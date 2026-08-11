@@ -1,0 +1,368 @@
+// Gamified Spaced Repetition System — core data architecture.
+// pgvector's `vector` column type is not a first-class Prisma type: it is declared
+// via `Unsupported("vector(1536)")`, which means Prisma Migrate cannot create or
+// alter it. The extension, the column, and its ANN index are created by the raw
+// SQL migration in prisma/migrations/0_init/migration.sql instead — see that file
+// and README.md "Database setup" for the full sequence.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+  // Single-schema mode. If you ever point this at a Supabase project whose
+  // `public` schema has its own FK into `auth` (e.g. a custom `entities`
+  // table), `prisma migrate`/`db pull` will fail with P4002 asking for
+  // `schemas = ["public", "auth"]`. Don't add that pre-emptively — declaring
+  // `auth` here makes Prisma's drift detection treat that whole schema as
+  // something it should match against migration history, and since we never
+  // define any auth.* models, every future `migrate dev` interprets
+  // Supabase's own auth tables as un-reconcilable drift and offers to reset
+  // both schemas. Add it back only if P4002 actually reappears, and expect
+  // that warning again if you do.
+  schemas    = ["public"]
+}
+
+enum CollectionLabel {
+  BOOK
+  ACTIONABLE
+  PROPOSAL
+
+  @@schema("public")
+}
+
+enum QuestionType {
+  SHORT
+  MULTI
+  DIAGRAM
+  FORMULA
+
+  @@schema("public")
+}
+
+/**
+ * The thirteen base attributes every Field is composed from.
+ *
+ * These are the substrate of the whole progression system: a Field declares
+ * what mix of them it trains, Field levels flow into attribute scores
+ * weighted by that mix, and skills gate on attribute scores. Nothing here
+ * is per-Field hardcoded — the previous skill system keyed off literal
+ * seeded Domain names like "Memory & Cognition", which meant renaming a
+ * Domain silently disabled a skill and no user-created Field could ever
+ * unlock anything.
+ */
+enum Attribute {
+  MIND
+  PHYSICAL
+  CRITICAL_THINKING
+  COMPASSION
+  ABSTRACT
+  LOGIC
+  REASON
+  REBUTTAL
+  SELF_RESPECT
+  FAITH
+  CREATIVITY
+  STUBBORNNESS
+  STATISTIC
+
+  @@schema("public")
+}
+
+model Field {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  level     Float            @default(1.0)
+  domains    Domain[]
+  snapshots  FieldSnapshot[]
+  attributes FieldAttribute[]
+  streaks    FieldStreak[]
+  bosses     BossEncounter[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model Domain {
+  id          String @id @default(cuid())
+  name        String
+  fieldId     String
+  field       Field  @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  totalPoints Float  @default(0)
+  level       Int    @default(1)
+  ideas       Idea[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([fieldId])
+  @@schema("public")
+}
+
+model Idea {
+  id              String          @id @default(cuid())
+  domainId        String
+  domain          Domain          @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  collectionLabel CollectionLabel
+  level           Int             @default(1) // Max 12
+  basePoints      Float           @default(0)
+  yieldPoints     Float           @default(0)
+  fragments       Int             @default(1)
+  question        String // JSON stringified for complex types (MULTI options, DIAGRAM hotspots)
+  questionType    QuestionType
+  answer          String // JSON stringified for complex types
+  dueDate         DateTime
+  graceEndsAt     DateTime?
+  failedAttempts  Int             @default(0)
+  endorsements    Int             @default(0)
+  isArchived      Boolean         @default(false)
+  linkedIdeaIds   String[]        @default([])
+
+  /**
+   * Memory-engineering node data (src/lib/dedup.ts). Distinct from
+   * `question`/`answer`, which are the *drill* — what the review session
+   * shows you. These are the *node*: what this Idea asserts, used for
+   * deduplication and library browsing.
+   *
+   * Nullable, and left that way: every Idea predating the dedup pipeline
+   * has none, and populating them retroactively would mean one Gemini call
+   * per existing row. Readers must tolerate the absence — `enrichNode`
+   * falls back to `question` when `corePremise` is null, and the dedup
+   * reasoning strings fall back to the Idea id when `title` is null.
+   */
+  title        String?
+  corePremise  String?
+  atomicPrompt String?
+  tags         String[] @default([])
+
+  enrichments IdeaEnrichment[]
+
+  // pgvector column — managed by raw SQL migration, not Prisma Migrate.
+  embedding Unsupported("vector(1536)")?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([domainId])
+  @@index([dueDate])
+  @@schema("public")
+}
+
+/**
+ * Append-only log of ENRICH_EXISTING merges (src/lib/dedup.ts).
+ *
+ * When a candidate lands in the enrichment band it adds nuance to an Idea
+ * that already exists rather than deserving its own node. The obvious
+ * implementation — rewriting `Idea.corePremise` in place — silently
+ * destroys the prior wording on every merge, and since the merge decision
+ * is automatic there'd be no way to audit what a node used to say or undo
+ * a bad call. So enrichments accumulate here instead: `Idea` keeps its
+ * original premise, and the full picture is the premise plus its
+ * enrichments in `createdAt` order.
+ *
+ * `similarity` records the cosine score that triggered the merge, which is
+ * what you need to tune thresholds against real data later.
+ */
+model IdeaEnrichment {
+  id         String @id @default(cuid())
+  ideaId     String
+  idea       Idea   @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  payload    String // the new nuance, as written by the synthesis call
+  sourceText String // the raw candidate text that produced it, kept for auditability
+  similarity Float
+
+  createdAt DateTime @default(now())
+
+  @@index([ideaId])
+  @@schema("public")
+}
+
+/**
+ * One row per (Field, calendar day) — powers the Dashboard's "ghost" radar
+ * comparison (current stats vs. 7 days ago). There's no other activity-log
+ * table in this schema; rather than reconstruct history after the fact,
+ * this is written forward from today via an upsert every time the
+ * Dashboard is viewed (src/lib/snapshot.ts). It starts empty — a 7-day-old
+ * snapshot only exists once the app has actually been open on that day.
+ */
+model FieldSnapshot {
+  id          String   @id @default(cuid())
+  fieldId     String
+  field       Field    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  day         DateTime // truncated to UTC midnight — the calendar day this snapshot represents
+  level       Float
+  totalPoints Float // sum of this Field's Domains' totalPoints at snapshot time
+
+  createdAt DateTime @default(now())
+
+  @@unique([fieldId, day])
+  @@schema("public")
+}
+
+/**
+ * One Field's weighting across the thirteen attributes.
+ *
+ * Weights are integers summing to 100 per Field — a percentage split of
+ * what that Field trains. Modelled as rows rather than a JSON blob on
+ * Field so a weight is queryable and constrained, matching how the rest of
+ * this schema represents structure.
+ */
+model FieldAttribute {
+  id        String    @id @default(cuid())
+  fieldId   String
+  field     Field     @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  attribute Attribute
+  weight    Int       @default(0) // 0..100; per-Field sum == 100
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fieldId, attribute])
+  @@index([fieldId])
+  @@schema("public")
+}
+
+/**
+ * Append-only mastery-point ledger.
+ *
+ * Mastery points are the scarce currency skills are bought with, so the
+ * balance is the sum of deltas rather than a mutable counter: spends are
+ * negative rows, and every grant records what earned it. A single mutable
+ * `balance` column would make an incorrect award impossible to trace or
+ * reverse, and grading (see `reason`) can involve a model call whose
+ * output should stay auditable.
+ */
+/**
+ * Machine-readable `reason` values, for reference (no DB enum — this stays
+ * a free string so a new income/expense source never needs a migration):
+ * IDEA_MASTERED | REVIEW_FRACTION | ATTESTATION | SKILL_UNLOCK |
+ * BOSS_VICTORY | DECAY.
+ */
+model MasteryLedgerEntry {
+  id     String @id @default(cuid())
+  userId String
+  /**
+   * Positive to grant, negative to spend/decay. Float, not Int: every
+   * successful review now mints a small fraction of a point
+   * (`reviewMasteryFraction` in mastery.ts) rather than only whole points
+   * on rare events, and decay debits are fractional too. The balance
+   * (`sum(delta)`) is still rounded for display and truncated toward zero
+   * wherever it gates a whole-number `Skill.masteryCost`.
+   */
+  delta  Float
+  reason String
+  /** Free-text detail — the graded rationale, or the skill code purchased. */
+  detail String?
+  ideaId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@schema("public")
+}
+
+/**
+ * Per-(user, Field) Boss state — the chance-and-stakes layer over a Field's
+ * hardest due material. A Boss unlocks once its Field clears
+ * `BOSS_UNLOCK_LEVEL` (bosses.ts); challenging it runs a capped, themed
+ * review batch through the normal SRS engine (real grading, no separate
+ * game state), and only the aggregate accuracy is judged here.
+ *
+ * `tier` climbs on every victory — the Boss "respawns stronger," which is
+ * what makes it replayable rather than a one-time unlock. `cooldownUntil`
+ * paces re-attempts (shorter after a loss, longer after a win) so this
+ * reads as a periodic event to look forward to, not a grindable loop.
+ */
+model BossEncounter {
+  id            String    @id @default(cuid())
+  userId        String
+  fieldId       String
+  field         Field     @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  tier          Int       @default(1)
+  victories     Int       @default(0)
+  lastVictoryAt DateTime?
+  lastAttemptAt DateTime?
+  cooldownUntil DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, fieldId])
+  @@index([fieldId])
+  @@schema("public")
+}
+
+/**
+ * A temporary negative modifier (debuffs.ts) — the inverse of an unlocked
+ * skill's permanent buff. Sourced from real setbacks (losing a Boss fight,
+ * a long Field streak breaking) rather than randomly, and always bounded
+ * and self-expiring: nothing here ever touches `Idea`/`Domain` state, only
+ * `ActiveModifiers`, so a debuff can sting without damaging the underlying
+ * knowledge base.
+ */
+model ActiveDebuff {
+  id        String   @id @default(cuid())
+  userId    String
+  /** DebuffKind from debuffs.ts, e.g. "SHAKEN" | "FATIGUED" | "DOUBT". */
+  kind      String
+  magnitude Float
+  /** Machine-readable source: BOSS_DEFEAT | STREAK_BROKEN. */
+  reason    String
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@schema("public")
+}
+
+/**
+ * Per-Field daily activity streak.
+ *
+ * Distinct from the global streak derived in src/lib/streak.ts: that one
+ * answers "did you show up at all", this one answers "did you keep faith
+ * with *this* subject", which is what field-streak skill effects key off.
+ * Stored rather than derived because it needs a per-Field last-active day
+ * and `Idea.updatedAt` alone can't distinguish a review from an edit.
+ */
+model FieldStreak {
+  id            String   @id @default(cuid())
+  userId        String
+  fieldId       String
+  field         Field    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  currentDays   Int      @default(0)
+  bestDays      Int      @default(0)
+  lastActiveDay DateTime // truncated to UTC midnight
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, fieldId])
+  @@index([fieldId])
+  @@schema("public")
+}
+
+model UnlockedSkill {
+  id           String   @id @default(cuid())
+  userId       String
+  skillCode    String
+  usesThisWeek Int      @default(0)
+  weekAnchor   DateTime @default(now()) // start of the week usesThisWeek is counted against
+
+  /** Mastery points actually spent to unlock — recorded so a future rebalance can refund honestly. */
+  masteryPaid  Int      @default(0)
+  unlockedAt   DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, skillCode])
+  @@schema("public")
+}

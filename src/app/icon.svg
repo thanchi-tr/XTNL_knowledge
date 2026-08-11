@@ -1,0 +1,22 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="chip" x1="10" y1="0" x2="90" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f1e2e" />
+      <stop offset="100%" stop-color="#04080f" />
+    </linearGradient>
+    <linearGradient id="mark" x1="24" y1="6" x2="58" y2="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3dffb0" />
+      <stop offset="50%" stop-color="#00cc7a" />
+      <stop offset="100%" stop-color="#009e60" />
+    </linearGradient>
+  </defs>
+  <circle cx="50" cy="50" r="50" fill="url(#chip)" />
+  <g transform="translate(19,19) scale(0.775)">
+    <line x1="27" y1="8" x2="63" y2="52" stroke="url(#mark)" stroke-width="4" stroke-linecap="round" />
+    <line x1="51" y1="13" x2="17" y2="52" stroke="url(#mark)" stroke-width="3.2" stroke-opacity="0.8" stroke-linecap="round" />
+    <circle cx="17" cy="52" r="2.3" fill="#00cc7a" fill-opacity="0.55" />
+    <circle cx="63" cy="52" r="3" fill="#2fd0ff" />
+    <circle cx="27" cy="8" r="4.6" fill="#00f090" />
+    <circle cx="51" cy="13" r="3.8" fill="#00e688" />
+  </g>
+</svg>

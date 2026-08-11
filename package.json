@@ -1,0 +1,53 @@
+{
+  "name": "xtnl-srs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "db:backfill-embeddings": "tsx scripts/backfill-embeddings.ts",
+    "db:backfill-compositions": "tsx scripts/backfill-compositions.ts",
+    "skills:stats": "tsx scripts/print-skill-pool-stats.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.13.0",
+    "@prisma/client": "^6.3.1",
+    "dotenv": "^17.4.2",
+    "framer-motion": "^12.43.0",
+    "mathjs": "^14.0.1",
+    "next": "16.2.12",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.10.1",
+    "string-similarity": "^4.0.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/string-similarity": "^4.0.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.12",
+    "prisma": "^6.3.1",
+    "tailwindcss": "^4",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.1": true,
+    "prisma@6.19.3": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.12.2": true,
+    "@google/genai@2.13.0": true,
+    "protobufjs@7.6.5": true
+  }
+}
