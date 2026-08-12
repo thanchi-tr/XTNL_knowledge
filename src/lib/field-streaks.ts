@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
 
 /**
@@ -31,16 +32,18 @@ export function streakBonusPercent(currentDays: number): number {
 
 /** Every Field the user has an active streak on, keyed by fieldId, as a raw (pre-STREAK_AMPLIFIER) bonus percent. */
 export async function loadFieldStreakBonuses(userId: string): Promise<Record<string, number>> {
-  const streaks = await prisma.fieldStreak.findMany({
-    where: { userId },
-    select: { fieldId: true, currentDays: true },
-  });
+  return cached(`streakBonuses:${userId}`, ["progress"], async () => {
+    const streaks = await prisma.fieldStreak.findMany({
+      where: { userId },
+      select: { fieldId: true, currentDays: true },
+    });
 
-  const out: Record<string, number> = {};
-  for (const s of streaks) {
-    out[s.fieldId] = streakBonusPercent(s.currentDays);
-  }
-  return out;
+    const out: Record<string, number> = {};
+    for (const s of streaks) {
+      out[s.fieldId] = streakBonusPercent(s.currentDays);
+    }
+    return out;
+  });
 }
 
 /**
@@ -93,6 +96,7 @@ export async function recordFieldActivity(
     await prisma.fieldStreak.create({
       data: { userId, fieldId, currentDays: 1, bestDays: 1, lastActiveDay: today },
     });
+    invalidate("progress");
     return { currentDays: 1, streakBroken: false, previousStreak: 0, debuffApplied: false };
   }
 
@@ -115,6 +119,7 @@ export async function recordFieldActivity(
   if (debuffApplied) {
     await applyDebuff(userId, "DOUBT", "STREAK_BROKEN", now);
   }
+  invalidate("progress");
 
   return { currentDays, streakBroken, previousStreak: existing.currentDays, debuffApplied };
 }

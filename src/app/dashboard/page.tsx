@@ -1,4 +1,5 @@
-import { prisma } from "@/lib/prisma";
+import { after } from "next/server";
+import { loadFieldTree } from "@/lib/queries";
 import { domainLevelProgress, fieldLevel } from "@/lib/xp";
 import { recordTodaySnapshot, getGhostLevelsFromDaysAgo } from "@/lib/snapshot";
 import { FieldLevelChart, type FieldLevelDatum } from "@/components/dashboard/FieldLevelChart";
@@ -19,18 +20,16 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const now = new Date();
 
-  // Fire-and-forget from the page's perspective, but awaited: writes today's
-  // Field snapshot so a week from now this same view has a real "7 days
-  // ago" ghost to compare against instead of nothing.
-  await recordTodaySnapshot();
+  // Writes today's Field snapshot so a week from now this view has a real
+  // "7 days ago" ghost to compare against. It was previously awaited before
+  // any of the page's own data was fetched — a read plus six upserts, every
+  // one a full round trip, in front of the response. Nothing rendered below
+  // depends on it, so it now runs after the response is sent.
+  after(async () => {
+    await recordTodaySnapshot();
+  });
 
-  const [fields, ghostLevels] = await Promise.all([
-    prisma.field.findMany({
-      orderBy: { name: "asc" },
-      include: { domains: { include: { ideas: true } } },
-    }),
-    getGhostLevelsFromDaysAgo(7),
-  ]);
+  const [fields, ghostLevels] = await Promise.all([loadFieldTree(), getGhostLevelsFromDaysAgo(7)]);
 
   const fieldLevelData: FieldLevelDatum[] = fields.map((f) => ({
     name: f.name,

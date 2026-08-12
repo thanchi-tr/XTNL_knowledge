@@ -1,7 +1,9 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached, invalidate } from "./cache";
 import { gradeMasteryAttestation } from "./gemini";
 import { SKILL_POOL } from "./skill-pool";
-import { loadProgression, unlockBlockers } from "./skill-effects";
+import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
 
 /**
  * The mastery-point economy. `MasteryLedgerEntry` is append-only (see its
@@ -64,7 +66,12 @@ export function mintReviewFractionOp(userId: string, ideaId: string, ideaLevel: 
   });
 }
 
-export async function getMasteryBalance(userId: string): Promise<number> {
+export const getMasteryBalance = cache(async (userId: string): Promise<number> => {
+  return cached(`masteryBalance:${userId}`, ["progress"], () => getMasteryBalanceFresh(userId));
+});
+
+/** Uncached. Spending paths must never price a purchase off a stale balance. */
+export async function getMasteryBalanceFresh(userId: string): Promise<number> {
   const agg = await prisma.masteryLedgerEntry.aggregate({ where: { userId }, _sum: { delta: true } });
   // Float column — round to 2dp so a long tail of 0.02s never surfaces as
   // 4.800000000000001 in the UI or in a cost comparison.
@@ -109,6 +116,7 @@ export async function submitAttestation(
   await prisma.masteryLedgerEntry.create({
     data: { userId, delta: points, reason: "ATTESTATION", detail: graded.rationale, ideaId: ideaId ?? undefined },
   });
+  invalidate("progress");
 
   return { status: "graded", points, rationale: graded.rationale };
 }
@@ -144,7 +152,9 @@ export type DecayResult =
  * Idempotent per UTC day, so running the Cron twice cannot double-charge.
  */
 export async function decayStaleMastery(userId: string, now: Date = new Date()): Promise<DecayResult> {
-  const balance = await getMasteryBalance(userId);
+  // Fresh throughout: this debits real points, so it must not price the
+  // decision off a cached balance or a cached skill list.
+  const balance = await getMasteryBalanceFresh(userId);
   if (balance <= MASTERY_DECAY_FLOOR) return { status: "skipped", why: "no_balance" };
 
   const todayStart = utcDayStart(now);
@@ -164,7 +174,7 @@ export async function decayStaleMastery(userId: string, now: Date = new Date()):
   const idleDays = Math.floor((now.getTime() - since.getTime()) / 86_400_000);
   if (idleDays < MASTERY_IDLE_GRACE_DAYS) return { status: "skipped", why: "within_grace" };
 
-  const progression = await loadProgression(userId, now);
+  const progression = await loadProgressionFresh(userId, now);
   const canAffordSomething = SKILL_POOL.some(
     (skill) =>
       unlockBlockers(skill, progression.scores, progression.ownedCodes, balance, progression.modifiers).length === 0
@@ -182,6 +192,7 @@ export async function decayStaleMastery(userId: string, now: Date = new Date()):
       detail: `Idle ${idleDays}d with unspent points that could already be spent.`,
     },
   });
+  invalidate("progress");
 
   return { status: "decayed", amount, balanceAfter: Math.round((balance - amount) * 100) / 100, idleDays };
 }

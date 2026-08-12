@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SKILL_POOL, type Skill } from "@/lib/skill-pool";
 import { unlockBlockers, type ActiveModifiers } from "@/lib/skill-gates";
 import { DEBUFF_META, type ActiveDebuffRow } from "@/lib/debuff-meta";
+import { BOON_META, type ActiveBoonRow } from "@/lib/boon-meta";
 import { ATTRIBUTES, ATTRIBUTE_META, type AttributeScores } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
 import { RANK_META, RANK_ORDER } from "@/lib/skill-visuals";
@@ -28,11 +29,12 @@ interface Props {
   masteryBalance: number;
   modifiers: ActiveModifiers;
   debuffs: ActiveDebuffRow[];
+  boons: ActiveBoonRow[];
 }
 
 type View = "paths" | "inventory";
 
-export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuffs }: Props) {
+export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuffs, boons }: Props) {
   const [view, setView] = useState<View>("paths");
   const ownedSet = useMemo(() => new Set(ownedCodes), [ownedCodes]);
 
@@ -79,6 +81,29 @@ export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuff
                   <span style={{ color: "var(--ink-3)" }}>
                     {" · until "}
                     {d.expiresAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {boons.length > 0 && (
+        <div className="card px-4 py-3" style={{ borderColor: "rgba(0,204,122,0.3)", background: "var(--green-06)" }}>
+          <p className="label-xs" style={{ color: "var(--green)" }}>
+            Spoils
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            {boons.map((b, i) => {
+              const meta = BOON_META[b.kind];
+              return (
+                <div key={`${b.kind}-${i}`} style={{ fontSize: 11 }}>
+                  <span style={{ color: "var(--green)", fontWeight: 600 }}>{meta.label}</span>
+                  <span style={{ color: "var(--ink-2)" }}> — {meta.effectText(b.magnitude)}</span>
+                  <span style={{ color: "var(--ink-3)" }}>
+                    {" · until "}
+                    {b.expiresAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" })}
                   </span>
                 </div>
               );

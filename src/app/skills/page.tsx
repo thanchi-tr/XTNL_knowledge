@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { loadFieldLevels } from "@/lib/queries";
 import { loadProgression } from "@/lib/skill-effects";
 import { getMasteryBalance } from "@/lib/mastery";
 import { SKILL_POOL } from "@/lib/skill-pool";
@@ -16,7 +16,7 @@ export default async function SkillsPage() {
   const [progression, masteryBalance, fields] = await Promise.all([
     loadProgression(userId),
     getMasteryBalance(userId),
-    prisma.field.findMany({ select: { level: true } }),
+    loadFieldLevels(),
   ]);
 
   // Same breadth-weighted formula the Overview page uses for its
@@ -46,6 +46,7 @@ export default async function SkillsPage() {
           masteryBalance={masteryBalance}
           modifiers={progression.modifiers}
           debuffs={progression.debuffs}
+          boons={progression.boons}
         />
       </div>
 

@@ -1,4 +1,6 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached, invalidate } from "./cache";
 
 function truncateToDay(d: Date): Date {
   const t = new Date(d);
@@ -36,6 +38,9 @@ export async function recordTodaySnapshot(): Promise<void> {
       })
     )
   );
+  // Today's own snapshot row changed; the 7-day-ago ghost has not, but the
+  // key is cheap to drop and stale ghosts are worse than a re-query.
+  invalidate("fields");
 }
 
 export interface GhostFieldLevel {
@@ -48,14 +53,16 @@ export interface GhostFieldLevel {
  * radar compares against. Returns an empty array until snapshots have
  * actually been accumulating for a week; there's no synthetic fallback.
  */
-export async function getGhostLevelsFromDaysAgo(daysAgo: number): Promise<GhostFieldLevel[]> {
-  const day = truncateToDay(new Date());
-  day.setUTCDate(day.getUTCDate() - daysAgo);
+export const getGhostLevelsFromDaysAgo = cache(async (daysAgo: number): Promise<GhostFieldLevel[]> => {
+  return cached(`ghostLevels:${daysAgo}`, ["fields"], async () => {
+    const day = truncateToDay(new Date());
+    day.setUTCDate(day.getUTCDate() - daysAgo);
 
-  const rows = await prisma.fieldSnapshot.findMany({
-    where: { day },
-    include: { field: { select: { name: true } } },
+    const rows = await prisma.fieldSnapshot.findMany({
+      where: { day },
+      include: { field: { select: { name: true } } },
+    });
+
+    return rows.map((r) => ({ fieldName: r.field.name, level: r.level }));
   });
-
-  return rows.map((r) => ({ fieldName: r.field.name, level: r.level }));
-}
+});

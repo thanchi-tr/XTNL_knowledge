@@ -300,6 +300,33 @@ model BossEncounter {
 }
 
 /**
+ * A temporary *positive* modifier — the spoils of a Boss victory
+ * (boons.ts). Mirrors `ActiveDebuff` deliberately rather than sharing a
+ * table with it: the two are folded into `ActiveModifiers` by different
+ * code with opposite sign conventions, and one table holding both would
+ * make every read site check which kind it was looking at.
+ *
+ * Boons come from a Spoils Cache. Which boon you draw is random; that a
+ * victory yields one, and the mastery it pays alongside, are not — see
+ * `boons.ts` for why that distinction is the whole design.
+ */
+model ActiveBoon {
+  id        String   @id @default(cuid())
+  userId    String
+  /** BoonKind from boons.ts, e.g. "INSIGHT" | "MOMENTUM" | "FOCUS". */
+  kind      String
+  magnitude Float
+  /** Machine-readable source: BOSS_SPOILS. */
+  reason    String
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@schema("public")
+}
+
+/**
  * A temporary negative modifier (debuffs.ts) — the inverse of an unlocked
  * skill's permanent buff. Sourced from real setbacks (losing a Boss fight,
  * a long Field streak breaking) rather than randomly, and always bounded

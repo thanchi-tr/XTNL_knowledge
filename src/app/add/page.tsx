@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { loadFieldsForCapture } from "@/lib/queries";
 import { AddIdeaForm, type AddFormField } from "@/components/AddIdeaForm";
 
 export const dynamic = "force-dynamic";
@@ -7,18 +7,10 @@ export const dynamic = "force-dynamic";
 const COMPOSITION_PREVIEW_COUNT = 4;
 
 export default async function AddIdeaPage() {
-  const rows = await prisma.field.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      // Offered as explicit placement targets in the form. Without this an
-      // empty hand-created Domain is unreachable — discovery routes by
-      // nearest existing Idea, and an empty Domain has none.
-      domains: { orderBy: { name: "asc" }, select: { id: true, name: true } },
-      attributes: { select: { attribute: true, weight: true } },
-    },
-  });
+  // Domains are offered as explicit placement targets in the form. Without
+  // them an empty hand-created Domain is unreachable — discovery routes by
+  // nearest existing Idea, and an empty Domain has none.
+  const rows = await loadFieldsForCapture();
 
   const fields: AddFormField[] = rows.map((f) => ({
     id: f.id,

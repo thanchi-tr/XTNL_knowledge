@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { loadFieldTree } from "@/lib/queries";
 import { fieldLevel } from "@/lib/xp";
 import { getDailyStreak } from "@/lib/streak";
 import { FieldRadarChart, type RadarDatum } from "@/components/home/FieldRadarChart";
@@ -13,20 +13,16 @@ export default async function HomePage() {
   const now = new Date();
   const graceCutoff = new Date(now.getTime() - 86_400_000);
 
-  const [fields, streak, dueCount, overdueCount, ideaCount] = await Promise.all([
-    prisma.field.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        domains: {
-          select: { totalPoints: true, level: true, _count: { select: { ideas: true } } },
-        },
-      },
-    }),
-    getDailyStreak(),
-    prisma.idea.count({ where: { isArchived: false, dueDate: { lte: now } } }),
-    prisma.idea.count({ where: { isArchived: false, dueDate: { lt: graceCutoff } } }),
-    prisma.idea.count({ where: { isArchived: false } }),
-  ]);
+  // Was five separate round trips — the Field tree plus three `idea.count`
+  // queries. The tree already carries every non-archived Idea, so the three
+  // counts are derived from it in memory instead: same numbers, two round
+  // trips instead of five, and both of them cached.
+  const [fields, streak] = await Promise.all([loadFieldTree(), getDailyStreak()]);
+
+  const allIdeas = fields.flatMap((f) => f.domains.flatMap((d) => d.ideas));
+  const ideaCount = allIdeas.length;
+  const dueCount = allIdeas.filter((i) => i.dueDate <= now).length;
+  const overdueCount = allIdeas.filter((i) => i.dueDate < graceCutoff).length;
 
   // Proficiency index: the same sub-linear "breadth over depth" formula the
   // spec uses for Field level (floor(sum(level^0.75))), applied one level up
@@ -38,7 +34,7 @@ export default async function HomePage() {
       name: f.name,
       level: f.level,
       domainCount: f.domains.length,
-      ideaCount: f.domains.reduce((sum, d) => sum + d._count.ideas, 0),
+      ideaCount: f.domains.reduce((sum, d) => sum + d.ideas.length, 0),
       points: f.domains.reduce((sum, d) => sum + d.totalPoints, 0),
     }))
     // Ranked by contribution rather than alphabetically — the top row of a

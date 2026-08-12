@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { loadFieldLevels } from "@/lib/queries";
 import { loadProgression } from "@/lib/skill-effects";
 import { getCurrentUserId } from "@/lib/user";
 import { fieldLevel } from "@/lib/xp";
@@ -22,10 +22,7 @@ async function loadBadge() {
   // eslint is right to reject it.
   try {
     const userId = getCurrentUserId();
-    const [progression, fields] = await Promise.all([
-      loadProgression(userId),
-      prisma.field.findMany({ select: { level: true } }),
-    ]);
+    const [progression, fields] = await Promise.all([loadProgression(userId), loadFieldLevels()]);
 
     const accountLevel = fieldLevel(fields.map((f) => f.level));
     const ultimateCount = progression.activeSkills.filter((s) => s.rank === "ULTIMATE").length;

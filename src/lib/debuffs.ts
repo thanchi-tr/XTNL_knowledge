@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { invalidate } from "./cache";
 import { DEBUFF_META, DEBUFF_KINDS, type DebuffKind, type ActiveDebuffRow } from "./debuff-meta";
 
 /**
@@ -52,6 +53,7 @@ export async function applyDebuff(
   await prisma.activeDebuff.create({
     data: { userId, kind, magnitude: clamped, reason, expiresAt },
   });
+  invalidate("progress");
 }
 
 export async function loadActiveDebuffs(userId: string, now: Date = new Date()): Promise<ActiveDebuffRow[]> {
@@ -69,5 +71,6 @@ export async function loadActiveDebuffs(userId: string, now: Date = new Date()):
 /** Housekeeping for the daily Cron — expired rows are inert either way, this just stops the table growing forever. */
 export async function purgeExpiredDebuffs(now: Date = new Date()): Promise<number> {
   const { count } = await prisma.activeDebuff.deleteMany({ where: { expiresAt: { lte: now } } });
+  if (count > 0) invalidate("progress");
   return count;
 }

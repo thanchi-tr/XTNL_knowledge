@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { degradeOverdueIdeas } from "@/lib/srs";
 import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
+import { purgeExpiredBoons } from "@/lib/boons";
 import { getCurrentUserId } from "@/lib/user";
 
 // Never statically cache/prerender a Cron endpoint.
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
 
   const results = await degradeOverdueIdeas();
   const decay = await decayStaleMastery(getCurrentUserId());
-  const debuffsPurged = await purgeExpiredDebuffs();
+  const [debuffsPurged, boonsPurged] = await Promise.all([purgeExpiredBoons(), purgeExpiredDebuffs()]);
 
-  return NextResponse.json({ degraded: results.length, results, decay, debuffsPurged });
+  return NextResponse.json({ degraded: results.length, results, decay, debuffsPurged, boonsPurged });
 }

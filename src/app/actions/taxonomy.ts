@@ -2,6 +2,7 @@
 
 import type { Attribute } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { invalidate } from "@/lib/cache";
 import { ATTRIBUTES, defaultCompositionFor, normaliseComposition, emptyComposition } from "@/lib/attributes";
 
 /**
@@ -81,6 +82,7 @@ export async function createField(rawName: string): Promise<TaxonomyResult<Creat
       },
       select: { id: true, name: true },
     });
+    invalidate("fields");
     return { ok: true, value: field };
   } catch {
     return { ok: false, error: `A Field named "${name}" already exists.` };
@@ -115,6 +117,7 @@ export async function updateFieldComposition(
       })
     )
   );
+  invalidate("fields");
 
   return { ok: true, value: { fieldId } };
 }
@@ -156,5 +159,6 @@ export async function createDomain(fieldId: string, rawName: string): Promise<Ta
     data: { name, fieldId },
     select: { id: true, name: true, fieldId: true },
   });
+  invalidate("fields", "ideas");
   return { ok: true, value: domain };
 }

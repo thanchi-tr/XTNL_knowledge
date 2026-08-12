@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { loadFieldTree } from "@/lib/queries";
 import { displayQuestion } from "@/lib/idea-display";
 import { loadBossStates } from "@/lib/bosses";
 import { getCurrentUserId } from "@/lib/user";
@@ -22,23 +22,20 @@ function formatDue(dueDate: Date, now: Date): { label: string; overdue: boolean 
 export default async function WorkspacePage() {
   const now = new Date();
 
-  const [fields, bosses] = await Promise.all([
-    prisma.field.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        domains: {
-          orderBy: { name: "asc" },
-          include: {
-            ideas: {
-              where: { isArchived: false, dueDate: { lte: now } },
-              orderBy: { dueDate: "asc" },
-            },
-          },
-        },
-      },
-    }),
-    loadBossStates(getCurrentUserId(), now),
-  ]);
+  // One shared, cached read of the Field tree rather than a bespoke query —
+  // the Dashboard wants the same rows, so whichever page is visited second
+  // pays nothing. Due-filtering moves into memory below: it is a comparison
+  // over a few dozen rows, and pushing it to SQL would cost a round trip
+  // (~816ms) to save microseconds.
+  const [allFields, bosses] = await Promise.all([loadFieldTree(), loadBossStates(getCurrentUserId())]);
+
+  const fields = allFields.map((field) => ({
+    ...field,
+    domains: field.domains.map((domain) => ({
+      ...domain,
+      ideas: domain.ideas.filter((idea) => idea.dueDate <= now),
+    })),
+  }));
 
   const allFieldNames = fields.map((f) => f.name);
 

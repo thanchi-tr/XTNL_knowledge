@@ -1,4 +1,6 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached } from "./cache";
 import { computeAttributeScores, emptyComposition, type AttributeScores, type Composition } from "./attributes";
 import { ATTRIBUTES } from "./attributes";
 
@@ -30,18 +32,23 @@ export interface ProgressRates {
   observedDays: number;
 }
 
-export async function loadProgressRates(userId: string, now: Date = new Date()): Promise<ProgressRates> {
-  const [masteryPerDay, scoreResult] = await Promise.all([
-    measureMasteryRate(userId, now),
-    measureScoreRate(now),
-  ]);
+export const loadProgressRates = cache(async (userId: string): Promise<ProgressRates> => {
+  // Rates move on the scale of days; a few seconds of staleness is
+  // meaningless here, and the three round trips behind them are not.
+  return cached(`progressRates:${userId}`, ["fields", "progress"], async () => {
+    const now = new Date();
+    const [masteryPerDay, scoreResult] = await Promise.all([
+      measureMasteryRate(userId, now),
+      measureScoreRate(now),
+    ]);
 
-  return {
-    masteryPerDay,
-    scorePerDay: scoreResult.scorePerDay,
-    observedDays: scoreResult.observedDays,
-  };
-}
+    return {
+      masteryPerDay,
+      scorePerDay: scoreResult.scorePerDay,
+      observedDays: scoreResult.observedDays,
+    };
+  });
+});
 
 /**
  * Income only — spends and decay are excluded. The question the estimate

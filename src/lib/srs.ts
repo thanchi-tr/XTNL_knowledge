@@ -1,5 +1,7 @@
+import { after } from "next/server";
 import type { Idea, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { invalidate } from "./cache";
 import {
   graceEndsAt,
   reviewReward,
@@ -10,7 +12,7 @@ import {
   MASTERY_LEVEL,
 } from "./xp";
 import { recalculateLeveling } from "./leveling";
-import { loadProgression, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
+import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
 import { recordFieldActivity } from "./field-streaks";
 import { mintIdeaMasteryOp, mintReviewFractionOp } from "./mastery";
 import { getCurrentUserId } from "./user";
@@ -118,6 +120,10 @@ async function attemptDegradation(
       where: { id: idea.id },
       data: { failedAttempts: 0, dueDate: addDays(now, 1) },
     });
+    // Reschedules the Idea without touching points, so it never reaches
+    // `recalculateLeveling` — the one write path that invalidates for us.
+    // The due queue still changed, so it has to be dropped here.
+    invalidate("ideas");
     return { outcome: "shielded", level: idea.level, skillName: anchor.name, nextCombo };
   }
 
@@ -148,13 +154,25 @@ export async function applyReviewResult(
   /** Consecutive correct answers *before* this one; clamped inside `reviewReward`. */
   combo = 0
 ): Promise<ReviewOutcome> {
-  const idea = await prisma.idea.findUniqueOrThrow({ where: { id: ideaId } });
-  const domainBefore = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
   const userId = getCurrentUserId();
-  const progression = await loadProgression(userId);
+  // Three independent reads — issued together rather than in sequence,
+  // because each round trip to the database costs far more than the query.
+  const [idea, progression] = await Promise.all([
+    prisma.idea.findUniqueOrThrow({ where: { id: ideaId } }),
+    // Fresh: this is a write path, and it prices real rewards off these
+    // modifiers. A cached ward charge or yield multiplier could be seconds
+    // stale, which is fine for display and not fine here.
+    loadProgressionFresh(userId, now),
+  ]);
+  const domainBefore = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
   const modifiers = progression.modifiers;
 
-  await recordFieldActivity(userId, domainBefore.fieldId, now);
+  // Streak bookkeeping affects nothing this response returns, so it runs
+  // after the answer has already been sent. `after` keeps the review loop
+  // snappy without dropping the write.
+  after(async () => {
+    await recordFieldActivity(userId, domainBefore.fieldId, now);
+  });
 
   if (correct) {
     const newLevel = Math.min(MAX_LEVEL, idea.level + 1);
@@ -227,6 +245,9 @@ export async function applyReviewResult(
       where: { id: ideaId },
       data: { failedAttempts, dueDate: addDays(now, 1) },
     });
+    // Same as the shielded path: the Idea moved out of the due window
+    // without any points changing, so nothing else will invalidate for us.
+    invalidate("ideas");
     return { outcome: "strike", failedAttempts, strikeLimit, nextCombo };
   }
 
@@ -252,7 +273,7 @@ export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ide
   if (overdue.length === 0) return [];
 
   const userId = getCurrentUserId();
-  const progression = await loadProgression(userId);
+  const progression = await loadProgressionFresh(userId, now);
 
   const results: { ideaId: string; outcome: ReviewOutcome }[] = [];
   for (const idea of overdue) {

@@ -3,8 +3,9 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import { getSkill } from "@/lib/skill-pool";
-import { loadProgression, unlockBlockers, type UnlockBlocker } from "@/lib/skill-effects";
-import { getMasteryBalance, submitAttestation } from "@/lib/mastery";
+import { loadProgressionFresh, unlockBlockers, type UnlockBlocker } from "@/lib/skill-effects";
+import { getMasteryBalanceFresh, submitAttestation } from "@/lib/mastery";
+import { invalidate } from "@/lib/cache";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 
 export type SkillActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -42,7 +43,12 @@ export async function unlockSkill(
   }
 
   const userId = getCurrentUserId();
-  const [progression, masteryBalance] = await Promise.all([loadProgression(userId), getMasteryBalance(userId)]);
+  // Both fresh: this spends points. Pricing a purchase off a cached balance
+  // is exactly the kind of staleness that lets a player overspend.
+  const [progression, masteryBalance] = await Promise.all([
+    loadProgressionFresh(userId),
+    getMasteryBalanceFresh(userId),
+  ]);
 
   const blockers = unlockBlockers(
     skill,
@@ -69,6 +75,7 @@ export async function unlockSkill(
     // raced with another unlock of the same skill between check and write.
     return { ok: false, error: "That skill was already unlocked." };
   }
+  invalidate("progress");
 
   return { ok: true, value: { skillCode: skill.code, masteryPaid: skill.masteryCost } };
 }

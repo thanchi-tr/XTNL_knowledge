@@ -2,6 +2,7 @@ import type { Attribute } from "@prisma/client";
 import type { AttributeScores } from "./attributes";
 import type { Skill, SkillEffect } from "./skill-pool";
 import { worstByKind, type ActiveDebuffRow } from "./debuff-meta";
+import { bestByKind, type ActiveBoonRow } from "./boon-meta";
 import { DEFAULT_LAMBDA, COMBO_CAP } from "./xp";
 
 /**
@@ -133,6 +134,34 @@ export function foldDebuffs(base: ActiveModifiers, debuffs: ActiveDebuffRow[]): 
   }
   if (worst.DOUBT) {
     m.attributePenaltyPercent = worst.DOUBT;
+  }
+
+  return m;
+}
+
+/**
+ * Folds temporary boons (Boss spoils) on top of the skill baseline.
+ *
+ * Applied before debuffs, so a player who is both Shaken and carrying
+ * Insight ends up between the two rather than having one silently erase
+ * the other. Boons stack with skills by taking the better value per hook,
+ * the same rule `foldEffects` uses — never summing.
+ */
+export function foldBoons(base: ActiveModifiers, boons: ActiveBoonRow[]): ActiveModifiers {
+  const best = bestByKind(boons);
+  const m: ActiveModifiers = { ...base };
+
+  if (best.INSIGHT) {
+    m.reviewYieldMultiplier = m.reviewYieldMultiplier * (1 + best.INSIGHT);
+  }
+  if (best.MOMENTUM) {
+    m.comboCap = m.comboCap + Math.round(best.MOMENTUM);
+  }
+  if (best.FOCUS) {
+    m.extraStrikes = m.extraStrikes + Math.round(best.FOCUS);
+  }
+  if (best.CLARITY) {
+    m.graceExtraDays = m.graceExtraDays + Math.round(best.CLARITY);
   }
 
   return m;

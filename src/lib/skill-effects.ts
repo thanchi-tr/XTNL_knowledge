@@ -1,4 +1,6 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached } from "./cache";
 import {
   computeAttributeScores,
   type AttributeScores,
@@ -9,9 +11,11 @@ import {
 import { getSkill, type Skill } from "./skill-pool";
 import { loadFieldStreakBonuses } from "./field-streaks";
 import { loadActiveDebuffs, type ActiveDebuffRow } from "./debuffs";
+import { loadActiveBoons, type ActiveBoonRow } from "./boons";
 import {
   foldEffects,
   foldDebuffs,
+  foldBoons,
   meetsRequirements,
   resolveWardAnchor,
   NEUTRAL_MODIFIERS,
@@ -49,6 +53,8 @@ export interface ProgressionState {
   modifiers: ActiveModifiers;
   /** Currently-active debuffs, so the UI can name what is dragging the numbers down. */
   debuffs: ActiveDebuffRow[];
+  /** Currently-active boons — Boss spoils, and equally worth naming. */
+  boons: ActiveBoonRow[];
 }
 
 interface FieldRow {
@@ -59,14 +65,16 @@ interface FieldRow {
 }
 
 async function loadFieldRows(): Promise<FieldRow[]> {
-  const fields = await prisma.field.findMany({
-    select: { id: true, name: true, level: true, attributes: { select: { attribute: true, weight: true } } },
-  });
+  return cached("fieldRows", ["fields"], async () => {
+    const fields = await prisma.field.findMany({
+      select: { id: true, name: true, level: true, attributes: { select: { attribute: true, weight: true } } },
+    });
 
-  return fields.map((f) => {
-    const composition = emptyComposition();
-    for (const a of f.attributes) composition[a.attribute] = a.weight;
-    return { id: f.id, name: f.name, level: f.level, composition: composition as Composition };
+    return fields.map((f) => {
+      const composition = emptyComposition();
+      for (const a of f.attributes) composition[a.attribute] = a.weight;
+      return { id: f.id, name: f.name, level: f.level, composition: composition as Composition };
+    });
   });
 }
 
@@ -96,22 +104,13 @@ export async function loadAttributeScores(userId: string): Promise<AttributeScor
   return scoresWithStreak(rows, streakBonuses, 1);
 }
 
-/**
- * Everything the engine and UI need about progression, in one round trip.
- *
- * RESONANCE and STREAK_AMPLIFIER are both resolved in the same two-pass
- * bootstrap: fold once against base (1x) scores to discover which owned
- * skills are active, then re-fold attribute scores with the resonance
- * percent and streak multiplier that first pass produced. Deliberately not
- * iterated to a fixed point — no chain of Resonance/Amplifier skills can
- * bootstrap itself into unlocking further copies of the same kind.
- */
-export async function loadProgression(userId: string, now: Date = new Date()): Promise<ProgressionState> {
-  const [rows, streakBonuses, owned, debuffs] = await Promise.all([
+async function loadProgressionUncached(userId: string, now: Date): Promise<ProgressionState> {
+  const [rows, streakBonuses, owned, debuffs, boons] = await Promise.all([
     loadFieldRows(),
     loadFieldStreakBonuses(userId),
     prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true } }),
     loadActiveDebuffs(userId, now),
+    loadActiveBoons(userId, now),
   ]);
 
   const ownedSkills = owned
@@ -136,9 +135,39 @@ export async function loadProgression(userId: string, now: Date = new Date()): P
     ownedCodes: owned.map((o) => o.skillCode),
     activeSkills,
     dormantSkills,
-    modifiers: foldDebuffs(foldEffects(activeSkills), debuffs),
+    // Order matters: skills form the baseline, boons lift it, debuffs cut
+    // it. Applying debuffs last means a penalty bites the state you
+    // actually have rather than being cancelled out by a fresh buff.
+    modifiers: foldDebuffs(foldBoons(foldEffects(activeSkills), boons), debuffs),
     debuffs,
+    boons,
   };
+}
+
+/**
+ * Everything the engine and UI need about progression, in one round trip.
+ *
+ * RESONANCE and STREAK_AMPLIFIER are both resolved in the same two-pass
+ * bootstrap: fold once against base (1x) scores to discover which owned
+ * skills are active, then re-fold attribute scores with the resonance
+ * percent and streak multiplier that first pass produced. Deliberately not
+ * iterated to a fixed point — no chain of Resonance/Amplifier skills can
+ * bootstrap itself into unlocking further copies of the same kind.
+ */
+export const loadProgression = cache(async (userId: string): Promise<ProgressionState> => {
+  // Two layers, doing different jobs. React `cache` dedupes within a single
+  // render — the nav's title badge and the page body both want progression,
+  // and without it every route paid for it twice. `cached` then holds the
+  // result across requests, which is what actually gets a page under a
+  // second when one round trip costs ~816ms.
+  return cached(`progression:${userId}`, ["fields", "progress"], () =>
+    loadProgressionUncached(userId, new Date())
+  );
+});
+
+/** Bypasses both cache layers. For write paths that must not act on a stale balance or skill list. */
+export function loadProgressionFresh(userId: string, now: Date = new Date()): Promise<ProgressionState> {
+  return loadProgressionUncached(userId, now);
 }
 
 /** Modifiers alone — the hot path for the review engine. */

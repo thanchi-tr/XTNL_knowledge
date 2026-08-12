@@ -1,4 +1,6 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached } from "./cache";
 
 export interface DailyStreak {
   current: number;
@@ -20,7 +22,11 @@ function dateKey(d: Date): string {
  * A streak stays "alive" through the current day even before today's first
  * review — it only breaks once a full day passes with zero activity.
  */
-export async function getDailyStreak(): Promise<DailyStreak> {
+export const getDailyStreak = cache(async (): Promise<DailyStreak> => {
+  return cached("dailyStreak", ["ideas"], getDailyStreakUncached);
+});
+
+async function getDailyStreakUncached(): Promise<DailyStreak> {
   const rows = await prisma.$queryRaw<{ day: Date }[]>`
     SELECT DISTINCT date_trunc('day', "updatedAt") AS day
     FROM "Idea"

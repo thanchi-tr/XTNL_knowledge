@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import type { BossResolution } from "@/lib/bosses";
 import { DEBUFF_META } from "@/lib/debuff-meta";
+import { BOON_META } from "@/lib/boon-meta";
 
 interface Props {
   resolution: BossResolution;
@@ -59,6 +60,33 @@ export function BossResult({ resolution, onDone }: Props) {
             +{resolution.masteryAwarded}
           </p>
           <p className="label-xs mt-1.5">Mastery earned</p>
+
+          {/* The Spoils Cache. Revealed, not gambled on — the mastery above
+              was fixed before the fight, and this is the variety on top. */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ delay: 0.35, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-5 w-full max-w-xs px-4 py-3"
+            style={{
+              borderRadius: 10,
+              background: "var(--green-06)",
+              border: "1px solid rgba(0,204,122,0.28)",
+            }}
+          >
+            <p className="label-xs" style={{ fontSize: 9, color: "var(--green)" }}>
+              Spoils cache
+            </p>
+            <p className="mt-1" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-0)" }}>
+              {BOON_META[resolution.spoils.kind].label}
+            </p>
+            <p style={{ fontSize: 11, color: "var(--green)", marginTop: 1 }}>
+              {BOON_META[resolution.spoils.kind].effectText(resolution.spoils.magnitude)}
+            </p>
+            <p style={{ fontSize: 10, color: "var(--ink-3)", marginTop: 4, lineHeight: 1.5 }}>
+              {BOON_META[resolution.spoils.kind].blurb}
+            </p>
+          </motion.div>
 
           <p className="mt-5 max-w-sm" style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.6 }}>
             Something older takes its place. <strong style={{ color: "var(--ink-1)" }}>{resolution.nextBoss.name}</strong>{" "}

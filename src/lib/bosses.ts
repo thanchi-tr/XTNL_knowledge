@@ -1,5 +1,8 @@
+import { cache } from "react";
 import { prisma } from "./prisma";
+import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
+import { drawBoon, grantBoon, type BoonKind } from "./boons";
 
 /**
  * Bosses — the chance-and-stakes layer, and the app's one real set-piece.
@@ -152,7 +155,11 @@ export interface BossState {
   availability: BossAvailability;
 }
 
-export async function loadBossStates(userId: string, now: Date = new Date()): Promise<BossState[]> {
+export const loadBossStates = cache(async (userId: string): Promise<BossState[]> => {
+  return cached(`bossStates:${userId}`, ["fields", "ideas", "progress"], () => loadBossStatesUncached(userId, new Date()));
+});
+
+async function loadBossStatesUncached(userId: string, now: Date): Promise<BossState[]> {
   const [fields, encounters] = await Promise.all([
     prisma.field.findMany({
       orderBy: { name: "asc" },
@@ -276,6 +283,8 @@ export type BossResolution =
       defeated: BossArchetype;
       nextBoss: BossArchetype;
       cooldownUntil: Date;
+      /** The Spoils Cache this victory opened — see boons.ts for why its contents vary but its worth does not. */
+      spoils: { kind: BoonKind; magnitude: number; expiresAt: Date };
     }
   | {
       outcome: "defeat";
@@ -339,6 +348,7 @@ export async function resolveBossAttempt(
       data: { cooldownUntil },
     });
     await applyDebuff(userId, "SHAKEN", "BOSS_DEFEAT", now);
+    invalidate("progress");
 
     return {
       outcome: "defeat",
@@ -369,6 +379,12 @@ export async function resolveBossAttempt(
     }),
   ]);
 
+  // The Spoils Cache. Minted after the mastery award, never instead of it —
+  // the payout you were promised before the fight is unconditional, and
+  // this is variety on top.
+  const spoils = await grantBoon(userId, drawBoon(), "BOSS_SPOILS", now);
+  invalidate("progress");
+
   return {
     outcome: "victory",
     accuracy,
@@ -378,6 +394,7 @@ export async function resolveBossAttempt(
     defeated: bossFor(fieldId, tier),
     nextBoss: bossFor(fieldId, newTier),
     cooldownUntil,
+    spoils: { kind: spoils.kind, magnitude: spoils.magnitude, expiresAt: spoils.expiresAt },
   };
 }
 
@@ -387,7 +404,9 @@ export async function beginBossAttempt(
   fieldId: string,
   now: Date = new Date()
 ): Promise<{ ok: true; cards: DrawnCard[]; tier: number } | { ok: false; error: string }> {
-  const states = await loadBossStates(userId, now);
+  // Fresh, not cached: this opens a real encounter and must not admit one
+  // against a cooldown or a due-count that expired seconds ago.
+  const states = await loadBossStatesUncached(userId, now);
   const state = states.find((s) => s.fieldId === fieldId);
   if (!state) return { ok: false, error: "No such field." };
 
@@ -413,6 +432,7 @@ export async function beginBossAttempt(
     create: { userId, fieldId, tier: state.tier, lastAttemptAt: now },
     update: { lastAttemptAt: now },
   });
+  invalidate("progress");
 
   return { ok: true, cards, tier: state.tier };
 }

@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { invalidate } from "./cache";
 import { domainLevel, fieldLevel } from "./xp";
 
 /**
@@ -24,6 +25,12 @@ export async function recalculateLeveling(domainId: string): Promise<{ domainLev
   if (newFieldLevel !== field.level) {
     await prisma.field.update({ where: { id: domain.fieldId }, data: { level: newFieldLevel } });
   }
+
+  // The single choke point for level/points changes — everything that moves
+  // a Domain's totalPoints routes through here, so invalidating both tags
+  // once is enough to keep every cached read honest after a review, a
+  // degradation, or an idea submission.
+  invalidate("fields", "ideas");
 
   return { domainLevel: newDomainLevel, fieldLevel: newFieldLevel };
 }

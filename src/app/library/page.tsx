@@ -1,18 +1,10 @@
-import { prisma } from "@/lib/prisma";
+import { loadLibraryTree } from "@/lib/queries";
 import { LibrarySearch, type LibraryIdea } from "@/components/library/LibrarySearch";
 
 export const dynamic = "force-dynamic";
 
 export default async function LibraryPage() {
-  const fields = await prisma.field.findMany({
-    orderBy: { name: "asc" },
-    include: {
-      domains: {
-        orderBy: { name: "asc" },
-        include: { ideas: { orderBy: { createdAt: "desc" } } },
-      },
-    },
-  });
+  const fields = await loadLibraryTree();
 
   const ideas: LibraryIdea[] = fields.flatMap((f) =>
     f.domains.flatMap((d) =>
