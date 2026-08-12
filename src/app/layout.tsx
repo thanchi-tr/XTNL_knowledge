@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { AppNav } from "@/components/AppNav";
 import { NavTitleBadge } from "@/components/NavTitleBadge";
+import { LoadoutBarSlot } from "@/components/skills/LoadoutBarSlot";
 import { StreakProvider } from "@/components/StreakProvider";
 import "./globals.css";
 
@@ -35,7 +36,20 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <StreakProvider>
+        <StreakProvider
+          // The loadout is part of the shell, not of /skills — what you are
+          // carrying matters most while reviewing, which is where the effects
+          // actually fire.
+          //
+          // Deliberately NOT wrapped in <Suspense>, unlike the title badge
+          // below. Inside a boundary its markup rendered but the client
+          // component never hydrated, leaving every slot button inert —
+          // verified by checking for React's props key on a slot. Rendering
+          // it directly blocks the shell on `loadProgression`, which is
+          // request-deduped and cross-request cached, so a warm load pays
+          // nothing for it.
+          bottomSlot={<LoadoutBarSlot />}
+        >
           {/* The title badge streams in — the nav renders immediately and the
               badge fills once its query resolves, so no route waits on it. */}
           <AppNav

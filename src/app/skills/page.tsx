@@ -8,7 +8,6 @@ import { computeTitle } from "@/lib/titles";
 import { SkillHub } from "@/components/skills/SkillHub";
 import { TitleBanner } from "@/components/skills/TitleBanner";
 import { AttestationForm } from "@/components/skills/AttestationForm";
-import { LoadoutBar } from "@/components/skills/LoadoutBar";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +48,9 @@ export default async function SkillsPage() {
         <SkillHub
           scores={progression.scores}
           ownedCodes={progression.ownedCodes}
+          equippedByCode={Object.fromEntries(
+            progression.loadout.filter((e) => e !== null).map((e) => [e!.skill.code, e!.slot])
+          )}
           masteryBalance={masteryBalance}
           modifiers={progression.modifiers}
           debuffs={progression.debuffs}
@@ -60,14 +62,8 @@ export default async function SkillsPage() {
         <AttestationForm />
       </div>
 
-      <LoadoutBar
-        slots={progression.loadout.map((entry, slot) => ({
-          slot,
-          skill: entry?.skill ?? null,
-          active: entry?.active ?? false,
-        }))}
-        bench={progression.benchedSkills}
-      />
+      {/* The loadout bar moved into the app shell (layout.tsx) — it is on
+          every route now, so rendering it here too would stack two. */}
     </main>
   );
 }

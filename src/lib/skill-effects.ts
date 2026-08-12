@@ -9,6 +9,8 @@ import {
   emptyComposition,
 } from "./attributes";
 import { getSkill, type Skill } from "./skill-pool";
+import { LOADOUT_SLOTS } from "./loadout";
+import { effectiveFieldComposition } from "./attribute-inference";
 import { loadFieldStreakBonuses } from "./field-streaks";
 import { loadActiveDebuffs, type ActiveDebuffRow } from "./debuffs";
 import { loadActiveBoons, type ActiveBoonRow } from "./boons";
@@ -32,6 +34,8 @@ import {
  * re-exported here so existing server-side callers keep one import site.
  */
 
+export { LOADOUT_SLOTS } from "./loadout";
+
 export {
   foldEffects,
   foldDebuffs,
@@ -44,8 +48,6 @@ export {
   type UnlockBlocker,
   type WardSkill,
 } from "./skill-gates";
-
-export const LOADOUT_SLOTS = 10;
 
 export interface EquippedEntry {
   slot: number;
@@ -79,16 +81,53 @@ interface FieldRow {
   composition: Composition;
 }
 
+/**
+ * A Field contributes its *effective* composition — its own split blended
+ * with what its Domains actually turned out to be about, weighted by the
+ * points sitting in each (`effectiveFieldComposition`).
+ *
+ * Before this, the entire attribute substrate rested on the Field's name.
+ * A Field called "Personal Skill" scored whatever that phrase happened to
+ * match, no matter that every Domain under it was about statistics. Domain
+ * and Idea attribution only *mean* something if they reach this function —
+ * this is where automatic assignment stops being a stored label and starts
+ * deciding which skills you can unlock.
+ */
 async function loadFieldRows(): Promise<FieldRow[]> {
-  return cached("fieldRows", ["fields"], async () => {
+  return cached("fieldRows", ["fields", "ideas"], async () => {
     const fields = await prisma.field.findMany({
-      select: { id: true, name: true, level: true, attributes: { select: { attribute: true, weight: true } } },
+      select: {
+        id: true,
+        name: true,
+        level: true,
+        attributes: { select: { attribute: true, weight: true } },
+        domains: {
+          select: {
+            totalPoints: true,
+            attributes: { select: { attribute: true, weight: true } },
+          },
+        },
+      },
     });
 
     return fields.map((f) => {
-      const composition = emptyComposition();
-      for (const a of f.attributes) composition[a.attribute] = a.weight;
-      return { id: f.id, name: f.name, level: f.level, composition: composition as Composition };
+      const own = emptyComposition();
+      for (const a of f.attributes) own[a.attribute] = a.weight;
+
+      const domains = f.domains
+        .filter((d) => d.attributes.length > 0)
+        .map((d) => {
+          const composition = emptyComposition();
+          for (const a of d.attributes) composition[a.attribute] = a.weight;
+          return { composition: composition as Composition, totalPoints: d.totalPoints };
+        });
+
+      return {
+        id: f.id,
+        name: f.name,
+        level: f.level,
+        composition: effectiveFieldComposition(own as Composition, domains),
+      };
     });
   });
 }

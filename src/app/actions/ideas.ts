@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { embedText, synthesizeNodeData } from "@/lib/gemini";
@@ -18,6 +19,7 @@ import { embeddingTextFromStored } from "@/lib/embedding-text";
 import { toVectorLiteral } from "@/lib/vector";
 import { XP_BASE, yieldXp, graceEndsAt, SIMILARITY_MERGE_MIN } from "@/lib/xp";
 import { loadModifiers } from "@/lib/skill-effects";
+import { assignIdeaAttribution } from "@/lib/attribute-assignment";
 import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
 
@@ -177,6 +179,13 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   });
   await recalculateLeveling(domain.id);
 
+  // Attribution is derived data: it must never be able to lose a submission
+  // the user actually typed, and nothing in the response depends on it. So
+  // it runs after the response, outside the write path above.
+  after(async () => {
+    await assignIdeaAttribution(idea.id, domain.id, contentText, questionType);
+  });
+
   return {
     status: "created",
     ideaId: idea.id,
@@ -317,6 +326,12 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
     data: { totalPoints: { increment: yieldPoints } },
   });
   await recalculateLeveling(existing.domainId);
+
+  // A linked Idea is a node in its own right, so it earns the same
+  // attribution as one created through submitIdea.
+  after(async () => {
+    await assignIdeaAttribution(idea.id, existing.domainId, contentText, questionType);
+  });
 
   return { ideaId: idea.id, domainId: existing.domainId };
 }

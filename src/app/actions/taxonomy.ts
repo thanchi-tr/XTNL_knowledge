@@ -3,7 +3,9 @@
 import type { Attribute } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { invalidate } from "@/lib/cache";
-import { ATTRIBUTES, defaultCompositionFor, normaliseComposition, emptyComposition } from "@/lib/attributes";
+import { ATTRIBUTES, normaliseComposition, emptyComposition } from "@/lib/attributes";
+import { inferComposition } from "@/lib/attribute-inference";
+import { assignDomainComposition, fieldComposition } from "@/lib/attribute-assignment";
 
 /**
  * Manual taxonomy creation.
@@ -69,10 +71,12 @@ export async function createField(rawName: string): Promise<TaxonomyResult<Creat
 
   try {
     // A Field arrives with a keyword-derived starting composition
-    // (attributes.ts's defaultCompositionFor) rather than 13 zeroes —
+    // (attribute-inference.ts) rather than 13 zeroes —
     // without this the attribute-score substrate the skill system reads
     // never gets populated for a hand-created Field.
-    const composition = defaultCompositionFor(name);
+    // No prior: a Field is the top of the hierarchy, so its name is all the
+    // evidence there is.
+    const { composition } = inferComposition({ text: name });
     const field = await prisma.field.create({
       data: {
         name,
@@ -159,6 +163,12 @@ export async function createDomain(fieldId: string, rawName: string): Promise<Ta
     data: { name, fieldId },
     select: { id: true, name: true, fieldId: true },
   });
+
+  // Inferred from the Domain's own name, pulled toward its Field — a Domain
+  // called "Ch. 4" inherits the Field almost entirely, while one called
+  // "Bayesian Inference" steers hard toward Statistic on its own evidence.
+  await assignDomainComposition(domain.id, name, await fieldComposition(fieldId));
+
   invalidate("fields", "ideas");
   return { ok: true, value: domain };
 }

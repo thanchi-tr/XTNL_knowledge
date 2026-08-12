@@ -178,6 +178,13 @@ const FALLBACK_WEIGHTS: Partial<Composition> = {
   CRITICAL_THINKING: 20,
 };
 
+/**
+ * @deprecated Superseded by `inferComposition` in attribute-inference.ts,
+ * which scores *every* matching rule instead of stopping at the first, and
+ * accepts a parent composition as a prior. Kept only so the seed script and
+ * the one-off backfill keep working unchanged; new call sites should use
+ * the inference module.
+ */
 export function defaultCompositionFor(fieldName: string): Composition {
   const match = KEYWORD_AFFINITIES.find((k) => k.pattern.test(fieldName));
   const base = { ...emptyComposition(), ...(match?.weights ?? FALLBACK_WEIGHTS) };

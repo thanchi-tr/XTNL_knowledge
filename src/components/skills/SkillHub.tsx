@@ -27,6 +27,8 @@ import { formatExpiry } from "@/lib/format-date";
 interface Props {
   scores: AttributeScores;
   ownedCodes: string[];
+  /** skillCode -> loadout slot. Absent means benched. */
+  equippedByCode: Record<string, number>;
   masteryBalance: number;
   modifiers: ActiveModifiers;
   debuffs: ActiveDebuffRow[];
@@ -35,7 +37,15 @@ interface Props {
 
 type View = "paths" | "inventory";
 
-export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuffs, boons }: Props) {
+export function SkillHub({
+  scores,
+  ownedCodes,
+  equippedByCode,
+  masteryBalance,
+  modifiers,
+  debuffs,
+  boons,
+}: Props) {
   const [view, setView] = useState<View>("paths");
   const ownedSet = useMemo(() => new Set(ownedCodes), [ownedCodes]);
 
@@ -150,7 +160,12 @@ export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuff
       </div>
 
       {view === "inventory" ? (
-        <InventoryPanel ownedCodes={ownedCodes} scores={scores} modifiers={modifiers} />
+        <InventoryPanel
+          ownedCodes={ownedCodes}
+          equippedByCode={equippedByCode}
+          scores={scores}
+          modifiers={modifiers}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {ATTRIBUTES.map((attribute) => {

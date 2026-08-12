@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { embedText, nameNewDomain } from "./gemini";
+import { assignDomainComposition, fieldComposition } from "./attribute-assignment";
 import { toVectorLiteral } from "./vector";
 import { SIMILARITY_NOVELTY_MAX, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN } from "./xp";
 
@@ -130,5 +131,13 @@ export async function createNoveltyDomain(fieldId: string, fieldName: string, co
     return existing;
   }
 
-  return prisma.domain.create({ data: { name, fieldId } });
+  const domain = await prisma.domain.create({ data: { name, fieldId } });
+
+  // A discovered Domain gets the same attribution as a hand-created one.
+  // Its name came from a model, but what that name *means* in attribute
+  // terms is still decided by the deterministic lexicon — the model never
+  // touches the substrate the skill gates read from.
+  await assignDomainComposition(domain.id, name, await fieldComposition(fieldId));
+
+  return domain;
 }

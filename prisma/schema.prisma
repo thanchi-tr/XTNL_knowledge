@@ -98,11 +98,43 @@ model Domain {
   totalPoints Float  @default(0)
   level       Int    @default(1)
   ideas       Idea[]
+  attributes  DomainAttribute[]
+  /**
+   * How many Ideas have been folded into `attributes` so far.
+   *
+   * Not the same as `ideas.length`: it is the observation count the running
+   * blend in `attribute-inference.ts` divides by, so a Domain's identity
+   * stabilises as it fills. Kept as its own counter because deletions
+   * should not make the next submission swing the Domain harder.
+   */
+  attributeObservations Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([fieldId])
+  @@schema("public")
+}
+
+/**
+ * A Domain's inferred attribute split (attribute-inference.ts).
+ *
+ * Mirrors `FieldAttribute` deliberately. A Field's name is a label someone
+ * chose once; its Domains are where the subject is actually described, and
+ * its Ideas are where it is described in detail. Storing the split here is
+ * what lets `effectiveFieldComposition` weight a Field by what its Domains
+ * turned out to be about rather than by whatever it was named.
+ */
+model DomainAttribute {
+  id        String    @id @default(cuid())
+  domainId  String
+  domain    Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  attribute Attribute
+  /** 0-100, summing to 100 across the thirteen. */
+  weight    Int       @default(0)
+
+  @@unique([domainId, attribute])
+  @@index([domainId])
   @@schema("public")
 }
 
@@ -141,6 +173,17 @@ model Idea {
   corePremise  String?
   atomicPrompt String?
   tags         String[] @default([])
+
+  /**
+   * The single attribute this Idea most exercises, inferred from its own
+   * wording and question type (attribute-inference.ts).
+   *
+   * A label, not a weight vector: the full composition an Idea produces is
+   * folded into its Domain at creation and does not need storing per row.
+   * Nullable because everything created before inference existed has none,
+   * and because a submission can be too generic to call.
+   */
+  attribute    Attribute?
 
   enrichments IdeaEnrichment[]
 

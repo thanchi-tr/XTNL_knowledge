@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
+import { EquipPulse } from "./EquipPulse";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
 import type { Skill } from "@/lib/skill-pool";
@@ -42,31 +43,71 @@ export function LoadoutBar({ slots, bench }: Props) {
   /** Slot that just received a skill — drives the one-shot attach animation. */
   const [justAttached, setJustAttached] = useState<number | null>(null);
 
-  const filled = slots.filter((s) => s.skill).length;
+  /**
+   * Local mirror of the server's loadout, applied the moment an action
+   * succeeds.
+   *
+   * The bar lives in the root layout, and `router.refresh()` does not
+   * reliably re-render it there — verified: after a successful detach the
+   * database read `equippedSlot: null` while the bar still showed the
+   * emblem until a full reload. Rather than depend on that propagating,
+   * the bar owns its own view and reconciles whenever fresh props do
+   * arrive. It also just reads better: a slot should respond on click, not
+   * after a round trip.
+   */
+  const [localSlots, setLocalSlots] = useState(slots);
+  const [localBench, setLocalBench] = useState(bench);
+  // Adjusting state during render is React's own prescribed way to reconcile
+  // derived state with new props — an effect would render the stale loadout
+  // once, then flash to the fresh one.
+  const [lastProps, setLastProps] = useState({ slots, bench });
+  if (lastProps.slots !== slots || lastProps.bench !== bench) {
+    setLastProps({ slots, bench });
+    setLocalSlots(slots);
+    setLocalBench(bench);
+  }
+
+  const filled = localSlots.filter((s) => s.skill).length;
 
   function attach(slot: number, skill: Skill) {
     setError(null);
+    // Whatever was in the slot goes back to the bench; the new skill leaves it.
+    const displaced = localSlots.find((s) => s.slot === slot)?.skill ?? null;
+    setLocalSlots((prev) =>
+      prev.map((s) => (s.slot === slot ? { ...s, skill, active: true } : s.skill?.code === skill.code ? { ...s, skill: null, active: false } : s))
+    );
+    setLocalBench((prev) => [...prev.filter((b) => b.code !== skill.code), ...(displaced ? [displaced] : [])]);
+    setPicking(null);
+    setJustAttached(slot);
+    // Long enough to outlast the CSS animation, then cleared so the same
+    // slot can flash again on the next attach.
+    setTimeout(() => setJustAttached(null), 1200);
+
     startTransition(async () => {
       const res = await equipSkill(skill.code, slot);
       if (!res.ok) {
+        // Snap back to whatever the server last told us.
         setError(res.error);
+        setLocalSlots(slots);
+        setLocalBench(bench);
         return;
       }
-      setPicking(null);
-      setJustAttached(slot);
-      // Long enough to outlast the CSS animation, then cleared so the same
-      // slot can flash again on the next attach.
-      setTimeout(() => setJustAttached(null), 900);
       router.refresh();
     });
   }
 
   function detach(slot: number) {
     setError(null);
+    const removed = localSlots.find((s) => s.slot === slot)?.skill ?? null;
+    setLocalSlots((prev) => prev.map((s) => (s.slot === slot ? { ...s, skill: null, active: false } : s)));
+    if (removed) setLocalBench((prev) => [...prev, removed]);
+
     startTransition(async () => {
       const res = await clearSlot(slot);
       if (!res.ok) {
         setError(res.error);
+        setLocalSlots(slots);
+        setLocalBench(bench);
         return;
       }
       router.refresh();
@@ -93,13 +134,13 @@ export function LoadoutBar({ slots, bench }: Props) {
                 Cancel
               </button>
             </div>
-            {bench.length === 0 ? (
+            {localBench.length === 0 ? (
               <p style={{ fontSize: 13, color: "var(--ink-2)" }}>
                 Every skill you own is already equipped. Unlock more from a path to expand your options.
               </p>
             ) : (
               <ul className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(210px,1fr))" }}>
-                {bench.map((skill) => (
+                {localBench.map((skill) => (
                   <li key={skill.code}>
                     <button
                       type="button"
@@ -158,7 +199,7 @@ export function LoadoutBar({ slots, bench }: Props) {
           </div>
 
           <ul className="flex flex-1 items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-            {slots.map((s) => (
+            {localSlots.map((s) => (
               <li key={s.slot} className="shrink-0">
                 <button
                   type="button"
@@ -189,6 +230,11 @@ export function LoadoutBar({ slots, bench }: Props) {
                     <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
                       {s.slot + 1}
                     </span>
+                  )}
+                  {/* Keyed on the skill code so re-slotting the *same* skill
+                      still remounts the element and replays the burst. */}
+                  {justAttached === s.slot && s.skill && (
+                    <EquipPulse key={s.skill.code} skill={s.skill} />
                   )}
                 </button>
               </li>

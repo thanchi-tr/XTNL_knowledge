@@ -473,32 +473,22 @@ code, pre, .mono {
 .slot:disabled { cursor: not-allowed; }
 .slot:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 
-/* Attach: a two-part hit. The slot itself punches in — overshooting past
-   1.0 before settling, so it reads as something seating rather than
-   fading — while ::after throws a ring outward from the same origin. One
-   shot only; the class is removed after ~900ms so the same slot can flash
-   again on the next attach. Deliberately louder than anything else in this
-   UI, because committing a slot is the moment an unlock finally does
-   something. */
+/* Attach: the slot punches in, overshooting past 1.0 before settling, so it
+   reads as something seating rather than fading. One shot only; the class is
+   removed after ~900ms so the same slot can flash again on the next attach.
+   Deliberately louder than anything else in this UI, because committing a
+   slot is the moment an unlock finally does something.
+
+   The ring that used to live on ::after has moved to `.equip-pulse`, which
+   the component renders instead. A single hardcoded green ring made every
+   skill land identically; the pulse takes its hue and spoke count from the
+   attribute and its reach from the skill's charge, so slotting a Pure I and
+   slotting an Ultimate are visibly different events. */
 .slot-attach { animation: slot-seat .42s cubic-bezier(.2,1.6,.4,1); }
 @keyframes slot-seat {
   0%   { transform: scale(.72); }
   55%  { transform: scale(1.14); }
   100% { transform: scale(1); }
-}
-.slot-attach::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 12px;
-  border: 2px solid var(--green);
-  pointer-events: none;
-  animation: slot-ring .82s cubic-bezier(.2,.7,.3,1) forwards;
-}
-@keyframes slot-ring {
-  0%   { transform: scale(.9);  opacity: 0; }
-  18%  { opacity: .95; }
-  100% { transform: scale(2.0); opacity: 0; }
 }
 
 /* ── Terminal spectacle: APEX and ULTIMATE only ──────────
@@ -602,6 +592,56 @@ code, pre, .mono {
   100% { transform: translateY(-14px) scale(1.1); opacity: 0; }
 }
 
+/* ── Equip pulse ─────────────────────────────────────────
+   Fires once when an emblem lands in a loadout slot.
+
+   Two channels, both driven by the skill rather than chosen per-animation:
+   the *hue* and the *spoke count* come from the attribute (so Mind and
+   Faith look like different events), while ring count, reach and duration
+   come from the skill's charge (so slotting a Pure I is a flicker and an
+   Ultimate is an detonation). Everything reads from CSS custom properties
+   the component sets — see LoadoutBar. */
+.equip-pulse {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+}
+
+.equip-ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  border: 2px solid var(--pulse-color, var(--green));
+  opacity: 0;
+  animation: equip-ring var(--pulse-dur, 900ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes equip-ring {
+  0%   { transform: scale(0.3); opacity: 0.95; }
+  70%  { opacity: 0.35; }
+  100% { transform: scale(var(--pulse-reach, 2.2)); opacity: 0; }
+}
+
+/* A spoke per polygon side — the attribute's silhouette, thrown outward. */
+.equip-spoke {
+  position: absolute;
+  width: 2px;
+  height: 50%;
+  top: 0;
+  left: calc(50% - 1px);
+  transform-origin: 50% 100%;
+  background: linear-gradient(to top, transparent, var(--pulse-color, var(--green)));
+  opacity: 0;
+  animation: equip-spoke var(--pulse-dur, 900ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes equip-spoke {
+  0%   { opacity: 0.9; transform: rotate(var(--spoke-angle, 0deg)) scaleY(0.15); }
+  100% { opacity: 0;   transform: rotate(var(--spoke-angle, 0deg)) scaleY(var(--pulse-reach, 2.2)); }
+}
+
 /* ── Hover card ──────────────────────────────────────────
    Absolutely positioned over the tree; the tree owns the coordinates. */
 .hover-card {
@@ -636,7 +676,7 @@ code, pre, .mono {
   .orbit-cw, .orbit-ccw, .twinkle, .core-pulse, .corona-pulse,
   .ray-pulse, .flare-pulse, .hover-card { animation: none; }
   .slot-attach { animation: none; }
-  .slot-attach::after { animation: none; opacity: 0; }
+  .equip-ring, .equip-spoke { animation: none; opacity: 0; }
   .slot:hover:not(:disabled) { transform: none; }
   .shockwave { animation: none; opacity: 0; }
   .ember-rise { animation: none; opacity: 0; }
