@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { resetKnowledgeBase, RESET_SCOPES, type ResetScope, type ResetSummary } from "@/app/actions/reset";
+import { resetKnowledgeBase } from "@/app/actions/reset";
+import { RESET_SCOPES, type ResetScope, type ResetSummary } from "@/lib/reset-scopes";
 
 interface Props {
   /** Row counts, so the panel states what is actually at stake. */

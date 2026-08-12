@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import { invalidateAll } from "@/lib/cache";
 import { domainLevel, fieldLevel } from "@/lib/xp";
+import { RESET_SCOPES, type ResetScope, type ResetResult } from "@/lib/reset-scopes";
 
 /**
  * Destructive resets.
@@ -21,38 +22,6 @@ import { domainLevel, fieldLevel } from "@/lib/xp";
  * mis-wired prop away from deleting everything a user has ever written.
  * Typing the scope's name cannot happen by accident.
  */
-
-export type ResetScope = "ideas" | "knowledge" | "everything";
-
-export interface ResetSummary {
-  scope: ResetScope;
-  deleted: Record<string, number>;
-  /** Rows left alone, so the report says what survived as well as what did not. */
-  preserved: Record<string, number>;
-}
-
-export type ResetResult = { ok: true; value: ResetSummary } | { ok: false; error: string };
-
-export const RESET_SCOPES: Record<ResetScope, { label: string; phrase: string; blurb: string }> = {
-  ideas: {
-    label: "Ideas only",
-    phrase: "DELETE IDEAS",
-    blurb:
-      "Removes every idea and its enrichments, and zeroes each domain's points and level. Fields and domains stay, so the structure you built is still there to file into.",
-  },
-  knowledge: {
-    label: "Ideas, domains and fields",
-    phrase: "DELETE KNOWLEDGE",
-    blurb:
-      "The above, plus the whole taxonomy and its attribute compositions, snapshots and streaks. Skills, mastery points and titles survive.",
-  },
-  everything: {
-    label: "Everything, including progression",
-    phrase: "DELETE EVERYTHING",
-    blurb:
-      "A completely new account: the taxonomy, every idea, and all progression — unlocked skills, the mastery ledger, boss encounters, boons and debuffs.",
-  },
-};
 
 /**
  * Wipes part of this knowledge base.
