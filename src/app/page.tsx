@@ -88,8 +88,8 @@ export default async function HomePage() {
         />
       </section>
 
-      <div className="fade-up fade-up-2 mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <section className="card p-4 lg:col-span-2">
+      <div className="fade-up fade-up-2 mt-3 grid grid-cols-1 gap-3 fold:grid-cols-3">
+        <section className="card p-4 fold:col-span-2">
           <h2 className="panel-title">Coverage by Field</h2>
           <p className="panel-sub">Current level per field</p>
           <FieldRadarChart data={radarData} />

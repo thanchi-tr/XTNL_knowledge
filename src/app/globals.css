@@ -93,7 +93,12 @@ body {
   background-image:
     radial-gradient(ellipse 130% 50% at 50% -6%, rgba(0,204,122,0.034) 0%, transparent 62%),
     radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0,130,255,0.014) 0%, transparent 50%);
-  background-attachment: fixed;
+  /* Deliberately NOT `background-attachment: fixed`.
+     On mobile a fixed background cannot be composited with the scrolling
+     layer, so every scroll frame repaints the full viewport gradient — on a
+     120Hz panel that is 120 full-screen repaints a second, for an effect
+     nobody can see while scrolling. */
+  background-attachment: scroll;
   color: var(--ink-0);
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   font-size: 15px;
@@ -118,8 +123,13 @@ code, pre, .mono {
     max-width: 1360px;
     margin-left: auto;
     margin-right: auto;
-    padding-left:  clamp(20px, 5vw, 80px);
-    padding-right: clamp(20px, 5vw, 80px);
+    /* `env(safe-area-inset-*)` carries the notch, cutout and rounded-corner
+       insets the device reports. With `viewport-fit: cover` the app paints
+       edge to edge, so without this the first column of text would sit
+       under the Fold's camera cutout in landscape. Falls back to 0 on any
+       browser that does not implement it. */
+    padding-left:  max(clamp(16px, 5vw, 80px), env(safe-area-inset-left));
+    padding-right: max(clamp(16px, 5vw, 80px), env(safe-area-inset-right));
   }
 
   /* ═══ TYPOGRAPHY ═══════════════════════════════════════
@@ -262,7 +272,12 @@ code, pre, .mono {
     font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
     text-transform: uppercase; white-space: nowrap;
     font-family: var(--font-inter), sans-serif;
-    backdrop-filter: blur(4px);
+  }
+  /* Blur promotes every chip to its own compositor layer, and a dense
+     screen carries dozens. Reserved for pointer devices, where the cost is
+     affordable and the glass edge is actually visible. */
+  @media (hover: hover) and (pointer: fine) {
+    .chip { backdrop-filter: blur(4px); }
   }
   .chip-green { background: var(--green-10); color: var(--green); border: 1px solid rgba(0,204,122,0.20); }
   .chip-red   { background: var(--red-10);   color: var(--red);   border: 1px solid rgba(240,58,87,0.20); }
@@ -683,6 +698,39 @@ code, pre, .mono {
   .tag-particles > .mote { animation: none; opacity: 0; }
   .foil:hover::after { animation: none; opacity: 0; }
   .card-hover:hover { transform: none; }
+}
+
+/* ═══ POWER ══════════════════════════════════════════════
+   Every decorative animation in this app loops forever: emblem orbits,
+   twinkles, shockwaves, embers, the corona. On an OLED at 120Hz that keeps
+   the GPU and display pipeline awake for as long as the tab exists, whether
+   or not anyone is looking at it — backgrounded in a browser, or sitting on
+   the Fold's cover screen while the phone is in a pocket.
+
+   `html[data-idle]` is set by the visibility listener in layout.tsx. It
+   halts animation rather than hiding anything, so the emblems stay fully
+   drawn and simply stop moving; returning to the tab resumes them with no
+   layout change and nothing to re-render.
+
+   `.no-motion` is the same switch driven by Android's battery saver, via
+   the Battery Status API where the browser exposes it. */
+html[data-idle] *,
+html[data-idle] *::before,
+html[data-idle] *::after,
+html.no-motion *,
+html.no-motion *::before,
+html.no-motion *::after {
+  animation-play-state: paused !important;
+  transition-duration: 0s !important;
+}
+
+/* Long lists skip layout and paint entirely while off-screen. The skill
+   tree renders hundreds of emblem nodes; without this the browser lays out
+   and paints all of them on every reflow. */
+.card,
+.data-table tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 
 /* ═══ MISC ═══════════════════════════════════════════════ */

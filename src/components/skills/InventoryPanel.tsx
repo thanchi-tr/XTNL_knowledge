@@ -101,7 +101,7 @@ export function InventoryPanel({ ownedCodes, equippedByCode, scores, modifiers }
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
+    <div className="grid grid-cols-1 gap-4 fold:grid-cols-[320px_1fr]">
       {/* ── Active effects: the loadout readout ── */}
       <div className="card" style={{ padding: 16, alignSelf: "start" }}>
         <div className="flex items-baseline justify-between">

@@ -167,7 +167,7 @@ export function SkillHub({
           modifiers={modifiers}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 fold:grid-cols-3 xl:grid-cols-4">
           {ATTRIBUTES.map((attribute) => {
             const theme = themeFor(attribute);
             const meta = ATTRIBUTE_META[attribute];

@@ -134,7 +134,7 @@ export default async function DashboardPage() {
         </p>
       </header>
 
-      <section className="fade-up fade-up-1 mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="fade-up fade-up-1 mb-3 grid grid-cols-2 gap-3 fold:grid-cols-4">
         <StatTile label="Cumulative Points" value={totalXp.toFixed(0)} sub="All fields" />
         <StatTile label="Ideas Tracked" value={String(activeIdeas.length)} sub="Excluding archived" />
         {/* Value and qualifier are separated so a long Field name degrades
@@ -154,21 +154,21 @@ export default async function DashboardPage() {
         />
       </section>
 
-      <div className="fade-up fade-up-2 mb-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="fade-up fade-up-2 mb-3 grid grid-cols-1 gap-3 fold:grid-cols-3">
         <section className="card flex flex-col items-center justify-center p-4">
           <AccountLevelRing accountLevel={accountLevel} progress={avgDomainProgress} />
         </section>
-        <div className="lg:col-span-2">
+        <div className="fold:col-span-2">
           <ReviewQueueWidget totalDue={dueIdeas.length} breakdown={dueBreakdown} atRiskCount={atRiskCount} />
         </div>
       </div>
 
-      <div className="fade-up fade-up-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <ChartCard title="Coverage Growth" subtitle="Current vs. 7 days ago" className="lg:col-span-2">
+      <div className="fade-up fade-up-3 grid grid-cols-1 gap-3 fold:grid-cols-2">
+        <ChartCard title="Coverage Growth" subtitle="Current vs. 7 days ago" className="fold:col-span-2">
           <GhostRadarChart data={ghostRadarData} hasGhost={hasGhost} />
         </ChartCard>
 
-        <ChartCard title="Field Ranking" subtitle="By cumulative points" className="lg:col-span-2">
+        <ChartCard title="Field Ranking" subtitle="By cumulative points" className="fold:col-span-2">
           <AnimatedLevelBreakdown rows={breakdownRows} />
         </ChartCard>
 
@@ -219,7 +219,7 @@ export default async function DashboardPage() {
           <DonutChart data={reviewStatusData} />
         </ChartCard>
 
-        <ChartCard title="Idea Level Distribution" subtitle="Levels 1–12" className="lg:col-span-2">
+        <ChartCard title="Idea Level Distribution" subtitle="Levels 1–12" className="fold:col-span-2">
           <LevelDistributionChart data={levelBuckets} />
         </ChartCard>
 
@@ -228,7 +228,7 @@ export default async function DashboardPage() {
         <ChartCard
           title="Domain Levels"
           subtitle={`${domainLevelData.length} ${domainLevelData.length === 1 ? "domain" : "domains"}, coloured by field`}
-          className="lg:col-span-2"
+          className="fold:col-span-2"
         >
           <DomainLevelChart data={domainLevelData} />
         </ChartCard>

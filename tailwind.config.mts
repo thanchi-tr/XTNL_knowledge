@@ -18,6 +18,23 @@ const config: Config = {
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
+      screens: {
+        /**
+         * The unfolded Galaxy Fold main screen.
+         *
+         * Measured on the connected SM-F971B: 2448x1848 physical at density
+         * 420, so 932x704 CSS px. That is *below* Tailwind's `lg` (1024),
+         * which meant every two- and three-column layout in the app stayed
+         * stubbornly single-column on the large screen — the one place
+         * there was room for them. `md` (768) is too eager: it would also
+         * fire on the cover screen in landscape.
+         *
+         * 900px sits between the two, so it means "a Fold that is open",
+         * and nothing else.
+         */
+        fold: "900px",
+      },
+
       colors: {
         canvas: "var(--canvas)",
         base: "var(--base)",
