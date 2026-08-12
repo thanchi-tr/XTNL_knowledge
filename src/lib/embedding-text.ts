@@ -1,4 +1,11 @@
 import type { QuestionType } from "@prisma/client";
+import {
+  decodeListQuestion,
+  decodeOrderQuestion,
+  decodeNumericQuestion,
+  decodeStringArray,
+  decodeNumericAnswer,
+} from "./idea-payload";
 
 /**
  * Derives the text actually sent to the embedding model from an Idea's
@@ -31,6 +38,26 @@ export function embeddingTextFromStored(questionType: QuestionType, question: st
         // leave empty — malformed DIAGRAM answer, embed on structure alone
       }
       return `Diagram labels: ${Object.values(labels).join(", ")}`;
+    }
+    case "CLOZE":
+      // The blanked sentence plus what fills it reconstructs the original
+      // claim, which is what the idea is actually *about* — embedding the
+      // gapped text alone would route on a sentence with holes in it.
+      return `${question}
+${decodeStringArray(answer).join(", ")}`;
+    case "LIST":
+      return `${decodeListQuestion(question).prompt}
+${decodeStringArray(answer).join(", ")}`;
+    case "ORDER":
+      // Correct sequence, not the scrambled display order: the ordering is
+      // the knowledge here.
+      return `${decodeOrderQuestion(question).prompt}
+${decodeStringArray(answer).join(" -> ")}`;
+    case "NUMERIC": {
+      const q = decodeNumericQuestion(question);
+      const a = decodeNumericAnswer(answer);
+      return `${q.prompt}
+${a.value}${q.unit ? ` ${q.unit}` : ""}`;
     }
   }
 }

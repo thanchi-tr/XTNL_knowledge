@@ -100,6 +100,15 @@ const QUESTION_TYPE_SIGNAL: Record<QuestionType, { weights: Partial<Composition>
   MULTI: { strength: 0.5, weights: { CRITICAL_THINKING: 55, REASON: 45 } },
   FORMULA: { strength: 1, weights: { LOGIC: 40, ABSTRACT: 35, STATISTIC: 25 } },
   DIAGRAM: { strength: 1, weights: { MIND: 45, ABSTRACT: 35, CRITICAL_THINKING: 20 } },
+  // A blank is cued recall — almost purely retention, with the surrounding
+  // sentence doing the reasoning for you.
+  CLOZE: { strength: 0.5, weights: { MIND: 75, REASON: 25 } },
+  // Producing every member of a set is retention under a completeness
+  // constraint; noticing one is missing is the stubborn part.
+  LIST: { strength: 0.75, weights: { MIND: 55, STUBBORNNESS: 25, CRITICAL_THINKING: 20 } },
+  // Sequence is about relations between steps, not the steps themselves.
+  ORDER: { strength: 1, weights: { LOGIC: 45, REASON: 30, ABSTRACT: 25 } },
+  NUMERIC: { strength: 1, weights: { STATISTIC: 50, LOGIC: 30, MIND: 20 } },
 };
 
 /**

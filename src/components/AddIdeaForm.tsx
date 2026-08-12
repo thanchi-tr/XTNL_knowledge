@@ -12,7 +12,8 @@ import {
   type SubmitIdeaResult,
   type PreviewIdeaResult,
 } from "@/app/actions/ideas";
-import type { IdeaContent } from "@/lib/idea-payload";
+import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
+import { useAutocorrect } from "@/components/useAutocorrect";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
 
@@ -31,7 +32,11 @@ interface Props {
 /** Glyphs already used on review cards elsewhere — same vocabulary, so a type is recognisable across screens. */
 const TYPE_META = {
   SHORT: { glyph: "◆", label: "Short", hint: "Free text, graded on similarity", points: 10 },
+  CLOZE: { glyph: "▭", label: "Cloze", hint: "Wrap answers in {{…}} to blank them", points: 12 },
+  NUMERIC: { glyph: "#", label: "Numeric", hint: "A value, graded within a tolerance", points: 15 },
   MULTI: { glyph: "▣", label: "Multi", hint: "Pick one option", points: 20 },
+  LIST: { glyph: "☰", label: "List", hint: "Name every item; order ignored", points: 25 },
+  ORDER: { glyph: "↕", label: "Order", hint: "Arrange the steps in sequence", points: 28 },
   FORMULA: { glyph: "∑", label: "Formula", hint: "Proved by algebraic equivalence", points: 30 },
 } as const;
 
@@ -43,7 +48,7 @@ const AUTO_DOMAIN = "__auto__";
 // needs a real editor (upload + click-to-place), which is out of scope for
 // a first form. DIAGRAM Ideas can still be reviewed (SessionCard handles
 // them); they just can't be created through this UI yet.
-type CreatableQuestionType = "SHORT" | "MULTI" | "FORMULA";
+type CreatableQuestionType = "SHORT" | "CLOZE" | "NUMERIC" | "MULTI" | "LIST" | "ORDER" | "FORMULA";
 
 // Control styling lives in globals.css (`.label-xs`, `.input`) so this form
 // and the taxonomy manager stay identical.
@@ -63,6 +68,16 @@ export function AddIdeaForm({ fields }: Props) {
   const [shortAnswer, setShortAnswer] = useState("");
   const [formulaQuestion, setFormulaQuestion] = useState("");
   const [formulaAnswer, setFormulaAnswer] = useState("");
+  const [clozeText, setClozeText] = useState("");
+  const [listPrompt, setListPrompt] = useState("");
+  const [listItems, setListItems] = useState<string[]>(["", ""]);
+  const [orderPrompt, setOrderPrompt] = useState("");
+  const [orderItems, setOrderItems] = useState<string[]>(["", ""]);
+  const [numericPrompt, setNumericPrompt] = useState("");
+  const [numericValue, setNumericValue] = useState("");
+  const [numericTolerance, setNumericTolerance] = useState("0");
+  const [numericUnit, setNumericUnit] = useState("");
+  const [autocorrectOn, setAutocorrectOn] = useState(true);
   const [options, setOptions] = useState(["", ""]);
   const [correctIndex, setCorrectIndex] = useState(0);
 
@@ -85,6 +100,26 @@ export function AddIdeaForm({ fields }: Props) {
     });
   }
 
+  /**
+   * Auto-correct is attached only to prose fields. FORMULA is excluded
+   * outright — its content is a mathjs expression where "correcting"
+   * anything is corruption — and the heuristics in `autocorrect.ts` guard
+   * the rest.
+   *
+   * A single hook is shared: it reports what it changed, and the caller
+   * passes whichever setter owns the field being edited.
+   */
+  const [lastEdited, setLastEdited] = useState<(v: string) => void>(() => () => {});
+  const autocorrect = useAutocorrect((next) => lastEdited(next), autocorrectOn);
+
+  /** Binds the shared hook to one field's setter. */
+  function typing(setter: (v: string) => void) {
+    return {
+      onKeyUp: autocorrect.onKeyUp,
+      onFocus: () => setLastEdited(() => setter),
+    };
+  }
+
   function buildContent(): IdeaContent | null {
     if (questionType === "SHORT") {
       if (!shortQuestion.trim() || !shortAnswer.trim()) return null;
@@ -93,6 +128,34 @@ export function AddIdeaForm({ fields }: Props) {
     if (questionType === "FORMULA") {
       if (!formulaQuestion.trim() || !formulaAnswer.trim()) return null;
       return { type: "FORMULA", question: formulaQuestion.trim(), answer: formulaAnswer.trim() };
+    }
+    if (questionType === "CLOZE") {
+      const text = clozeText.trim();
+      // A cloze with no blanks is just a sentence — nothing to recall.
+      if (!text || countClozeBlanks(text) === 0) return null;
+      return { type: "CLOZE", text };
+    }
+    if (questionType === "LIST") {
+      const items = listItems.map((i) => i.trim()).filter(Boolean);
+      if (!listPrompt.trim() || items.length < 2) return null;
+      return { type: "LIST", prompt: listPrompt.trim(), items };
+    }
+    if (questionType === "ORDER") {
+      const items = orderItems.map((i) => i.trim()).filter(Boolean);
+      if (!orderPrompt.trim() || items.length < 2) return null;
+      return { type: "ORDER", prompt: orderPrompt.trim(), items };
+    }
+    if (questionType === "NUMERIC") {
+      const value = Number.parseFloat(numericValue);
+      const tolerance = Number.parseFloat(numericTolerance || "0");
+      if (!numericPrompt.trim() || !Number.isFinite(value) || !Number.isFinite(tolerance)) return null;
+      return {
+        type: "NUMERIC",
+        prompt: numericPrompt.trim(),
+        value,
+        tolerance: Math.abs(tolerance),
+        unit: numericUnit.trim() || undefined,
+      };
     }
     const cleaned = options.map((o) => o.trim()).filter(Boolean);
     if (cleaned.length < 2 || !cleaned[correctIndex]) return null;
@@ -416,6 +479,165 @@ export function AddIdeaForm({ fields }: Props) {
         </div>
       )}
 
+      {questionType === "CLOZE" && (
+        <label className="block">
+          <span className={LABEL_CLASS}>Sentence</span>
+          <textarea
+            value={clozeText}
+            onChange={(e) => setClozeText(e.target.value)}
+            {...typing(setClozeText)}
+            rows={3}
+            placeholder="The capital of France is {{Paris}}, founded in {{3rd century BC}}."
+            className={FIELD_CLASS}
+          />
+          {/* Live preview of exactly what the review card will show, so it
+              is obvious before saving which spans become blanks. */}
+          {clozeText.trim() && (
+            <span className="mt-2 block">
+              {countClozeBlanks(clozeText) === 0 ? (
+                <span style={{ fontSize: 11, color: "var(--amber)" }}>
+                  No blanks yet — wrap the part to recall in {"{{"}double braces{"}}"}.
+                </span>
+              ) : (
+                <>
+                  <span className="label-xs">Reviewer sees</span>
+                  <span
+                    className="mt-1 block px-3 py-2"
+                    style={{
+                      fontSize: 13,
+                      borderRadius: 8,
+                      background: "var(--sub)",
+                      border: "1px solid var(--line)",
+                      color: "var(--ink-1)",
+                    }}
+                  >
+                    {parseCloze(clozeText).blanked}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+        </label>
+      )}
+
+      {questionType === "NUMERIC" && (
+        <>
+          <label className="block">
+            <span className={LABEL_CLASS}>Question</span>
+            <textarea
+              value={numericPrompt}
+              onChange={(e) => setNumericPrompt(e.target.value)}
+              {...typing(setNumericPrompt)}
+              rows={2}
+              placeholder="Acceleration due to gravity at sea level?"
+              className={FIELD_CLASS}
+            />
+          </label>
+          <div className="grid grid-cols-3 gap-3">
+            <label className="block">
+              <span className={LABEL_CLASS}>Value</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={numericValue}
+                onChange={(e) => setNumericValue(e.target.value)}
+                placeholder="9.81"
+                className={`${FIELD_CLASS} mono`}
+              />
+            </label>
+            <label className="block">
+              <span className={LABEL_CLASS}>Tolerance ±</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={numericTolerance}
+                onChange={(e) => setNumericTolerance(e.target.value)}
+                placeholder="0.05"
+                className={`${FIELD_CLASS} mono`}
+              />
+            </label>
+            <label className="block">
+              <span className={LABEL_CLASS}>Unit</span>
+              <input
+                type="text"
+                value={numericUnit}
+                onChange={(e) => setNumericUnit(e.target.value)}
+                placeholder="m/s²"
+                className={FIELD_CLASS}
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      {(questionType === "LIST" || questionType === "ORDER") && (
+        <>
+          <label className="block">
+            <span className={LABEL_CLASS}>Question</span>
+            <textarea
+              value={questionType === "LIST" ? listPrompt : orderPrompt}
+              onChange={(e) => (questionType === "LIST" ? setListPrompt : setOrderPrompt)(e.target.value)}
+              {...typing(questionType === "LIST" ? setListPrompt : setOrderPrompt)}
+              rows={2}
+              placeholder={
+                questionType === "LIST"
+                  ? "Name the four bases in DNA"
+                  : "Order the stages of mitosis"
+              }
+              className={FIELD_CLASS}
+            />
+          </label>
+
+          <div className="space-y-2">
+            <span className={LABEL_CLASS}>
+              {questionType === "LIST" ? "Items — order ignored when grading" : "Steps — enter in the CORRECT order"}
+            </span>
+            {(questionType === "LIST" ? listItems : orderItems).map((item, i) => {
+              const setItems = questionType === "LIST" ? setListItems : setOrderItems;
+              const items = questionType === "LIST" ? listItems : orderItems;
+              return (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="mono w-4 shrink-0 text-right" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                    {i + 1}
+                  </span>
+                  <input
+                    type="text"
+                    value={item}
+                    onChange={(e) => setItems(items.map((v, j) => (j === i ? e.target.value : v)))}
+                    className={`flex-1 ${FIELD_CLASS}`}
+                  />
+                  {items.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setItems(items.filter((_, j) => j !== i))}
+                      style={{ fontSize: 11, color: "var(--ink-2)" }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() =>
+                questionType === "LIST"
+                  ? setListItems([...listItems, ""])
+                  : setOrderItems([...orderItems, ""])
+              }
+              style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}
+            >
+              + Add {questionType === "LIST" ? "item" : "step"}
+            </button>
+            {questionType === "ORDER" && (
+              <p style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                Stored scrambled and re-shuffled for review — the reviewer never sees this order.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
       {questionType === "SHORT" && (
         <>
           <label className="block">
@@ -423,6 +645,7 @@ export function AddIdeaForm({ fields }: Props) {
             <textarea
               value={shortQuestion}
               onChange={(e) => setShortQuestion(e.target.value)}
+              {...typing(setShortQuestion)}
               rows={2}
               className={FIELD_CLASS}
             />
@@ -573,6 +796,55 @@ export function AddIdeaForm({ fields }: Props) {
           )}
         </div>
       )}
+
+      {/* Auto-correct, and what it just did.
+          Reporting each change is the point: a correction you did not
+          notice is one you cannot reject, and this text is going onto a
+          card you may review for months. */}
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 px-3 py-2"
+        style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}
+      >
+        <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={autocorrectOn}
+            onChange={(e) => {
+              setAutocorrectOn(e.target.checked);
+              autocorrect.clearRecent();
+            }}
+            style={{ accentColor: "var(--green)" }}
+          />
+          <span className="label-xs" style={{ marginBottom: 0 }}>
+            Auto-correct
+          </span>
+          <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+            typos, shorthand (w/, thm, approx) and → ≥ ±. Ctrl+Z undoes any of it.
+          </span>
+        </label>
+
+        {autocorrect.recent.length > 0 && (
+          <span className="flex flex-wrap items-center gap-1.5">
+            {autocorrect.recent.map((c, i) => (
+              <span
+                key={`${c.from}-${i}`}
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  background: "var(--green-10)",
+                  border: "1px solid rgba(0,204,122,0.2)",
+                  color: "var(--green)",
+                }}
+                title={c.kind === "typo" ? "Corrected a typo" : "Expanded shorthand"}
+              >
+                {c.from} → {c.to}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <button type="submit" disabled={isPending || !fieldId} className="btn-primary">

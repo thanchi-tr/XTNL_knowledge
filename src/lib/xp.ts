@@ -3,9 +3,21 @@ import type { QuestionType } from "@prisma/client";
 // ============================================================================
 // Idea Score Assignment & Diminishing XP Calculus (spec section 4)
 // ============================================================================
+/**
+ * Base XP per format, ordered by how much work the format demands.
+ *
+ * CLOZE sits just above SHORT: a blank is a cued recall, easier than free
+ * recall from a bare prompt. LIST and ORDER sit above MULTI because both
+ * require producing every element rather than recognising one — ORDER
+ * higher still, since it also demands the relations between them.
+ */
 export const XP_BASE: Record<QuestionType, number> = {
   SHORT: 10,
+  CLOZE: 12,
+  NUMERIC: 15,
   MULTI: 20,
+  LIST: 25,
+  ORDER: 28,
   FORMULA: 30,
   DIAGRAM: 40,
 };

@@ -47,11 +47,31 @@ enum CollectionLabel {
   @@schema("public")
 }
 
+/**
+ * How an Idea is drilled, and therefore how its answer is graded.
+ *
+ * Each value has a verifier in `verification.ts`, an encoder in
+ * `idea-payload.ts`, and a base XP in `xp.ts` — the switches over this enum
+ * are deliberately exhaustive so adding a member fails to compile until
+ * every one of them has been taught about it.
+ */
 enum QuestionType {
+  /** Free recall, graded on Dice-coefficient similarity. */
   SHORT
+  /** One correct option out of several. */
   MULTI
+  /** Labelled hotspots over an image. */
   DIAGRAM
+  /** Symbolic expression, graded by algebraic equivalence. */
   FORMULA
+  /** Fill-in-the-blank. One prompt yields as many blanks as it marks. */
+  CLOZE
+  /** Enumerate a set of items; order irrelevant, completeness required. */
+  LIST
+  /** Arrange items into the correct sequence. */
+  ORDER
+  /** A number, graded within a tolerance, optionally carrying a unit. */
+  NUMERIC
 
   @@schema("public")
 }

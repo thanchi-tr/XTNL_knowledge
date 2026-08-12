@@ -44,9 +44,13 @@ export function fieldColor(fieldName: string): string {
  */
 export const QUESTION_TYPE_COLORS: Record<string, string> = {
   SHORT: "#6E93B8",
+  CLOZE: "#7FA8D4",
+  NUMERIC: "#5EA8A0",
   MULTI: "#8C7FD4",
-  FORMULA: "#5EA8A0",
-  DIAGRAM: "#B08A4F",
+  LIST: "#9AA1AC",
+  ORDER: "#B08A4F",
+  FORMULA: "#6BA88C",
+  DIAGRAM: "#C97F7F",
 };
 
 /** The one place saturated hue is earned: review urgency. */

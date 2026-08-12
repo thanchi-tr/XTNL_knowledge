@@ -5,6 +5,7 @@ import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { displayQuestion, displayAnswer } from "@/lib/idea-display";
 import { fieldColor } from "@/lib/palette";
 import { MASTERY_LEVEL } from "@/lib/xp";
+import { QUESTION_TYPES } from "@/lib/idea-payload";
 
 export interface LibraryIdea {
   id: string;
@@ -29,7 +30,6 @@ interface Props {
   allTags: string[];
 }
 
-const QUESTION_TYPES: QuestionType[] = ["SHORT", "MULTI", "FORMULA", "DIAGRAM"];
 const COLLECTION_LABELS: CollectionLabel[] = ["BOOK", "ACTIONABLE", "PROPOSAL"];
 
 type StatusFilter = "any" | "mastered" | "developing" | "archived";

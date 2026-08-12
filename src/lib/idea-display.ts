@@ -1,4 +1,11 @@
 import type { QuestionType } from "@prisma/client";
+import {
+  decodeListQuestion,
+  decodeOrderQuestion,
+  decodeNumericQuestion,
+  decodeStringArray,
+  decodeNumericAnswer,
+} from "./idea-payload";
 
 /** Human-readable question preview. Safe anywhere — never touches `answer`. */
 export function displayQuestion(questionType: QuestionType, question: string): string {
@@ -20,6 +27,21 @@ export function displayQuestion(questionType: QuestionType, question: string): s
       } catch {
         return "Diagram";
       }
+    case "CLOZE":
+      // Already stored blanked, so this is safe to show verbatim.
+      return question;
+    case "LIST": {
+      const { prompt, count } = decodeListQuestion(question);
+      return count > 0 ? `${prompt} (${count})` : prompt;
+    }
+    case "ORDER": {
+      const { prompt, items } = decodeOrderQuestion(question);
+      return items.length > 0 ? `${prompt} (${items.length} steps)` : prompt;
+    }
+    case "NUMERIC": {
+      const { prompt, unit } = decodeNumericQuestion(question);
+      return unit ? `${prompt} (${unit})` : prompt;
+    }
   }
 }
 
@@ -43,5 +65,19 @@ export function displayAnswer(questionType: QuestionType, answer: string): strin
       } catch {
         return answer;
       }
+    case "CLOZE":
+      return decodeStringArray(answer)
+        .map((blank, i) => `[${i + 1}] ${blank}`)
+        .join("  ");
+    case "LIST":
+      return decodeStringArray(answer).join(", ");
+    case "ORDER":
+      return decodeStringArray(answer)
+        .map((item, i) => `${i + 1}. ${item}`)
+        .join("  ");
+    case "NUMERIC": {
+      const { value, tolerance } = decodeNumericAnswer(answer);
+      return tolerance > 0 ? `${value} ± ${tolerance}` : String(value);
+    }
   }
 }

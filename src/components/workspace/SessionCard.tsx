@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import type { QuestionType } from "@prisma/client";
 import { submitReview, type SubmitReviewResult } from "@/app/actions/review";
 import { useStreak } from "@/components/StreakProvider";
+import { FormatAnswer } from "./FormatAnswer";
 import type { DomainProgress } from "@/lib/srs";
 import { baseIntervalDays, MASTERY_LEVEL, MASTERY_BONUS, COMBO_CAP, COMBO_STEP } from "@/lib/xp";
 
@@ -30,6 +31,10 @@ const TYPE_STYLES: Record<QuestionType, string> = {
   MULTI: "chip chip-blue",
   FORMULA: "chip chip-green",
   DIAGRAM: "chip chip-amber",
+  CLOZE: "chip chip-muted",
+  LIST: "chip chip-blue",
+  ORDER: "chip chip-green",
+  NUMERIC: "chip chip-amber",
 };
 
 // Short, varied flavor text on a correct answer — presentation variety only,
@@ -103,7 +108,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
   const [formulaAnswer, setFormulaAnswer] = useState("");
   const [diagramLabels, setDiagramLabels] = useState<Record<string, string>>({});
 
-  function submit(userAnswer: string | Record<string, string>) {
+  function submit(userAnswer: string | string[] | Record<string, string>) {
     startTransition(async () => {
       // `streak` is the run *before* this answer, which is exactly the
       // combo the reward curve expects.
@@ -243,6 +248,16 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
             </button>
           </form>
         </>
+      ) : questionType === "CLOZE" ||
+        questionType === "LIST" ||
+        questionType === "ORDER" ||
+        questionType === "NUMERIC" ? (
+        <FormatAnswer
+          questionType={questionType}
+          question={question}
+          disabled={isPending}
+          onSubmit={submit}
+        />
       ) : questionType === "MULTI" ? (
         (() => {
           let options: string[] = [];

@@ -1,6 +1,7 @@
 import { compareTwoStrings } from "string-similarity";
 import { create, all } from "mathjs";
 import type { QuestionType } from "@prisma/client";
+import { decodeStringArray, decodeNumericAnswer } from "./idea-payload";
 
 const math = create(all);
 
@@ -121,9 +122,83 @@ export function verifyDiagram(userLabels: Record<string, string>, correctAnswerJ
 }
 
 // ============================================================================
+// CLOZE — every blank graded like a SHORT answer
+// ============================================================================
+/**
+ * Blanks are graded with the same similarity threshold as SHORT, and all of
+ * them must pass. A partially-filled sentence is not partial knowledge of
+ * the claim; it is the claim not recalled.
+ */
+export function verifyCloze(userBlanks: string[], correctAnswerJson: string): boolean {
+  const correct = decodeStringArray(correctAnswerJson);
+  if (correct.length === 0 || userBlanks.length !== correct.length) return false;
+  return correct.every((expected, i) => verifyShort(userBlanks[i] ?? "", expected));
+}
+
+// ============================================================================
+// LIST — set equality, order irrelevant
+// ============================================================================
+/**
+ * Greedy one-to-one match on similarity: each expected item must be claimed
+ * by exactly one distinct user item. Matching without consuming would let a
+ * learner list the same correct item four times and pass a four-item
+ * question.
+ */
+export function verifyList(userItems: string[], correctAnswerJson: string): boolean {
+  const correct = decodeStringArray(correctAnswerJson);
+  if (correct.length === 0) return false;
+
+  const remaining = userItems.map((s) => s.trim()).filter(Boolean);
+  if (remaining.length !== correct.length) return false;
+
+  for (const expected of correct) {
+    const idx = remaining.findIndex((given) => verifyShort(given, expected));
+    if (idx === -1) return false;
+    remaining.splice(idx, 1);
+  }
+  return true;
+}
+
+// ============================================================================
+// ORDER — exact sequence
+// ============================================================================
+/**
+ * Compared position by position against the stored sequence. Items are
+ * chosen from a fixed set rather than typed, so this is an identity check
+ * on ordering, not a spelling test — similarity grading would be the wrong
+ * tool and would let two similarly-named steps swap places undetected.
+ */
+export function verifyOrder(userOrder: string[], correctAnswerJson: string): boolean {
+  const correct = decodeStringArray(correctAnswerJson);
+  if (correct.length === 0 || userOrder.length !== correct.length) return false;
+  return correct.every((item, i) => item.trim() === userOrder[i]?.trim());
+}
+
+// ============================================================================
+// NUMERIC — value within tolerance
+// ============================================================================
+/**
+ * `tolerance` is absolute and set by the author, so "9.8 ± 0.1" and
+ * "6.02e23 ± 1e21" both express what they mean. A zero tolerance is a
+ * legitimate demand for exactness rather than an error.
+ */
+export function verifyNumeric(userInput: string, correctAnswerJson: string): boolean {
+  const { value, tolerance } = decodeNumericAnswer(correctAnswerJson);
+  if (!Number.isFinite(value)) return false;
+
+  // Accept what a person actually types: thousands separators, stray unit
+  // text, and a leading `=`. Anything left over that is not a number fails.
+  const cleaned = userInput.replace(/[,\s]/g, "").replace(/^=/, "");
+  const parsed = Number.parseFloat(cleaned);
+  if (!Number.isFinite(parsed)) return false;
+
+  return Math.abs(parsed - value) <= Math.abs(tolerance);
+}
+
+// ============================================================================
 // Dispatch
 // ============================================================================
-export type ReviewAnswer = string | Record<string, string>;
+export type ReviewAnswer = string | string[] | Record<string, string>;
 
 export function verifyAnswer(
   questionType: QuestionType,
@@ -138,7 +213,16 @@ export function verifyAnswer(
     case "FORMULA":
       return verifyFormula(String(userAnswer), correctAnswer);
     case "DIAGRAM":
-      if (typeof userAnswer === "string") return false; // DIAGRAM answers are a label map, not a string
+      // DIAGRAM answers are a label map, not a string or a list.
+      if (typeof userAnswer === "string" || Array.isArray(userAnswer)) return false;
       return verifyDiagram(userAnswer, correctAnswer);
+    case "CLOZE":
+      return Array.isArray(userAnswer) ? verifyCloze(userAnswer, correctAnswer) : false;
+    case "LIST":
+      return Array.isArray(userAnswer) ? verifyList(userAnswer, correctAnswer) : false;
+    case "ORDER":
+      return Array.isArray(userAnswer) ? verifyOrder(userAnswer, correctAnswer) : false;
+    case "NUMERIC":
+      return typeof userAnswer === "string" ? verifyNumeric(userAnswer, correctAnswer) : false;
   }
 }
