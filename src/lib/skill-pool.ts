@@ -78,6 +78,34 @@ interface Archetype {
   describe: (effect: SkillEffect) => string;
 }
 
+/**
+ * Fraction of an archetype's peak effect delivered at a given tier.
+ *
+ * Sub-linear on purpose, and it is the single most important number in the
+ * pool's feel. Real knowledge acquisition has diminishing returns — the
+ * first pass through a subject moves you enormously, the eighth pass
+ * refines an edge — so each successive tier adds *less* than the one
+ * before while costing more. Concretely, across the eight Pure tiers the
+ * curve delivers roughly 28%, 43%, 54%, 65%, 75%, 84%, 92%, 100% of peak:
+ * eight real steps rather than five coarse ones, with the back half
+ * deliberately grinding.
+ *
+ * Defined past PURE_MAX_TIER as well, because Capstone tiers continue the
+ * same curve into 9-13 and are supposed to exceed anything a single
+ * lineage can reach alone.
+ */
+function effectProgress(tier: number): number {
+  return Math.pow(tier / PURE_MAX_TIER, 0.62);
+}
+
+/**
+ * Continuous effects ride `effectProgress` toward a stated peak, so they
+ * gain less per tier as the lineage deepens. Countable effects (charges,
+ * days, strikes) instead step linearly with tier: rounding a diminishing
+ * curve onto integers produces adjacent tiers with *identical* numbers,
+ * and paying a steeper price for a purchase that visibly changes nothing
+ * is the one thing a long ladder must never do.
+ */
 const ARCHETYPES: readonly Archetype[] = [
   {
     code: "DIVIDEND",
@@ -85,7 +113,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "REVIEW_YIELD",
     affinities: ["LOGIC", "STATISTIC", "MIND"],
     complexity: 1,
-    magnitude: (t) => ({ kind: "REVIEW_YIELD", multiplier: 1 + 0.06 * t }),
+    magnitude: (t) => ({ kind: "REVIEW_YIELD", multiplier: 1 + 0.3 * effectProgress(t) }),
     describe: (e) => (e.kind === "REVIEW_YIELD" ? `+${Math.round((e.multiplier - 1) * 100)}% points per review` : ""),
   },
   {
@@ -95,8 +123,8 @@ const ARCHETYPES: readonly Archetype[] = [
     affinities: ["ABSTRACT", "CREATIVITY", "REASON"],
     complexity: 3,
     // DEFAULT_LAMBDA is 0.15; lower means saturated domains keep paying.
-    magnitude: (t) => ({ kind: "DECAY_RESISTANCE", lambda: Math.max(0.04, 0.15 - 0.02 * t) }),
-    describe: (e) => (e.kind === "DECAY_RESISTANCE" ? `Similarity decay λ ${e.lambda.toFixed(2)} (from 0.15)` : ""),
+    magnitude: (t) => ({ kind: "DECAY_RESISTANCE", lambda: Math.max(0.03, 0.15 - 0.1 * effectProgress(t)) }),
+    describe: (e) => (e.kind === "DECAY_RESISTANCE" ? `Similarity decay λ ${e.lambda.toFixed(3)} (from 0.15)` : ""),
   },
   {
     code: "WARD",
@@ -125,7 +153,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "INTERVAL_DILATION",
     affinities: ["MIND", "ABSTRACT", "PHYSICAL"],
     complexity: 4,
-    magnitude: (t) => ({ kind: "INTERVAL_DILATION", multiplier: 1 + 0.08 * t }),
+    magnitude: (t) => ({ kind: "INTERVAL_DILATION", multiplier: 1 + 0.4 * effectProgress(t) }),
     describe: (e) =>
       e.kind === "INTERVAL_DILATION" ? `+${Math.round((e.multiplier - 1) * 100)}% review interval` : "",
   },
@@ -135,7 +163,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "COMBO_CEILING",
     affinities: ["PHYSICAL", "STUBBORNNESS", "MIND"],
     complexity: 2,
-    magnitude: (t) => ({ kind: "COMBO_CEILING", extraSteps: 2 * t }),
+    magnitude: (t) => ({ kind: "COMBO_CEILING", extraSteps: Math.ceil(1.25 * t) }),
     describe: (e) => (e.kind === "COMBO_CEILING" ? `Combo ceiling +${e.extraSteps} answers` : ""),
   },
   {
@@ -144,7 +172,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "COMBO_ANCHOR",
     affinities: ["SELF_RESPECT", "REBUTTAL", "FAITH"],
     complexity: 3,
-    magnitude: (t) => ({ kind: "COMBO_ANCHOR", retained: Math.min(0.75, 0.15 * t) }),
+    magnitude: (t) => ({ kind: "COMBO_ANCHOR", retained: Math.min(0.75, 0.75 * effectProgress(t)) }),
     describe: (e) => (e.kind === "COMBO_ANCHOR" ? `Keeps ${Math.round(e.retained * 100)}% of combo on a miss` : ""),
   },
   {
@@ -153,7 +181,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "MASTERY_YIELD",
     affinities: ["CRITICAL_THINKING", "REASON", "MIND"],
     complexity: 5,
-    magnitude: (t) => ({ kind: "MASTERY_YIELD", multiplier: 1 + 0.25 * t }),
+    magnitude: (t) => ({ kind: "MASTERY_YIELD", multiplier: 1 + 1.25 * effectProgress(t) }),
     describe: (e) =>
       e.kind === "MASTERY_YIELD" ? `+${Math.round((e.multiplier - 1) * 100)}% mastery bonus and points` : "",
   },
@@ -173,7 +201,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "YIELD_FLOOR",
     affinities: ["CREATIVITY", "ABSTRACT", "FAITH"],
     complexity: 4,
-    magnitude: (t) => ({ kind: "YIELD_FLOOR", fractionOfBase: Math.min(0.6, 0.1 * t) }),
+    magnitude: (t) => ({ kind: "YIELD_FLOOR", fractionOfBase: Math.min(0.6, 0.6 * effectProgress(t)) }),
     describe: (e) =>
       e.kind === "YIELD_FLOOR" ? `New ideas never yield below ${Math.round(e.fractionOfBase * 100)}% of base` : "",
   },
@@ -183,10 +211,10 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "DEDUP_PRECISION",
     affinities: ["CRITICAL_THINKING", "REBUTTAL", "STATISTIC"],
     complexity: 5,
-    magnitude: (t) => ({ kind: "DEDUP_PRECISION", thresholdDelta: 0.004 * t }),
+    magnitude: (t) => ({ kind: "DEDUP_PRECISION", thresholdDelta: 0.02 * effectProgress(t) }),
     describe: (e) =>
       e.kind === "DEDUP_PRECISION"
-        ? `Auto-merge threshold +${(e.thresholdDelta * 100).toFixed(1)}pp — fewer submissions absorbed`
+        ? `Auto-merge threshold +${(e.thresholdDelta * 100).toFixed(2)}pp — fewer submissions absorbed`
         : "",
   },
   {
@@ -195,7 +223,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "STREAK_AMPLIFIER",
     affinities: ["FAITH", "STUBBORNNESS", "SELF_RESPECT"],
     complexity: 4,
-    magnitude: (t) => ({ kind: "STREAK_AMPLIFIER", multiplier: 1 + 0.2 * t }),
+    magnitude: (t) => ({ kind: "STREAK_AMPLIFIER", multiplier: 1 + 1.0 * effectProgress(t) }),
     describe: (e) =>
       e.kind === "STREAK_AMPLIFIER" ? `+${Math.round((e.multiplier - 1) * 100)}% field-streak effect` : "",
   },
@@ -205,7 +233,7 @@ const ARCHETYPES: readonly Archetype[] = [
     kind: "RESONANCE",
     affinities: ["MIND", "REASON", "CREATIVITY"],
     complexity: 5,
-    magnitude: (t) => ({ kind: "RESONANCE", percent: 2 * t }),
+    magnitude: (t) => ({ kind: "RESONANCE", percent: Math.round(10 * effectProgress(t)) }),
     describe: (e) => (e.kind === "RESONANCE" ? `+${e.percent}% to all attribute scores` : ""),
   },
 ];
@@ -214,8 +242,18 @@ const ARCHETYPES: readonly Archetype[] = [
 // Difficulty curve
 // ============================================================================
 
-export const PURE_MAX_TIER = 5;
-export const SYNERGY_MAX_TIER = 3;
+/**
+ * Ladder depth.
+ *
+ * Deliberately long. Five coarse Pure tiers meant a lineage was finished
+ * almost as soon as it was started; eight finer ones — each worth less
+ * than the last (`effectProgress`) and costing more — is what turns a
+ * lineage into something you work at over months rather than clear in an
+ * afternoon. Synergy and Capstone were widened to match so the whole tree
+ * escalates at one rate instead of three.
+ */
+export const PURE_MAX_TIER = 8;
+export const SYNERGY_MAX_TIER = 5;
 
 /**
  * Attribute score required at a given tier.
@@ -241,7 +279,7 @@ export function masteryCost(complexity: number, tier: number, synergy: boolean):
   return complexity * tier * tier * (synergy ? 2 : 1);
 }
 
-export const CAPSTONE_MAX_TIER = 3;
+export const CAPSTONE_MAX_TIER = 5;
 
 /**
  * A Capstone tier N literally continues its dominant parent archetype's own
@@ -254,18 +292,19 @@ export const CAPSTONE_MAX_TIER = 3;
  * hand-tuned per lineage.
  */
 export function capstoneMasteryCost(complexity: number, capstoneTier: number): number {
-  return complexity * Math.pow(5 + capstoneTier, 2) * 3;
+  return complexity * Math.pow(PURE_MAX_TIER + capstoneTier, 2) * 3;
 }
 
 /**
  * One Apex per attribute, fused from every Capstone lineage that attribute
- * has. `maxComplexity * 81 * 5` is fixed at 405x per complexity point —
- * 2.11x above that attribute's own Capstone Tier-III cost at the same
- * complexity (405/192) — so an Apex is provably the most expensive thing in
- * the pool for its complexity, never merely the priciest by convention.
+ * has. Derived from the ladder rather than hardcoded, so it stays provably
+ * above the deepest Capstone at the same complexity however the tier
+ * counts are retuned: `(depth)^2 * 5` against the Capstone's `depth^2 * 3`
+ * one rung lower. The `print-skill-pool-stats` script asserts that
+ * ordering across every prerequisite edge.
  */
 export function apexMasteryCost(maxComplexity: number): number {
-  return maxComplexity * 81 * 5;
+  return maxComplexity * Math.pow(PURE_MAX_TIER + CAPSTONE_MAX_TIER + 1, 2) * 5;
 }
 
 /** Every archetype that lists `attribute` as an affinity, in ARCHETYPES order. */
@@ -323,7 +362,9 @@ export interface Skill {
   flavour: string;
 }
 
-const ROMAN = ["", "I", "II", "III", "IV", "V"];
+// Indexed by tier, so index 0 is unused. Runs to VIII because PURE_MAX_TIER
+// is 8 — a short array here silently produced "Eidetic Crown undefined".
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 
 function pureCode(archetype: string, attribute: Attribute, tier: number): string {
   return `P_${archetype}_${attribute}_T${tier}`;
@@ -471,20 +512,20 @@ function buildApex(capstones: Skill[]): Skill[] {
 // Ultimate tier — three per attribute, gated on completing the whole path
 // ============================================================================
 
-export const ULTIMATE_TIER = 12;
-/** The score bar each of the two breadth attributes must clear — Pure-Tier-IV-equivalent, real but not maximal investment. */
-export const ULTIMATE_BREADTH_TIER = 4;
+/** One rung past the Apex — the deepest thing in the pool. */
+export const ULTIMATE_TIER = PURE_MAX_TIER + CAPSTONE_MAX_TIER + 2;
+/** The score bar each of the two breadth attributes must clear — real but not maximal investment in a second discipline. */
+export const ULTIMATE_BREADTH_TIER = 5;
 
 /**
- * `apexMasteryCost(1) * 4` per complexity point — a flat 4x an attribute's
- * own Apex cost, provable the same way `capstoneMasteryCost`/
- * `apexMasteryCost` already are: the ratio holds at every complexity level,
- * not tuned per attribute. For the highest-complexity attributes this is
- * five figures — the top of this game is meant to be a campaign, not a
- * purchase, and there are three of these per attribute to choose between.
+ * A flat 3x an attribute's own Apex cost — the ratio holds at every
+ * complexity level, so the escalation is provable rather than tuned per
+ * attribute. For the highest-complexity attributes this runs to five
+ * figures: the top of this game is a campaign, not a purchase, and there
+ * are three of these per attribute to choose between.
  */
 export function ultimateMasteryCost(apexComplexity: number): number {
-  return apexComplexity * apexMasteryCost(1) * 4;
+  return apexMasteryCost(apexComplexity) * 3;
 }
 
 /**

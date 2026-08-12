@@ -36,11 +36,23 @@ function polygonPoints(cx: number, cy: number, r: number, sides: number, rotatio
   return points.join(" ");
 }
 
-/** Evenly spaced points on a circle — the particle rings. */
+/**
+ * Evenly spaced points on a circle — the particle rings.
+ *
+ * Rounded to 2dp for the same reason `polygonPoints` is, and it is not
+ * cosmetic: `Math.cos`/`Math.sin` are implementation-defined in ECMAScript,
+ * so Node's V8 and the browser's can disagree in the final bit. Feeding a
+ * raw `58.99999999999999` into an SVG `cx` renders one string on the server
+ * and another on the client, which React reports as a hydration attribute
+ * mismatch. Rounding collapses that difference well below a pixel.
+ */
 function ringPoints(cx: number, cy: number, r: number, count: number, offsetDeg = 0) {
   return Array.from({ length: count }, (_, i) => {
     const angle = ((offsetDeg + (360 / count) * i) * Math.PI) / 180;
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+    return {
+      x: Number((cx + r * Math.cos(angle)).toFixed(2)),
+      y: Number((cy + r * Math.sin(angle)).toFixed(2)),
+    };
   });
 }
 

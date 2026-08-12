@@ -2,54 +2,69 @@
 
 import { useMemo, useState } from "react";
 import type { Attribute } from "@prisma/client";
-import type { Skill } from "@/lib/skill-pool";
+import type { Skill, SkillRank } from "@/lib/skill-pool";
+import { PURE_MAX_TIER, CAPSTONE_MAX_TIER } from "@/lib/skill-pool";
 import type { UnlockBlocker } from "@/lib/skill-gates";
 import { estimateEta, type EtaEstimate } from "@/lib/skill-eta";
 import { RANK_META } from "@/lib/skill-visuals";
 import { themeFor } from "@/lib/attribute-themes";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { SkillLogo } from "./SkillLogo";
+import { RankTag } from "./RankTag";
 import { SkillCard, type SkillStatus } from "./SkillCard";
 
 /**
- * The skill tree, drawn as the directed graph it actually is.
+ * The skill tree, drawn top-down as the directed graph it actually is.
  *
- * A flat grid hid the one fact that matters most — that these skills *lead
- * somewhere*. The whole design of the pool is a funnel (five Pure tiers
- * feed a Capstone, every Capstone feeds the Apex, the Apex feeds three
- * Ultimates), and a player deciding what to work toward needs to see the
- * funnel, not read prerequisite codes off individual cards.
+ * Vertical rather than horizontal: the pool is a funnel — many cheap Pure
+ * tiers converge into Capstones, every Capstone converges into the single
+ * Apex, and the Apex opens three Ultimates — and a funnel reads as a
+ * funnel when it narrows *downward*. Depth is the Y axis, so the eye
+ * travels the way progression does, and the page scrolls the way a long
+ * ladder should.
  *
- * Layout is a fixed DAG rather than a force simulation: one row per
- * lineage, one column per depth, edges drawn from each skill to its
- * prerequisites. Deterministic, so the tree a player learns the shape of
- * today is in the same shape tomorrow.
+ * Columns are packed per rank *band* rather than globally. Capstone
+ * lineages only exist below depth 8, so they reuse the horizontal space
+ * the Pure lineages occupy above — without that, a 27-lineage attribute
+ * would be 2,300px wide and unreadable. Each band is centred against the
+ * widest one, which is what produces the funnel silhouette.
+ *
+ * Layout is a fixed DAG, not a force simulation: deterministic, so the
+ * tree a player learns the shape of today is the same shape tomorrow.
  */
 
-const COL_W = 88;
-const ROW_H = 46;
+const COL_W = 74;
+const ROW_H = 58;
 const NODE = 30;
-const GUTTER = 168;
-const PAD_TOP = 34;
+const GUTTER = 52;
+const PAD_TOP = 40;
+const LABEL_GAP = 16;
 
-const COLUMN_LABELS = ["I", "II", "III", "IV", "V", "C·I", "C·II", "C·III", "APEX", "ULT"];
-
-function columnFor(skill: Skill): number {
+/** Vertical position, 1-indexed. Mirrors the prerequisite chain exactly. */
+function depthFor(skill: Skill): number {
   switch (skill.rank) {
     case "PURE":
-      return skill.tier - 1; // 0..4
+      return skill.tier; // 1..8
     case "SYNERGY":
-      return skill.tier - 1; // 0..2, on its own rows
+      return skill.tier; // 1..5, alongside the Pure ladder
     case "CAPSTONE":
-      return 5 + skill.tier - 1; // 5..7
+      return PURE_MAX_TIER + skill.tier; // 9..13
     case "APEX":
-      return 8;
+      return PURE_MAX_TIER + CAPSTONE_MAX_TIER + 1; // 14
     case "ULTIMATE":
-      return 9;
+      return PURE_MAX_TIER + CAPSTONE_MAX_TIER + 2; // 15
   }
 }
 
-/** Stable per-lineage key — everything sharing one gets one row. */
+/** Which horizontal band a rank shares columns with. */
+function bandFor(rank: SkillRank): "upper" | "capstone" | "apex" | "ultimate" {
+  if (rank === "PURE" || rank === "SYNERGY") return "upper";
+  if (rank === "CAPSTONE") return "capstone";
+  if (rank === "APEX") return "apex";
+  return "ultimate";
+}
+
+/** Stable per-lineage key — everything sharing one gets one column. */
 function lineageKey(skill: Skill): string {
   switch (skill.rank) {
     case "PURE":
@@ -71,16 +86,22 @@ function lineageLabel(skill: Skill, attribute: Attribute): string {
       return skill.archetypeCode.charAt(0) + skill.archetypeCode.slice(1).toLowerCase();
     case "SYNERGY": {
       const other = skill.attributes.find((a) => a !== attribute) ?? attribute;
-      return `+ ${ATTRIBUTE_META[other].label}`;
+      return `+${ATTRIBUTE_META[other].label}`;
     }
     case "CAPSTONE":
-      return (skill.parentArchetypes ?? []).map((a) => a.charAt(0) + a.slice(1, 4).toLowerCase()).join("·");
+      return (skill.parentArchetypes ?? []).map((a) => a.slice(0, 4).toLowerCase()).join("·");
     case "APEX":
       return "Apex";
     case "ULTIMATE":
       return skill.archetypeCode.charAt(0) + skill.archetypeCode.slice(1).toLowerCase();
   }
 }
+
+const DEPTH_LABELS = [
+  "I", "II", "III", "IV", "V", "VI", "VII", "VIII",
+  "C·I", "C·II", "C·III", "C·IV", "C·V",
+  "APEX", "ULT",
+];
 
 const ETA_TONE: Record<EtaEstimate["status"], string> = {
   available: "var(--green)",
@@ -110,92 +131,124 @@ export function SkillTree({
   scorePerDay,
 }: Props) {
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<{ code: string; x: number; y: number } | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
   const theme = themeFor(attribute);
 
-  const { rows, positions, width, height } = useMemo(() => {
-    // Rank order first, then lineage key — so the tree reads left-to-right
-    // as "cheap and many" toward "singular and final", top to bottom.
+  const { positions, labels, width, height, maxDepth } = useMemo(() => {
     const sorted = [...skills].sort(
       (a, b) => RANK_META[a.rank].order - RANK_META[b.rank].order || lineageKey(a).localeCompare(lineageKey(b))
     );
 
-    const rowIndex = new Map<string, number>();
-    const rowList: { key: string; label: string; rank: Skill["rank"] }[] = [];
+    // One column index per lineage, numbered independently inside each band.
+    const bandColumns = new Map<string, Map<string, number>>();
+    const lineageBand = new Map<string, string>();
+    const lineageTop = new Map<string, { depth: number; label: string; rank: SkillRank }>();
+
     for (const s of sorted) {
+      const band = bandFor(s.rank);
       const key = lineageKey(s);
-      if (!rowIndex.has(key)) {
-        rowIndex.set(key, rowList.length);
-        rowList.push({ key, label: lineageLabel(s, attribute), rank: s.rank });
+      if (!bandColumns.has(band)) bandColumns.set(band, new Map());
+      const cols = bandColumns.get(band)!;
+      if (!cols.has(key)) cols.set(key, cols.size);
+      lineageBand.set(key, band);
+
+      const depth = depthFor(s);
+      const top = lineageTop.get(key);
+      if (!top || depth < top.depth) {
+        lineageTop.set(key, { depth, label: lineageLabel(s, attribute), rank: s.rank });
       }
     }
 
+    const widest = Math.max(...[...bandColumns.values()].map((c) => c.size));
+
+    /** Centring each band against the widest is what draws the funnel. */
+    const xFor = (band: string, col: number) => {
+      const size = bandColumns.get(band)!.size;
+      const offset = (widest - size) / 2;
+      return GUTTER + (offset + col) * COL_W + COL_W / 2;
+    };
+
     const pos = new Map<string, { x: number; y: number; skill: Skill }>();
     for (const s of sorted) {
-      const col = columnFor(s);
-      const row = rowIndex.get(lineageKey(s))!;
-      pos.set(s.code, { x: GUTTER + col * COL_W + COL_W / 2, y: PAD_TOP + row * ROW_H + ROW_H / 2, skill: s });
+      const key = lineageKey(s);
+      const band = bandFor(s.rank);
+      pos.set(s.code, {
+        x: xFor(band, bandColumns.get(band)!.get(key)!),
+        y: PAD_TOP + (depthFor(s) - 1) * ROW_H + ROW_H / 2,
+        skill: s,
+      });
     }
 
+    // One label per lineage, sitting just above its topmost node.
+    const labelList = [...lineageTop.entries()].map(([key, top]) => {
+      const band = lineageBand.get(key)!;
+      return {
+        key,
+        label: top.label,
+        rank: top.rank,
+        x: xFor(band, bandColumns.get(band)!.get(key)!),
+        y: PAD_TOP + (top.depth - 1) * ROW_H + ROW_H / 2 - NODE / 2 - LABEL_GAP + 4,
+      };
+    });
+
+    const deepest = Math.max(...sorted.map(depthFor));
     return {
-      rows: rowList,
       positions: pos,
-      width: GUTTER + COLUMN_LABELS.length * COL_W,
-      height: PAD_TOP + rowList.length * ROW_H + 12,
+      labels: labelList,
+      width: GUTTER + widest * COL_W + 16,
+      height: PAD_TOP + deepest * ROW_H + 16,
+      maxDepth: deepest,
     };
   }, [skills, attribute]);
 
   const selected = selectedCode ? positions.get(selectedCode)?.skill ?? null : null;
-  const hoveredEntry = hovered ? positions.get(hovered.code) : null;
+  const hoveredEntry = hovered ? positions.get(hovered) : null;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
       <div className="card relative overflow-x-auto" style={{ padding: 8 }}>
         <svg width={width} height={height} style={{ display: "block" }}>
-          {COLUMN_LABELS.map((label, i) => (
+          {/* Depth rails — the ladder's rungs, labelled down the left edge. */}
+          {Array.from({ length: maxDepth }, (_, i) => {
+            const y = PAD_TOP + i * ROW_H + ROW_H / 2;
+            return (
+              <g key={i}>
+                <line x1={GUTTER - 12} y1={y} x2={width - 8} y2={y} stroke="var(--line)" strokeWidth={1} />
+                <text
+                  x={GUTTER - 20}
+                  y={y + 3}
+                  textAnchor="end"
+                  style={{ fontSize: 8.5, fill: "var(--ink-3)", letterSpacing: "0.06em", fontWeight: 600 }}
+                >
+                  {DEPTH_LABELS[i] ?? String(i + 1)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Lineage names, above each lineage's first node. */}
+          {labels.map((l) => (
             <text
-              key={label}
-              x={GUTTER + i * COL_W + COL_W / 2}
-              y={18}
+              key={l.key}
+              x={l.x}
+              y={l.y}
               textAnchor="middle"
-              style={{ fontSize: 9, fill: "var(--ink-3)", letterSpacing: "0.08em", fontWeight: 600 }}
+              style={{ fontSize: 8.5, fill: RANK_META[l.rank].color, fontWeight: 600 }}
             >
-              {label}
+              {l.label.length > 11 ? `${l.label.slice(0, 10)}…` : l.label}
             </text>
           ))}
 
-          {rows.map((row, i) => (
-            <g key={row.key}>
-              <text
-                x={GUTTER - 12}
-                y={PAD_TOP + i * ROW_H + ROW_H / 2 + 3}
-                textAnchor="end"
-                style={{ fontSize: 10, fill: RANK_META[row.rank].color, fontWeight: 500 }}
-              >
-                {row.label}
-              </text>
-              <line
-                x1={GUTTER}
-                y1={PAD_TOP + i * ROW_H + ROW_H / 2}
-                x2={width - 8}
-                y2={PAD_TOP + i * ROW_H + ROW_H / 2}
-                stroke="var(--line)"
-                strokeWidth={1}
-              />
-            </g>
-          ))}
-
-          {/* Prerequisite edges. An edge whose parent you own carries a slow
-              current toward what it feeds, so the tree reads as live and the
-              direction of travel is obvious without arrowheads. */}
+          {/* Prerequisite edges, drawn parent-above to child-below. An edge
+              whose parent you own carries a current toward what it feeds. */}
           {[...positions.values()].map(({ x, y, skill }) =>
             skill.prerequisites.map((code) => {
               const from = positions.get(code);
               if (!from) return null;
               const parentOwned = statusOf(code) !== "locked";
               const childOwned = statusOf(skill.code) !== "locked";
-              const mid = (from.x + x) / 2;
-              const d = `M ${from.x + NODE / 2} ${from.y} C ${mid} ${from.y}, ${mid} ${y}, ${x - NODE / 2} ${y}`;
+              const midY = (from.y + y) / 2;
+              const d = `M ${from.x} ${from.y + NODE / 2} C ${from.x} ${midY}, ${x} ${midY}, ${x} ${y - NODE / 2}`;
               const color = RANK_META[skill.rank].color;
 
               return (
@@ -204,7 +257,7 @@ export function SkillTree({
                     d={d}
                     fill="none"
                     stroke={parentOwned ? color : "var(--line-hi)"}
-                    strokeOpacity={parentOwned ? 0.5 : 0.28}
+                    strokeOpacity={parentOwned ? 0.5 : 0.26}
                     strokeWidth={parentOwned ? 1.6 : 1}
                   />
                   {parentOwned && !childOwned && (
@@ -235,8 +288,8 @@ export function SkillTree({
                 transform={`translate(${x - NODE / 2}, ${y - NODE / 2})`}
                 style={{ cursor: "pointer" }}
                 onClick={() => setSelectedCode(skill.code)}
-                onMouseEnter={() => setHovered({ code: skill.code, x, y })}
-                onMouseLeave={() => setHovered((h) => (h?.code === skill.code ? null : h))}
+                onMouseEnter={() => setHovered(skill.code)}
+                onMouseLeave={() => setHovered((h) => (h === skill.code ? null : h))}
                 role="button"
                 aria-label={`${skill.name} — ${status}`}
               >
@@ -298,7 +351,7 @@ export function SkillTree({
                   strokeOpacity={status === "locked" && !unlockable ? 0.5 : 1}
                 />
                 <g opacity={status === "locked" && !unlockable ? 0.4 : 1}>
-                  {/* Particles are off at node scale — hundreds of animated
+                  {/* Particles off at node scale — hundreds of animated
                       emblems at once is a compositor problem, and the detail
                       panel is where an Ultimate gets to show off. */}
                   <SkillLogo skill={skill} size={NODE} animated={false} />
@@ -312,7 +365,6 @@ export function SkillTree({
           })}
         </svg>
 
-        {/* Hover card — effect and projected time, without needing a click. */}
         {hoveredEntry && (
           <HoverCard
             skill={hoveredEntry.skill}
@@ -340,8 +392,8 @@ export function SkillTree({
           <div className="card px-4 py-8 text-center">
             <p style={{ fontSize: 12, color: "var(--ink-2)" }}>Hover a node for its effect. Click to inspect.</p>
             <p style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 6 }}>
-              Columns run left to right by depth: five Pure tiers, then Capstones, then the Apex, then the three
-              Ultimates that close the path.
+              The tree runs top to bottom by depth: eight Pure tiers, then Capstones where two lineages fuse, then
+              the single Apex, then the three Ultimates that close the path.
             </p>
           </div>
         )}
@@ -368,9 +420,8 @@ function HoverCard({
   themeColor: string;
 }) {
   const meta = RANK_META[skill.rank];
-  // Flip to the left of the node when it would otherwise overflow the
-  // scroll container's right edge.
-  const flip = x + 270 > maxX;
+  // Flip left when the card would overflow the scroll container's edge.
+  const flip = x + 280 > maxX;
 
   return (
     <div
@@ -386,19 +437,27 @@ function HoverCard({
     >
       <div className="flex items-start justify-between gap-2">
         <p style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-0)", lineHeight: 1.3 }}>{skill.name}</p>
-        <span className="chip shrink-0" style={{ fontSize: 8.5, background: meta.wash, color: meta.color, border: `1px solid ${meta.color}40` }}>
-          {meta.label}
-        </span>
+        <RankTag rank={skill.rank} size="xs" />
       </div>
 
       <p style={{ fontSize: 11, color: meta.color, marginTop: 4, fontWeight: 500 }}>{skill.effectText}</p>
       <p style={{ fontSize: 10, color: "var(--ink-2)", marginTop: 5, lineHeight: 1.5 }}>{skill.flavour}</p>
 
-      <div className="mt-2.5 flex items-baseline justify-between gap-2 pt-2" style={{ borderTop: "1px solid var(--line)" }}>
+      <div
+        className="mt-2.5 flex items-baseline justify-between gap-2 pt-2"
+        style={{ borderTop: "1px solid var(--line)" }}
+      >
         <span className="label-xs" style={{ fontSize: 9 }}>
           {status === "locked" ? "Time to reach" : status === "dormant" ? "Dormant" : "Active"}
         </span>
-        <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: status === "locked" ? ETA_TONE[eta.status] : themeColor }}>
+        <span
+          className="mono"
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: status === "locked" ? ETA_TONE[eta.status] : themeColor,
+          }}
+        >
           {status === "locked" ? eta.label : status === "dormant" ? "requirements lapsed" : "in effect"}
         </span>
       </div>

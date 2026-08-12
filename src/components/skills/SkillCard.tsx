@@ -7,6 +7,7 @@ import { getSkill } from "@/lib/skill-pool";
 import { RANK_META } from "@/lib/skill-visuals";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { SkillLogo } from "./SkillLogo";
+import { RankTag } from "./RankTag";
 import { UnlockButton } from "./UnlockButton";
 
 export type SkillStatus = "active" | "dormant" | "locked";
@@ -129,17 +130,7 @@ export function SkillCard({ skill, status, blockers, masteryBalance, eta }: Prop
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <p style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-0)", lineHeight: 1.3 }}>{skill.name}</p>
-            <span
-              className="chip shrink-0"
-              style={{
-                fontSize: 9,
-                background: meta.wash,
-                color: meta.color,
-                border: `1px solid ${meta.color}40`,
-              }}
-            >
-              {meta.label}
-            </span>
+            <RankTag rank={skill.rank} />
           </div>
 
           <p style={{ fontSize: 11, color: meta.color, marginTop: 3, fontWeight: 500 }}>{skill.effectText}</p>

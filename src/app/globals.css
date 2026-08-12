@@ -467,6 +467,27 @@ code, pre, .mono {
   50%      { opacity: 1; }
 }
 
+/* ── Skill tag particles ─────────────────────────────────
+   The rank chip emits a few motes that drift up and fade. Reserved for
+   the three ranks that take a real campaign to reach, so the tag itself
+   signals "this is not a routine unlock" before the label is read. */
+.tag-particles { position: relative; overflow: hidden; }
+.tag-particles > .mote {
+  position: absolute;
+  bottom: -2px;
+  width: 2px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0;
+  animation: tag-mote 2.8s ease-out infinite;
+}
+@keyframes tag-mote {
+  0%   { transform: translateY(2px)   scale(0.5); opacity: 0; }
+  25%  { opacity: 0.95; }
+  100% { transform: translateY(-14px) scale(1.1); opacity: 0; }
+}
+
 /* ── Hover card ──────────────────────────────────────────
    Absolutely positioned over the tree; the tree owns the coordinates. */
 .hover-card {
@@ -499,6 +520,7 @@ code, pre, .mono {
   .aura-breathe, .boss-hit, .boss-rise,
   .ready-ring, .edge-flow, .unlock-burst,
   .orbit-cw, .orbit-ccw, .twinkle, .core-pulse, .hover-card { animation: none; }
+  .tag-particles > .mote { animation: none; opacity: 0; }
   .foil:hover::after { animation: none; opacity: 0; }
   .card-hover:hover { transform: none; }
 }
