@@ -6,8 +6,19 @@
 // and README.md "Database setup" for the full sequence.
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
+
+  // `relationJoins` lets a query opt into `relationLoadStrategy: "join"`,
+  // which fetches a nested relation with a LATERAL JOIN instead of issuing a
+  // second query and stitching the rows together in the client.
+  //
+  // That default cost a round trip per relation, which is invisible on a
+  // local database and ruinous on a remote one: profiling showed every page
+  // paying separate SELECTs for Field *and* FieldAttribute, Domain *and*
+  // DomainAttribute, purely because they were expressed as nested selects.
+  // At ~160ms per hop to Seoul, each of those was a sixth of the entire
+  // performance budget for the page.
+  previewFeatures = ["postgresqlExtensions", "relationJoins"]
 }
 
 datasource db {

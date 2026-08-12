@@ -41,11 +41,59 @@ function getClient(): GoogleGenAI {
 }
 
 /**
+ * Short-lived cache of embeddings, keyed by the exact text embedded.
+ *
+ * The Add form previews a candidate before committing it — `previewIdea`
+ * embeds the text to find its neighbours — and then `submitIdea` embeds the
+ * *same string again* moments later. Embeddings are a pure function of the
+ * input, so the second call was buying a byte-identical vector at full
+ * price and full latency. Typing into the form and re-previewing multiplied
+ * that further.
+ *
+ * Keyed on the full text rather than a hash: these strings are a question
+ * plus an answer, not documents, and comparing them is far cheaper than the
+ * network call this avoids. Bounded and short-lived because it only needs
+ * to survive the gap between previewing something and committing it.
+ */
+const EMBED_TTL_MS = 10 * 60 * 1000;
+const EMBED_CACHE_MAX = 200;
+const embedCache = new Map<string, { vector: number[]; expiresAt: number }>();
+
+function readEmbedCache(text: string): number[] | undefined {
+  const hit = embedCache.get(text);
+  if (!hit) return undefined;
+  if (hit.expiresAt < Date.now()) {
+    embedCache.delete(text);
+    return undefined;
+  }
+  // Refresh recency: re-inserting moves the key to the end of Map order,
+  // which is what makes the eviction below least-recently-used.
+  embedCache.delete(text);
+  embedCache.set(text, hit);
+  return hit.vector;
+}
+
+function writeEmbedCache(text: string, vector: number[]): void {
+  if (embedCache.size >= EMBED_CACHE_MAX) {
+    const oldest = embedCache.keys().next().value;
+    if (oldest !== undefined) embedCache.delete(oldest);
+  }
+  embedCache.set(text, { vector, expiresAt: Date.now() + EMBED_TTL_MS });
+}
+
+/**
  * Embeds a single piece of text (an Idea's question + answer, concatenated
  * by the caller) into a 1536-dim vector for pgvector cosine-similarity
  * routing.
+ *
+ * Memoised — see the cache above. Returns a copy so a caller mutating the
+ * result (`toVectorLiteral` does not, but nothing stops one) cannot corrupt
+ * what the next caller receives.
  */
 export async function embedText(text: string): Promise<number[]> {
+  const cached = readEmbedCache(text);
+  if (cached) return [...cached];
+
   const response = await getClient().models.embedContent({
     model: EMBEDDING_MODEL,
     contents: [text],
@@ -58,7 +106,8 @@ export async function embedText(text: string): Promise<number[]> {
       `Gemini embedding response missing/malformed values (expected ${EMBEDDING_DIMENSIONS}-dim vector)`
     );
   }
-  return values;
+  writeEmbedCache(text, values);
+  return [...values];
 }
 
 /**

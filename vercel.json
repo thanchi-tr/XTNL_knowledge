@@ -1,4 +1,24 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+
+  "//regions": [
+    "Run the functions in Seoul, beside the database.",
+    "",
+    "Measured on the live deployment: `x-vercel-id: syd1::iad1::…` — requests",
+    "entered at the Sydney edge but executed in iad1 (Washington DC), while",
+    "Supabase sits in ap-northeast-2 (Seoul). Every query crossed the Pacific",
+    "at ~160ms per round trip, and a page issuing several of them could not",
+    "come in under a second however the SQL was written.",
+    "",
+    "Co-locating with the database is the right trade even though the user is",
+    "in Australia: the browser pays ONE extra hop to reach Seoul, whereas the",
+    "function pays that hop N times, once per query. One 150ms hop plus 2ms",
+    "queries beats a 20ms hop plus 160ms queries the moment N exceeds one.",
+    "",
+    "If the database ever moves, this must move with it. They are a pair."
+  ],
+  "regions": ["icn1"],
+
   "crons": [
     {
       "path": "/api/cron/degrade",

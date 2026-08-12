@@ -20,6 +20,7 @@ import { cached } from "./cache";
 export const loadFieldTree = cache(async () => {
   return cached("fieldTree", ["fields", "ideas"], () =>
     prisma.field.findMany({
+      relationLoadStrategy: "join",
       orderBy: { name: "asc" },
       include: {
         domains: {
@@ -52,6 +53,7 @@ export const loadFieldLevels = cache(async () => {
 export const loadLibraryTree = cache(async () => {
   return cached("libraryTree", ["fields", "ideas"], () =>
     prisma.field.findMany({
+      relationLoadStrategy: "join",
       orderBy: { name: "asc" },
       include: {
         domains: {

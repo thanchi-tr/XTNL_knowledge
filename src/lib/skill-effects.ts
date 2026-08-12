@@ -96,6 +96,11 @@ interface FieldRow {
 async function loadFieldRows(): Promise<FieldRow[]> {
   return cached("fieldRows", ["fields", "ideas"], async () => {
     const fields = await prisma.field.findMany({
+      // One LATERAL JOIN instead of four sequential round trips. Without
+      // this Prisma fetched Field, then FieldAttribute, then Domain, then
+      // DomainAttribute as separate queries — four network hops for what is
+      // one question, on every single page in the app.
+      relationLoadStrategy: "join",
       select: {
         id: true,
         name: true,
