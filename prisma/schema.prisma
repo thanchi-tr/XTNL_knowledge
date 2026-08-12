@@ -387,9 +387,25 @@ model UnlockedSkill {
   masteryPaid  Int      @default(0)
   unlockedAt   DateTime @default(now())
 
+  /**
+   * Loadout slot, 0..9, or null when benched.
+   *
+   * Owning a skill no longer makes it do anything: only the ten equipped
+   * skills fold into `ActiveModifiers`. Unlocking used to be the last
+   * decision a player ever made about a skill — with 749 of them and no
+   * cap, a long-running account would simply hold every effect at once and
+   * the whole tree would collapse into "buy everything". A hard ten-slot
+   * bench turns each unlock into an ongoing choice about what to carry.
+   *
+   * Uniqueness is per (userId, slot), so a slot holds at most one skill;
+   * equipping into an occupied slot swaps rather than stacks.
+   */
+  equippedSlot Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, skillCode])
+  @@unique([userId, equippedSlot])
   @@schema("public")
 }

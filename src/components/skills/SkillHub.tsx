@@ -10,6 +10,7 @@ import { ATTRIBUTES, ATTRIBUTE_META, type AttributeScores } from "@/lib/attribut
 import { themeFor } from "@/lib/attribute-themes";
 import { RANK_META, RANK_ORDER } from "@/lib/skill-visuals";
 import { InventoryPanel } from "./InventoryPanel";
+import { formatExpiry } from "@/lib/format-date";
 
 /**
  * The skills hub: thirteen paths as portals, plus the inventory.
@@ -80,7 +81,7 @@ export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuff
                   <span style={{ color: "var(--ink-2)" }}> — {meta.effectText(d.magnitude)}</span>
                   <span style={{ color: "var(--ink-3)" }}>
                     {" · until "}
-                    {d.expiresAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" })}
+                    {formatExpiry(d.expiresAt)}
                   </span>
                 </div>
               );
@@ -103,7 +104,7 @@ export function SkillHub({ scores, ownedCodes, masteryBalance, modifiers, debuff
                   <span style={{ color: "var(--ink-2)" }}> — {meta.effectText(b.magnitude)}</span>
                   <span style={{ color: "var(--ink-3)" }}>
                     {" · until "}
-                    {b.expiresAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" })}
+                    {formatExpiry(b.expiresAt)}
                   </span>
                 </div>
               );

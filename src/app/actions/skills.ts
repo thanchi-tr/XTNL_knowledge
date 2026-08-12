@@ -3,7 +3,12 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import { getSkill } from "@/lib/skill-pool";
-import { loadProgressionFresh, unlockBlockers, type UnlockBlocker } from "@/lib/skill-effects";
+import {
+  loadProgressionFresh,
+  unlockBlockers,
+  LOADOUT_SLOTS,
+  type UnlockBlocker,
+} from "@/lib/skill-effects";
 import { getMasteryBalanceFresh, submitAttestation } from "@/lib/mastery";
 import { invalidate } from "@/lib/cache";
 import { ATTRIBUTE_META } from "@/lib/attributes";
@@ -100,4 +105,76 @@ export async function submitMasteryAttestation(
   }
 
   return { ok: true, value: { points: result.points, rationale: result.rationale } };
+}
+
+// ============================================================================
+// Loadout
+// ============================================================================
+
+/**
+ * Equip a skill into a loadout slot, or bench it.
+ *
+ * Unlocking a skill no longer activates it — the ten slots do. Anything not
+ * in a slot contributes nothing to `ActiveModifiers`, which is what stops a
+ * long-lived account from simply holding all 749 effects at once.
+ *
+ * The write is a transaction because equipping is really two edits: vacate
+ * whatever occupies the target slot, then move this skill in. Run
+ * separately, a failure between them would leave the account either holding
+ * a duplicate slot (violating the partial unique index) or silently missing
+ * an effect it still believes it has.
+ */
+export async function equipSkill(
+  skillCode: string,
+  slot: number | null
+): Promise<SkillActionResult<{ slot: number | null }>> {
+  const userId = getCurrentUserId();
+
+  const skill = getSkill(skillCode);
+  if (!skill) {
+    return { ok: false, error: "No such skill." };
+  }
+  if (slot !== null && (!Number.isInteger(slot) || slot < 0 || slot >= LOADOUT_SLOTS)) {
+    return { ok: false, error: `Slot must be 0-${LOADOUT_SLOTS - 1}.` };
+  }
+
+  const owned = await prisma.unlockedSkill.findUnique({
+    where: { userId_skillCode: { userId, skillCode } },
+    select: { id: true },
+  });
+  if (!owned) {
+    return { ok: false, error: "Unlock this skill before equipping it." };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (slot !== null) {
+      // Bench whatever is already here. Equipping into an occupied slot
+      // swaps rather than erroring — the bar is a place you rearrange.
+      await tx.unlockedSkill.updateMany({
+        where: { userId, equippedSlot: slot },
+        data: { equippedSlot: null },
+      });
+    }
+    await tx.unlockedSkill.update({
+      where: { userId_skillCode: { userId, skillCode } },
+      data: { equippedSlot: slot },
+    });
+  });
+
+  invalidate("progress");
+  return { ok: true, value: { slot } };
+}
+
+/** Clears a slot without needing to know what is in it. */
+export async function clearSlot(slot: number): Promise<SkillActionResult<{ slot: number }>> {
+  const userId = getCurrentUserId();
+  if (!Number.isInteger(slot) || slot < 0 || slot >= LOADOUT_SLOTS) {
+    return { ok: false, error: `Slot must be 0-${LOADOUT_SLOTS - 1}.` };
+  }
+  await prisma.unlockedSkill.updateMany({
+    where: { userId, equippedSlot: slot },
+    data: { equippedSlot: null },
+  });
+  invalidate("progress");
+  return { ok: true, value: { slot } };
 }

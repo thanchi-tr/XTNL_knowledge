@@ -456,6 +456,120 @@ code, pre, .mono {
   50%      { opacity: 1;    transform: scale(1.15); }
 }
 
+/* ── Loadout slots ───────────────────────────────────────
+   Ten slots, and the only place a skill's effect becomes real. */
+.slot {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--line-hi);
+  cursor: pointer;
+  position: relative;
+  transition: border-color .15s ease, transform .12s ease, background .15s ease;
+}
+.slot:hover:not(:disabled) { transform: translateY(-2px); }
+.slot:disabled { cursor: not-allowed; }
+.slot:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* Attach: a two-part hit. The slot itself punches in — overshooting past
+   1.0 before settling, so it reads as something seating rather than
+   fading — while ::after throws a ring outward from the same origin. One
+   shot only; the class is removed after ~900ms so the same slot can flash
+   again on the next attach. Deliberately louder than anything else in this
+   UI, because committing a slot is the moment an unlock finally does
+   something. */
+.slot-attach { animation: slot-seat .42s cubic-bezier(.2,1.6,.4,1); }
+@keyframes slot-seat {
+  0%   { transform: scale(.72); }
+  55%  { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+.slot-attach::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 12px;
+  border: 2px solid var(--green);
+  pointer-events: none;
+  animation: slot-ring .82s cubic-bezier(.2,.7,.3,1) forwards;
+}
+@keyframes slot-ring {
+  0%   { transform: scale(.9);  opacity: 0; }
+  18%  { opacity: .95; }
+  100% { transform: scale(2.0); opacity: 0; }
+}
+
+/* ── Terminal spectacle: APEX and ULTIMATE only ──────────
+   These three are the only effects in the app that no other rank has, and
+   they exist because escalating shared channels by count alone made the
+   last two steps of a 15-deep ladder read as "more dots" rather than as
+   arrival. Confined to ~7% of the pool, viewed one at a time. */
+
+/* Shockwave: a ring bursts outward from the body and dissipates. The long
+   tail on the opacity curve is what stops it looking like a blink. */
+.shockwave {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: shockwave 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+@keyframes shockwave {
+  0%   { transform: scale(0.5); opacity: 0; }
+  15%  { opacity: 0.65; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+/* Rays breathe rather than sitting static, on staggered delays so the
+   crown shimmers instead of throbbing as one block. */
+.ray-pulse {
+  animation: ray-pulse 3.6s ease-in-out infinite;
+}
+@keyframes ray-pulse {
+  0%, 100% { opacity: 0.12; }
+  50%      { opacity: 0.42; }
+}
+
+/* Lens flare over the core — scale and opacity together, so it reads as
+   light blooming rather than a shape resizing. */
+.flare-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: flare-pulse 4.2s ease-in-out infinite;
+}
+@keyframes flare-pulse {
+  0%, 100% { transform: scale(0.72) rotate(0deg); opacity: 0.45; }
+  50%      { transform: scale(1.12) rotate(45deg); opacity: 0.95; }
+}
+
+/* Corona: the outer halo breathes — slower and wider than the core, so the
+   two pulses never sync into a single throb. Scale rather than opacity so
+   the aura reads as expanding light, not a flickering lamp. */
+.corona-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: corona-pulse 5.2s ease-in-out infinite;
+}
+@keyframes corona-pulse {
+  0%, 100% { transform: scale(0.94); opacity: 0.7; }
+  50%      { transform: scale(1.06); opacity: 1; }
+}
+
+/* Embers: motes lift off the core and fade out. Reserved for ULTIMATE, so
+   the one effect that implies heat belongs to the one rank that ends a
+   path. Each mote carries its own animation-delay from the component, which
+   is what turns a synchronised pop into a drift. */
+.ember-rise {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ember-rise 3.2s ease-out infinite;
+}
+@keyframes ember-rise {
+  0%   { transform: translateY(4px) scale(0.5); opacity: 0; }
+  25%  { opacity: 0.9; }
+  100% { transform: translateY(-16px) scale(1.1); opacity: 0; }
+}
+
 /* Ultimate core: a slow pulse of the innermost light only. */
 .core-pulse {
   transform-box: fill-box;
@@ -519,7 +633,13 @@ code, pre, .mono {
   .fade-up, .pulse-dot, .skill-unlock, .rank-ascend,
   .aura-breathe, .boss-hit, .boss-rise,
   .ready-ring, .edge-flow, .unlock-burst,
-  .orbit-cw, .orbit-ccw, .twinkle, .core-pulse, .hover-card { animation: none; }
+  .orbit-cw, .orbit-ccw, .twinkle, .core-pulse, .corona-pulse,
+  .ray-pulse, .flare-pulse, .hover-card { animation: none; }
+  .slot-attach { animation: none; }
+  .slot-attach::after { animation: none; opacity: 0; }
+  .slot:hover:not(:disabled) { transform: none; }
+  .shockwave { animation: none; opacity: 0; }
+  .ember-rise { animation: none; opacity: 0; }
   .tag-particles > .mote { animation: none; opacity: 0; }
   .foil:hover::after { animation: none; opacity: 0; }
   .card-hover:hover { transform: none; }

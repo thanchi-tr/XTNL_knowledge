@@ -45,11 +45,26 @@ export {
   type WardSkill,
 } from "./skill-gates";
 
+export const LOADOUT_SLOTS = 10;
+
+export interface EquippedEntry {
+  slot: number;
+  skill: Skill;
+  /** False when equipped but the attribute requirements are no longer met. */
+  active: boolean;
+}
+
 export interface ProgressionState {
   scores: AttributeScores;
   ownedCodes: string[];
+  /** Slot -> skill, for the loadout bar. Sparse; length is always LOADOUT_SLOTS. */
+  loadout: (EquippedEntry | null)[];
+  /** Equipped AND requirements met — the only skills that fold into `modifiers`. */
   activeSkills: Skill[];
+  /** Equipped but requirements no longer met. */
   dormantSkills: Skill[];
+  /** Owned but not equipped. Contributes nothing. */
+  benchedSkills: Skill[];
   modifiers: ActiveModifiers;
   /** Currently-active debuffs, so the UI can name what is dragging the numbers down. */
   debuffs: ActiveDebuffRow[];
@@ -108,7 +123,7 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   const [rows, streakBonuses, owned, debuffs, boons] = await Promise.all([
     loadFieldRows(),
     loadFieldStreakBonuses(userId),
-    prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true } }),
+    prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true, equippedSlot: true } }),
     loadActiveDebuffs(userId, now),
     loadActiveBoons(userId, now),
   ]);
@@ -117,24 +132,43 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     .map((o) => getSkill(o.skillCode))
     .filter((s): s is Skill => s !== undefined);
 
+  // Only equipped skills can contribute. Ownership is a receipt; a slot is
+  // what makes an effect real.
+  const slotOf = new Map<string, number>();
+  for (const o of owned) {
+    if (o.equippedSlot !== null && o.equippedSlot >= 0 && o.equippedSlot < LOADOUT_SLOTS) {
+      slotOf.set(o.skillCode, o.equippedSlot);
+    }
+  }
+  const equippedSkills = ownedSkills.filter((s) => slotOf.has(s.code));
+
   // Debuffs are independent of which skills are active, so their penalty is
   // resolved up front and applied in every pass below.
   const penalty = foldDebuffs(NEUTRAL_MODIFIERS, debuffs).attributePenaltyPercent;
 
   const baseScores = scoresWithStreak(rows, streakBonuses, 1);
-  const firstPass = ownedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
+  const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
   const firstFold = foldEffects(firstPass);
 
   const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier);
   const isActive = (s: Skill) => meetsRequirements(s, scores, firstFold.resonancePercent, penalty);
-  const activeSkills = ownedSkills.filter(isActive);
-  const dormantSkills = ownedSkills.filter((s) => !isActive(s));
+  const activeSkills = equippedSkills.filter(isActive);
+  const dormantSkills = equippedSkills.filter((s) => !isActive(s));
+  const benchedSkills = ownedSkills.filter((s) => !slotOf.has(s.code));
+
+  const loadout: (EquippedEntry | null)[] = Array.from({ length: LOADOUT_SLOTS }, () => null);
+  for (const skill of equippedSkills) {
+    const slot = slotOf.get(skill.code)!;
+    loadout[slot] = { slot, skill, active: isActive(skill) };
+  }
 
   return {
     scores,
     ownedCodes: owned.map((o) => o.skillCode),
+    loadout,
     activeSkills,
     dormantSkills,
+    benchedSkills,
     // Order matters: skills form the baseline, boons lift it, debuffs cut
     // it. Applying debuffs last means a penalty bites the state you
     // actually have rather than being cancelled out by a fresh buff.

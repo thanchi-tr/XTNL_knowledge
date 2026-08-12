@@ -1,13 +1,14 @@
 import { loadFieldLevels } from "@/lib/queries";
 import { loadProgression } from "@/lib/skill-effects";
 import { getMasteryBalance } from "@/lib/mastery";
-import { SKILL_POOL } from "@/lib/skill-pool";
+import { SKILL_POOL, getSkill } from "@/lib/skill-pool";
 import { getCurrentUserId } from "@/lib/user";
 import { fieldLevel } from "@/lib/xp";
 import { computeTitle } from "@/lib/titles";
 import { SkillHub } from "@/components/skills/SkillHub";
 import { TitleBanner } from "@/components/skills/TitleBanner";
 import { AttestationForm } from "@/components/skills/AttestationForm";
+import { LoadoutBar } from "@/components/skills/LoadoutBar";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,12 @@ export default async function SkillsPage() {
   // Proficiency Index — the title ladder is calibrated against that number,
   // not a second, parallel definition of "account level".
   const accountLevel = fieldLevel(fields.map((f) => f.level));
-  const ultimateCount = progression.activeSkills.filter((s) => s.rank === "ULTIMATE").length;
+  // Counted from what you *own*, not what you currently carry. Titles are
+  // earned once; deriving one from `activeSkills` would demote a player the
+  // moment they unequipped an Ultimate to try a different loadout.
+  const ultimateCount = progression.ownedCodes
+    .map(getSkill)
+    .filter((s) => s?.rank === "ULTIMATE").length;
   const title = computeTitle(accountLevel, progression.scores, ultimateCount);
 
   return (
@@ -53,6 +59,15 @@ export default async function SkillsPage() {
       <div className="fade-up fade-up-2 mt-5 max-w-xl">
         <AttestationForm />
       </div>
+
+      <LoadoutBar
+        slots={progression.loadout.map((entry, slot) => ({
+          slot,
+          skill: entry?.skill ?? null,
+          active: entry?.active ?? false,
+        }))}
+        bench={progression.benchedSkills}
+      />
     </main>
   );
 }

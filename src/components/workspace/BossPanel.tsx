@@ -5,6 +5,7 @@ import type { BossState } from "@/lib/bosses";
 import { BOON_KINDS, BOON_META } from "@/lib/boon-meta";
 import { fieldColor } from "@/lib/palette";
 import { BossSigil } from "./BossSigil";
+import { formatExpiry } from "@/lib/format-date";
 
 interface Props {
   bosses: BossState[];
@@ -202,11 +203,7 @@ export function BossPanel({ bosses, onChallenge, pendingFieldId, error }: Props)
                     {boss.availability.status === "cooldown" && (
                       <p style={{ fontSize: 10, color: "var(--ink-3)" }}>
                         Regrouping until{" "}
-                        {boss.availability.until.toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                        })}
+                        {formatExpiry(boss.availability.until)}
                         .
                       </p>
                     )}
