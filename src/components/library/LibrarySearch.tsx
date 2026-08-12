@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { deleteIdea } from "@/app/actions/ideas";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { displayQuestion, displayAnswer } from "@/lib/idea-display";
 import { fieldColor } from "@/lib/palette";
@@ -143,6 +145,37 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
   const [maxLevel, setMaxLevel] = useState(MASTERY_LEVEL);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
+  const router = useRouter();
+  const [isDeleting, startDelete] = useTransition();
+  /**
+   * Two-step delete: the first click arms the row, the second commits.
+   *
+   * Deliberately not a modal. Deleting one idea out of a list is a small,
+   * frequent action, and a dialog for each one trains you to dismiss
+   * dialogs — which is exactly the habit you do not want when a
+   * genuinely destructive confirmation appears. Arming is reversible,
+   * visible, and costs one click.
+   */
+  const [armed, setArmed] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** Hidden immediately on success so the list responds before the refetch. */
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+
+  function remove(id: string) {
+    setDeleteError(null);
+    startDelete(async () => {
+      const res = await deleteIdea(id);
+      if (!res.ok) {
+        setDeleteError(res.error);
+        setArmed(null);
+        return;
+      }
+      setRemoved((prev) => new Set(prev).add(id));
+      setArmed(null);
+      router.refresh();
+    });
+  }
+
   /**
    * Domains offered for selection. Narrowed to the chosen fields when any
    * are chosen, so the domain list stays navigable — but selections already
@@ -175,6 +208,7 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
         if (status === "developing" && idea.level >= MASTERY_LEVEL) return false;
       }
 
+      if (removed.has(idea.id)) return false;
       if (fieldFilter.size > 0 && !fieldFilter.has(idea.fieldName)) return false;
       if (domainFilter.size > 0 && !domainFilter.has(domainKey(idea.fieldName, idea.domainName))) return false;
       if (tagFilter.size > 0 && !idea.tags.some((t) => tagFilter.has(t))) return false;
@@ -198,7 +232,7 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
       }
       return true;
     });
-  }, [ideas, query, fieldFilter, domainFilter, tagFilter, typeFilter, labelFilter, status, minLevel, maxLevel]);
+  }, [ideas, query, fieldFilter, domainFilter, tagFilter, typeFilter, labelFilter, status, minLevel, maxLevel, removed]);
 
   /** Result counts per option, computed against everything *except* that facet. */
   const fieldCounts = useMemo(() => {
@@ -452,6 +486,22 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
         </div>
       )}
 
+      {deleteError && (
+        <p
+          role="alert"
+          className="px-3 py-2"
+          style={{
+            fontSize: 12,
+            borderRadius: 8,
+            background: "var(--red-10)",
+            border: "1px solid rgba(240,58,87,0.20)",
+            color: "var(--red)",
+          }}
+        >
+          {deleteError}
+        </p>
+      )}
+
       <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
         {results.length} of {ideas.length} idea{ideas.length === 1 ? "" : "s"}
       </p>
@@ -519,6 +569,53 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
                   ))}
                 </div>
               )}
+
+              {/* Delete, armed on first click and committed on the second.
+                  Kept quiet until armed: destructive controls that look
+                  destructive at rest make a list feel hazardous to browse. */}
+              <div className="mt-2.5 flex items-center justify-end gap-2">
+                {armed === idea.id ? (
+                  <>
+                    <span style={{ fontSize: 11, color: "var(--ink-2)" }}>Delete permanently?</span>
+                    <button
+                      type="button"
+                      disabled={isDeleting}
+                      onClick={() => remove(idea.id)}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "3px 10px",
+                        borderRadius: 6,
+                        border: "1px solid rgba(240,58,87,0.45)",
+                        background: "var(--red-10)",
+                        color: "var(--red)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {isDeleting ? "Deleting…" : "Delete"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArmed(null)}
+                      style={{ fontSize: 11, color: "var(--ink-2)", background: "none", border: "none", cursor: "pointer" }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setArmed(idea.id);
+                      setDeleteError(null);
+                    }}
+                    aria-label={`Delete ${idea.title ?? displayQuestion(idea.questionType, idea.question)}`}
+                    style={{ fontSize: 11, color: "var(--ink-3)", background: "none", border: "none", cursor: "pointer" }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
             </li>
           );
         })}

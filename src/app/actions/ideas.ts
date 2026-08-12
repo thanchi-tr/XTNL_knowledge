@@ -22,6 +22,10 @@ import { loadModifiers } from "@/lib/skill-effects";
 import { assignIdeaAttribution } from "@/lib/attribute-assignment";
 import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
+import { invalidate } from "@/lib/cache";
+
+/** Same discriminated-result shape the taxonomy and skill actions use. */
+export type SkillFreeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 export interface SubmitIdeaInput {
   fieldId: string;
@@ -334,4 +338,67 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
   });
 
   return { ideaId: idea.id, domainId: existing.domainId };
+}
+
+// ============================================================================
+// Deletion
+// ============================================================================
+
+export interface DeleteIdeaResult {
+  ideaId: string;
+  domainId: string;
+  /** Points removed from the Domain — the Idea's own yield contribution. */
+  pointsRemoved: number;
+  /** Domain level after recalculation. */
+  domainLevel: number;
+}
+
+/**
+ * Permanently removes one Idea.
+ *
+ * Distinct from archiving, which the schema already supports: an archived
+ * Idea still exists, still holds its points and still counts as a
+ * deduplication neighbour. This is for material that should never have been
+ * captured at all.
+ *
+ * **Points.** A Domain's `totalPoints` is the sum of every Idea's
+ * `yieldPoints` plus the review rewards earned since. Deleting an Idea
+ * reverses only its own yield contribution, not the rewards — those were
+ * paid for recall that genuinely happened, and confiscating them would
+ * punish the user for tidying up. Floored at zero, because
+ * `DEGRADATION_YIELD_MULTIPLIER` can have shrunk an Idea's yield below what
+ * it originally contributed.
+ *
+ * `IdeaEnrichment` rows cascade with the Idea (see schema.prisma).
+ */
+export async function deleteIdea(ideaId: string): Promise<SkillFreeResult<DeleteIdeaResult>> {
+  const idea = await prisma.idea.findUnique({
+    where: { id: ideaId },
+    select: { id: true, domainId: true, yieldPoints: true },
+  });
+  if (!idea) {
+    return { ok: false, error: "That idea no longer exists." };
+  }
+
+  const domain = await prisma.domain.findUniqueOrThrow({
+    where: { id: idea.domainId },
+    select: { totalPoints: true },
+  });
+  const pointsRemoved = Math.min(idea.yieldPoints, domain.totalPoints);
+
+  await prisma.$transaction([
+    prisma.idea.delete({ where: { id: ideaId } }),
+    prisma.domain.update({
+      where: { id: idea.domainId },
+      data: { totalPoints: { decrement: pointsRemoved } },
+    }),
+  ]);
+
+  const { domainLevel } = await recalculateLeveling(idea.domainId);
+
+  // Both tags: the Idea is gone from every listing, and the Domain's points
+  // and level moved, which the progression reads.
+  invalidate("ideas", "fields", "progress");
+
+  return { ok: true, value: { ideaId, domainId: idea.domainId, pointsRemoved, domainLevel } };
 }

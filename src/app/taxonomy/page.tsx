@@ -1,10 +1,12 @@
 import { listTaxonomy } from "@/lib/taxonomy";
 import { TaxonomyManager } from "@/components/taxonomy/TaxonomyManager";
+import { DangerZone } from "@/components/taxonomy/DangerZone";
+import { getResetPreview } from "@/app/actions/reset";
 
 export const dynamic = "force-dynamic";
 
 export default async function TaxonomyPage() {
-  const tree = await listTaxonomy();
+  const [tree, resetCounts] = await Promise.all([listTaxonomy(), getResetPreview()]);
 
   const domainCount = tree.reduce((sum, f) => sum + f.domains.length, 0);
 
@@ -28,6 +30,10 @@ export default async function TaxonomyPage() {
         </header>
         <div className="fade-up fade-up-1">
           <TaxonomyManager initialTree={tree} />
+        </div>
+
+        <div className="fade-up fade-up-2">
+          <DangerZone counts={resetCounts} />
         </div>
       </div>
     </main>
