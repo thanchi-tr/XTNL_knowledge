@@ -357,7 +357,7 @@ code, pre, .mono {
   0%, 100% { transform: scale(1); opacity: 1; }
   50%      { transform: scale(1.5); opacity: 0.6; }
 }
-.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; animation-play-state: var(--ambient-play, running); }
 
 /* ── Game-feel ────────────────────────────────────────────
    Reserved for events that are genuinely rare: a rank change,
@@ -386,7 +386,7 @@ code, pre, .mono {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 1; }
 }
-.aura-breathe { animation: aura-breathe 3.2s ease-in-out infinite; }
+.aura-breathe { animation: aura-breathe 3.2s ease-in-out infinite; animation-play-state: var(--ambient-play, running); }
 
 /* ── Rarity treatments ───────────────────────────────────
    A trading-card foil, earned rather than decorative: the sheen only
@@ -426,13 +426,13 @@ code, pre, .mono {
   0%, 100% { opacity: 0.30; transform: scale(1); }
   50%      { opacity: 0.85; transform: scale(1.06); }
 }
-.ready-ring { animation: ready-ring 2.4s ease-in-out infinite; transform-origin: center; }
+.ready-ring { animation: ready-ring 2.4s ease-in-out infinite; transform-origin: center; animation-play-state: var(--ambient-play, running); }
 
 /* Prerequisite edges you already own carry a slow current toward what they
    feed — the tree reads as *live* rather than as a static diagram, and the
    direction of travel is legible at a glance. */
 @keyframes edge-flow { to { stroke-dashoffset: -24; } }
-.edge-flow { stroke-dasharray: 3 9; animation: edge-flow 1.4s linear infinite; }
+.edge-flow { stroke-dasharray: 3 9; animation: edge-flow 1.4s linear infinite; animation-play-state: var(--ambient-play, running); }
 
 /* One-shot shockwave behind a node the moment it becomes ownable. */
 @keyframes unlock-burst {
@@ -457,14 +457,15 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
 }
-.orbit-cw  { animation: orbit-spin 14s linear infinite; }
-.orbit-ccw { animation: orbit-spin 22s linear infinite reverse; }
+.orbit-cw  { animation: orbit-spin 14s linear infinite; animation-play-state: var(--ambient-play, running); }
+.orbit-ccw { animation: orbit-spin 22s linear infinite reverse; animation-play-state: var(--ambient-play, running); }
 @keyframes orbit-spin { to { transform: rotate(360deg); } }
 
 .twinkle {
   transform-box: fill-box;
   transform-origin: center;
   animation: twinkle 2.6s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes twinkle {
   0%, 100% { opacity: 0.25; transform: scale(0.85); }
@@ -518,6 +519,7 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
   animation: shockwave 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes shockwave {
   0%   { transform: scale(0.5); opacity: 0; }
@@ -529,6 +531,7 @@ code, pre, .mono {
    crown shimmers instead of throbbing as one block. */
 .ray-pulse {
   animation: ray-pulse 3.6s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes ray-pulse {
   0%, 100% { opacity: 0.12; }
@@ -541,6 +544,7 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
   animation: flare-pulse 4.2s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes flare-pulse {
   0%, 100% { transform: scale(0.72) rotate(0deg); opacity: 0.45; }
@@ -554,6 +558,7 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
   animation: corona-pulse 5.2s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes corona-pulse {
   0%, 100% { transform: scale(0.94); opacity: 0.7; }
@@ -568,6 +573,7 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
   animation: ember-rise 3.2s ease-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes ember-rise {
   0%   { transform: translateY(4px) scale(0.5); opacity: 0; }
@@ -580,6 +586,7 @@ code, pre, .mono {
   transform-box: fill-box;
   transform-origin: center;
   animation: core-pulse 3.4s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes core-pulse {
   0%, 100% { opacity: 0.75; }
@@ -600,6 +607,7 @@ code, pre, .mono {
   background: currentColor;
   opacity: 0;
   animation: tag-mote 2.8s ease-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 @keyframes tag-mote {
   0%   { transform: translateY(2px)   scale(0.5); opacity: 0; }
@@ -713,14 +721,29 @@ code, pre, .mono {
    layout change and nothing to re-render.
 
    `.no-motion` is the same switch driven by Android's battery saver, via
-   the Battery Status API where the browser exposes it. */
+   the Battery Status API where the browser exposes it.
+
+   Pausing is opt-in, via `animation-play-state: var(--ambient-play, running)`
+   on the looping rules below. It used to be a blanket `html[data-idle] *`,
+   which was wrong in a way that only showed up on a hidden tab: it also
+   caught the one-shot entrance animations, and those are declared with
+   `both`, so a fade-up paused at t=0 pins its *from* keyframe — opacity 0 —
+   and the page renders blank until the tab is foregrounded. Under
+   `.no-motion` it would never recover at all, so a phone below 20% battery
+   showed an empty app.
+
+   Opt-in also fails in the safe direction: a new ambient effect that forgets
+   the declaration costs some battery, where a new entrance animation under
+   the old rule would have silently become invisible. Finite animations are
+   left alone entirely — they are over within a second and cost nothing to
+   let finish. */
+html[data-idle],
+html.no-motion {
+  --ambient-play: paused;
+}
+
 html[data-idle] *,
-html[data-idle] *::before,
-html[data-idle] *::after,
-html.no-motion *,
-html.no-motion *::before,
-html.no-motion *::after {
-  animation-play-state: paused !important;
+html.no-motion * {
   transition-duration: 0s !important;
 }
 
