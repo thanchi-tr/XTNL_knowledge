@@ -1,5 +1,29 @@
 import { PrismaClient } from "@prisma/client";
 
+/**
+ * Where this client runs matters more than anything it does.
+ *
+ * `vercel.json` pins functions to `icn1` (Seoul) because Supabase runs in
+ * `ap-northeast-2` (Seoul). That pairing is load-bearing and the two must
+ * move together — the config file is strict JSON and cannot carry a comment
+ * saying so, hence this one.
+ *
+ * Measured on the live deployment before the pin: `x-vercel-id` read
+ * `syd1::iad1::…`, so requests entered at the Sydney edge and executed in
+ * Washington DC while the database sat in Seoul. Every query crossed the
+ * Pacific at ~160ms. Co-locating is the right trade even though the user is
+ * in Australia: the browser pays one extra hop, whereas the function was
+ * paying one per query.
+ *
+ * The remaining latency is the pooler. Measured against the real instance on
+ * an identical TCP path (both ports connect in ~160ms), a warm `SELECT 1`
+ * costs ~833ms through the transaction pooler on :6543 but ~161ms through
+ * the session pooler on :5432 — `pgbouncer=true` disables prepared
+ * statements, turning one logical query into roughly five round trips. That
+ * is a `DATABASE_URL` change, not a code change, so it lives in the
+ * deployment environment rather than here.
+ */
+
 // Next.js dev mode hot-reloads modules on every request, which would create
 // a new PrismaClient (and a new connection pool) on every reload without
 // this. Standard Prisma+Next.js singleton pattern.
