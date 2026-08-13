@@ -47,6 +47,27 @@ export function reviewMasteryFraction(ideaLevel: number): number {
   return REVIEW_MASTERY_PER_LEVEL * Math.max(1, ideaLevel);
 }
 
+/**
+ * Combo bonus on mastery income — a deliberately gentle, capped counterpart
+ * to XP's own combo bonus (`COMBO_STEP`/`COMBO_CAP` in xp.ts), not a copy of
+ * it. Mastery is the currency the entire skill tree is priced in; a linear
+ * bonus here, or one with no ceiling, would let a single long session
+ * outrun the slow income curve the rest of this module is built around (see
+ * the module doc comment — "all four paths are deliberately slow").
+ *
+ * Diminishing (sqrt) rather than linear, so the first few consecutive
+ * correct answers matter most and a marathon session past combo 25 buys
+ * almost nothing more — capped at the same +50% ceiling XP's own combo bonus
+ * tops out at, so one long streak can never out-earn what it already earns
+ * in XP terms by a wide margin.
+ */
+export const MASTERY_COMBO_RATE = 0.1;
+export const MASTERY_COMBO_CAP = 0.5;
+
+export function comboMasteryBonus(combo: number): number {
+  return 1 + Math.min(MASTERY_COMBO_CAP, MASTERY_COMBO_RATE * Math.sqrt(Math.max(0, combo)));
+}
+
 /** A Prisma op, not awaited — pushed into srs.ts's existing mastery-transition `$transaction([...])` array. */
 export function mintIdeaMasteryOp(userId: string, ideaId: string, multiplier: number) {
   return prisma.masteryLedgerEntry.create({

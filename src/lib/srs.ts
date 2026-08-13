@@ -14,7 +14,7 @@ import {
 import { recalculateLeveling } from "./leveling";
 import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
 import { recordFieldActivity } from "./field-streaks";
-import { mintIdeaMasteryOp, mintReviewFractionOp } from "./mastery";
+import { mintIdeaMasteryOp, mintReviewFractionOp, comboMasteryBonus } from "./mastery";
 import { getCurrentUserId } from "./user";
 
 // MAX_LEVEL and the interval schedule now live in xp.ts (pure arithmetic,
@@ -204,7 +204,12 @@ export async function applyReviewResult(
     // Every passed review mints a fraction of a mastery point, scaled by
     // the level just cleared — the slow, steady income the skill tree runs
     // on. Same transaction as the XP credit, so the two can never disagree.
-    ops.push(mintReviewFractionOp(userId, ideaId, idea.level, modifiers.masteryMultiplier));
+    // `comboMasteryBonus` layers on top: a longer run of correct answers
+    // mints slightly more, capped and sub-linear so a single long session
+    // cannot out-earn the economy this is meant to trickle into.
+    ops.push(
+      mintReviewFractionOp(userId, ideaId, idea.level, modifiers.masteryMultiplier * comboMasteryBonus(combo))
+    );
     // The whole point on top, once per Idea ever, at the mastery transition.
     if (mastered) {
       ops.push(mintIdeaMasteryOp(userId, ideaId, modifiers.masteryMultiplier));

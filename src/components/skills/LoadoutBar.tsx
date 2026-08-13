@@ -5,13 +5,18 @@ import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
 import { BarCharge, type ChargeVariant } from "./BarCharge";
+import { ComboPopup } from "./ComboPopup";
+import { ComboCodex } from "./ComboCodex";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
-import { resolveResonance, SOLO_SHARE, type LoadoutResonance } from "@/lib/loadout-sets";
+import { resolveResonance, SOLO_SHARE, type LoadoutResonance, type ActiveSet } from "@/lib/loadout-sets";
 import { attachOutcome } from "@/lib/bar-charge-select";
+import { loadSeenSetIds, markSetsSeen } from "@/lib/combo-discovery";
 import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
 import { ResonanceAtmosphere } from "./ResonanceAtmosphere";
 import type { Skill } from "@/lib/skill-pool";
+
+const EMPTY_SEEN_SET = new Set<string>();
 
 export interface LoadoutSlotView {
   slot: number;
@@ -101,22 +106,51 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
   /** One-shot flash when a shape completes that was not held a moment ago. */
   const [locking, setLocking] = useState(false);
   const knownSets = useRef<string | null>(null);
+
+  /** The popup queue for shapes gained just now that this browser has never seen before. */
+  const [discoveryQueue, setDiscoveryQueue] = useState<ActiveSet[]>([]);
+  const [codexOpen, setCodexOpen] = useState(false);
+
   useEffect(() => {
     const ids = resonance.sets.map((s) => s.id).sort().join(",");
     // First render seeds the baseline instead of flashing: arriving on a page
-    // with sets already held is not an achievement that just happened.
+    // with sets already held is not an achievement that just happened. It
+    // still gets silently marked seen (a plain localStorage write, not
+    // React state — the codex reads it fresh whenever it opens instead), so
+    // the codex knows about it from session one without a popup claiming it
+    // was just discovered.
     if (knownSets.current === null) {
       knownSets.current = ids;
+      markSetsSeen(resonance.sets.map((s) => s.id));
       return;
     }
     const had = new Set(knownSets.current.split(",").filter(Boolean));
-    const gained = resonance.sets.some((s) => !had.has(s.id));
+    const gainedSets = resonance.sets.filter((s) => !had.has(s.id));
     knownSets.current = ids;
-    if (!gained) return;
+    if (gainedSets.length === 0) return;
     setLocking(true);
     const t = setTimeout(() => setLocking(false), 950);
+
+    // Only the ones this browser has genuinely never assembled before queue
+    // a popup — re-completing a shape you already know about (re-equip the
+    // same loadout, revisit the page) should not interrupt you again.
+    const freshIds = new Set(markSetsSeen(gainedSets.map((s) => s.id)));
+    if (freshIds.size > 0) {
+      setDiscoveryQueue((q) => [...q, ...gainedSets.filter((s) => freshIds.has(s.id))]);
+    }
     return () => clearTimeout(t);
   }, [resonance.sets]);
+
+  /** Triple-click, within 600ms, anywhere on the footer's own label — reopens the codex without a formula in sight. */
+  const codexClickTimes = useRef<number[]>([]);
+  function handleLabelClick() {
+    const now = Date.now();
+    codexClickTimes.current = [...codexClickTimes.current.filter((t) => now - t < 600), now];
+    if (codexClickTimes.current.length >= 3) {
+      codexClickTimes.current = [];
+      setCodexOpen(true);
+    }
+  }
 
   /**
    * The bar-wide reaction to an attach — surge, meter or bloom, chosen by
@@ -203,12 +237,25 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     });
   }
 
+  const activeSetIds = useMemo(() => new Set(resonance.sets.map((s) => s.id)), [resonance.sets]);
+
   return (
     <>
       {/* Sibling of the bar, never a child: `.loadout-bar` isolates, which
           would trap the atmosphere's negative z-index inside the footer
           instead of letting it sit behind the whole page. */}
       {ambient && <ResonanceAtmosphere resonance={resonance} />}
+
+      <ComboPopup queue={discoveryQueue} onDismiss={() => setDiscoveryQueue([])} />
+      {/* Read fresh rather than kept in React state: by the time this can
+          possibly be open, every `markSetsSeen` write above has already
+          landed in localStorage, so there's nothing to keep in sync. */}
+      <ComboCodex
+        open={codexOpen}
+        onClose={() => setCodexOpen(false)}
+        seenIds={codexOpen ? loadSeenSetIds() : EMPTY_SEEN_SET}
+        activeIds={activeSetIds}
+      />
 
       {picking !== null && (
         <div
@@ -324,7 +371,12 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
         {lit && visual.sweep && <div className="res-sweep" aria-hidden="true" />}
 
         <div className="site-container relative flex items-center gap-4 py-2.5" style={{ zIndex: 1 }}>
-          <div className="shrink-0">
+          <div
+            className="shrink-0"
+            onClick={handleLabelClick}
+            style={{ cursor: "pointer" }}
+            title="Triple-click for the combo codex"
+          >
             <p className="label-xs" style={{ color: lit ? visual.color : undefined }}>
               {lit ? visual.label : "Loadout"}
             </p>

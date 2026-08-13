@@ -1,5 +1,7 @@
 import type { Attribute } from "@prisma/client";
 import type { Skill, SkillRank } from "./skill-pool";
+import { PURE_MAX_TIER } from "./skill-pool";
+import { NEUTRAL_MODIFIERS, type ActiveModifiers } from "./skill-gates";
 
 /**
  * Set bonuses: what ten emblems mean *together*.
@@ -15,6 +17,24 @@ import type { Skill, SkillRank } from "./skill-pool";
  * the rest is unlocked by *composition* — same lineage, same tier, a complete
  * rank spectrum, a tier ladder. Ten unrelated Ultimates are worth noticeably
  * less than a coherent set, which is the whole point.
+ *
+ * **Every shape also grants something concrete.** Composition used to only
+ * ever multiply the printed value of whatever skills you happened to be
+ * carrying — real, but abstract, and invisible until you already understood
+ * the powerShare curve. Each of the 32 shapes below now grants one named
+ * mechanic in its own right (`grant`), stated in the same vocabulary the
+ * skill tree already uses: an extra strike forgiven, a wrong answer that no
+ * longer breaks your combo, a review that stays gracious two days past due
+ * instead of costing you score. "Assemble this shape, get this concrete
+ * thing" is a far more legible promise than "assemble this shape, everything
+ * gets somewhat stronger."
+ *
+ * **Which emblems complete which shape is deliberately never explained
+ * in-app.** `blurb` describes the shape once it is already showing in the
+ * footer; nothing steers a player toward it beforehand. The 32 conditions
+ * below are the actual detection logic and the only place they are written
+ * down — see `combo-discovery.ts` and `ComboCodex.tsx` for how a shape is
+ * revealed exactly once, the first time a player actually assembles it.
  *
  * **Low-level loadouts must be able to do something interesting.** `TRIAD`
  * and `CADRE` need three emblems that merely share an archetype or a tier —
@@ -64,6 +84,37 @@ const RANK_MATERIAL: Record<SkillRank, number> = {
 
 export type ResonanceGrade = "NONE" | "FAINT" | "ALIGNED" | "HARMONIC" | "RESONANT" | "TRANSCENDENT";
 
+/**
+ * What a completed shape actually grants, in the same vocabulary
+ * `ActiveModifiers` already uses — see `foldSetGrants` for exactly how each
+ * kind's `value` is applied. A set never grants RESONANCE-of-resonance
+ * (attenuating a shape's own reward by the powerShare it produced would be
+ * circular); every other modifier kind the skill tree uses is fair game.
+ */
+export type SetGrantKind =
+  | "REVIEW_YIELD"
+  | "DECAY_RESISTANCE"
+  | "DEGRADATION_WARD"
+  | "GRACE_EXTENSION"
+  | "INTERVAL_DILATION"
+  | "COMBO_CEILING"
+  | "COMBO_ANCHOR"
+  | "MASTERY_YIELD"
+  | "STRIKE_TOLERANCE"
+  | "YIELD_FLOOR"
+  | "DEDUP_PRECISION"
+  | "STREAK_AMPLIFIER"
+  | "RESONANCE";
+
+export interface SetGrant {
+  kind: SetGrantKind;
+  value: number;
+  /** Plain statement of the mechanic, shown in the discovery popup and the codex. */
+  effectText: string;
+  /** When it actually matters — the recommendation half of the popup. */
+  tip: string;
+}
+
 export interface ActiveSet {
   id: string;
   name: string;
@@ -74,6 +125,7 @@ export interface ActiveSet {
   difficulty: number;
   /** Contribution to `setStrength`. */
   potency: number;
+  grant: SetGrant;
 }
 
 export interface LoadoutResonance {
@@ -110,6 +162,7 @@ interface SetShape {
   potency: number;
   /** The members satisfying the shape, or null when it does not apply. */
   detect(skills: Skill[]): Skill[] | null;
+  grant: SetGrant;
 }
 
 /** Groups skills by a key, returning the largest group when it meets `min`. */
@@ -151,6 +204,12 @@ function largestAttributeGroup(skills: Skill[], min: number): Skill[] | null {
  * Ordering is presentational only — the footer lists them in this order, so
  * the entry-level sets a new player can actually reach appear at the top
  * rather than being buried under aspirational ones they cannot read yet.
+ *
+ * 32 shapes across 25 families. Every one of the 13 grant kinds is used at
+ * least once; several are used by shapes of deliberately different weight
+ * (Cadre/Phalanx both grant STRIKE_TOLERANCE, Phalanx more) so a player who
+ * discovers the cheap version later finds the expensive one is a real
+ * upgrade, not a different reward entirely.
  */
 export const SET_SHAPES: readonly SetShape[] = [
   {
@@ -161,6 +220,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 0.7,
     potency: 0.07,
     detect: (s) => largestGroup(s, (x) => x.tier, 3),
+    grant: {
+      kind: "STRIKE_TOLERANCE",
+      value: 1,
+      effectText: "One extra wrong answer forgiven before a Strike, on any card.",
+      tip: "A cheap, early cushion — good for a loadout still full of cards you're shaky on.",
+    },
   },
   {
     id: "TRIAD",
@@ -170,6 +235,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 1,
     potency: 0.1,
     detect: (s) => largestGroup(s, (x) => x.archetypeCode, 3),
+    grant: {
+      kind: "GRACE_EXTENSION",
+      value: 1,
+      effectText: "Overdue Ideas get 1 extra day of grace before a late review starts costing you.",
+      tip: "Worth it the moment your schedule gets unpredictable — a missed day stops being a scramble.",
+    },
   },
   {
     id: "PHALANX",
@@ -179,6 +250,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 2,
     potency: 0.17,
     detect: (s) => largestGroup(s, (x) => x.tier, 5),
+    grant: {
+      kind: "STRIKE_TOLERANCE",
+      value: 2,
+      effectText: "Two extra wrong answers forgiven before a Strike, on any card.",
+      tip: "Supersedes Cadre outright — lean on it while pushing into unfamiliar Fields where misses are frequent.",
+    },
   },
   {
     id: "FOCUS",
@@ -188,6 +265,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 2,
     potency: 0.18,
     detect: (s) => largestAttributeGroup(s, 6),
+    grant: {
+      kind: "RESONANCE",
+      value: 6,
+      effectText: "+6% to every attribute score.",
+      tip: "Fires the same qualifying bar every other skill uses — build this when you're just short of unlocking something.",
+    },
   },
   {
     id: "COMPLEMENT",
@@ -197,6 +280,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 2,
     potency: 0.18,
     detect: (s) => (s.length >= 10 ? s : null),
+    grant: {
+      kind: "YIELD_FLOOR",
+      value: 0.15,
+      effectText: "Every passed review pays at least 15% of its undecayed value, no matter how stale the card was.",
+      tip: "Best on an account with a lot of old, decayed backlog — it stops the oldest cards paying almost nothing.",
+    },
   },
   {
     id: "CHOIR",
@@ -206,6 +295,12 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 2.6,
     potency: 0.24,
     detect: (s) => largestGroup(s, (x) => x.archetypeCode, 5),
+    grant: {
+      kind: "GRACE_EXTENSION",
+      value: 2,
+      effectText: "Overdue Ideas get 2 extra days of grace before a late review starts costing you.",
+      tip: "Supersedes Triad — the set to build before a trip or a busy week you already know is coming.",
+    },
   },
   {
     id: "POLYMATH",
@@ -218,6 +313,30 @@ export const SET_SHAPES: readonly SetShape[] = [
       const seen = new Set<Attribute>();
       for (const x of s) for (const a of x.attributes) seen.add(a);
       return seen.size >= 6 ? s : null;
+    },
+    grant: {
+      kind: "DEDUP_PRECISION",
+      value: 0.03,
+      effectText: "The duplicate-idea detector loosens its matching threshold slightly.",
+      tip: "Useful once your Library spans many Fields and near-duplicate Ideas start slipping through under different names.",
+    },
+  },
+  {
+    id: "CONFLUENCE",
+    family: "FUSION",
+    name: "Confluence",
+    blurb: "Two or more Synergy emblems, each already fusing two attributes.",
+    weight: 1.2,
+    potency: 0.09,
+    detect: (s) => {
+      const synergies = s.filter((x) => x.rank === "SYNERGY");
+      return synergies.length >= 2 ? synergies : null;
+    },
+    grant: {
+      kind: "REVIEW_YIELD",
+      value: 0.06,
+      effectText: "+6% points on every passed review.",
+      tip: "A gentle, always-on boost — reasonable to keep running as a default rather than saving for a specific moment.",
     },
   },
   {
@@ -242,6 +361,114 @@ export const SET_SHAPES: readonly SetShape[] = [
       }
       return members;
     },
+    grant: {
+      kind: "INTERVAL_DILATION",
+      value: 0.12,
+      effectText: "Review intervals stretch 12% further before a card comes due again.",
+      tip: "A real breadth build across five different lineages earns you a lighter daily queue — use it once the backlog feels heavy.",
+    },
+  },
+  {
+    id: "GENESIS",
+    family: "GENESIS",
+    name: "Genesis",
+    blurb: "Five or more Tier I or II emblems — a loadout built almost entirely of fresh unlocks.",
+    weight: 1.1,
+    potency: 0.08,
+    detect: (s) => {
+      const fresh = s.filter((x) => (x.rank === "PURE" || x.rank === "SYNERGY") && x.tier <= 2);
+      return fresh.length >= 5 ? fresh : null;
+    },
+    grant: {
+      kind: "COMBO_ANCHOR",
+      value: 0.3,
+      effectText: "A wrong answer keeps 30% of your combo instead of zeroing it.",
+      tip: "Naturally available early — a new account's first real taste of a streak that survives a single mistake.",
+    },
+  },
+  {
+    id: "HORIZON",
+    family: "SPAN",
+    name: "Horizon",
+    blurb: "A Tier I and a Tier VIII from the same archetype, both equipped.",
+    weight: 1.8,
+    potency: 0.14,
+    detect: (s) => {
+      const byArch = new Map<string, Skill[]>();
+      for (const x of s) {
+        if (x.rank !== "PURE") continue;
+        const g = byArch.get(x.archetypeCode);
+        if (g) g.push(x);
+        else byArch.set(x.archetypeCode, [x]);
+      }
+      for (const g of byArch.values()) {
+        const lo = g.find((x) => x.tier === 1);
+        const hi = g.find((x) => x.tier === PURE_MAX_TIER);
+        if (lo && hi) return [lo, hi];
+      }
+      return null;
+    },
+    grant: {
+      kind: "INTERVAL_DILATION",
+      value: 0.08,
+      effectText: "Review intervals stretch 8% further before a card comes due again.",
+      tip: "A lineage's beginning and end carried together — a small, early taste of what Ascension pays out in full.",
+    },
+  },
+  {
+    id: "GRADIENT",
+    family: "RANKSPAN",
+    name: "Gradient",
+    blurb: "Three or more distinct ranks represented.",
+    weight: 1.5,
+    potency: 0.12,
+    detect: (s) => {
+      const ranks = new Set(s.map((x) => x.rank));
+      return ranks.size >= 3 ? s : null;
+    },
+    grant: {
+      kind: "REVIEW_YIELD",
+      value: 0.08,
+      effectText: "+8% points on every passed review.",
+      tip: "A natural byproduct of a loadout that isn't all one rank — check whether you already have this before chasing anything else.",
+    },
+  },
+  {
+    id: "IRONCLAD",
+    family: "REDUNDANCY",
+    name: "Ironclad",
+    blurb: "Two or more equipped emblems whose own effect is a Degradation Ward.",
+    weight: 1.6,
+    potency: 0.13,
+    detect: (s) => {
+      const wards = s.filter((x) => x.effect.kind === "DEGRADATION_WARD");
+      return wards.length >= 2 ? wards : null;
+    },
+    grant: {
+      kind: "STRIKE_TOLERANCE",
+      value: 1,
+      effectText: "One extra wrong answer forgiven before a Strike, on any card.",
+      tip: "Redundant wards say the same thing twice — the set answers by making a slip cost even less.",
+    },
+  },
+  {
+    id: "UNBROKEN",
+    family: "RESILIENCE",
+    name: "Unbroken",
+    blurb: "One Degradation Ward and one Strike Tolerance emblem, both equipped.",
+    weight: 1.7,
+    potency: 0.14,
+    detect: (s) => {
+      const ward = s.find((x) => x.effect.kind === "DEGRADATION_WARD");
+      const strike = s.find((x) => x.effect.kind === "STRIKE_TOLERANCE");
+      return ward && strike ? [ward, strike] : null;
+    },
+    grant: {
+      kind: "COMBO_ANCHOR",
+      value: 0.4,
+      effectText: "A wrong answer keeps 40% of your combo instead of zeroing it.",
+      tip: "A loadout built around not losing things extends that promise to your streak too.",
+    },
   },
   {
     id: "TOOLKIT",
@@ -253,6 +480,70 @@ export const SET_SHAPES: readonly SetShape[] = [
     detect: (s) => {
       const kinds = new Set(s.map((x) => x.effect.kind));
       return kinds.size >= 7 ? s : null;
+    },
+    grant: {
+      kind: "STREAK_AMPLIFIER",
+      value: 0.2,
+      effectText: "The daily Field streak bonus is worth 20% more.",
+      tip: "A generalist build pays off in the currency generalism doesn't otherwise touch — showing up daily.",
+    },
+  },
+  {
+    id: "EQUILIBRIUM",
+    family: "BALANCE",
+    name: "Equilibrium",
+    blurb: "At least three Pure and three Synergy emblems equipped together.",
+    weight: 1.6,
+    potency: 0.13,
+    detect: (s) => {
+      const pure = s.filter((x) => x.rank === "PURE");
+      const syn = s.filter((x) => x.rank === "SYNERGY");
+      return pure.length >= 3 && syn.length >= 3 ? [...pure, ...syn] : null;
+    },
+    grant: {
+      kind: "STREAK_AMPLIFIER",
+      value: 0.12,
+      effectText: "The daily Field streak bonus is worth 12% more.",
+      tip: "The gentlest route to the same reward Toolkit pays out in full, reachable earlier.",
+    },
+  },
+  {
+    id: "TRIANGULATION",
+    family: "PAIRING",
+    name: "Triangulation",
+    blurb: "A Synergy and both of its two parent attributes' Tier V+ Pures, all equipped.",
+    weight: 2.3,
+    potency: 0.18,
+    detect: (s) => {
+      const synergies = s.filter((x) => x.rank === "SYNERGY");
+      for (const syn of synergies) {
+        const [a1, a2] = syn.attributes;
+        const p1 = s.find((x) => x.rank === "PURE" && x.tier >= 5 && x.attributes[0] === a1);
+        const p2 = s.find((x) => x.rank === "PURE" && x.tier >= 5 && x.attributes[0] === a2);
+        if (p1 && p2) return [syn, p1, p2];
+      }
+      return null;
+    },
+    grant: {
+      kind: "MASTERY_YIELD",
+      value: 0.15,
+      effectText: "+15% mastery points from every source.",
+      tip: "A deliberate, specific pairing — worth assembling right before a push toward a Capstone that needs the points.",
+    },
+  },
+  {
+    id: "PURIST",
+    family: "MONOCHROME",
+    name: "Purist",
+    blurb: "Eight or more emblems, all Pure rank.",
+    weight: 2.1,
+    potency: 0.16,
+    detect: (s) => (s.length >= 8 && s.every((x) => x.rank === "PURE") ? s : null),
+    grant: {
+      kind: "REVIEW_YIELD",
+      value: 0.1,
+      effectText: "+10% points on every passed review.",
+      tip: "Fundamentals only, eight deep — a legitimate build in its own right, not just a stepping stone to Synergy.",
     },
   },
   {
@@ -274,6 +565,184 @@ export const SET_SHAPES: readonly SetShape[] = [
       }
       return members;
     },
+    grant: {
+      kind: "MASTERY_YIELD",
+      value: 0.25,
+      effectText: "+25% mastery points from every source.",
+      tip: "The whole spectrum, rewarded in the currency that measures a whole career — keep it running once you have it.",
+    },
+  },
+  {
+    id: "CONTINUUM",
+    family: "RANKSPAN",
+    name: "Continuum",
+    blurb: "Four or more distinct ranks represented.",
+    weight: 3.2,
+    potency: 0.22,
+    detect: (s) => {
+      const ranks = new Set(s.map((x) => x.rank));
+      return ranks.size >= 4 ? s : null;
+    },
+    grant: {
+      kind: "REVIEW_YIELD",
+      value: 0.16,
+      effectText: "+16% points on every passed review.",
+      tip: "Supersedes Gradient — one rank short of Spectrum's full run, and far easier to hold onto day to day.",
+    },
+  },
+  {
+    id: "VANGUARD",
+    family: "ELEVATION",
+    name: "Vanguard",
+    blurb: "Three or more emblems Capstone rank or higher.",
+    weight: 2.2,
+    potency: 0.17,
+    detect: (s) => {
+      const heavy = s.filter((x) => x.rank !== "PURE" && x.rank !== "SYNERGY");
+      return heavy.length >= 3 ? heavy : null;
+    },
+    grant: {
+      kind: "DEGRADATION_WARD",
+      value: 1,
+      effectText: "+1 weekly Degradation Ward charge — blocks a level drop from an unattempted or failed review.",
+      tip: "Hard-won emblems earning you room to actually miss a review without paying for it.",
+    },
+  },
+  {
+    id: "INVESTMENT",
+    family: "ECONOMY",
+    name: "Investment",
+    blurb: "Active emblems whose combined mastery cost is at least 200.",
+    weight: 1.9,
+    potency: 0.15,
+    detect: (s) => {
+      const total = s.reduce((sum, x) => sum + x.masteryCost, 0);
+      return total >= 200 ? s : null;
+    },
+    grant: {
+      kind: "MASTERY_YIELD",
+      value: 0.1,
+      effectText: "+10% mastery points from every source.",
+      tip: "What you spent to equip this loadout starts paying part of itself back.",
+    },
+  },
+  {
+    id: "CROSSCURRENT",
+    family: "MIRROR",
+    name: "Crosscurrent",
+    blurb: "Two Synergy emblems sharing no attribute at all — four distinct attributes between just two slots.",
+    weight: 2.1,
+    potency: 0.16,
+    detect: (s) => {
+      const synergies = s.filter((x) => x.rank === "SYNERGY");
+      for (let i = 0; i < synergies.length; i++) {
+        for (let j = i + 1; j < synergies.length; j++) {
+          const [a, b] = [synergies[i], synergies[j]];
+          if (!a.attributes.some((x) => b.attributes.includes(x))) return [a, b];
+        }
+      }
+      return null;
+    },
+    grant: {
+      kind: "DEDUP_PRECISION",
+      value: 0.025,
+      effectText: "The duplicate-idea detector loosens its matching threshold slightly.",
+      tip: "Two fusions that share nothing still catch the same kind of near-duplicate Idea between them.",
+    },
+  },
+  {
+    id: "CROWNED",
+    family: "COURT",
+    name: "Crowned",
+    blurb: "An Apex and a Synergy that shares one of its attributes, both equipped.",
+    weight: 2.8,
+    potency: 0.2,
+    detect: (s) => {
+      const apexes = s.filter((x) => x.rank === "APEX");
+      for (const ap of apexes) {
+        const partner = s.find((x) => x.rank === "SYNERGY" && x.attributes.includes(ap.attributes[0]));
+        if (partner) return [ap, partner];
+      }
+      return null;
+    },
+    grant: {
+      kind: "COMBO_CEILING",
+      value: 3,
+      effectText: "The combo ceiling rises by 3 steps before it stops paying more per correct answer.",
+      tip: "Best on a long, focused review session — the extra ceiling only matters once you're already running a real combo.",
+    },
+  },
+  {
+    id: "BASTION",
+    family: "ELEVATION",
+    name: "Bastion",
+    blurb: "Six or more emblems Capstone rank or higher.",
+    weight: 4.5,
+    potency: 0.32,
+    detect: (s) => {
+      const heavy = s.filter((x) => x.rank !== "PURE" && x.rank !== "SYNERGY");
+      return heavy.length >= 6 ? heavy : null;
+    },
+    grant: {
+      kind: "DEGRADATION_WARD",
+      value: 2,
+      effectText: "+2 weekly Degradation Ward charges — blocks a level drop from an unattempted or failed review.",
+      tip: "Supersedes Vanguard — enough that a genuinely bad week still costs you nothing structurally.",
+    },
+  },
+  {
+    id: "NEXUS",
+    family: "FUSION",
+    name: "Nexus",
+    blurb: "Four or more Synergy emblems.",
+    weight: 2.8,
+    potency: 0.19,
+    detect: (s) => {
+      const synergies = s.filter((x) => x.rank === "SYNERGY");
+      return synergies.length >= 4 ? synergies : null;
+    },
+    grant: {
+      kind: "REVIEW_YIELD",
+      value: 0.14,
+      effectText: "+14% points on every passed review.",
+      tip: "Supersedes Confluence — a loadout built almost entirely on cross-attribute fusions.",
+    },
+  },
+  {
+    id: "FORTUNE",
+    family: "ECONOMY",
+    name: "Fortune",
+    blurb: "Active emblems whose combined mastery cost is at least 800.",
+    weight: 4,
+    potency: 0.3,
+    detect: (s) => {
+      const total = s.reduce((sum, x) => sum + x.masteryCost, 0);
+      return total >= 800 ? s : null;
+    },
+    grant: {
+      kind: "MASTERY_YIELD",
+      value: 0.22,
+      effectText: "+22% mastery points from every source.",
+      tip: "Supersedes Investment — a loadout this expensive should visibly compound, not just sit there.",
+    },
+  },
+  {
+    id: "POLYGLOT",
+    family: "DIASPORA",
+    name: "Polyglot",
+    blurb: "Seven or more distinct archetypes represented among active emblems.",
+    weight: 2.5,
+    potency: 0.19,
+    detect: (s) => {
+      const codes = new Set(s.map((x) => x.archetypeCode));
+      return codes.size >= 7 ? s : null;
+    },
+    grant: {
+      kind: "GRACE_EXTENSION",
+      value: 3,
+      effectText: "Overdue Ideas get 3 extra days of grace before a late review starts costing you.",
+      tip: "The breadth-first counterpart to Choir's depth — a loadout spread this wide already forgives a scattered schedule.",
+    },
   },
   {
     id: "MONOLITH",
@@ -287,6 +756,89 @@ export const SET_SHAPES: readonly SetShape[] = [
     weight: 6,
     potency: 0.4,
     detect: (s) => largestGroup(s, (x) => x.archetypeCode, 8),
+    grant: {
+      kind: "GRACE_EXTENSION",
+      value: 4,
+      effectText: "Overdue Ideas get 4 extra days of grace before a late review starts costing you.",
+      tip: "Supersedes Choir and Triad both — total commitment to one lineage buys the widest forgiveness in the game.",
+    },
+  },
+  {
+    id: "LADDER",
+    family: "LADDER",
+    name: "Complete Ladder",
+    blurb: "Every Pure tier, I through VIII, of one archetype, all equipped.",
+    weight: 5.2,
+    potency: 0.34,
+    detect: (s) => {
+      const byArch = new Map<string, Skill[]>();
+      for (const x of s) {
+        if (x.rank !== "PURE") continue;
+        const g = byArch.get(x.archetypeCode);
+        if (g) g.push(x);
+        else byArch.set(x.archetypeCode, [x]);
+      }
+      for (const g of byArch.values()) {
+        const tiers = new Set(g.map((x) => x.tier));
+        let complete = true;
+        for (let t = 1; t <= PURE_MAX_TIER; t++) {
+          if (!tiers.has(t)) {
+            complete = false;
+            break;
+          }
+        }
+        if (complete) return g;
+      }
+      return null;
+    },
+    grant: {
+      kind: "DECAY_RESISTANCE",
+      value: 0.05,
+      effectText: "Idea decay slows — the lambda governing how fast an unreviewed card weakens drops by 0.05.",
+      tip: "A full ladder is eight of your ten slots — worth it on the one lineage you genuinely never want to lose ground on.",
+    },
+  },
+  {
+    id: "OMNISCIENT",
+    family: "BREADTH_MATCH",
+    name: "Omniscient",
+    blurb: "An equipped Ultimate plus an emblem for each attribute its breadth check demands.",
+    weight: 4.8,
+    potency: 0.35,
+    detect: (s) => {
+      const ultimates = s.filter((x) => x.rank === "ULTIMATE");
+      for (const u of ultimates) {
+        const reqs = u.breadthRequirement ?? [];
+        if (reqs.length === 0) continue;
+        const covering = reqs.map((r) => s.find((x) => x !== u && x.attributes.includes(r.attribute)));
+        if (covering.every((c): c is Skill => c !== undefined)) return [u, ...covering];
+      }
+      return null;
+    },
+    grant: {
+      kind: "RESONANCE",
+      value: 10,
+      effectText: "+10% to every attribute score.",
+      tip: "Actively training exactly what an Ultimate quietly demands of you — the surest way to keep it from ever going dormant.",
+    },
+  },
+  {
+    id: "DUALITY",
+    family: "TERMINUS",
+    name: "Duality",
+    blurb: "Two or more Ultimate emblems equipped at once.",
+    weight: 5.8,
+    potency: 0.38,
+    detect: (s) => {
+      const ultimates = s.filter((x) => x.rank === "ULTIMATE");
+      return ultimates.length >= 2 ? ultimates : null;
+    },
+    grant: {
+      kind: "YIELD_FLOOR",
+      value: 0.3,
+      effectText: "Every passed review pays at least 30% of its undecayed value, no matter how stale the card was.",
+      tip: "Two lineage termini at once — no review this loadout touches should ever be worth almost nothing.",
+    },
   },
 ];
 
@@ -368,7 +920,15 @@ export function resolveResonance(active: Skill[]): LoadoutResonance {
     // would be promising a power gap the numbers never deliver.
     const potency = shape.potency * (1 + Math.log2(1 + material) * 0.18);
 
-    sets.push({ id: shape.id, name: shape.name, blurb: shape.blurb, members, difficulty, potency });
+    sets.push({
+      id: shape.id,
+      name: shape.name,
+      blurb: shape.blurb,
+      members,
+      difficulty,
+      potency,
+      grant: shape.grant,
+    });
     raw += difficulty;
     strength += potency;
   }
@@ -400,3 +960,79 @@ export const NO_RESONANCE: LoadoutResonance = {
   grade: "NONE",
   powerShare: SOLO_SHARE,
 };
+
+/**
+ * What a completed shape grants, folded on top of the skill baseline — the
+ * same "best value per kind, never summed" rule `foldEffects` uses, applied
+ * here across whichever sets are simultaneously active rather than across
+ * skills. Deliberately a separate pass from `attenuateModifiers`: a set's own
+ * grant is not attenuated by the powerShare it itself produces, the same
+ * reason boons sit outside that attenuation in `skill-effects.ts`.
+ *
+ * Each kind's `value` has one fixed meaning, matching the unit its
+ * `ActiveModifiers` field already uses:
+ *   - multiplier-shaped kinds (REVIEW_YIELD, INTERVAL_DILATION, MASTERY_YIELD,
+ *     STREAK_AMPLIFIER) store a fraction and stack multiplicatively on top —
+ *     `value: 0.06` means "+6%".
+ *   - count-shaped kinds (DEGRADATION_WARD, GRACE_EXTENSION, COMBO_CEILING,
+ *     STRIKE_TOLERANCE) store a flat integer and add.
+ *   - floor-shaped kinds (COMBO_ANCHOR, YIELD_FLOOR) store the guaranteed
+ *     minimum and take the max against whatever skills already provide.
+ *   - DECAY_RESISTANCE stores a flat lambda reduction; DEDUP_PRECISION and
+ *     RESONANCE store flat deltas and add.
+ */
+export function foldSetGrants(base: ActiveModifiers, sets: ActiveSet[]): ActiveModifiers {
+  const best = new Map<SetGrantKind, number>();
+  for (const s of sets) {
+    const cur = best.get(s.grant.kind);
+    if (cur === undefined || s.grant.value > cur) best.set(s.grant.kind, s.grant.value);
+  }
+  const v = (k: SetGrantKind) => best.get(k);
+  const m: ActiveModifiers = { ...base };
+
+  const reviewYield = v("REVIEW_YIELD");
+  if (reviewYield !== undefined) m.reviewYieldMultiplier *= 1 + reviewYield;
+
+  const decay = v("DECAY_RESISTANCE");
+  if (decay !== undefined) m.lambda = Math.max(0.02, m.lambda - decay);
+
+  const ward = v("DEGRADATION_WARD");
+  if (ward !== undefined) m.wardCharges += ward;
+
+  const grace = v("GRACE_EXTENSION");
+  if (grace !== undefined) m.graceExtraDays += grace;
+
+  const interval = v("INTERVAL_DILATION");
+  if (interval !== undefined) m.intervalMultiplier *= 1 + interval;
+
+  const comboCeiling = v("COMBO_CEILING");
+  if (comboCeiling !== undefined) m.comboCap += comboCeiling;
+
+  const comboAnchor = v("COMBO_ANCHOR");
+  if (comboAnchor !== undefined) m.comboRetained = Math.max(m.comboRetained, comboAnchor);
+
+  const mastery = v("MASTERY_YIELD");
+  if (mastery !== undefined) m.masteryMultiplier *= 1 + mastery;
+
+  const strikes = v("STRIKE_TOLERANCE");
+  if (strikes !== undefined) m.extraStrikes += strikes;
+
+  const floor = v("YIELD_FLOOR");
+  if (floor !== undefined) m.yieldFloorFraction = Math.max(m.yieldFloorFraction, floor);
+
+  const dedup = v("DEDUP_PRECISION");
+  if (dedup !== undefined) m.dedupThresholdDelta += dedup;
+
+  const streakAmp = v("STREAK_AMPLIFIER");
+  if (streakAmp !== undefined) m.streakMultiplier *= 1 + streakAmp;
+
+  const resonance = v("RESONANCE");
+  if (resonance !== undefined) m.resonancePercent += resonance;
+
+  return m;
+}
+
+// Re-exported so callers that only need the neutral baseline (e.g. a codex
+// entry for a shape that has never been completed) don't need a second
+// import from skill-gates.ts.
+export { NEUTRAL_MODIFIERS };

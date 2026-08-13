@@ -24,7 +24,7 @@ import {
   NEUTRAL_MODIFIERS,
   type ActiveModifiers,
 } from "./skill-gates";
-import { resolveResonance, type LoadoutResonance } from "./loadout-sets";
+import { resolveResonance, foldSetGrants, type LoadoutResonance } from "./loadout-sets";
 
 /**
  * The database half of the progression system: reads Field/streak/skill/
@@ -198,8 +198,15 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
   // Attenuated on both passes. Gating on printed values and then paying out
   // attenuated ones would let a loadout unlock skills on strength it does
-  // not actually have.
-  const firstFold = attenuateModifiers(foldEffects(firstPass), resolveResonance(firstPass).powerShare);
+  // not actually have. Set grants are folded in here too — Focus and
+  // Omniscient can grant RESONANCE on their own, with no individual skill
+  // involved, and that has to reach the bootstrap or a loadout whose only
+  // source of RESONANCE is a completed shape would gate as if it had none.
+  const firstResonance = resolveResonance(firstPass);
+  const firstFold = foldSetGrants(
+    attenuateModifiers(foldEffects(firstPass), firstResonance.powerShare),
+    firstResonance.sets
+  );
 
   const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier);
   const isActive = (s: Skill) => meetsRequirements(s, scores, firstFold.resonancePercent, penalty);
@@ -224,13 +231,14 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     benchedSkills,
     resonance,
     // Order matters: skills are attenuated to what the loadout's coherence
-    // actually realises, boons lift that, debuffs cut it. Applying debuffs
-    // last means a penalty bites the state you actually have rather than
-    // being cancelled out by a fresh buff. Boons sit outside the attenuation
-    // because they are Boss spoils, not emblems — set composition should not
-    // decide what a reward is worth.
+    // actually realises, set grants land on top of that at full strength
+    // (never attenuated by the powerShare they themselves produced — the
+    // same reason boons sit outside the attenuation), then boons lift that,
+    // then debuffs cut it. Applying debuffs last means a penalty bites the
+    // state you actually have rather than being cancelled out by a fresh
+    // buff.
     modifiers: foldDebuffs(
-      foldBoons(attenuateModifiers(foldEffects(activeSkills), resonance.powerShare), boons),
+      foldBoons(foldSetGrants(attenuateModifiers(foldEffects(activeSkills), resonance.powerShare), resonance.sets), boons),
       debuffs
     ),
     debuffs,
