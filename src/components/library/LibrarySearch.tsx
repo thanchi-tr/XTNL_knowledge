@@ -7,6 +7,7 @@ import { bandFor, DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty"
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { displayQuestion, displayAnswer } from "@/lib/idea-display";
 import { fieldColor } from "@/lib/palette";
+import { fieldTier, nextTierAt } from "@/lib/field-tier";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { QUESTION_TYPES } from "@/lib/idea-payload";
 
@@ -31,6 +32,8 @@ export interface LibraryIdea {
 interface Props {
   ideas: LibraryIdea[];
   fieldNames: string[];
+  /** Level per field name, driving the tier decoration on the "by field" tiles. */
+  fieldLevels: Record<string, number>;
   domainsByField: Record<string, string[]>;
   allTags: string[];
 }
@@ -165,7 +168,7 @@ function FacetRow({ label, children }: { label: string; children: React.ReactNod
  * faceted-search contract, and the one that makes multi-field selection
  * mean "show me all of these" rather than the empty intersection.
  */
-export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Props) {
+export function LibrarySearch({ ideas, fieldNames, fieldLevels, domainsByField, allTags }: Props) {
   const [query, setQuery] = useState("");
   const [fieldFilter, setFieldFilter] = useState<Set<string>>(new Set());
   const [domainFilter, setDomainFilter] = useState<Set<string>>(new Set());
@@ -376,8 +379,34 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
       group.subs.set(sub, (group.subs.get(sub) ?? 0) + 1);
     }
 
-    return [...map.values()].sort((a, b) => b.ideas.length - a.ideas.length || a.label.localeCompare(b.label));
-  }, [results, view]);
+    /**
+     * With nothing filtered, the field view lists every Field — including
+     * ones holding no ideas yet.
+     *
+     * Groups are built from matching ideas, so an empty Field would otherwise
+     * be invisible in the very view whose job is to show the shape of the
+     * library. A Field you created and have not filled is a real part of that
+     * shape, and it now carries a level worth seeing. Once any filter or
+     * query is active the opposite is true: a Field with no matches is not an
+     * answer, so only matching groups survive.
+     */
+    if (view === "field" && activeTokens.length === 0 && query.trim() === "") {
+      for (const name of fieldNames) {
+        if (map.has(name)) continue;
+        map.set(name, { key: name, label: name, color: fieldColor(name), ideas: [], subs: new Map() });
+      }
+    }
+
+    return [...map.values()].sort((a, b) => {
+      // Level leads in the field view, so the ladder the decoration describes
+      // is also the order you read the tiles in.
+      if (view === "field") {
+        const byLevel = (fieldLevels[b.key] ?? 0) - (fieldLevels[a.key] ?? 0);
+        if (byLevel !== 0) return byLevel;
+      }
+      return b.ideas.length - a.ideas.length || a.label.localeCompare(b.label);
+    });
+  }, [results, view, activeTokens.length, query, fieldNames, fieldLevels]);
 
   const openGroup = openKey === null ? null : (groups.find((g) => g.key === openKey) ?? null);
   const modalIdeas = !openGroup
@@ -684,12 +713,33 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
         {groups.map((g) => {
           const subs = [...g.subs.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
           const mastered = g.ideas.filter((i) => i.level >= MASTERY_LEVEL).length;
+          // Tier decoration applies to fields only — a collection has no
+          // level, and inventing one for the sake of symmetry would be
+          // decoration that means nothing.
+          const level = view === "field" ? (fieldLevels[g.key] ?? 0) : null;
+          const tier = level === null ? null : fieldTier(level);
+          const nextAt = level === null ? null : nextTierAt(level);
           return (
             <li
               key={g.key}
-              className="card card-hover p-3.5"
-              style={{ borderLeftColor: g.color, borderLeftWidth: 3 }}
+              className={`card card-hover p-3.5${tier ? " ftile" : ""}`}
+              {...(tier
+                ? {
+                    "data-tier": tier.tier,
+                    "data-lit": tier.lit ? "1" : "0",
+                    "data-notches": tier.notches ? "1" : "0",
+                  }
+                : {})}
+              style={
+                {
+                  borderLeftColor: g.color,
+                  borderLeftWidth: 3,
+                  ...(tier ? { "--tier-accent": g.color, "--tier-glow": tier.glow } : {}),
+                } as React.CSSProperties
+              }
             >
+              {tier?.sheen && <span className="ftile-sheen" aria-hidden="true" />}
+              {tier?.crest && <span className="ftile-crest" aria-hidden="true" />}
               <button
                 type="button"
                 onClick={() => {
@@ -699,9 +749,27 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
                 className="w-full text-left"
                 style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
               >
-                <span className="mono block uppercase" style={{ fontSize: 11, fontWeight: 700, color: g.color }}>
-                  {g.label}
+                <span className="flex items-start justify-between gap-2">
+                  <span className="mono uppercase" style={{ fontSize: 11, fontWeight: 700, color: g.color }}>
+                    {g.label}
+                  </span>
+                  {tier?.badge && (
+                    <span
+                      className="ftile-badge mono shrink-0"
+                      title={`${tier.label} — ${tier.blurb}${nextAt ? ` Next tier at level ${nextAt}.` : ""}`}
+                    >
+                      Lv {level}
+                    </span>
+                  )}
                 </span>
+                {/* Named only once the tier means something. A "Dormant"
+                    label on every empty field would be noise on exactly the
+                    tiles that have least to say. */}
+                {tier && tier.tier !== "DORMANT" && (
+                  <span className="mt-0.5 block" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+                    {tier.label}
+                  </span>
+                )}
                 {view === "collection" && (
                   <span className="mt-0.5 block" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
                     {COLLECTION_BLURBS[g.key as CollectionLabel]}
@@ -946,7 +1014,13 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
         })}
               {modalIdeas.length === 0 && (
                 <li className="px-4 py-8 text-center" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-                  Every idea here was removed.
+                  {/* A field that was created and never filled is not the
+                      same as one you have just emptied, and telling someone
+                      their ideas were "removed" when they never wrote any is
+                      alarming for no reason. */}
+                  {openGroup.ideas.length === 0
+                    ? "Nothing filed here yet."
+                    : "Every idea here was removed."}
                 </li>
               )}
             </ul>

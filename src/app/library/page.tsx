@@ -30,6 +30,11 @@ export default async function LibraryPage() {
   );
 
   const fieldNames = fields.map((f) => f.name);
+  // Level per field, for the tier decoration on the "by field" tiles. Keyed
+  // by name because that is what an Idea carries into the client — the
+  // library never needs field ids.
+  const fieldLevels: Record<string, number> = {};
+  for (const f of fields) fieldLevels[f.name] = f.level;
   const domainsByField: Record<string, string[]> = {};
   for (const f of fields) domainsByField[f.name] = f.domains.map((d) => d.name);
 
@@ -57,6 +62,7 @@ export default async function LibraryPage() {
         <LibrarySearch
           ideas={ideas}
           fieldNames={fieldNames}
+          fieldLevels={fieldLevels}
           domainsByField={domainsByField}
           allTags={allTags}
         />

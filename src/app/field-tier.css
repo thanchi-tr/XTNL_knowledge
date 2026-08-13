@@ -1,0 +1,152 @@
+/* ═══ FIELD TIERS ════════════════════════════════════════
+   Decoration on a Field's library tile, driven by its level.
+
+   Every ornament is switched by a `data-*` attribute set from the tier table
+   in src/lib/field-tier.ts, and they are cumulative — a Monumental field
+   carries the badge, the lit border, the notches, the sheen and the crest at
+   once. Tiers are therefore told apart by *what is present* rather than by
+   how bright something is, which survives being looked at on a phone in
+   daylight where a difference of opacity does not.
+
+   `--tier-accent` is the field's own hashed colour, passed in inline. Level
+   deliberately does not change the hue: the accent is what tells one field
+   from another, and re-using it for progression would trade the identity
+   readout for the progression one.
+
+   The two looping animations opt into `--ambient-play`, like everything else
+   that runs forever in this app — see the POWER block in globals.css.
+   ═══════════════════════════════════════════════════════ */
+
+.ftile {
+  position: relative;
+  overflow: hidden;
+  transition: border-color .3s ease, box-shadow .3s ease;
+}
+
+/* Lit — ESTABLISHED and up. The glow is a level-scaled wash rather than a
+   hard border, so a mature field reads as warm rather than as outlined.
+
+   Written as `.card.ftile[…]` rather than `.ftile[…]` to out-specify the
+   bare-mode rule in atmosphere.css, which flattens `.card` shadows when no
+   loadout is equipped. That rule scores (0,2,1) and silently won, so the
+   glow never appeared on any tier — measured as `box-shadow: none` on all
+   six tiles. Two classes plus an attribute takes it to (0,3,0).
+
+   It should out-specify it: bare mode strips decoration that a *loadout*
+   would have earned, and a Field's level is earned separately. Stripping it
+   would mean an unequipped account could not see its own progress. */
+.card.ftile[data-lit="1"] {
+  border-color: color-mix(in srgb, var(--tier-accent) 34%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tier-accent) 10%, transparent),
+    0 6px 26px -14px color-mix(in srgb, var(--tier-accent) calc(var(--tier-glow, 0) * 100%), transparent);
+}
+
+/* Notches — SUBSTANTIAL and up. Corner brackets, drawn with borders on two
+   absolutely-positioned boxes so they cost no extra elements in the markup
+   and cannot be mistaken for a focus ring. */
+.ftile[data-notches="1"]::before,
+.ftile[data-notches="1"]::after {
+  content: "";
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+  border-color: color-mix(in srgb, var(--tier-accent) 55%, transparent);
+  border-style: solid;
+}
+
+.ftile[data-notches="1"]::before {
+  top: 6px;
+  right: 6px;
+  border-width: 1px 1px 0 0;
+}
+
+.ftile[data-notches="1"]::after {
+  bottom: 6px;
+  right: 6px;
+  border-width: 0 1px 1px 0;
+}
+
+/* Sheen — FORMIDABLE and up. A slow diagonal pass. Long and infrequent on
+   purpose: a tile grid where every card is constantly shining is a grid you
+   cannot read. */
+.ftile-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ftile-sheen::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  bottom: -60%;
+  width: 40%;
+  left: -60%;
+  transform: rotate(18deg);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--tier-accent) 14%, transparent) 50%,
+    transparent 100%
+  );
+  animation: ftile-sheen 9s cubic-bezier(.5, 0, .5, 1) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes ftile-sheen {
+  0%        { left: -60%; }
+  45%, 100% { left: 130%; }
+}
+
+/* Crest — MONUMENTAL only. A slowly turning ring behind the level badge,
+   the one ornament nothing below the top of the ladder has. */
+.ftile-crest {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--tier-accent) 45%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--tier-accent) 30%, transparent);
+  animation: ftile-crest 18s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+/* Dashed, so the rotation is visible at all — a plain circle turning looks
+   identical at every angle. */
+.ftile-crest::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 1px dashed color-mix(in srgb, var(--tier-accent) 40%, transparent);
+}
+
+@keyframes ftile-crest {
+  to { transform: rotate(360deg); }
+}
+
+/* The level badge — NASCENT and up. */
+.ftile-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  white-space: nowrap;
+  color: var(--tier-accent);
+  border: 1px solid color-mix(in srgb, var(--tier-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--tier-accent) 12%, transparent);
+}
+
+/* A dormant field is legible and plainly unstarted, never broken-looking. */
+.ftile[data-tier="DORMANT"] {
+  opacity: .72;
+}
