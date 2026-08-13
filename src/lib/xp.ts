@@ -187,8 +187,53 @@ export function dueDateFromOffset(offsetDays: number, from: Date = new Date()): 
  */
 export const DOMAIN_LEVEL_STEP = 7;
 
-export function domainLevel(totalPoints: number): number {
+/** The points half of a Domain's level, before the depth cap is applied. */
+export function domainPointsLevel(totalPoints: number): number {
   return Math.floor(Math.sqrt(Math.max(0, totalPoints)) / DOMAIN_LEVEL_STEP);
+}
+
+/**
+ * Mastery equivalent of a Domain's Ideas: how many *fully mastered* Ideas the
+ * collection is worth.
+ *
+ * Squared rather than linear, and that is the substance of it. Points accrue
+ * on submission, so a Domain could reach a high level on volume alone —
+ * sixty ideas written once and never recalled scored the same as sixty driven
+ * to mastery, which makes the number on a Domain a measure of typing. Under
+ * a square, an Idea at level 6 of 12 is worth a quarter of a mastered one
+ * rather than half, so shallow breadth contributes almost nothing and the
+ * measure only moves when Ideas actually mature.
+ */
+export function masteryDepth(ideaLevels: number[]): number {
+  return ideaLevels.reduce((sum, lvl) => {
+    const share = Math.max(0, Math.min(1, lvl / MASTERY_LEVEL));
+    return sum + share * share;
+  }, 0);
+}
+
+/**
+ * Levels reachable on points alone, before any Idea has matured.
+ *
+ * Not zero: a Domain you have just started should be able to show *some*
+ * progress, or the first weeks of a new subject read as broken. It is one,
+ * because that is enough to show the system responding and far too little to
+ * mistake for expertise.
+ */
+export const DEPTH_GRACE = 1;
+
+/**
+ * A Domain's level: earned points, capped by demonstrated depth.
+ *
+ * Both halves are necessary and neither is sufficient. Points without
+ * recall is a reading list; recall without volume is a handful of cards
+ * known well. A high level now means the Domain holds the equivalent of that
+ * many mastered Ideas *and* the accumulated work to match — which is what
+ * makes it worth printing on a tile.
+ */
+export function domainLevel(totalPoints: number, ideaLevels: number[]): number {
+  const byPoints = domainPointsLevel(totalPoints);
+  const byDepth = DEPTH_GRACE + Math.floor(masteryDepth(ideaLevels));
+  return Math.min(byPoints, byDepth);
 }
 
 export function fieldLevel(domainLevels: number[]): number {
@@ -209,7 +254,10 @@ export function domainLevelProgress(totalPoints: number): {
   pointsIntoLevel: number;
   pointsForNextLevel: number;
 } {
-  const level = domainLevel(totalPoints);
+  // Points progress only — the depth cap is a separate axis, and folding it
+  // in here would show a bar frozen at 100% while the real level sat lower,
+  // with nothing to explain why.
+  const level = domainPointsLevel(totalPoints);
   const currentThreshold = Math.pow(DOMAIN_LEVEL_STEP * level, 2);
   const nextThreshold = Math.pow(DOMAIN_LEVEL_STEP * (level + 1), 2);
   const pointsIntoLevel = Math.max(0, totalPoints - currentThreshold);

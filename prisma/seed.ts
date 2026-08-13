@@ -732,6 +732,8 @@ async function main() {
 
       let domainYieldTotal = 0;
 
+      const seededIdeaLevels: number[] = [];
+
       for (const [nSimilar, ideaSeed] of domainSeed.ideas.entries()) {
         const { question, answer, type } = ideaQuestionAndAnswer(ideaSeed);
         const level = ideaSeed.level ?? 1;
@@ -757,18 +759,21 @@ async function main() {
         });
 
         domainYieldTotal += yieldPoints;
+        seededIdeaLevels.push(level);
       }
 
       // Reward XP math (spec: "+2 XP to the Domain's totalPoints" per passed
       // review) isn't earned yet at seed time — no reviews have happened.
       // totalPoints starts from the sum of seeded yieldPoints so
-      // Level_domain = floor(0.5 * sqrt(totalPoints)) is meaningful from
-      // the first page load instead of every domain reading Level 0.
+      // Level_domain is then meaningful from the first page load instead
+      // of every domain reading Level 0.
       await prisma.domain.update({
         where: { id: domain.id },
         data: {
           totalPoints: domainYieldTotal,
-          level: domainLevel(domainYieldTotal),
+          // Seeded Ideas carry their own levels, so the depth half of the
+          // cap is computed from them rather than assumed.
+          level: domainLevel(domainYieldTotal, seededIdeaLevels),
         },
       });
     }

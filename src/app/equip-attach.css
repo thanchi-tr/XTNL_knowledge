@@ -1,0 +1,149 @@
+/* ═══ ATTACH BURST ═══════════════════════════════════════
+   Extra layers on the equip pulse, added by stage.
+
+   The base ring and spoke live in globals.css; these are the layers that make
+   the higher stages a different *kind* of event rather than a bigger one.
+   Stage thresholds are in EquipPulse.tsx and read the same 15-deep charge
+   ladder the emblem is drawn from.
+
+   Everything here is one-shot — an attach is an event, not an ambience — so
+   none of it needs `--ambient-play`. It is switched off wholesale by the
+   reduced-motion block instead.
+
+   All of it inherits `--pulse-color`, `--pulse-reach` and `--pulse-dur` from
+   `.equip-pulse`, so a single skill's burst stays one colour and one tempo
+   across every layer.
+   ═══════════════════════════════════════════════════════ */
+
+.equip-shard,
+.equip-inrush,
+.equip-shock,
+.equip-beam,
+.equip-flash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+
+/* Everything that travels *outward* waits for the wind-up.
+ *
+ * `--burst-delay` is 0 below stage 4, so this is inert for every other
+ * emblem. Written as `.equip-pulse .x` rather than `.x` on purpose: the
+ * `animation` shorthand in globals.css resets `animation-delay`, and since
+ * @import rules are hoisted above that file's own rules, a bare selector
+ * here would lose the cascade regardless of what it declared. Two classes
+ * out-specify it. */
+.equip-pulse .equip-spoke,
+.equip-pulse .equip-shard,
+.equip-pulse .equip-shock,
+.equip-pulse .equip-beam,
+.equip-pulse .equip-flash {
+  animation-delay: var(--burst-delay, 0ms);
+}
+
+/* ── Stage 1: shards ─────────────────────────────────────
+   Fragments thrown out between the spokes, so the two channels interleave
+   rather than overlapping into a single thicker star. */
+.equip-shard {
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 1px;
+  background: var(--pulse-color);
+  box-shadow: 0 0 8px var(--pulse-color);
+  opacity: 0;
+  animation: equip-shard var(--pulse-dur, 900ms) cubic-bezier(.15, .75, .3, 1) both;
+}
+
+@keyframes equip-shard {
+  0%   { opacity: 0; transform: rotate(var(--spoke-angle, 0deg)) translateX(6px) scale(.5); }
+  18%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--spoke-angle, 0deg)) translateX(calc(20px * var(--pulse-reach, 2))) scale(.2); }
+}
+
+/* ── Stage 2: shockwave ──────────────────────────────────
+   A single thin ring that outruns the others and thins as it goes, so the
+   burst reads as having a leading edge. */
+.equip-shock {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 2px solid var(--pulse-color);
+  opacity: 0;
+  animation: equip-shock calc(var(--pulse-dur, 900ms) * 1.25) cubic-bezier(.1, .7, .25, 1) both;
+}
+
+@keyframes equip-shock {
+  0%   { opacity: .85; transform: scale(.4); border-width: 2px; }
+  70%  { opacity: .25; }
+  100% { opacity: 0; transform: scale(calc(4 * var(--pulse-reach, 2))); border-width: .5px; }
+}
+
+/* ── Stage 3: beam ───────────────────────────────────────
+   A vertical column through the slot. The one layer that is not radial, so
+   it changes the silhouette of the whole burst instead of adding to it. */
+.equip-beam {
+  width: 3px;
+  height: 116px;
+  margin: -58px 0 0 -1.5px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--pulse-color) 26%,
+    #fff 50%,
+    var(--pulse-color) 74%,
+    transparent 100%
+  );
+  opacity: 0;
+  filter: blur(.5px);
+  animation: equip-beam calc(var(--pulse-dur, 900ms) * 0.9) cubic-bezier(.2, .9, .3, 1) both;
+}
+
+@keyframes equip-beam {
+  0%   { opacity: 0; transform: scaleY(.1) scaleX(2.4); }
+  22%  { opacity: .9; transform: scaleY(1) scaleX(1); }
+  100% { opacity: 0; transform: scaleY(1.15) scaleX(.2); }
+}
+
+/* ── Stage 4: inrush ─────────────────────────────────────
+   Plays before everything else: matter falls inward, then the burst throws
+   it back out. Negative delay is not used — the wind-up is real time, which
+   is what makes the top stage feel heavier rather than merely busier. */
+.equip-inrush {
+  width: 2.5px;
+  height: 2.5px;
+  margin: -1.25px 0 0 -1.25px;
+  border-radius: 50%;
+  background: var(--pulse-color);
+  box-shadow: 0 0 6px var(--pulse-color);
+  opacity: 0;
+  animation: equip-inrush calc(var(--pulse-dur, 900ms) * 0.5) cubic-bezier(.6, 0, .9, .4) both;
+}
+
+@keyframes equip-inrush {
+  0%   { opacity: 0; transform: rotate(var(--spoke-angle, 0deg)) translateX(calc(26px * var(--pulse-reach, 2))) scale(.4); }
+  35%  { opacity: .95; }
+  100% { opacity: 0; transform: rotate(var(--spoke-angle, 0deg)) translateX(4px) scale(1.1); }
+}
+
+/* ── Stage 4: flash ──────────────────────────────────────
+   Brief, and deliberately the only white in the set — it reads as the
+   moment of contact rather than as more of the skill's colour. */
+.equip-flash {
+  width: 70px;
+  height: 70px;
+  margin: -35px 0 0 -35px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, var(--pulse-color) 32%, transparent 68%);
+  opacity: 0;
+  animation: equip-flash calc(var(--pulse-dur, 900ms) * 0.55) ease-out both;
+}
+
+@keyframes equip-flash {
+  0%   { opacity: 0; transform: scale(.2); }
+  18%  { opacity: .75; }
+  100% { opacity: 0; transform: scale(1.9); }
+}

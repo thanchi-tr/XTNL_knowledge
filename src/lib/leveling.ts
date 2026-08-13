@@ -10,8 +10,18 @@ import { domainLevel, fieldLevel } from "./xp";
  * incremented/decremented in step with totalPoints.
  */
 export async function recalculateLeveling(domainId: string): Promise<{ domainLevel: number; fieldLevel: number }> {
-  const domain = await prisma.domain.findUniqueOrThrow({ where: { id: domainId } });
-  const newDomainLevel = domainLevel(domain.totalPoints);
+  const domain = await prisma.domain.findUniqueOrThrow({
+    where: { id: domainId },
+    // Idea levels are the depth half of a Domain's level: points alone are a
+    // measure of how much was written, not of how much is known. Archived
+    // Ideas are excluded for the same reason they are excluded from routing —
+    // they have stopped being recalled.
+    include: { ideas: { where: { isArchived: false }, select: { level: true } } },
+  });
+  const newDomainLevel = domainLevel(
+    domain.totalPoints,
+    domain.ideas.map((i) => i.level)
+  );
 
   if (newDomainLevel !== domain.level) {
     await prisma.domain.update({ where: { id: domainId }, data: { level: newDomainLevel } });

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "./atmosphere.css";
 @import "./field-tier.css";
+@import "./equip-attach.css";
 @config "../../tailwind.config.mts";
 
 /* ═══════════════════════════════════════════════════════════
@@ -836,6 +837,12 @@ code, pre, .mono {
   .ray-pulse, .flare-pulse, .hover-card { animation: none; }
   .slot-attach { animation: none; }
   .equip-ring, .equip-spoke { animation: none; opacity: 0; }
+  /* The stage layers travel further and flash brighter than the base burst,
+     so they matter more here, not less. */
+  .equip-shard, .equip-inrush, .equip-shock, .equip-beam, .equip-flash {
+    animation: none;
+    opacity: 0;
+  }
   .slot:hover:not(:disabled) { transform: none; }
   .shockwave { animation: none; opacity: 0; }
   .ember-rise { animation: none; opacity: 0; }

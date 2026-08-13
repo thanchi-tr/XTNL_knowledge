@@ -3,6 +3,7 @@ import type { Attribute } from "@prisma/client";
 import { SKILL_POOL, type Skill } from "@/lib/skill-pool";
 import { skinFor, particlesFor, depthOf } from "@/lib/skill-form";
 import { SkillLogo } from "@/components/skills/SkillLogo";
+import { AttachBurstPreview } from "@/components/skills/AttachBurstPreview";
 import { RANK_META } from "@/lib/skill-visuals";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 
@@ -96,6 +97,21 @@ function Row({
   );
 }
 
+const BURST_LAYERS = ["rings + spokes", "+ shards", "+ shockwave", "+ beam", "+ inrush, flash"];
+
+/**
+ * One real skill per attach stage. Thresholds mirror `EquipPulse`; the sample
+ * is simply the first skill in each band, so if the ladder is retuned this
+ * page follows rather than asserting stages that no longer exist.
+ */
+function burstSamples() {
+  const stageOf = (c: number) => (c < 0.2 ? 0 : c < 0.45 ? 1 : c < 0.7 ? 2 : c < 0.9 ? 3 : 4);
+  return [0, 1, 2, 3, 4].map((stage) => {
+    const skill = SKILL_POOL.find((sk) => stageOf(skinFor(sk).charge) === stage)!;
+    return { stage, layers: BURST_LAYERS[stage], skill };
+  });
+}
+
 export default function EmblemPreviewPage() {
   const logic = pureLadder("LOGIC");
   const synergy = firstOfRank("SYNERGY", 5);
@@ -121,6 +137,10 @@ export default function EmblemPreviewPage() {
           Motion is withheld until depth 5 so that the moment a lineage starts moving reads as an event.
         </p>
       </header>
+
+      <div className="fade-up fade-up-1 mb-6">
+        <AttachBurstPreview samples={burstSamples()} />
+      </div>
 
       <div className="fade-up fade-up-1 space-y-3">
         <Row

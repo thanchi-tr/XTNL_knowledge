@@ -50,7 +50,9 @@ export async function resetKnowledgeBase(scope: ResetScope, confirmation: string
     // Points and levels are derived from Ideas, so with none left they must
     // return to what a brand-new domain looks like — otherwise a wiped
     // account keeps levels it can no longer justify.
-    const zeroLevel = domainLevel(0);
+    // Both halves of the level are empty: no points, and no Ideas to have
+    // demonstrated depth with.
+    const zeroLevel = domainLevel(0, []);
     await prisma.domain.updateMany({
       data: { totalPoints: 0, level: zeroLevel, attributeObservations: 0 },
     });
