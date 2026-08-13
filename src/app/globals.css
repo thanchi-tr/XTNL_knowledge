@@ -522,7 +522,16 @@ code, pre, .mono {
    opts into `--ambient-play` — see the POWER block — so a hidden tab or a
    phone under 20% battery stops paying for the whole layer. */
 .loadout-bar {
-  position: relative;
+  /* `position: sticky` here, not just via the component's Tailwind
+     `sticky` class: this rule and Tailwind's `.sticky` both carry
+     specificity (0,1,0), and because this stylesheet is `@import`-ed after
+     Tailwind, cascade order let a plain `relative` here silently overrule
+     the utility class — the footer scrolled away with the page on every
+     real route despite the markup asking for sticky. Declaring position
+     and offset explicitly here means it can never again depend on which
+     stylesheet happens to load last. */
+  position: sticky;
+  bottom: 0;
   isolation: isolate;
   border-top: 1px solid var(--line);
   transition: border-color .5s ease, background-color .5s ease, box-shadow .5s ease;

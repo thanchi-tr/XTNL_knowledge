@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
+import { BarCharge, type ChargeVariant } from "./BarCharge";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
-import { resolveResonance, SOLO_SHARE } from "@/lib/loadout-sets";
+import { resolveResonance, SOLO_SHARE, type LoadoutResonance } from "@/lib/loadout-sets";
+import { attachOutcome } from "@/lib/bar-charge-select";
 import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
 import { ResonanceAtmosphere } from "./ResonanceAtmosphere";
 import type { Skill } from "@/lib/skill-pool";
@@ -116,19 +118,59 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     return () => clearTimeout(t);
   }, [resonance.sets]);
 
+  /**
+   * The bar-wide reaction to an attach — surge, meter or bloom, chosen by
+   * `attachOutcome` from what actually changed (a grade lift, a set closing,
+   * or neither). `barRef`/`slotRefs` are measured rather than derived from
+   * slot index, because the strip does not span the whole bar — there is a
+   * label to its left and the container's own padding — so an index-based
+   * percent points at the wrong place the moment the viewport isn't exactly
+   * the one it was tuned against.
+   */
+  const [barCharge, setBarCharge] = useState<{ key: number; skill: Skill; variant: ChargeVariant; origin: number } | null>(
+    null
+  );
+  const chargeSeq = useRef(0);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const slotRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+
+  function fireBarCharge(skill: Skill, before: LoadoutResonance, after: LoadoutResonance, slot: number) {
+    const outcome = attachOutcome(skill, before, after);
+    const bar = barRef.current;
+    const slotEl = slotRefs.current[slot];
+    const origin =
+      bar && slotEl
+        ? ((slotEl.getBoundingClientRect().left + slotEl.getBoundingClientRect().width / 2 - bar.getBoundingClientRect().left) /
+            bar.getBoundingClientRect().width) *
+          100
+        : 50;
+    chargeSeq.current += 1;
+    setBarCharge({ key: chargeSeq.current, skill, variant: outcome.variant, origin });
+    // Ultimate/Apex hold an aftermath (halo or gravity well) for ~3.4s on top
+    // of the burst itself; everything else is done well under 2s. Generous
+    // fixed windows rather than replicating BarCharge's own duration math —
+    // this only needs to outlast the animation, not choreograph it.
+    const legendary = skill.rank === "APEX" || skill.rank === "ULTIMATE";
+    setTimeout(() => setBarCharge(null), legendary ? 4600 : 1600);
+  }
+
   function attach(slot: number, skill: Skill) {
     setError(null);
     // Whatever was in the slot goes back to the bench; the new skill leaves it.
     const displaced = localSlots.find((s) => s.slot === slot)?.skill ?? null;
-    setLocalSlots((prev) =>
-      prev.map((s) => (s.slot === slot ? { ...s, skill, active: true } : s.skill?.code === skill.code ? { ...s, skill: null, active: false } : s))
+    const nextSlots = localSlots.map((s) =>
+      s.slot === slot ? { ...s, skill, active: true } : s.skill?.code === skill.code ? { ...s, skill: null, active: false } : s
     );
+    setLocalSlots(nextSlots);
     setLocalBench((prev) => [...prev.filter((b) => b.code !== skill.code), ...(displaced ? [displaced] : [])]);
     setPicking(null);
     setJustAttached(slot);
     // Long enough to outlast the CSS animation, then cleared so the same
     // slot can flash again on the next attach.
     setTimeout(() => setJustAttached(null), 1200);
+
+    const after = resolveResonance(nextSlots.filter((s) => s.skill && s.active).map((s) => s.skill!));
+    fireBarCharge(skill, resonance, after, slot);
 
     startTransition(async () => {
       const res = await equipSkill(skill.code, slot);
@@ -235,6 +277,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
       )}
 
       <div
+        ref={barRef}
         className={`loadout-bar sticky bottom-0 z-20 mt-6 ${locking ? "res-lock" : ""}`}
         data-resonant={lit ? "1" : "0"}
         style={
@@ -249,6 +292,13 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
           } as React.CSSProperties
         }
       >
+        {/* The bar-wide attach reaction — surge, meter or bloom. Sits at
+            z-index 0 (see bar-charge.css), below the slots at 1, so it never
+            intercepts a click. */}
+        {barCharge && (
+          <BarCharge key={barCharge.key} skill={barCharge.skill} variant={barCharge.variant} originPercent={barCharge.origin} />
+        )}
+
         {/* Decoration only, and never in the way: both layers are
             pointer-events:none and sit below the slots. */}
         {lit && motes.length > 0 && (
@@ -297,6 +347,9 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
             {localSlots.map((s) => (
               <li key={s.slot} className="shrink-0">
                 <button
+                  ref={(el) => {
+                    slotRefs.current[s.slot] = el;
+                  }}
                   type="button"
                   disabled={isPending}
                   onClick={() => (s.skill ? detach(s.slot) : setPicking(s.slot))}
