@@ -16,6 +16,7 @@ import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-paylo
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
+import { EquationField } from "@/components/math/EquationField";
 
 export interface AddFormField {
   id: string;
@@ -666,14 +667,9 @@ export function AddIdeaForm({ fields }: Props) {
         <>
           <label className="block">
             <span className={LABEL_CLASS}>Prompt</span>
-            <textarea
-              value={formulaQuestion}
-              onChange={(e) => setFormulaQuestion(e.target.value)}
-              rows={2}
-              className={FIELD_CLASS}
-            />
+            <EquationField value={formulaQuestion} onChange={setFormulaQuestion} />
           </label>
-          <label className="block">
+          <label className="mt-3 block">
             <span className={LABEL_CLASS}>Answer expression (mathjs syntax, e.g. sqrt(x^2 + y^2))</span>
             <input
               type="text"
@@ -681,6 +677,9 @@ export function AddIdeaForm({ fields }: Props) {
               onChange={(e) => setFormulaAnswer(e.target.value)}
               className={`${FIELD_CLASS} font-mono`}
             />
+            <span className="mt-1 block" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+              Graded by algebraic equivalence, not by LaTeX — write this one as a plain expression, not inside $...$.
+            </span>
           </label>
         </>
       )}

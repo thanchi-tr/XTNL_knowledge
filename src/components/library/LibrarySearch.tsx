@@ -6,6 +6,7 @@ import { deleteIdea } from "@/app/actions/ideas";
 import { bandFor, DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { displayQuestion, displayAnswer } from "@/lib/idea-display";
+import { MathText } from "@/components/math/MathText";
 import { fieldColor } from "@/lib/palette";
 import { fieldTier, nextTierAt } from "@/lib/field-tier";
 import { MASTERY_LEVEL } from "@/lib/xp";
@@ -932,7 +933,11 @@ export function LibrarySearch({ ideas, fieldNames, fieldLevels, domainsByField, 
                 <p style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{idea.title}</p>
               )}
               <p style={{ fontSize: 13, color: idea.title ? "var(--ink-1)" : "var(--ink-0)" }}>
-                {displayQuestion(idea.questionType, idea.question)}
+                {idea.questionType === "FORMULA" ? (
+                  <MathText text={displayQuestion(idea.questionType, idea.question)} />
+                ) : (
+                  displayQuestion(idea.questionType, idea.question)
+                )}
               </p>
               <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-1)" }}>
                 {displayAnswer(idea.questionType, idea.answer)}

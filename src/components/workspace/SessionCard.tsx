@@ -5,6 +5,7 @@ import type { QuestionType } from "@prisma/client";
 import { submitReview, type SubmitReviewResult } from "@/app/actions/review";
 import { useStreak } from "@/components/StreakProvider";
 import { FormatAnswer } from "./FormatAnswer";
+import { MathText } from "@/components/math/MathText";
 import type { DomainProgress } from "@/lib/srs";
 import { baseIntervalDays, MASTERY_LEVEL, MASTERY_BONUS, COMBO_CAP, COMBO_STEP } from "@/lib/xp";
 
@@ -221,7 +222,9 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
 
       {questionType === "SHORT" || questionType === "FORMULA" ? (
         <>
-          <p className={`mb-5 text-[17px] leading-snug text-ink-0 ${questionType === "FORMULA" ? "mono" : ""}`}>{preview}</p>
+          <p className="mb-5 text-[17px] leading-snug text-ink-0">
+            {questionType === "FORMULA" ? <MathText text={preview} /> : preview}
+          </p>
           <form
             className="flex items-center gap-2"
             onSubmit={(e) => {
