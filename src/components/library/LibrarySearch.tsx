@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteIdea } from "@/app/actions/ideas";
+import { bandFor, DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { displayQuestion, displayAnswer } from "@/lib/idea-display";
 import { fieldColor } from "@/lib/palette";
@@ -23,6 +24,8 @@ export interface LibraryIdea {
   corePremise: string | null;
   tags: string[];
   linkedCount: number;
+  /** 0–100, decided automatically. 0 means never scored, not trivial. */
+  difficulty: number;
 }
 
 interface Props {
@@ -144,6 +147,7 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
   const [minLevel, setMinLevel] = useState(1);
   const [maxLevel, setMaxLevel] = useState(MASTERY_LEVEL);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [bandFilter, setBandFilter] = useState<Set<DifficultyBand>>(new Set());
 
   const router = useRouter();
   const [isDeleting, startDelete] = useTransition();
@@ -209,6 +213,10 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
       }
 
       if (removed.has(idea.id)) return false;
+      // An active band filter excludes unscored ideas: they have no band, and
+      // filing them under Intro would assert something never measured.
+      if (bandFilter.size > 0 && (idea.difficulty === 0 || !bandFilter.has(bandFor(idea.difficulty))))
+        return false;
       if (fieldFilter.size > 0 && !fieldFilter.has(idea.fieldName)) return false;
       if (domainFilter.size > 0 && !domainFilter.has(domainKey(idea.fieldName, idea.domainName))) return false;
       if (tagFilter.size > 0 && !idea.tags.some((t) => tagFilter.has(t))) return false;
@@ -232,7 +240,7 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
       }
       return true;
     });
-  }, [ideas, query, fieldFilter, domainFilter, tagFilter, typeFilter, labelFilter, status, minLevel, maxLevel, removed]);
+  }, [ideas, query, fieldFilter, domainFilter, tagFilter, typeFilter, labelFilter, status, minLevel, maxLevel, removed, bandFilter]);
 
   /** Result counts per option, computed against everything *except* that facet. */
   const fieldCounts = useMemo(() => {
@@ -267,6 +275,11 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
       label: t,
       clear: () => setTypeFilter((s) => toggleSet(s, t)),
     })),
+    ...[...bandFilter].map((b) => ({
+      key: `band:${b}`,
+      label: DIFFICULTY_META[b].label,
+      clear: () => setBandFilter((s) => toggleSet(s, b)),
+    })),
     ...[...labelFilter].map((l) => ({
       key: `label:${l}`,
       label: l,
@@ -296,6 +309,7 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
     setDomainFilter(new Set());
     setTagFilter(new Set());
     setTypeFilter(new Set());
+    setBandFilter(new Set());
     setLabelFilter(new Set());
     setStatus("any");
     setMinLevel(1);
@@ -418,6 +432,17 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
             </FacetRow>
           )}
 
+          <FacetRow label="Difficulty">
+            {(Object.keys(DIFFICULTY_META) as DifficultyBand[]).map((b) => (
+              <FacetChip
+                key={b}
+                label={DIFFICULTY_META[b].label}
+                active={bandFilter.has(b)}
+                onClick={() => setBandFilter((s) => toggleSet(s, b))}
+              />
+            ))}
+          </FacetRow>
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <FacetRow label="Question type">
               {QUESTION_TYPES.map((t) => (
@@ -526,6 +551,17 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
                 <span className="mono" style={{ color: mastered ? "var(--green)" : undefined }}>
                   L{idea.level}
                 </span>
+                {/* Unscored ideas (difficulty 0, predating the column) show
+                    nothing rather than claiming to be trivial. */}
+                {idea.difficulty > 0 && (
+                  <span
+                    className="mono"
+                    title={`Difficulty ${idea.difficulty}/100 — ${DIFFICULTY_META[bandFor(idea.difficulty)].blurb}`}
+                    style={{ color: DIFFICULTY_META[bandFor(idea.difficulty)].color }}
+                  >
+                    {DIFFICULTY_META[bandFor(idea.difficulty)].label}
+                  </span>
+                )}
                 {mastered && <span className="chip chip-green">Mastered</span>}
                 {idea.linkedCount > 0 && (
                   <span className="chip chip-blue">

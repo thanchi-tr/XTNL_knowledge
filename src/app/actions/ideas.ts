@@ -16,6 +16,7 @@ import {
   type EnrichResult,
 } from "@/lib/dedup";
 import { encodeIdeaContent, type IdeaContent } from "@/lib/idea-payload";
+import { estimateDifficulty } from "@/lib/difficulty";
 import { embeddingTextFromStored } from "@/lib/embedding-text";
 import { toVectorLiteral } from "@/lib/vector";
 import { XP_BASE, yieldXp, graceEndsAt, SIMILARITY_MERGE_MIN } from "@/lib/xp";
@@ -208,6 +209,9 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
       answer,
       dueDate,
       graceEndsAt: graceEndsAt(dueDate, level, modifiers.graceExtraDays),
+      // Scored from the stored form, so the same function serves creation and
+      // backfill and neither can drift from the other.
+      difficulty: estimateDifficulty(questionType, question, answer).score,
       title: decision.node_data?.title,
       corePremise: decision.node_data?.core_premise,
       atomicPrompt: decision.node_data?.atomic_prompt,

@@ -24,6 +24,7 @@ export default async function LibraryPage() {
         corePremise: i.corePremise,
         tags: i.tags,
         linkedCount: i.linkedIdeaIds.length,
+        difficulty: i.difficulty,
       }))
     )
   );

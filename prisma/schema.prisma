@@ -189,6 +189,22 @@ model Idea {
   linkedIdeaIds   String[]        @default([])
 
   /**
+   * 0–100, decided automatically from what the card asks (src/lib/difficulty.ts).
+   *
+   * A property of the question, not of your history with it: format,
+   * how much must be produced, vocabulary density and required precision.
+   * Review performance deliberately does not feed it — level, interval and
+   * degradation already track that, and letting difficulty move with
+   * performance would count the same signal twice and pay you more for the
+   * cards you keep failing.
+   *
+   * The band (Intro/Standard/Demanding/Severe) is derived on read rather
+   * than stored, so recalibrating the thresholds does not require rewriting
+   * every row.
+   */
+  difficulty      Int             @default(0)
+
+  /**
    * Memory-engineering node data (src/lib/dedup.ts). Distinct from
    * `question`/`answer`, which are the *drill* — what the review session
    * shows you. These are the *node*: what this Idea asserts, used for
