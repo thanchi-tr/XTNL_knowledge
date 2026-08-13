@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteIdea } from "@/app/actions/ideas";
 import { bandFor, DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
@@ -36,6 +36,35 @@ interface Props {
 }
 
 const COLLECTION_LABELS: CollectionLabel[] = ["BOOK", "ACTIONABLE", "PROPOSAL"];
+
+/**
+ * One hue per collection, so the "by collection" tiles are as immediately
+ * distinguishable as the field tiles are. Fields get their colour from
+ * `fieldColor`, which hashes the name; collections are a closed enum of
+ * three, so they are assigned deliberately instead.
+ */
+const COLLECTION_COLORS: Record<CollectionLabel, string> = {
+  BOOK: "#4d9cf5",
+  ACTIONABLE: "#00cc7a",
+  PROPOSAL: "#f0a030",
+};
+
+const COLLECTION_BLURBS: Record<CollectionLabel, string> = {
+  BOOK: "Reference knowledge — what is true.",
+  ACTIONABLE: "Things to do, or do differently.",
+  PROPOSAL: "Claims still being tested.",
+};
+
+type BrowseView = "field" | "collection";
+
+interface BrowseGroup {
+  key: string;
+  label: string;
+  color: string;
+  ideas: LibraryIdea[];
+  /** The breakdown inside the tile: domains under a field, fields under a collection. */
+  subs: Map<string, number>;
+}
 
 type StatusFilter = "any" | "mastered" | "developing" | "archived";
 
@@ -304,6 +333,88 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
     });
   }
 
+  /**
+   * The library shows containers, not contents.
+   *
+   * A flat list of every card was fine at twenty ideas and unusable at a few
+   * hundred: the top-level view answered "what have I written" with a wall of
+   * individual questions, which is the one question you can already answer by
+   * searching. Grouped tiles answer the question you actually arrive with —
+   * where is my material, and how much of it is there — and the ideas
+   * themselves are one click away in a dialog.
+   *
+   * Both views group the *filtered* results, not the whole library, so every
+   * facet above still applies and the counts on the tiles are counts of what
+   * matches.
+   */
+  const [view, setView] = useState<BrowseView>("field");
+  /** Tile currently opened in the dialog, and an optional sub-group within it. */
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [openSub, setOpenSub] = useState<string | null>(null);
+
+  const groups = useMemo<BrowseGroup[]>(() => {
+    const map = new Map<string, BrowseGroup>();
+
+    for (const idea of results) {
+      // The two views differ only in what forms a group and what forms the
+      // breakdown inside it, so one pass builds either.
+      const key = view === "field" ? idea.fieldName : idea.collectionLabel;
+      const sub = view === "field" ? idea.domainName : idea.fieldName;
+
+      let group = map.get(key);
+      if (!group) {
+        group = {
+          key,
+          label: key,
+          color: view === "field" ? fieldColor(key) : COLLECTION_COLORS[idea.collectionLabel],
+          ideas: [],
+          subs: new Map(),
+        };
+        map.set(key, group);
+      }
+      group.ideas.push(idea);
+      group.subs.set(sub, (group.subs.get(sub) ?? 0) + 1);
+    }
+
+    return [...map.values()].sort((a, b) => b.ideas.length - a.ideas.length || a.label.localeCompare(b.label));
+  }, [results, view]);
+
+  const openGroup = openKey === null ? null : (groups.find((g) => g.key === openKey) ?? null);
+  const modalIdeas = !openGroup
+    ? []
+    : openSub === null
+      ? openGroup.ideas
+      : openGroup.ideas.filter((i) => (view === "field" ? i.domainName : i.fieldName) === openSub);
+
+  function closeModal() {
+    setOpenKey(null);
+    setOpenSub(null);
+  }
+
+  // Escape closes the dialog. Bound only while one is open, so the listener
+  // is not sitting on the document for the whole life of the page.
+  useEffect(() => {
+    if (openKey === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenKey(null);
+        setOpenSub(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openKey]);
+
+  /**
+   * Reopens nothing when the filters change out from under an open dialog.
+   * Adjusting state during render rather than in an effect, so the dialog
+   * never paints once against a group that no longer exists.
+   */
+  if (openKey !== null && !groups.some((g) => g.key === openKey)) {
+    setOpenKey(null);
+    setOpenSub(null);
+  }
+
   function clearAll() {
     setFieldFilter(new Set());
     setDomainFilter(new Set());
@@ -527,12 +638,190 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
         </p>
       )}
 
-      <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-        {results.length} of {ideas.length} idea{ideas.length === 1 ? "" : "s"}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          {results.length} of {ideas.length} idea{ideas.length === 1 ? "" : "s"} in {groups.length}{" "}
+          {view === "field" ? "field" : "collection"}
+          {groups.length === 1 ? "" : "s"}
+        </p>
 
-      <ul className="space-y-2">
-        {results.map((idea) => {
+        <div
+          role="tablist"
+          aria-label="Group library by"
+          className="flex"
+          style={{ borderRadius: 8, border: "1px solid var(--line-hi)", overflow: "hidden" }}
+        >
+          {(["field", "collection"] as BrowseView[]).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              type="button"
+              aria-selected={view === v}
+              onClick={() => {
+                setView(v);
+                closeModal();
+              }}
+              style={{
+                padding: "5px 14px",
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.02em",
+                border: "none",
+                background: view === v ? "var(--green-10)" : "transparent",
+                color: view === v ? "var(--green)" : "var(--ink-2)",
+                cursor: "pointer",
+              }}
+            >
+              By {v}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tiles only — no idea text at this level. Clicking one opens the
+          dialog below; clicking a sub-chip opens it already narrowed. */}
+      <ul className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))" }}>
+        {groups.map((g) => {
+          const subs = [...g.subs.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+          const mastered = g.ideas.filter((i) => i.level >= MASTERY_LEVEL).length;
+          return (
+            <li
+              key={g.key}
+              className="card card-hover p-3.5"
+              style={{ borderLeftColor: g.color, borderLeftWidth: 3 }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenKey(g.key);
+                  setOpenSub(null);
+                }}
+                className="w-full text-left"
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              >
+                <span className="mono block uppercase" style={{ fontSize: 11, fontWeight: 700, color: g.color }}>
+                  {g.label}
+                </span>
+                {view === "collection" && (
+                  <span className="mt-0.5 block" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
+                    {COLLECTION_BLURBS[g.key as CollectionLabel]}
+                  </span>
+                )}
+                <span className="mono mt-1.5 block" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+                  {g.ideas.length} idea{g.ideas.length === 1 ? "" : "s"} · {subs.length}{" "}
+                  {view === "field" ? "domain" : "field"}
+                  {subs.length === 1 ? "" : "s"}
+                  {mastered > 0 && <span style={{ color: "var(--green)" }}> · {mastered} mastered</span>}
+                </span>
+              </button>
+
+              <div className="mt-2 flex flex-wrap gap-1">
+                {subs.slice(0, 5).map(([name, n]) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      setOpenKey(g.key);
+                      setOpenSub(name);
+                    }}
+                    title={`${name} — ${n} idea${n === 1 ? "" : "s"}`}
+                    className="mono"
+                    style={{
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: 10,
+                      padding: "2px 7px",
+                      borderRadius: 5,
+                      border: "1px solid var(--line-hi)",
+                      background: "var(--sub)",
+                      color: "var(--ink-2)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {name} {n}
+                  </button>
+                ))}
+                {subs.length > 5 && (
+                  <span className="mono" style={{ fontSize: 10, padding: "2px 4px", color: "var(--ink-3)" }}>
+                    +{subs.length - 5}
+                  </span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+
+        {groups.length === 0 && (
+          <li className="card px-4 py-10 text-center" style={{ gridColumn: "1/-1", fontSize: 13, color: "var(--ink-2)" }}>
+            No ideas match these filters.
+            {activeTokens.length > 0 && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  style={{ color: "var(--green)", background: "none", border: "none", cursor: "pointer" }}
+                >
+                  Clear all filters
+                </button>
+              </>
+            )}
+          </li>
+        )}
+      </ul>
+
+      {openGroup && (
+        <div
+          className="fixed inset-0 z-40"
+          style={{ background: "rgba(2,5,8,.72)", backdropFilter: "blur(3px)" }}
+          onClick={closeModal}
+          role="presentation"
+        >
+          <div
+            className="card fixed left-1/2 top-1/2 flex w-[min(94vw,860px)] -translate-x-1/2 -translate-y-1/2 flex-col"
+            style={{ maxHeight: "84vh", borderLeftColor: openGroup.color, borderLeftWidth: 3 }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${openGroup.label} — ${modalIdeas.length} ideas`}
+          >
+            <div className="flex items-start justify-between gap-3 p-4 pb-3">
+              <div className="min-w-0">
+                <h2 className="mono uppercase" style={{ fontSize: 12, fontWeight: 700, color: openGroup.color }}>
+                  {openGroup.label}
+                  {openSub && <span style={{ color: "var(--ink-2)" }}> · {openSub}</span>}
+                </h2>
+                <p className="panel-sub mt-0.5">
+                  {modalIdeas.length} idea{modalIdeas.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              <button type="button" className="btn-ghost shrink-0" onClick={closeModal}>
+                Close
+              </button>
+            </div>
+
+            {/* Narrow to one domain/field without leaving the dialog. */}
+            {openGroup.subs.size > 1 && (
+              <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+                <FacetChip label="All" active={openSub === null} onClick={() => setOpenSub(null)} />
+                {[...openGroup.subs.entries()]
+                  .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                  .map(([name, n]) => (
+                    <FacetChip
+                      key={name}
+                      label={name}
+                      count={n}
+                      active={openSub === name}
+                      onClick={() => setOpenSub(openSub === name ? null : name)}
+                    />
+                  ))}
+              </div>
+            )}
+
+            <ul className="space-y-2 overflow-y-auto px-4 pb-4">
+        {modalIdeas.map((idea) => {
           const mastered = idea.level >= MASTERY_LEVEL;
           return (
             <li
@@ -655,24 +944,15 @@ export function LibrarySearch({ ideas, fieldNames, domainsByField, allTags }: Pr
             </li>
           );
         })}
-        {results.length === 0 && (
-          <li className="card px-4 py-10 text-center" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-            No ideas match these filters.
-            {activeTokens.length > 0 && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  onClick={clearAll}
-                  style={{ color: "var(--green)", background: "none", border: "none", cursor: "pointer" }}
-                >
-                  Clear all filters
-                </button>
-              </>
-            )}
-          </li>
-        )}
-      </ul>
+              {modalIdeas.length === 0 && (
+                <li className="px-4 py-8 text-center" style={{ fontSize: 13, color: "var(--ink-2)" }}>
+                  Every idea here was removed.
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
