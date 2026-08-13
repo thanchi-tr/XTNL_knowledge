@@ -2,6 +2,7 @@
 @import "./atmosphere.css";
 @import "./field-tier.css";
 @import "./equip-attach.css";
+@import "./bar-charge.css";
 @config "../../tailwind.config.mts";
 
 /* ═══════════════════════════════════════════════════════════

@@ -1,0 +1,368 @@
+/* ═══ BAR CHARGE ═════════════════════════════════════════
+   Three concepts for the loadout bar reacting to an attach.
+
+   All one-shot: an attach is an event, not an ambience, so nothing here
+   needs `--ambient-play`. The reduced-motion block at the bottom switches
+   the lot off.
+
+   Every layer inherits `--bc-color`, `--bc-dur`, `--bc-origin` and
+   `--bc-intensity` from `.barcharge`, so one attach stays one colour and one
+   tempo across every layer, and the emblem's level is legible in all three.
+
+   The layer sits at z-index 0 inside the bar; the bar's own content sits at
+   1, so the charge reads as light *behind* the slots and can never make a
+   slot harder to read or intercept a click.
+   ═══════════════════════════════════════════════════════ */
+
+.barcharge {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ── 1. SURGE ────────────────────────────────────────────
+   Conduction. Two waves leave the slot and run to both ends, so the bar
+   reads as a busbar that the emblem just closed a circuit across. The only
+   concept of the three where you can see *which* slot did it. */
+.bc-wave {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--bc-color) 14%, transparent) 55%,
+    color-mix(in srgb, var(--bc-color) 34%, transparent) 88%,
+    color-mix(in srgb, var(--bc-color) 55%, transparent) 100%
+  );
+  animation: bc-wave var(--bc-dur, 800ms) cubic-bezier(.16, .8, .3, 1) both;
+}
+
+.bc-wave-l {
+  right: calc(100% - var(--bc-origin, 50%));
+  left: 0;
+  transform-origin: right center;
+  transform: scaleX(0);
+  /* Mirrored so the bright edge leads on both sides rather than trailing on
+     one — the wave should look like it is travelling, not stretching. */
+  scale: -1 1;
+}
+
+.bc-wave-r {
+  left: var(--bc-origin, 50%);
+  right: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+@keyframes bc-wave {
+  0%   { opacity: var(--bc-intensity, .8); transform: scaleX(0); }
+  62%  { opacity: var(--bc-intensity, .8); }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+/* The rail: a hairline along the bar's top edge that lights as the wave
+   passes and lingers a moment longer, so the surge leaves a trace. */
+.bc-rail {
+  position: absolute;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--bc-color));
+  box-shadow: 0 0 10px var(--bc-color);
+  opacity: 0;
+  animation: bc-rail calc(var(--bc-dur, 800ms) * 1.3) cubic-bezier(.16, .8, .3, 1) both;
+}
+
+.bc-rail-l {
+  right: calc(100% - var(--bc-origin, 50%));
+  left: 0;
+  transform-origin: right center;
+  transform: scaleX(0);
+  scale: -1 1;
+}
+
+.bc-rail-r {
+  left: var(--bc-origin, 50%);
+  right: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+@keyframes bc-rail {
+  0%   { opacity: 1; transform: scaleX(0); }
+  55%  { opacity: 1; transform: scaleX(1); }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+/* ── 2. METER ────────────────────────────────────────────
+   Accumulation. A segmented charge sweeps the full width, holds at full,
+   then discharges. The only one of the three that gives the moment a
+   duration you watch rather than an impact you catch. */
+.bc-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+  /* Segmented rather than solid: a continuous bar reads as a progress
+     indicator for something loading, which is the wrong idea — segments read
+     as cells filling. */
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--bc-color) 22%, transparent) 0 11px,
+      transparent 11px 15px
+    );
+  opacity: 0;
+  animation: bc-fill var(--bc-dur, 800ms) cubic-bezier(.3, .1, .2, 1) both;
+}
+
+@keyframes bc-fill {
+  0%        { opacity: var(--bc-intensity, .8); transform: scaleX(0); }
+  58%       { opacity: var(--bc-intensity, .8); transform: scaleX(1); }
+  74%       { opacity: var(--bc-intensity, .8); transform: scaleX(1); }
+  100%      { opacity: 0; transform: scaleX(1); }
+}
+
+/* The leading edge — a bright bar riding the front of the fill. */
+.bc-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  left: 0;
+  background: var(--bc-color);
+  box-shadow: 0 0 18px 3px var(--bc-color);
+  opacity: 0;
+  animation: bc-edge var(--bc-dur, 800ms) cubic-bezier(.3, .1, .2, 1) both;
+}
+
+@keyframes bc-edge {
+  0%   { opacity: 1; left: 0; }
+  58%  { opacity: 1; left: calc(100% - 3px); }
+  100% { opacity: 0; left: calc(100% - 3px); }
+}
+
+/* Fires as the fill completes: the bar acknowledges reaching full instead of
+   merely stopping. */
+.bc-full {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bc-color) 30%, transparent) 0%,
+    transparent 60%
+  );
+  border-top: 1px solid var(--bc-color);
+  opacity: 0;
+  animation: bc-full var(--bc-dur, 800ms) ease-out both;
+}
+
+@keyframes bc-full {
+  0%, 54% { opacity: 0; }
+  62%     { opacity: 1; }
+  100%    { opacity: 0; }
+}
+
+/* ── 3. BLOOM ────────────────────────────────────────────
+   Ignition. The bar browns out first, then floods with light from the slot
+   outward. The only concept that takes something away before it gives, which
+   is what makes it the most violent of the three. */
+.bc-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  animation: bc-dim calc(var(--bc-dur, 800ms) * 0.34) ease-in both;
+}
+
+@keyframes bc-dim {
+  0%   { opacity: 0; }
+  55%  { opacity: .55; }
+  100% { opacity: 0; }
+}
+
+.bc-core {
+  position: absolute;
+  top: 50%;
+  left: var(--bc-origin, 50%);
+  width: var(--bc-core, 260px);
+  height: var(--bc-core, 260px);
+  margin: calc(var(--bc-core, 260px) / -2) 0 0 calc(var(--bc-core, 260px) / -2);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    #fff 0%,
+    var(--bc-color) 22%,
+    color-mix(in srgb, var(--bc-color) 40%, transparent) 46%,
+    transparent 72%
+  );
+  opacity: 0;
+  /* Delayed behind the brownout, so the two read as cause and effect. */
+  animation: bc-core calc(var(--bc-dur, 800ms) * 0.9) cubic-bezier(.1, .8, .3, 1)
+    calc(var(--bc-dur, 800ms) * 0.18) both;
+}
+
+@keyframes bc-core {
+  0%   { opacity: 0; transform: scale(.15); }
+  22%  { opacity: var(--bc-intensity, .8); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+
+/* Columns rise across the full width, each delayed by its distance from the
+   slot — the ignition spreads outward rather than everything lighting at
+   once, which is what keeps the origin readable in this concept too. */
+.bc-column {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 100%;
+  margin-left: -1px;
+  background: linear-gradient(to top, var(--bc-color) 0%, transparent 100%);
+  opacity: 0;
+  transform-origin: bottom center;
+  animation: bc-column calc(var(--bc-dur, 800ms) * 0.7) cubic-bezier(.2, .9, .3, 1)
+    var(--col-delay, 0ms) both;
+}
+
+@keyframes bc-column {
+  0%   { opacity: 0; transform: scaleY(0); }
+  30%  { opacity: .75; }
+  100% { opacity: 0; transform: scaleY(1); }
+}
+
+/* ── Aftermath ───────────────────────────────────────────
+   What the bar is left holding once the burst is over. Only the top two
+   ranks get one: an aftermath asserts the bar has been changed, and that
+   should not be true of a trinket.
+
+   Both begin after the burst has run, so they read as consequence rather
+   than as one more simultaneous layer, and both are far longer and far
+   quieter than the burst itself — this is a residue, not a second event. */
+
+/* APEX — a deep violet that settles over the bar and drains away.
+   Deliberately not the emblem's own hue: gold is the Apex mark, and having
+   the aftermath repeat it would make the two moments blur together. The
+   violet says something happened *to the bar*. */
+.bc-halo {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 160% at var(--bc-origin, 50%) 100%, #6d28d9 0%, transparent 62%),
+    linear-gradient(180deg, transparent 0%, rgba(76, 29, 149, .55) 100%);
+  border-top: 1px solid #7c3aed;
+  box-shadow: inset 0 -18px 40px -18px #7c3aed;
+  opacity: 0;
+  animation: bc-halo 3.4s cubic-bezier(.2, .6, .3, 1) calc(var(--bc-dur, 800ms) * 0.55) both;
+}
+
+@keyframes bc-halo {
+  0%   { opacity: 0; }
+  14%  { opacity: .9; }
+  46%  { opacity: .7; }
+  100% { opacity: 0; }
+}
+
+/* ULTIMATE — the bar collapses into a well at the slot.
+   Matter along its length is drawn in, an accretion disc turns around the
+   point, and the core occludes what falls past it. */
+.bc-pull {
+  position: absolute;
+  top: var(--pull-top, 50%);
+  height: 1px;
+  width: 46px;
+  margin-left: -23px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--bc-color));
+  box-shadow: 0 0 8px var(--bc-color);
+  opacity: 0;
+  /* Accelerating, never easing out: gravity does not decelerate on arrival. */
+  animation: bc-pull 1.5s cubic-bezier(.55, 0, .95, .35)
+    calc(var(--bc-dur, 800ms) * 0.5 + var(--pull-delay, 0ms)) both;
+}
+
+@keyframes bc-pull {
+  0%   { opacity: 0; left: var(--pull-from, 50%); width: 46px; }
+  18%  { opacity: .85; }
+  100% { opacity: 0; left: var(--bc-origin, 50%); width: 3px; }
+}
+
+.bc-accretion {
+  position: absolute;
+  top: 50%;
+  left: var(--bc-origin, 50%);
+  width: 132px;
+  height: 132px;
+  margin: -66px 0 0 -66px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--bc-color) 55%, transparent) 60deg,
+    rgba(255, 255, 255, .5) 120deg,
+    color-mix(in srgb, var(--bc-color) 70%, transparent) 190deg,
+    transparent 280deg,
+    color-mix(in srgb, var(--bc-color) 35%, transparent) 340deg,
+    transparent 360deg
+  );
+  -webkit-mask-image: radial-gradient(circle, transparent 30%, #000 40%, #000 56%, transparent 68%);
+  mask-image: radial-gradient(circle, transparent 30%, #000 40%, #000 56%, transparent 68%);
+  filter: blur(2px);
+  opacity: 0;
+  animation: bc-accretion 3.2s linear calc(var(--bc-dur, 800ms) * 0.45) both;
+}
+
+@keyframes bc-accretion {
+  0%   { opacity: 0; transform: rotate(0deg) scale(.5); }
+  16%  { opacity: .85; }
+  62%  { opacity: .6; }
+  100% { opacity: 0; transform: rotate(540deg) scale(1.1); }
+}
+
+/* The event horizon, painted last so it occludes the disc behind it. */
+.bc-hole {
+  position: absolute;
+  top: 50%;
+  left: var(--bc-origin, 50%);
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #000 0%, #000 58%, rgba(0, 0, 0, .78) 78%, transparent 100%);
+  box-shadow: 0 0 22px 6px rgba(0, 0, 0, .85);
+  opacity: 0;
+  animation: bc-hole 3.2s cubic-bezier(.2, .7, .3, 1) calc(var(--bc-dur, 800ms) * 0.45) both;
+}
+
+@keyframes bc-hole {
+  0%   { opacity: 0; transform: scale(.2); }
+  14%  { opacity: 1; transform: scale(1); }
+  66%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(.3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bc-halo,
+  .bc-pull,
+  .bc-accretion,
+  .bc-hole {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bc-wave,
+  .bc-rail,
+  .bc-fill,
+  .bc-edge,
+  .bc-full,
+  .bc-dim,
+  .bc-core,
+  .bc-column {
+    animation: none;
+    opacity: 0;
+  }
+}
