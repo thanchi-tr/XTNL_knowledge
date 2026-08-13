@@ -3,6 +3,7 @@
 import "katex/dist/katex.min.css";
 import katex from "katex";
 import { Fragment, useMemo } from "react";
+import { segmentMath } from "@/lib/latex";
 
 /**
  * Renders prose with inline `$...$` and block `$$...$$` LaTeX spans typeset
@@ -16,31 +17,10 @@ import { Fragment, useMemo } from "react";
  * means every existing prompt renders byte-for-byte unchanged, and LaTeX is
  * something an author opts into inside a sentence rather than a mode the
  * whole field switches into.
+ *
+ * Segmentation lives in `lib/latex.ts` so the authoring field's caret logic
+ * and this renderer can never disagree about where a span begins or ends.
  */
-
-const MATH_SEGMENT = /\$\$([^$]+?)\$\$|\$([^$\n]+?)\$/g;
-
-interface Segment {
-  key: number;
-  text: string;
-  latex?: string;
-  display?: boolean;
-}
-
-function splitSegments(source: string): Segment[] {
-  const segments: Segment[] = [];
-  let last = 0;
-  let key = 0;
-  for (const match of source.matchAll(MATH_SEGMENT)) {
-    const idx = match.index ?? 0;
-    if (idx > last) segments.push({ key: key++, text: source.slice(last, idx) });
-    const [whole, display, inline] = match;
-    segments.push({ key: key++, text: whole, latex: display ?? inline, display: display !== undefined });
-    last = idx + whole.length;
-  }
-  if (last < source.length) segments.push({ key: key++, text: source.slice(last) });
-  return segments;
-}
 
 function renderLatex(latex: string, display: boolean): string | null {
   try {
@@ -57,24 +37,24 @@ interface Props {
 
 export function MathText({ text, className }: Props) {
   // Nothing to split when there's no `$` at all — the overwhelmingly common
-  // case — so this skips the regex pass entirely for plain-prose prompts.
-  const segments = useMemo(() => (text.includes("$") ? splitSegments(text) : [{ key: 0, text }]), [text]);
+  // case — so this skips the segmentation pass entirely for plain prose.
+  const segments = useMemo(() => (text.includes("$") ? segmentMath(text) : [{ text, start: 0 }]), [text]);
 
   return (
     <span className={className}>
-      {segments.map((seg) => {
-        if (!seg.latex) return <Fragment key={seg.key}>{seg.text}</Fragment>;
+      {segments.map((seg, i) => {
+        if (seg.latex === undefined) return <Fragment key={i}>{seg.text}</Fragment>;
         const html = renderLatex(seg.latex, !!seg.display);
         if (html === null) {
           // Invalid LaTeX mid-edit shouldn't blank the field or break the
           // sentence around it — show the raw span, flagged, and move on.
           return (
-            <span key={seg.key} className="mono" style={{ color: "var(--amber)" }} title="Couldn't parse this as LaTeX">
+            <span key={i} className="mono" style={{ color: "var(--amber)" }} title="Couldn't parse this as LaTeX">
               {seg.text}
             </span>
           );
         }
-        return <span key={seg.key} dangerouslySetInnerHTML={{ __html: html }} />;
+        return <span key={i} dangerouslySetInnerHTML={{ __html: html }} />;
       })}
     </span>
   );

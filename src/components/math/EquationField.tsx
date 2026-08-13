@@ -2,17 +2,21 @@
 
 import { useRef, useState } from "react";
 import { MathText } from "./MathText";
-import { LATEX_GROUPS, insertLatexSnippet } from "./latex-snippets";
+import { LatexPalette } from "./LatexPalette";
+import { insertLatexSnippet } from "./latex-snippets";
+import { isInsideMathSpan } from "@/lib/latex";
 
 /**
- * The FORMULA prompt field: a textarea that accepts LaTeX inside `$...$` /
- * `$$...$$` spans, a lookup palette that inserts commands at the cursor, and
- * a live preview of the whole prompt as it will actually be shown to a
- * reviewer.
+ * The FORMULA prompt field: prose with `$...$` math spans, the lookup
+ * palette, and a live preview of exactly what a reviewer will be shown.
  *
- * The palette inserts bare LaTeX, never pre-wrapped in `$...$` — clicking
- * "frac" then "alpha" should build one coherent expression inside a single
- * span, not two adjacent ones. Wrapping is its own explicit action instead.
+ * The palette wraps what it inserts in `$...$` *unless the caret is already
+ * inside a span*. The earlier version always inserted bare LaTeX and left
+ * wrapping as a separate manual step, which meant clicking `Σ` in a prose
+ * field produced the literal text `\sum_{i=1}^{n}` sitting in the sentence —
+ * indistinguishable from the preview being broken. Deciding from the caret
+ * means a symbol click always yields rendered math and never tears an open
+ * span in half.
  */
 
 interface Props {
@@ -23,10 +27,11 @@ interface Props {
 
 export function EquationField({ value, onChange, rows = 3 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [openGroup, setOpenGroup] = useState<string>(LATEX_GROUPS[0].label);
+  const [caret, setCaret] = useState(0);
 
-  function replaceSelection(next: string, cursor: number) {
+  function commit(next: string, cursor: number) {
     onChange(next);
+    setCaret(cursor);
     // The textarea's DOM value only catches up with `value` after this
     // render commits — setting selection now would land on the stale text.
     requestAnimationFrame(() => {
@@ -40,11 +45,14 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
     const el = textareaRef.current;
     const start = el?.selectionStart ?? value.length;
     const end = el?.selectionEnd ?? value.length;
-    const { next, cursor } = insertLatexSnippet(value, start, end, snippet);
-    replaceSelection(next, cursor);
+    // Wrap only when landing in prose; inside an existing span the delimiters
+    // would close it early and leave the rest as literal text.
+    const wrap = !isInsideMathSpan(value, start);
+    const { next, cursor } = insertLatexSnippet(value, start, end, snippet, wrap);
+    commit(next, cursor);
   }
 
-  /** Wraps the current selection in `$...$`, or inserts an empty pair with the cursor between. */
+  /** Wraps the current selection in `$...$`, or inserts an empty pair with the caret between. */
   function wrapMath(display: boolean) {
     const el = textareaRef.current;
     const start = el?.selectionStart ?? value.length;
@@ -53,84 +61,52 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
     const selected = value.slice(start, end);
     const wrapped = `${delim}${selected}${delim}`;
     const next = value.slice(0, start) + wrapped + value.slice(end);
-    const cursor = selected ? start + wrapped.length : start + delim.length;
-    replaceSelection(next, cursor);
+    commit(next, selected ? start + wrapped.length : start + delim.length);
   }
 
-  const hasMath = value.includes("$");
+  function syncCaret() {
+    setCaret(textareaRef.current?.selectionStart ?? 0);
+  }
+
+  const inSpan = isInsideMathSpan(value, caret);
 
   return (
     <div>
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        <button type="button" className="chip" style={CHIP_BUTTON} onClick={() => wrapMath(false)} title="Wrap the selection in $...$ (inline math)">
+        <button type="button" style={CHIP_BUTTON} onClick={() => wrapMath(false)} title="Wrap the selection in $...$ (inline math)">
           $ inline
         </button>
-        <button type="button" className="chip" style={CHIP_BUTTON} onClick={() => wrapMath(true)} title="Wrap the selection in $$...$$ (block/display math)">
+        <button type="button" style={CHIP_BUTTON} onClick={() => wrapMath(true)} title="Wrap the selection in $$...$$ (block math)">
           $$ block
         </button>
-        <span style={{ fontSize: 10, color: "var(--ink-3)" }}>Only text inside $...$ renders as math — everything else stays plain.</span>
+        {/* States where the caret is what decides insertion behaviour should
+            say so, rather than leaving it to be inferred from the result. */}
+        <span style={{ fontSize: 10, color: inSpan ? "var(--green)" : "var(--ink-3)" }}>
+          {inSpan ? "Caret is inside a math span — symbols insert directly." : "Caret is in prose — symbols insert wrapped in $…$."}
+        </span>
       </div>
 
       <textarea
         ref={textareaRef}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setCaret(e.target.selectionStart);
+        }}
+        onKeyUp={syncCaret}
+        onClick={syncCaret}
+        onSelect={syncCaret}
         rows={rows}
         className="input font-mono"
         style={{ width: "100%" }}
-        placeholder="e.g. Simplify $\frac{x^2-1}{x-1}$ for x ≠ 1."
+        placeholder="e.g. Simplify $\frac{x^2-1}{x-1}$ for $x \neq 1$."
       />
 
-      {/* Lookup — grouped LaTeX commands, glyph as the button, exact command on hover. */}
       <div className="mt-2">
-        <div className="flex flex-wrap gap-1">
-          {LATEX_GROUPS.map((g) => (
-            <button
-              key={g.label}
-              type="button"
-              onClick={() => setOpenGroup(g.label)}
-              style={{
-                padding: "2px 8px",
-                borderRadius: 6,
-                fontSize: 10.5,
-                fontWeight: 600,
-                border: `1px solid ${openGroup === g.label ? "rgba(0,204,122,.4)" : "var(--line)"}`,
-                background: openGroup === g.label ? "var(--green-10)" : "transparent",
-                color: openGroup === g.label ? "var(--green)" : "var(--ink-2)",
-                cursor: "pointer",
-              }}
-            >
-              {g.label}
-            </button>
-          ))}
-        </div>
-        <div className="mt-1.5 flex flex-wrap gap-1 p-2" style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}>
-          {LATEX_GROUPS.find((g) => g.label === openGroup)!.snippets.map((s) => (
-            <button
-              key={s.command}
-              type="button"
-              onClick={() => insert(s.insert)}
-              title={s.command}
-              aria-label={`Insert ${s.command}`}
-              className="mono"
-              style={{
-                minWidth: 30,
-                padding: "4px 7px",
-                borderRadius: 6,
-                fontSize: 13,
-                border: "1px solid var(--line-hi)",
-                background: "var(--raised)",
-                color: "var(--ink-0)",
-                cursor: "pointer",
-              }}
-            >
-              {s.glyph}
-            </button>
-          ))}
-        </div>
+        <LatexPalette onInsert={insert} />
       </div>
 
-      {/* Preview — exactly what SessionCard and the Library will show. */}
+      {/* Preview — the same component SessionCard and the Library render with. */}
       <div className="mt-2 p-3" style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}>
         <p className="label-xs">Preview</p>
         <div className="mt-1" style={{ fontSize: 15, color: "var(--ink-0)", lineHeight: 1.6, minHeight: 22 }}>
@@ -140,9 +116,9 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
             <span style={{ color: "var(--ink-3)", fontSize: 13 }}>Nothing to preview yet.</span>
           )}
         </div>
-        {value.trim() && !hasMath && (
+        {value.trim() && !value.includes("$") && (
           <p className="mt-1" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-            No $...$ span yet — this will show exactly as typed, with no math rendering.
+            No $…$ span yet — this shows exactly as typed, with no math rendering.
           </p>
         )}
       </div>
@@ -150,4 +126,13 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
   );
 }
 
-const CHIP_BUTTON: React.CSSProperties = { cursor: "pointer", border: "1px solid var(--line)", background: "var(--sub)" };
+const CHIP_BUTTON: React.CSSProperties = {
+  padding: "3px 10px",
+  borderRadius: 8,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: "pointer",
+  border: "1px solid var(--line)",
+  background: "var(--sub)",
+  color: "var(--ink-1)",
+};

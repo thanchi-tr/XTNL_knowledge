@@ -17,6 +17,8 @@ import { useAutocorrect } from "@/components/useAutocorrect";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
 import { EquationField } from "@/components/math/EquationField";
+import { AnswerExpressionField } from "@/components/math/AnswerExpressionField";
+import { latexToMathjs } from "@/lib/latex";
 
 export interface AddFormField {
   id: string;
@@ -128,7 +130,10 @@ export function AddIdeaForm({ fields }: Props) {
     }
     if (questionType === "FORMULA") {
       if (!formulaQuestion.trim() || !formulaAnswer.trim()) return null;
-      return { type: "FORMULA", question: formulaQuestion.trim(), answer: formulaAnswer.trim() };
+      // Normalised to mathjs on the way out: the author may have typed
+      // LaTeX, but `verifyFormula` evaluates the stored string as an
+      // expression, so LaTeX reaching the database would fail every grade.
+      return { type: "FORMULA", question: formulaQuestion.trim(), answer: latexToMathjs(formulaAnswer) };
     }
     if (questionType === "CLOZE") {
       const text = clozeText.trim();
@@ -670,16 +675,8 @@ export function AddIdeaForm({ fields }: Props) {
             <EquationField value={formulaQuestion} onChange={setFormulaQuestion} />
           </label>
           <label className="mt-3 block">
-            <span className={LABEL_CLASS}>Answer expression (mathjs syntax, e.g. sqrt(x^2 + y^2))</span>
-            <input
-              type="text"
-              value={formulaAnswer}
-              onChange={(e) => setFormulaAnswer(e.target.value)}
-              className={`${FIELD_CLASS} font-mono`}
-            />
-            <span className="mt-1 block" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-              Graded by algebraic equivalence, not by LaTeX — write this one as a plain expression, not inside $...$.
-            </span>
+            <span className={LABEL_CLASS}>Answer expression — LaTeX or plain mathjs</span>
+            <AnswerExpressionField value={formulaAnswer} onChange={setFormulaAnswer} />
           </label>
         </>
       )}
