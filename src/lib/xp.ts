@@ -171,8 +171,24 @@ export function dueDateFromOffset(offsetDays: number, from: Date = new Date()): 
 }
 
 // Sub-linear Leveling Architecture (spec section 6).
+
+/**
+ * Points-per-level constant: a Domain reaches level L at `DOMAIN_LEVEL_STEP² · L²`.
+ *
+ * Was 2, which put level 1 at four points and level 3 at thirty-six. Typical
+ * ideas yield 12–40 points each, so a *single* card arrived already at level
+ * two and two cards produced a level-three Domain — measured on the live
+ * account, two ideas worth 37.8 points gave Domain level 3 and Field level 2.
+ * Levels that cost nothing say nothing.
+ *
+ * At 7 the same curve puts level 1 near fifty points — three or four ideas —
+ * and level 5 near twelve hundred, which is a Domain someone has genuinely
+ * worked. The shape is unchanged and still sub-linear; only its scale moved.
+ */
+export const DOMAIN_LEVEL_STEP = 7;
+
 export function domainLevel(totalPoints: number): number {
-  return Math.floor(0.5 * Math.sqrt(Math.max(0, totalPoints)));
+  return Math.floor(Math.sqrt(Math.max(0, totalPoints)) / DOMAIN_LEVEL_STEP);
 }
 
 export function fieldLevel(domainLevels: number[]): number {
@@ -181,11 +197,11 @@ export function fieldLevel(domainLevels: number[]): number {
 
 /**
  * Progress toward a Domain's next level. Inverting
- * `level = floor(0.5 * sqrt(totalPoints))`: the smallest totalPoints at
- * which a given level is reached is `(2 * level)^2`. Field level has no
- * equivalent single-scalar inverse — it's a sum over all sibling Domains'
- * levels raised to 0.75, not a running total on the Field itself — so this
- * is Domain-only.
+ * `level = floor(sqrt(totalPoints) / DOMAIN_LEVEL_STEP)`: the smallest
+ * totalPoints at which a given level is reached is
+ * `(DOMAIN_LEVEL_STEP * level)^2`. Field level has no equivalent
+ * single-scalar inverse — it's a sum over all sibling Domains' levels raised
+ * to 0.75, not a running total on the Field itself — so this is Domain-only.
  */
 export function domainLevelProgress(totalPoints: number): {
   level: number;
@@ -194,8 +210,8 @@ export function domainLevelProgress(totalPoints: number): {
   pointsForNextLevel: number;
 } {
   const level = domainLevel(totalPoints);
-  const currentThreshold = Math.pow(2 * level, 2);
-  const nextThreshold = Math.pow(2 * (level + 1), 2);
+  const currentThreshold = Math.pow(DOMAIN_LEVEL_STEP * level, 2);
+  const nextThreshold = Math.pow(DOMAIN_LEVEL_STEP * (level + 1), 2);
   const pointsIntoLevel = Math.max(0, totalPoints - currentThreshold);
   const pointsForNextLevel = nextThreshold - currentThreshold;
   const progress = pointsForNextLevel > 0 ? Math.min(1, pointsIntoLevel / pointsForNextLevel) : 0;

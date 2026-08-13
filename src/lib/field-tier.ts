@@ -70,7 +70,7 @@ export const FIELD_TIERS: FieldTierMeta[] = [
   {
     tier: "ESTABLISHED",
     label: "Established",
-    from: 8,
+    from: 3,
     badge: true,
     lit: true,
     notches: false,
@@ -82,7 +82,7 @@ export const FIELD_TIERS: FieldTierMeta[] = [
   {
     tier: "SUBSTANTIAL",
     label: "Substantial",
-    from: 20,
+    from: 8,
     badge: true,
     lit: true,
     notches: true,
@@ -94,7 +94,7 @@ export const FIELD_TIERS: FieldTierMeta[] = [
   {
     tier: "FORMIDABLE",
     label: "Formidable",
-    from: 40,
+    from: 16,
     badge: true,
     lit: true,
     notches: true,
@@ -106,7 +106,7 @@ export const FIELD_TIERS: FieldTierMeta[] = [
   {
     tier: "MONUMENTAL",
     label: "Monumental",
-    from: 80,
+    from: 32,
     badge: true,
     lit: true,
     notches: true,
