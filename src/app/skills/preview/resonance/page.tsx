@@ -4,6 +4,7 @@ import { resolveResonance, SOLO_SHARE, SET_SHAPES } from "@/lib/loadout-sets";
 import { GRADE_VISUALS } from "@/lib/resonance-visuals";
 import { foldEffects, attenuateModifiers } from "@/lib/skill-gates";
 import { LoadoutBar } from "@/components/skills/LoadoutBar";
+import { ResonanceAtmosphere } from "@/components/skills/ResonanceAtmosphere";
 import { LOADOUT_SLOTS } from "@/lib/loadout";
 
 export const metadata: Metadata = { title: "Loadout Resonance" };
@@ -161,10 +162,32 @@ function BuildRow({ build }: { build: Build }) {
         </span>
       </div>
 
+      {/* The atmosphere this loadout would put across the whole app, boxed so
+          nine of them can be compared at once. `ambient={false}` on the bar
+          below stops each one also claiming the real full-viewport layer. */}
+      <div
+        style={{
+          position: "relative",
+          height: 260,
+          overflow: "hidden",
+          background: "var(--canvas)",
+          borderTop: "1px solid var(--line)",
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <ResonanceAtmosphere resonance={r} scoped />
+        <p
+          className="mono absolute left-4 top-3"
+          style={{ zIndex: 1, fontSize: 10.5, color: "var(--ink-3)" }}
+        >
+          {v.layers.length === 0 ? "no atmosphere — bare" : v.layers.join(" · ")}
+        </p>
+      </div>
+
       {/* The real bar. Sticky inside its own wrapper, so each sits in its own
           row rather than nine of them fighting over the viewport floor. */}
       <div style={{ position: "relative" }}>
-        <LoadoutBar slots={slots} bench={[]} />
+        <LoadoutBar slots={slots} bench={[]} ambient={false} />
       </div>
     </section>
   );

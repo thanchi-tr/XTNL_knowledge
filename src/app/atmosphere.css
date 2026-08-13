@@ -1,0 +1,353 @@
+/* ═══ ATMOSPHERE ═════════════════════════════════════════
+   The app's decoration is earned, not default.
+
+   With nothing equipped every ornamental layer is stripped: the body's two
+   light sources, the sheen gradient and inset highlight on cards, the glow
+   under the eyebrow, the hover lift. What is left is flat panels on flat
+   black — legible, complete, and visibly unlit. The point is the contrast
+   with what a loadout puts back, so an empty bar cannot read as the normal
+   state you stop noticing.
+
+   Bare is the DEFAULT rather than a NONE-only override, so an account with no
+   skills at all — where the bar never renders and no attribute is ever set —
+   sees the same stripped surface as one carrying ten unlinked emblems. Both
+   have earned nothing.
+
+   Split out of globals.css because it is long, and imported from there.
+   Every rule here is either more specific than the base rule it overrides or
+   targets a class that exists nowhere else, so import order does not matter.
+   ═══════════════════════════════════════════════════════ */
+
+html:not([data-res-grade]) body,
+html[data-res-grade="NONE"] body {
+  background-image: none;
+}
+
+html:not([data-res-grade]) .card,
+html:not([data-res-grade]) .panel,
+html[data-res-grade="NONE"] .card,
+html[data-res-grade="NONE"] .panel {
+  background-image: none;
+  box-shadow: none;
+}
+
+html:not([data-res-grade]) .section-eyebrow,
+html[data-res-grade="NONE"] .section-eyebrow {
+  color: var(--ink-2);
+  text-shadow: none;
+}
+
+html:not([data-res-grade]) .card-hover:hover,
+html[data-res-grade="NONE"] .card-hover:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--line-hi) !important;
+}
+
+/* Lit: the body's ambient light takes the grade's hue, so the whole page —
+   not only the footer — is tinted by what is equipped. */
+html[data-res-grade]:not([data-res-grade="NONE"]) body {
+  background-image:
+    radial-gradient(ellipse 130% 50% at 50% -6%, var(--atmos-tint, rgba(0, 204, 122, 0.05)) 0%, transparent 62%),
+    radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0, 130, 255, 0.014) 0%, transparent 50%);
+}
+
+html[data-res-grade="ALIGNED"] { --atmos-tint: rgba(77, 156, 245, 0.055); }
+html[data-res-grade="HARMONIC"] { --atmos-tint: rgba(155, 107, 255, 0.065); }
+html[data-res-grade="RESONANT"] { --atmos-tint: rgba(240, 160, 48, 0.075); }
+html[data-res-grade="TRANSCENDENT"] { --atmos-tint: rgba(255, 94, 176, 0.09); }
+
+/* ── The layer itself ────────────────────────────────────
+   Fixed, behind every pixel of content, inert to the pointer. `z-index: -1`
+   paints it above the body background and below in-flow content, which is
+   why it must not live inside the loadout bar — that element isolates, and a
+   negative z-index would be trapped inside the footer. */
+.atmos {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+}
+
+/* Scoped variant for the reference page: contained in its own box, painting
+   above that box's background rather than behind the whole document. */
+.atmos.atmos-scoped {
+  position: absolute;
+  z-index: 0;
+}
+
+/* ── Dust ────────────────────────────────────────────── */
+.atmos-speck {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--res-color);
+  opacity: 0;
+  animation: atmos-drift var(--d, 18s) linear var(--delay, 0s) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-drift {
+  0%       { opacity: 0; transform: translate3d(0, 14px, 0); }
+  12%, 82% { opacity: .34; }
+  100%     { opacity: 0; transform: translate3d(26px, -70px, 0); }
+}
+
+/* ── Meteors ─────────────────────────────────────────────
+   A hairline with a bright head, thrown down and to the left. The long,
+   staggered delays are the point: continuous streaks would read as rain,
+   and a meteor has to be an event to be worth looking at. */
+.atmos-meteor {
+  position: absolute;
+  height: 1px;
+  transform-origin: right center;
+  rotate: 26deg;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--res-color) 55%, transparent) 78%,
+    var(--res-color) 100%
+  );
+  box-shadow: 0 0 7px var(--res-color);
+  opacity: 0;
+  animation: atmos-meteor var(--d, 3s) cubic-bezier(.25, .55, .35, 1) var(--delay, 0s) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-meteor {
+  0%        { opacity: 0; transform: translate3d(0, 0, 0) scaleX(.2); }
+  6%        { opacity: .85; }
+  38%       { opacity: .7; }
+  55%, 100% { opacity: 0; transform: translate3d(-88vw, 46vh, 0) scaleX(1); }
+}
+
+/* ── Orbits ──────────────────────────────────────────────
+   Rings tipped toward the viewer with a single body running each. Nested
+   because the tilt is a static transform and the spin an animated one —
+   putting both on the same element means the animation wins and the ring
+   flattens. */
+.atmos-system {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0;
+  height: 0;
+  perspective: 900px;
+}
+
+.atmos-orbit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--res-color) 13%, transparent);
+  transform-style: preserve-3d;
+}
+
+.atmos-orbit-spin {
+  position: absolute;
+  inset: 0;
+  animation: atmos-spin var(--d, 30s) linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+.atmos-orbit-spin.rev { animation-direction: reverse; }
+
+@keyframes atmos-spin {
+  to { transform: rotate(360deg); }
+}
+
+.atmos-body {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  margin-left: -3px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--res-color);
+  box-shadow: 0 0 12px var(--res-color);
+  opacity: .6;
+}
+
+/* ── Sun ─────────────────────────────────────────────── */
+.atmos-sun {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0;
+  height: 0;
+}
+
+.atmos-sun-core,
+.atmos-sun-rays {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.atmos-sun-core {
+  width: 190px;
+  height: 190px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--res-color) 34%, transparent) 0%,
+    color-mix(in srgb, var(--res-color) 12%, transparent) 42%,
+    transparent 70%
+  );
+  filter: blur(6px);
+  animation: atmos-burn 6.5s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-burn {
+  0%, 100% { opacity: .68; transform: translate(-50%, -50%) scale(1); }
+  50%      { opacity: 1; transform: translate(-50%, -50%) scale(1.09); }
+}
+
+/* Corona. A conic gradient masked to an annulus, turning slowly enough that
+   you notice it only if you look. */
+.atmos-sun-rays {
+  width: 620px;
+  height: 620px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,   color-mix(in srgb, var(--res-color) 9%, transparent) 6deg,   transparent 14deg,
+    transparent 40deg,  color-mix(in srgb, var(--res-color) 7%, transparent) 46deg,  transparent 55deg,
+    transparent 92deg,  color-mix(in srgb, var(--res-color) 10%, transparent) 98deg, transparent 108deg,
+    transparent 150deg, color-mix(in srgb, var(--res-color) 6%, transparent) 156deg, transparent 165deg,
+    transparent 210deg, color-mix(in srgb, var(--res-color) 9%, transparent) 216deg, transparent 226deg,
+    transparent 270deg, color-mix(in srgb, var(--res-color) 7%, transparent) 276deg, transparent 286deg,
+    transparent 330deg, color-mix(in srgb, var(--res-color) 8%, transparent) 336deg, transparent 346deg,
+    transparent 360deg
+  );
+  -webkit-mask-image: radial-gradient(circle, transparent 12%, #000 34%, #000 60%, transparent 78%);
+  mask-image: radial-gradient(circle, transparent 12%, #000 34%, #000 60%, transparent 78%);
+  opacity: .85;
+  animation: atmos-corona 88s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-corona {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* ── Black hole ──────────────────────────────────────────
+   TRANSCENDENT only. Disk, then photon ring, then the horizon painted last
+   so the dark core genuinely occludes the disk behind it. */
+.atmos-hole {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0;
+  height: 0;
+}
+
+.atmos-disk,
+.atmos-lens,
+.atmos-horizon,
+.atmos-freeze {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.atmos-disk {
+  width: 420px;
+  height: 420px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--res-color) 40%, transparent) 55deg,
+    rgba(255, 255, 255, .13) 110deg,
+    color-mix(in srgb, var(--res-color) 55%, transparent) 165deg,
+    transparent 250deg,
+    color-mix(in srgb, var(--res-color) 30%, transparent) 320deg,
+    transparent 360deg
+  );
+  -webkit-mask-image: radial-gradient(circle, transparent 26%, #000 36%, #000 52%, transparent 64%);
+  mask-image: radial-gradient(circle, transparent 26%, #000 36%, #000 52%, transparent 64%);
+  filter: blur(3px);
+  opacity: .5;
+  animation: atmos-disk 14s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-disk {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* The photon ring: light that went round and came back. */
+.atmos-lens {
+  width: 168px;
+  height: 168px;
+  border: 1px solid color-mix(in srgb, var(--res-color) 60%, transparent);
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--res-color) 45%, transparent),
+    inset 0 0 26px color-mix(in srgb, var(--res-color) 30%, transparent);
+  opacity: .6;
+  animation: atmos-lens 5.2s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-lens {
+  0%, 100% { opacity: .45; transform: translate(-50%, -50%) scale(1); }
+  50%      { opacity: .75; transform: translate(-50%, -50%) scale(1.045); }
+}
+
+.atmos-horizon {
+  width: 148px;
+  height: 148px;
+  background: radial-gradient(circle, #000 0%, #000 62%, rgba(0, 0, 0, .82) 82%, transparent 100%);
+}
+
+/* Matter spiralling in: it rotates while its radius collapses, so the path
+   is a spiral rather than a straight fall. */
+.atmos-infall {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  border-radius: 50%;
+  background: var(--res-color);
+  box-shadow: 0 0 6px var(--res-color);
+  opacity: 0;
+  animation: atmos-infall var(--d, 5s) cubic-bezier(.35, 0, .75, .6) var(--delay, 0s) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-infall {
+  0%   { opacity: 0; transform: rotate(var(--a, 0deg)) translateX(240px) scale(1); }
+  14%  { opacity: .9; }
+  88%  { opacity: .55; }
+  100% { opacity: 0; transform: rotate(calc(var(--a, 0deg) + 430deg)) translateX(72px) scale(.35); }
+}
+
+/* Time coming apart. Stepped rather than eased, so it stutters outward in
+   discrete jumps instead of gliding — the whole reason it reads as a clock
+   failing rather than as one more pulse. */
+.atmos-freeze {
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(
+    circle,
+    transparent 38%,
+    color-mix(in srgb, var(--res-color) 9%, transparent) 54%,
+    transparent 68%
+  );
+  opacity: 0;
+  animation: atmos-freeze 11s steps(14, end) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes atmos-freeze {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(.35); }
+  30%  { opacity: .85; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.9); }
+}

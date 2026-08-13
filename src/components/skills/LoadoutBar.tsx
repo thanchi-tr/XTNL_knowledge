@@ -8,6 +8,7 @@ import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
 import { resolveResonance, SOLO_SHARE } from "@/lib/loadout-sets";
 import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
+import { ResonanceAtmosphere } from "./ResonanceAtmosphere";
 import type { Skill } from "@/lib/skill-pool";
 
 export interface LoadoutSlotView {
@@ -21,6 +22,12 @@ interface Props {
   slots: LoadoutSlotView[];
   /** Owned but unequipped, offered in the picker. */
   bench: Skill[];
+  /**
+   * Whether this bar owns the app-wide atmosphere. Only the real one in the
+   * shell should — the reference page renders many bars and would otherwise
+   * stack a full-viewport layer per grade.
+   */
+  ambient?: boolean;
 }
 
 /**
@@ -37,7 +44,7 @@ interface Props {
  * Sticky, because the answer to "what does this do for me" should be
  * visible while browsing the tree, not one navigation away.
  */
-export function LoadoutBar({ slots, bench }: Props) {
+export function LoadoutBar({ slots, bench, ambient = true }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [picking, setPicking] = useState<number | null>(null);
@@ -156,6 +163,11 @@ export function LoadoutBar({ slots, bench }: Props) {
 
   return (
     <>
+      {/* Sibling of the bar, never a child: `.loadout-bar` isolates, which
+          would trap the atmosphere's negative z-index inside the footer
+          instead of letting it sit behind the whole page. */}
+      {ambient && <ResonanceAtmosphere resonance={resonance} />}
+
       {picking !== null && (
         <div
           className="fixed inset-0 z-30"

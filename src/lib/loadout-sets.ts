@@ -33,8 +33,15 @@ import type { Skill, SkillRank } from "./skill-pool";
  * same reason `skill-gates.ts` is split out of `skill-effects.ts`.
  */
 
-/** Fraction of its printed power a single emblem realises with no set backing it. */
-export const SOLO_SHARE = 0.35;
+/**
+ * Fraction of its printed power a single emblem realises with no set backing.
+ *
+ * Low on purpose. At 0.35 the span controlled by composition was under two
+ * thirds of the range and a shapeless pile of emblems still felt adequate; at
+ * 0.15 nearly the whole range belongs to the sets, and carrying ten unrelated
+ * emblems is visibly the weak option rather than merely the unexciting one.
+ */
+export const SOLO_SHARE = 0.15;
 
 /** Set strength above 1.0 keeps paying, but at a much shallower rate. */
 const OVERDRIVE_RATE = 0.3;

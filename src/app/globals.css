@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./atmosphere.css";
 @config "../../tailwind.config.mts";
 
 /* ═══════════════════════════════════════════════════════════

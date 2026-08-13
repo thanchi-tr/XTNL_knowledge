@@ -20,6 +20,19 @@ import type { ResonanceGrade } from "./loadout-sets";
  * backgrounded tab or a battery below 20% stops paying for any of it.
  */
 
+/**
+ * Full-viewport ambient phenomena, layered cumulatively as the grade climbs.
+ *
+ * Each is a distinct physical idea rather than more of the last one, so the
+ * top grades are told apart by *what is happening* and not by brightness:
+ * dust drifts, meteors fall, bodies orbit, a sun burns, and at the very top a
+ * black hole drags the whole field inward and periodically freezes it.
+ *
+ * They accumulate — TRANSCENDENT runs all of them at once — which is what
+ * makes the ceiling feel like an event rather than one more increment.
+ */
+export type AtmosphereLayer = "dust" | "meteors" | "orbits" | "sun" | "blackhole";
+
 export interface GradeVisual {
   label: string;
   /** Primary accent — border, text, particle colour. */
@@ -30,6 +43,8 @@ export interface GradeVisual {
   motes: number;
   /** A slow light sweep across the bar. Reserved for the top three grades. */
   sweep: boolean;
+  /** Ambient phenomena across the whole app, not just the footer. */
+  layers: AtmosphereLayer[];
   /** One line naming what the loadout has achieved. */
   tagline: string;
 }
@@ -41,6 +56,7 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(90,116,144,0)",
     motes: 0,
     sweep: false,
+    layers: [],
     tagline: "No emblems in combination — each is working alone.",
   },
   FAINT: {
@@ -49,6 +65,7 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(0,204,122,0.16)",
     motes: 6,
     sweep: false,
+    layers: ["dust"],
     tagline: "A first pattern holds.",
   },
   ALIGNED: {
@@ -57,6 +74,7 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(77,156,245,0.20)",
     motes: 10,
     sweep: false,
+    layers: ["dust", "meteors"],
     tagline: "The set is deliberate now.",
   },
   HARMONIC: {
@@ -65,7 +83,8 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(155,107,255,0.26)",
     motes: 14,
     sweep: true,
-    tagline: "Several shapes reinforcing at once.",
+    layers: ["dust", "meteors", "orbits"],
+    tagline: "Bodies have found orbits around you.",
   },
   RESONANT: {
     label: "Resonant",
@@ -73,7 +92,8 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(240,160,48,0.30)",
     motes: 18,
     sweep: true,
-    tagline: "A build, not a collection.",
+    layers: ["dust", "meteors", "orbits", "sun"],
+    tagline: "A star at the centre of it, burning.",
   },
   TRANSCENDENT: {
     label: "Transcendent",
@@ -81,7 +101,8 @@ export const GRADE_VISUALS: Record<ResonanceGrade, GradeVisual> = {
     glow: "rgba(255,94,176,0.34)",
     motes: 24,
     sweep: true,
-    tagline: "Composition this rare barely occurs by accident.",
+    layers: ["dust", "meteors", "orbits", "sun", "blackhole"],
+    tagline: "Light bends around this. Time comes apart.",
   },
 };
 
