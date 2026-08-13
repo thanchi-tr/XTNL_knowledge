@@ -18,11 +18,13 @@ import {
   foldEffects,
   foldDebuffs,
   foldBoons,
+  attenuateModifiers,
   meetsRequirements,
   resolveWardAnchor,
   NEUTRAL_MODIFIERS,
   type ActiveModifiers,
 } from "./skill-gates";
+import { resolveResonance, type LoadoutResonance } from "./loadout-sets";
 
 /**
  * The database half of the progression system: reads Field/streak/skill/
@@ -67,6 +69,8 @@ export interface ProgressionState {
   dormantSkills: Skill[];
   /** Owned but not equipped. Contributes nothing. */
   benchedSkills: Skill[];
+  /** Which set shapes the active loadout satisfies, and the power that unlocks. */
+  resonance: LoadoutResonance;
   modifiers: ActiveModifiers;
   /** Currently-active debuffs, so the UI can name what is dragging the numbers down. */
   debuffs: ActiveDebuffRow[];
@@ -192,7 +196,10 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
 
   const baseScores = scoresWithStreak(rows, streakBonuses, 1);
   const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
-  const firstFold = foldEffects(firstPass);
+  // Attenuated on both passes. Gating on printed values and then paying out
+  // attenuated ones would let a loadout unlock skills on strength it does
+  // not actually have.
+  const firstFold = attenuateModifiers(foldEffects(firstPass), resolveResonance(firstPass).powerShare);
 
   const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier);
   const isActive = (s: Skill) => meetsRequirements(s, scores, firstFold.resonancePercent, penalty);
@@ -206,6 +213,8 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     loadout[slot] = { slot, skill, active: isActive(skill) };
   }
 
+  const resonance = resolveResonance(activeSkills);
+
   return {
     scores,
     ownedCodes: owned.map((o) => o.skillCode),
@@ -213,10 +222,17 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     activeSkills,
     dormantSkills,
     benchedSkills,
-    // Order matters: skills form the baseline, boons lift it, debuffs cut
-    // it. Applying debuffs last means a penalty bites the state you
-    // actually have rather than being cancelled out by a fresh buff.
-    modifiers: foldDebuffs(foldBoons(foldEffects(activeSkills), boons), debuffs),
+    resonance,
+    // Order matters: skills are attenuated to what the loadout's coherence
+    // actually realises, boons lift that, debuffs cut it. Applying debuffs
+    // last means a penalty bites the state you actually have rather than
+    // being cancelled out by a fresh buff. Boons sit outside the attenuation
+    // because they are Boss spoils, not emblems — set composition should not
+    // decide what a reward is worth.
+    modifiers: foldDebuffs(
+      foldBoons(attenuateModifiers(foldEffects(activeSkills), resonance.powerShare), boons),
+      debuffs
+    ),
     debuffs,
     boons,
   };

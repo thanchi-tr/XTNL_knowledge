@@ -507,6 +507,140 @@ code, pre, .mono {
   100% { transform: scale(1); }
 }
 
+/* ── Loadout resonance ───────────────────────────────────
+   The footer's whole appearance is driven by two inline custom properties,
+   `--res-color` and `--res-glow`, set from GRADE_VISUALS. Grades therefore
+   need no per-grade CSS: adding one is a data change, and the bar cannot
+   drift out of sync with the table that scores it.
+
+   The bar is unstyled at NONE and stays that way until a set actually fires,
+   so the decoration always means something. Every looping animation below
+   opts into `--ambient-play` — see the POWER block — so a hidden tab or a
+   phone under 20% battery stops paying for the whole layer. */
+.loadout-bar {
+  position: relative;
+  isolation: isolate;
+  border-top: 1px solid var(--line);
+  transition: border-color .5s ease, background-color .5s ease, box-shadow .5s ease;
+}
+
+.loadout-bar[data-resonant="1"] {
+  border-top-color: color-mix(in srgb, var(--res-color) 42%, transparent);
+  box-shadow:
+    0 -1px 0 color-mix(in srgb, var(--res-color) 22%, transparent),
+    0 -18px 44px -20px var(--res-glow);
+}
+
+/* The lighting itself: a wide, very soft pool rising from the bar's own
+   edge, so the glow reads as the bar emitting light rather than a rectangle
+   someone painted behind it. */
+.loadout-bar[data-resonant="1"]::before {
+  content: "";
+  position: absolute;
+  inset: -40px 0 0 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(120% 100% at 50% 100%, var(--res-glow) 0%, transparent 68%);
+  animation: res-breathe 5.6s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes res-breathe {
+  0%, 100% { opacity: .72; }
+  50%      { opacity: 1; }
+}
+
+/* Particle layer. Clipped to the bar and inert to pointers — it sits above
+   the background but below the slots, so nothing it does can intercept a
+   click on a slot. */
+.res-motes {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.res-mote {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--res-color);
+  opacity: 0;
+  filter: blur(.4px);
+  box-shadow: 0 0 6px var(--res-color);
+  animation: res-drift var(--mote-dur, 5s) ease-in-out var(--mote-delay, 0s) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+/* Rises and fades. Horizontal drift is small and one-directional so the
+   layer reads as motes lifting off the bar, not as snow. */
+@keyframes res-drift {
+  0%   { opacity: 0; transform: translate3d(0, 6px, 0) scale(.6); }
+  22%  { opacity: .85; }
+  70%  { opacity: .5; }
+  100% { opacity: 0; transform: translate3d(7px, -26px, 0) scale(1.05); }
+}
+
+/* Light sweep — HARMONIC and above only, so it marks a threshold rather
+   than being one more thing that scales. */
+.res-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.res-sweep::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 42%;
+  left: -50%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--res-color) 13%, transparent) 45%,
+    color-mix(in srgb, var(--res-color) 20%, transparent) 50%,
+    transparent 100%
+  );
+  animation: res-sweep 7s cubic-bezier(.5, 0, .5, 1) infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes res-sweep {
+  0%        { left: -50%; }
+  55%, 100% { left: 108%; }
+}
+
+/* The set badges. `--res-color` again, so they recolour with the grade
+   without a single per-grade rule. */
+.res-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  color: var(--res-color);
+  border: 1px solid color-mix(in srgb, var(--res-color) 34%, transparent);
+  background: color-mix(in srgb, var(--res-color) 11%, transparent);
+}
+
+/* Fires once when a new set completes: the bar acknowledges the moment
+   rather than quietly changing colour. */
+.res-lock { animation: res-lock .9s cubic-bezier(.16, 1, .3, 1); }
+@keyframes res-lock {
+  0%   { box-shadow: 0 -1px 0 var(--res-color), 0 0 0 0 var(--res-glow); }
+  40%  { box-shadow: 0 -1px 0 var(--res-color), 0 -26px 60px -14px var(--res-color); }
+  100% { box-shadow: 0 -1px 0 color-mix(in srgb, var(--res-color) 22%, transparent), 0 -18px 44px -20px var(--res-glow); }
+}
+
 /* ── Terminal spectacle: APEX and ULTIMATE only ──────────
    These three are the only effects in the app that no other rank has, and
    they exist because escalating shared channels by count alone made the

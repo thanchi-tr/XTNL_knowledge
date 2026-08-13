@@ -64,6 +64,57 @@ export const NEUTRAL_MODIFIERS: ActiveModifiers = {
   attributePenaltyPercent: 0,
 };
 
+/**
+ * Scales one modifier toward neutral.
+ *
+ * Only the *delta* from neutral is scaled, so the direction of an effect is
+ * preserved whichever way it points — `lambda` improves downward and its
+ * delta is negative, and it attenuates correctly without a special case.
+ *
+ * Integer modifiers (charges, days, strikes) round, but never below 1 while
+ * the unattenuated effect granted at least 1. A ward that intercepts
+ * degradation "0.35 times per week" is not a weakened skill, it is a skill
+ * that silently does nothing — the player would equip it, see a modifier
+ * line reading zero, and reasonably conclude the feature is broken.
+ */
+function attenuate(neutral: number, value: number, share: number, integer = false): number {
+  const delta = (value - neutral) * share;
+  if (!integer) return neutral + delta;
+  const rounded = Math.round(delta);
+  if (delta > 0 && rounded < 1 && value - neutral >= 1) return neutral + 1;
+  return neutral + rounded;
+}
+
+/**
+ * Applies the loadout's realised power share to a folded modifier set.
+ *
+ * Exported for the loadout UI, which shows the same numbers the engine will
+ * use rather than the emblems' printed values — see `loadout-sets.ts` for
+ * why a solo emblem is worth only `SOLO_SHARE` of what it prints.
+ */
+export function attenuateModifiers(m: ActiveModifiers, share: number): ActiveModifiers {
+  const n = NEUTRAL_MODIFIERS;
+  return {
+    ...m,
+    reviewYieldMultiplier: attenuate(n.reviewYieldMultiplier, m.reviewYieldMultiplier, share),
+    lambda: attenuate(n.lambda, m.lambda, share),
+    wardCharges: attenuate(n.wardCharges, m.wardCharges, share, true),
+    graceExtraDays: attenuate(n.graceExtraDays, m.graceExtraDays, share, true),
+    intervalMultiplier: attenuate(n.intervalMultiplier, m.intervalMultiplier, share),
+    comboCap: attenuate(n.comboCap, m.comboCap, share, true),
+    comboRetained: attenuate(n.comboRetained, m.comboRetained, share),
+    masteryMultiplier: attenuate(n.masteryMultiplier, m.masteryMultiplier, share),
+    extraStrikes: attenuate(n.extraStrikes, m.extraStrikes, share, true),
+    yieldFloorFraction: attenuate(n.yieldFloorFraction, m.yieldFloorFraction, share),
+    dedupThresholdDelta: attenuate(n.dedupThresholdDelta, m.dedupThresholdDelta, share),
+    streakMultiplier: attenuate(n.streakMultiplier, m.streakMultiplier, share),
+    resonancePercent: attenuate(n.resonancePercent, m.resonancePercent, share),
+    // Debuff-only, and never set by a skill — a loadout's coherence has no
+    // business softening a penalty the player was handed.
+    attributePenaltyPercent: m.attributePenaltyPercent,
+  };
+}
+
 export function foldEffects(skills: Skill[]): ActiveModifiers {
   const m: ActiveModifiers = { ...NEUTRAL_MODIFIERS };
   for (const s of skills) {

@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
+import { resolveResonance, SOLO_SHARE } from "@/lib/loadout-sets";
+import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
 import type { Skill } from "@/lib/skill-pool";
 
 export interface LoadoutSlotView {
@@ -68,6 +70,44 @@ export function LoadoutBar({ slots, bench }: Props) {
   }
 
   const filled = localSlots.filter((s) => s.skill).length;
+
+  /**
+   * Resonance is recomputed here rather than passed down from the server.
+   *
+   * `resolveResonance` is pure, so the bar can evaluate it against its own
+   * optimistic slots — the footer changes grade on the click that completes a
+   * set, not after the round trip. Waiting for the server would put the
+   * spectacle a beat behind the decision that earned it, which is precisely
+   * the moment it exists to mark. The server still owns the real modifiers;
+   * this only decides how the bar looks.
+   */
+  const resonance = useMemo(
+    () => resolveResonance(localSlots.filter((s) => s.skill && s.active).map((s) => s.skill!)),
+    [localSlots]
+  );
+  const visual = GRADE_VISUALS[resonance.grade];
+  const lit = resonance.sets.length > 0;
+  const motes = useMemo(() => motesFor(visual.motes), [visual.motes]);
+
+  /** One-shot flash when a shape completes that was not held a moment ago. */
+  const [locking, setLocking] = useState(false);
+  const knownSets = useRef<string | null>(null);
+  useEffect(() => {
+    const ids = resonance.sets.map((s) => s.id).sort().join(",");
+    // First render seeds the baseline instead of flashing: arriving on a page
+    // with sets already held is not an achievement that just happened.
+    if (knownSets.current === null) {
+      knownSets.current = ids;
+      return;
+    }
+    const had = new Set(knownSets.current.split(",").filter(Boolean));
+    const gained = resonance.sets.some((s) => !had.has(s.id));
+    knownSets.current = ids;
+    if (!gained) return;
+    setLocking(true);
+    const t = setTimeout(() => setLocking(false), 950);
+    return () => clearTimeout(t);
+  }, [resonance.sets]);
 
   function attach(slot: number, skill: Skill) {
     setError(null);
@@ -183,18 +223,61 @@ export function LoadoutBar({ slots, bench }: Props) {
       )}
 
       <div
-        className="sticky bottom-0 z-20 mt-6"
-        style={{
-          background: "rgba(4,8,15,.92)",
-          backdropFilter: "blur(10px)",
-          borderTop: "1px solid var(--line)",
-        }}
+        className={`loadout-bar sticky bottom-0 z-20 mt-6 ${locking ? "res-lock" : ""}`}
+        data-resonant={lit ? "1" : "0"}
+        style={
+          {
+            background: "rgba(4,8,15,.92)",
+            backdropFilter: "blur(10px)",
+            // The top border lives in `.loadout-bar`, not here: an inline
+            // style outranks the stylesheet, so declaring it here silently
+            // defeated the grade's border-colour rule on every bar.
+            "--res-color": visual.color,
+            "--res-glow": visual.glow,
+          } as React.CSSProperties
+        }
       >
-        <div className="site-container flex items-center gap-4 py-2.5">
+        {/* Decoration only, and never in the way: both layers are
+            pointer-events:none and sit below the slots. */}
+        {lit && motes.length > 0 && (
+          <div className="res-motes" aria-hidden="true">
+            {motes.map((m, i) => (
+              <span
+                key={i}
+                className="res-mote"
+                style={
+                  {
+                    left: `${m.left}%`,
+                    top: `${m.top}%`,
+                    width: m.size,
+                    height: m.size,
+                    "--mote-dur": `${m.durationSec}s`,
+                    "--mote-delay": `${m.delaySec}s`,
+                  } as React.CSSProperties
+                }
+              />
+            ))}
+          </div>
+        )}
+        {lit && visual.sweep && <div className="res-sweep" aria-hidden="true" />}
+
+        <div className="site-container relative flex items-center gap-4 py-2.5" style={{ zIndex: 1 }}>
           <div className="shrink-0">
-            <p className="label-xs">Loadout</p>
-            <p className="mono" style={{ fontSize: 11, color: filled === slots.length ? "var(--green)" : "var(--ink-2)" }}>
-              {filled}/{slots.length} equipped
+            <p className="label-xs" style={{ color: lit ? visual.color : undefined }}>
+              {lit ? visual.label : "Loadout"}
+            </p>
+            <p
+              className="mono"
+              style={{ fontSize: 11, color: filled === slots.length ? "var(--green)" : "var(--ink-2)" }}
+              // The share is the number that actually decides payouts, so it
+              // is stated rather than left to be inferred from the colour.
+              title={
+                lit
+                  ? `Emblems realise ${(resonance.powerShare * 100).toFixed(0)}% of their printed effect`
+                  : `Unlinked emblems realise ${(SOLO_SHARE * 100).toFixed(0)}% of their printed effect`
+              }
+            >
+              {filled}/{slots.length} · {(resonance.powerShare * 100).toFixed(0)}%
             </p>
           </div>
 
@@ -247,6 +330,33 @@ export function LoadoutBar({ slots, bench }: Props) {
             </p>
           )}
         </div>
+
+        {/* The set readout. Only rendered once something is actually held, so
+            the bar stays a thin strip of slots until there is news — a
+            permanent "0 sets" row would make the empty state look like the
+            feature is broken rather than unstarted. */}
+        {lit && (
+          <div
+            className="site-container relative flex items-center gap-2 overflow-x-auto pb-2"
+            style={{ zIndex: 1, scrollbarWidth: "none" }}
+          >
+            <span className="shrink-0" style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
+              {visual.tagline}
+            </span>
+            {resonance.sets.map((s) => (
+              <span
+                key={s.id}
+                className="res-chip shrink-0"
+                title={`${s.blurb}\n${s.members.map((m) => m.name).join(", ")}`}
+              >
+                {s.name}
+                <span className="mono" style={{ opacity: 0.7 }}>
+                  ×{s.members.length}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
