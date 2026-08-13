@@ -1,6 +1,7 @@
 import { listTaxonomy } from "@/lib/taxonomy";
 import { TaxonomyManager } from "@/components/taxonomy/TaxonomyManager";
 import { DangerZone } from "@/components/taxonomy/DangerZone";
+import { ReattributeButton } from "@/components/taxonomy/ReattributeButton";
 import { getResetPreview } from "@/app/actions/reset";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export default async function TaxonomyPage() {
         </div>
 
         <div className="fade-up fade-up-2">
+          <ReattributeButton />
           <DangerZone counts={resetCounts} />
         </div>
       </div>

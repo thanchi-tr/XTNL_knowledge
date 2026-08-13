@@ -43,51 +43,107 @@ interface LexicalRule {
 }
 
 /**
+ * Homographs are handled inside the patterns with negative lookahead rather
+ * than by a rule-level veto, because the ambiguity is local to the word and
+ * not to the document: an idea can legitimately discuss covalent bonds and
+ * bond yields in the same breath, and a veto would silently drop both.
+ *
+ * Measured misfires this exists to stop — every one of these was scoring
+ * wrongly before:
+ *
+ *   "when do you use a capital letter"   scored as economics  (STATISTIC)
+ *   "organic growth vs acquisition"      scored as chemistry
+ *   "how many bytes does a character"    scored as language, and PHYSICAL
+ *   "corporate bond yield to maturity"   scored as chemistry *and* finance
+ *
+ * The general rule applied below: a word with a common non-academic or
+ * cross-domain sense either carries its qualifier in the pattern ("covalent
+ * bond", "capital expenditure") or is excluded from the senses it does not
+ * mean. Bare ambiguous tokens — "system", "sample", "reaction", "trade",
+ * "fund", "composition" — are not worth a rule on their own at all.
+ */
+
+/**
  * Every rule that matches contributes — the whole point of moving off
  * first-match-wins. `strength` separates a term that names a discipline
  * outright ("thermodynamics") from one that merely leans ("system").
  */
 const LEXICON: LexicalRule[] = [
   // ── Formal and quantitative ──────────────────────────────────────
-  { pattern: /\b(math|algebra|calculus|topolog\w*|geometr\w*|theorem|proof|lemma)/i, strength: 3, weights: { LOGIC: 32, ABSTRACT: 30, REASON: 20, MIND: 18 } },
-  { pattern: /\b(statistic\w*|probabilit\w*|bayes\w*|variance|regression|sample|distribution)/i, strength: 3, weights: { STATISTIC: 42, REASON: 20, CRITICAL_THINKING: 20, LOGIC: 18 } },
-  { pattern: /\b(econometric|quantitative|quant|backtest\w*|expectancy|sharpe|drawdown)/i, strength: 3, weights: { STATISTIC: 35, REASON: 25, CRITICAL_THINKING: 20, STUBBORNNESS: 20 } },
-  { pattern: /\b(logic|deduct\w*|inference|entail\w*|axiom|formal)/i, strength: 2, weights: { LOGIC: 45, REASON: 30, ABSTRACT: 25 } },
+  { pattern: /\b(mathematic\w*|algebra\w*|calculus|topolog\w*|geometr\w*|theorem|lemma|corollar\w*|integral|derivative|matri(x|ces)|eigen\w*|polynomial|factorial|logarithm)/i, strength: 3, weights: { LOGIC: 32, ABSTRACT: 30, REASON: 20, MIND: 18 } },
+  { pattern: /\b(statistic\w*|probabilit\w*|bayes\w*|variance|covariance|regression|std ?dev\w*|standard deviation|percentile|quantile|correlat\w*|p-value|confidence interval|hypothesis test\w*|sampling)/i, strength: 3, weights: { STATISTIC: 42, REASON: 20, CRITICAL_THINKING: 20, LOGIC: 18 } },
+  { pattern: /\b(econometric\w*|backtest\w*|expectancy|sharpe|drawdown|volatilit\w*|monte carlo|stochastic)/i, strength: 3, weights: { STATISTIC: 35, REASON: 25, CRITICAL_THINKING: 20, STUBBORNNESS: 20 } },
+  { pattern: /\b(logic|deduct\w*|syllogis\w*|entail\w*|axiom\w*|tautolog\w*|predicate|quantifier)/i, strength: 2, weights: { LOGIC: 45, REASON: 30, ABSTRACT: 25 } },
+  { pattern: /\b(proof|prove|proving)\b/i, strength: 2, weights: { LOGIC: 38, ABSTRACT: 28, REASON: 24, STUBBORNNESS: 10 } },
 
   // ── Natural science ──────────────────────────────────────────────
-  { pattern: /\b(physic\w*|thermodynam\w*|mechanic\w*|quantum|relativit\w*)/i, strength: 3, weights: { ABSTRACT: 30, LOGIC: 26, MIND: 24, STATISTIC: 20 } },
-  { pattern: /\b(chemistr\w*|molecul\w*|organic|reaction|bond|atom\w*)/i, strength: 3, weights: { MIND: 32, ABSTRACT: 24, LOGIC: 24, CRITICAL_THINKING: 20 } },
-  { pattern: /\b(biolog\w*|cell\w*|neuro\w*|anatom\w*|genetic\w*|protein|enzyme)/i, strength: 3, weights: { MIND: 38, CRITICAL_THINKING: 22, ABSTRACT: 20, PHYSICAL: 20 } },
+  { pattern: /\b(physic\w*|thermodynam\w*|quantum|relativit\w*|kinematic\w*|momentum|entropy|electromagnet\w*|newton\w*)/i, strength: 3, weights: { ABSTRACT: 30, LOGIC: 26, MIND: 24, STATISTIC: 20 } },
+  // "bond" and "organic" carry their qualifier: bare forms mean finance and
+  // marketing at least as often as they mean chemistry.
+  { pattern: /\b(chemistr\w*|molecul\w*|stoichiometr\w*|electron|isotope|ph scale|titrat\w*|(covalent|ionic|hydrogen|chemical) bond|organic chem\w*|atomic \w+|periodic table)/i, strength: 3, weights: { MIND: 32, ABSTRACT: 24, LOGIC: 24, CRITICAL_THINKING: 20 } },
+  { pattern: /\b(biolog\w*|cellular|mitochondri\w*|neuro\w*|anatom\w*|genetic\w*|genome|protein|enzyme|photosynthes\w*|evolution\w*|ecosystem|species)/i, strength: 3, weights: { MIND: 38, CRITICAL_THINKING: 22, ABSTRACT: 20, PHYSICAL: 20 } },
+  { pattern: /\b(astronom\w*|astrophys\w*|galax\w*|nebula|supernova|orbit\w*|planet\w*|stellar|cosmolog\w*|red giant|black hole|light-?year)/i, strength: 3, weights: { ABSTRACT: 34, MIND: 26, LOGIC: 22, CRITICAL_THINKING: 18 } },
+  { pattern: /\b(geograph\w*|geolog\w*|climat\w*|monsoon|tecton\w*|erosion|atmosphere|latitude|longitude|meteorolog\w*|weather|glacier)/i, strength: 3, weights: { MIND: 32, CRITICAL_THINKING: 24, ABSTRACT: 22, STATISTIC: 20 } },
 
-  // ── Engineering and computation ──────────────────────────────────
-  { pattern: /\b(comput\w*|software|program\w*|algorithm\w*|data structure|compiler|database|api)/i, strength: 3, weights: { LOGIC: 34, ABSTRACT: 26, CREATIVITY: 20, STUBBORNNESS: 20 } },
-  { pattern: /\b(engineer\w*|architect\w*|system|optimi[sz]\w*|debug\w*|refactor\w*)/i, strength: 2, weights: { LOGIC: 28, STUBBORNNESS: 26, ABSTRACT: 24, CREATIVITY: 22 } },
+  // ── Computation ──────────────────────────────────────────────────
+  { pattern: /\b(algorithm\w*|data structure|hash ?(map|table|set)|linked list|binary (tree|search)|graph traversal|sort\w* algorithm|big-?o|complexity class|recursion|dynamic programming|heap|trie|linear probing)/i, strength: 3, weights: { LOGIC: 36, ABSTRACT: 28, STUBBORNNESS: 20, CREATIVITY: 16 } },
+  // "comput" is anchored to its noun forms: as a bare stem it fires on the
+  // ordinary verb, so "compute the yield to maturity" scored as computer
+  // science and diluted a finance card.
+  { pattern: /\b(computer|computing|computation\w*|software|programm\w*|compiler|runtime|typescript|javascript|python|rust\b|golang|function signature|variable scope|pointer|garbage collect\w*|utf-?8|byte\w*)/i, strength: 3, weights: { LOGIC: 34, ABSTRACT: 26, CREATIVITY: 20, STUBBORNNESS: 20 } },
+  { pattern: /\b(database|sql\b|query plan|index\w* scan|normali[sz]ation|transaction|acid\b|schema|primary key|foreign key|migration)/i, strength: 3, weights: { LOGIC: 32, ABSTRACT: 26, CRITICAL_THINKING: 22, STUBBORNNESS: 20 } },
+  { pattern: /\b(machine learning|neural net\w*|deep learning|gradient descent|overfit\w*|dropout|training set|embedding|transformer|classifier|loss function|backprop\w*)/i, strength: 3, weights: { STATISTIC: 34, ABSTRACT: 26, LOGIC: 24, CRITICAL_THINKING: 18 } },
+  { pattern: /\b(security|cryptograph\w*|encrypt\w*|authenticat\w*|vulnerab\w*|exploit|injection|xss\b|csrf|hashing|tls\b|threat model)/i, strength: 3, weights: { CRITICAL_THINKING: 32, LOGIC: 26, REBUTTAL: 22, STUBBORNNESS: 20 } },
+  // Bare "network" is deliberately absent: it collided with "neural network"
+  // and pulled machine-learning cards toward distributed systems.
+  { pattern: /\b(networking|network protocol|packet|ethernet|dns\b|ip address|subnet|firewall|protocol|tcp\b|http\w*|latency|bandwidth|distributed system|load balanc\w*|cache invalidat\w*|concurren\w*|deadlock)/i, strength: 3, weights: { LOGIC: 30, ABSTRACT: 26, CRITICAL_THINKING: 24, STUBBORNNESS: 20 } },
+  { pattern: /\b(engineer\w*|architectur\w*|optimi[sz]\w*|debug\w*|refactor\w*|circuit|voltage|torque|tolerance|blueprint)/i, strength: 2, weights: { LOGIC: 28, STUBBORNNESS: 26, ABSTRACT: 24, CREATIVITY: 22 } },
 
   // ── Argument, law, philosophy ────────────────────────────────────
-  { pattern: /\b(philosoph\w*|ethic\w*|metaphysic\w*|epistem\w*)/i, strength: 3, weights: { REASON: 30, ABSTRACT: 26, CRITICAL_THINKING: 24, REBUTTAL: 20 } },
-  { pattern: /\b(rhetoric|argument\w*|debate|rebut\w*|counter\w*|fallac\w*|refut\w*)/i, strength: 3, weights: { REBUTTAL: 40, CRITICAL_THINKING: 28, REASON: 20, LOGIC: 12 } },
-  { pattern: /\b(law|legal|statut\w*|contract|jurisprud\w*|precedent)/i, strength: 3, weights: { REASON: 28, REBUTTAL: 26, CRITICAL_THINKING: 26, MIND: 20 } },
+  { pattern: /\b(philosoph\w*|ethic\w*|metaphysic\w*|epistem\w*|ontolog\w*|utilitarian\w*|deontolog\w*|existential\w*)/i, strength: 3, weights: { REASON: 30, ABSTRACT: 26, CRITICAL_THINKING: 24, REBUTTAL: 20 } },
+  { pattern: /\b(rhetoric\w*|argument\w*|debate|rebut\w*|counter-?argument|fallac\w*|refut\w*|steel ?man|straw ?man|objection)/i, strength: 3, weights: { REBUTTAL: 40, CRITICAL_THINKING: 28, REASON: 20, LOGIC: 12 } },
+  { pattern: /\b(jurisprud\w*|statut\w*|legal|litigation|tort|plaintiff|defendant|precedent|contract law|invitation to treat|liabilit\w*|court)/i, strength: 3, weights: { REASON: 28, REBUTTAL: 26, CRITICAL_THINKING: 26, MIND: 20 } },
 
-  // ── Humanities and society ───────────────────────────────────────
-  { pattern: /\b(histor\w*|polit\w*|anthropol\w*|sociolog\w*|civili[sz]\w*)/i, strength: 2, weights: { CRITICAL_THINKING: 30, REASON: 26, MIND: 24, STATISTIC: 20 } },
-  { pattern: /\b(econom\w*|market\w*|trade|trading|invest\w*|capital|fund|portfolio)/i, strength: 3, weights: { STATISTIC: 30, REASON: 26, SELF_RESPECT: 22, STUBBORNNESS: 22 } },
+  // ── Society ──────────────────────────────────────────────────────
+  { pattern: /\b(histor\w*|civili[sz]\w*|dynast\w*|empire|revolution|medieval|antiquit\w*|bronze age|renaissance|colonial\w*)/i, strength: 2, weights: { CRITICAL_THINKING: 30, REASON: 26, MIND: 24, STATISTIC: 20 } },
+  { pattern: /\b(politic\w*|governance|democra\w*|parliament\w*|constitution\w*|electoral|proportional representation|first-?past-?the-?post|gerrymander\w*|referend\w*|legislat\w*|policy|diplomac\w*|sovereign\w*)/i, strength: 2, weights: { CRITICAL_THINKING: 30, REASON: 28, REBUTTAL: 22, MIND: 20 } },
+  { pattern: /\b(sociolog\w*|anthropolog\w*|demograph\w*|social norm|culture|ethnograph\w*|inequalit\w*)/i, strength: 2, weights: { CRITICAL_THINKING: 28, COMPASSION: 24, REASON: 24, STATISTIC: 20 } },
+
+  // ── Money ────────────────────────────────────────────────────────
+  // "capital" excluded from its letter/city/punishment senses.
+  { pattern: /\b(econom\w*|inflation|monetary|fiscal|gdp\b|supply and demand|elasticit\w*|opportunity cost|capital (expenditure|allocation|structure)|macro\w*|microeconom\w*)/i, strength: 3, weights: { STATISTIC: 30, REASON: 28, CRITICAL_THINKING: 24, ABSTRACT: 18 } },
+  { pattern: /\b(trading|investor|investing|investment|portfolio|equit(y|ies)|securit(y|ies) market|yield to maturity|coupon rate|corporate bond|hedge|derivative\w* market|arbitrage|liquidit\w*)/i, strength: 3, weights: { STATISTIC: 30, REASON: 26, SELF_RESPECT: 22, STUBBORNNESS: 22 } },
+  { pattern: /\b(account\w*|balance sheet|income statement|cash flow|ledger|depreciat\w*|amorti[sz]\w*|accrual|debit|credit entry|audit\w*)/i, strength: 3, weights: { STATISTIC: 32, LOGIC: 26, CRITICAL_THINKING: 22, STUBBORNNESS: 20 } },
+  { pattern: /\b(marketing|brand\w*|customer acquisition|lifetime value|conversion rate|segment\w*|positioning|campaign|funnel|churn|organic (growth|traffic|reach))/i, strength: 3, weights: { CREATIVITY: 28, CRITICAL_THINKING: 26, STATISTIC: 24, REASON: 20 } },
+  { pattern: /\b(management|leadership|strateg\w*|stakeholder|negotiat\w*|delegat\w*|operations|logistics|procurement|kpi\b)/i, strength: 2, weights: { REASON: 26, CRITICAL_THINKING: 24, COMPASSION: 22, SELF_RESPECT: 20 } },
+  // "finance", "business" and "commerce" were missing entirely, so a Field
+  // literally named "Business & Finance" inferred nothing and was stored as
+  // the generic fallback — indistinguishable from every other unmatched name.
+  { pattern: /\b(financ\w*|business|commerc\w*|entrepreneur\w*|revenue|profit|pricing|valuation|budget\w*)/i, strength: 3, weights: { STATISTIC: 28, REASON: 26, CRITICAL_THINKING: 22, STUBBORNNESS: 20 } },
 
   // ── Craft and expression ─────────────────────────────────────────
-  { pattern: /\b(art|design|music|paint\w*|film|poetr\w*|literat\w*|narrat\w*|composit\w*)/i, strength: 3, weights: { CREATIVITY: 42, ABSTRACT: 24, MIND: 18, SELF_RESPECT: 16 } },
-  { pattern: /\b(writ\w*|essay|prose|draft\w*|edit\w*)/i, strength: 2, weights: { CREATIVITY: 34, ABSTRACT: 22, CRITICAL_THINKING: 22, MIND: 22 } },
-  { pattern: /\b(languag\w*|vocab\w*|grammar|linguist\w*|conjugat\w*|kanji|character)/i, strength: 3, weights: { MIND: 42, STUBBORNNESS: 26, PHYSICAL: 18, CREATIVITY: 14 } },
+  { pattern: /\b(painting|sculpt\w*|drawing|illustrat\w*|typograph\w*|colour theory|color theory|visual design|composition of (the )?(image|frame)|aesthetic\w*)/i, strength: 3, weights: { CREATIVITY: 42, ABSTRACT: 24, MIND: 18, SELF_RESPECT: 16 } },
+  { pattern: /\b(music\w*|harmon(y|ic)\w*|chord|tritone|cadence|counterpoint|melod\w*|rhythm|timbre|scale degree|key signature)/i, strength: 3, weights: { CREATIVITY: 38, ABSTRACT: 26, MIND: 20, PHYSICAL: 16 } },
+  { pattern: /\b(film|cinema\w*|cinematograph\w*|photograph\w*|framing|montage|shot composition|exposure|aperture)/i, strength: 3, weights: { CREATIVITY: 38, ABSTRACT: 24, CRITICAL_THINKING: 20, MIND: 18 } },
+  { pattern: /\b(literatur\w*|poetr\w*|poem|narrativ\w*|protagonist|metaphor|prose style|novel\b|fiction)/i, strength: 3, weights: { CREATIVITY: 36, ABSTRACT: 24, COMPASSION: 20, MIND: 20 } },
+  { pattern: /\b(writing|essay|paragraph|draft\w*|editing|rewrite|thesis statement|outline)/i, strength: 2, weights: { CREATIVITY: 34, ABSTRACT: 22, CRITICAL_THINKING: 22, MIND: 22 } },
+  // "character" only in its writing-system sense; the CS rule owns bytes.
+  { pattern: /\b(languag\w*|vocabular\w*|grammar|linguist\w*|conjugat\w*|declension|kanji|hanzi|hiragana|katakana|pronunciation|idiom|tense\b|capital letter)/i, strength: 3, weights: { MIND: 42, STUBBORNNESS: 26, CREATIVITY: 16, CRITICAL_THINKING: 16 } },
 
   // ── Body, care, self ─────────────────────────────────────────────
-  { pattern: /\b(fitness|training|sport|athlet\w*|nutrition|strength|endurance|exercise)/i, strength: 3, weights: { PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH: 10 } },
-  { pattern: /\b(medic\w*|clinic\w*|nurs\w*|health|patient|diagnos\w*|radiograph\w*)/i, strength: 3, weights: { MIND: 30, COMPASSION: 26, CRITICAL_THINKING: 24, PHYSICAL: 20 } },
-  { pattern: /\b(psycholog\w*|therap\w*|counsel\w*|relationship|empath\w*|grief|trauma)/i, strength: 3, weights: { COMPASSION: 38, CRITICAL_THINKING: 20, REASON: 20, SELF_RESPECT: 22 } },
-  { pattern: /\b(discipline|habit|routine|consisten\w*|persever\w*|resilien\w*)/i, strength: 2, weights: { STUBBORNNESS: 36, SELF_RESPECT: 26, FAITH: 22, PHYSICAL: 16 } },
-  { pattern: /\b(mindful\w*|meditat\w*|calm|patience|emotion\w*|regulat\w*)/i, strength: 2, weights: { COMPASSION: 30, SELF_RESPECT: 28, FAITH: 24, REASON: 18 } },
-  { pattern: /\b(theolog\w*|religio\w*|spirit\w*|scriptur\w*|faith|prayer)/i, strength: 3, weights: { FAITH: 44, COMPASSION: 20, ABSTRACT: 20, SELF_RESPECT: 16 } },
+  { pattern: /\b(fitness|hypertroph\w*|sport|athlet\w*|strength training|endurance|exercise|progressive overload|cardio|mobilit\w*|repetition range)/i, strength: 3, weights: { PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH: 10 } },
+  { pattern: /\b(nutrition|macronutrient|protein intake|calorie|vitamin|diet\w*|cooking|baking|ferment\w*|gluten|dough|sear\w*|emulsif\w*)/i, strength: 3, weights: { PHYSICAL: 32, MIND: 26, CRITICAL_THINKING: 22, CREATIVITY: 20 } },
+  { pattern: /\b(medic\w*|clinic\w*|nurs\w*|patient|diagnos\w*|symptom|patholog\w*|pharmacolog\w*|dosage|radiograph\w*|prognosis)/i, strength: 3, weights: { MIND: 30, COMPASSION: 26, CRITICAL_THINKING: 24, PHYSICAL: 20 } },
+  { pattern: /\b(psycholog\w*|therap\w*|counsel\w*|empath\w*|grief|trauma|attachment style|cognitive behav\w*|depress\w*|anxiet\w*)/i, strength: 3, weights: { COMPASSION: 38, SELF_RESPECT: 22, CRITICAL_THINKING: 20, REASON: 20 } },
+  { pattern: /\b(disciplin\w*|habit\w*|routine|consisten\w*|persever\w*|resilien\w*|willpower|procrastinat\w*|accountab\w*|conditioning|peak performance|productivit\w*)/i, strength: 3, weights: { STUBBORNNESS: 36, SELF_RESPECT: 26, FAITH: 22, PHYSICAL: 16 } },
+  { pattern: /\b(cognitio\w*|cognitive|attention|focus\b|concentrat\w*|flow state|self-?improvement|personal development|skill acquisition)/i, strength: 2, weights: { MIND: 34, CRITICAL_THINKING: 24, SELF_RESPECT: 22, STUBBORNNESS: 20 } },
+  { pattern: /\b(mindful\w*|meditat\w*|patience|emotional regulat\w*|self-?compassion|breathwork|equanimit\w*)/i, strength: 2, weights: { COMPASSION: 30, SELF_RESPECT: 28, FAITH: 24, REASON: 18 } },
+  { pattern: /\b(theolog\w*|religio\w*|spiritual\w*|scriptur\w*|faith\b|prayer|doctrin\w*|liturg\w*|monastic)/i, strength: 3, weights: { FAITH: 44, COMPASSION: 20, ABSTRACT: 20, SELF_RESPECT: 16 } },
 
-  // ── Memory and study craft ───────────────────────────────────────
-  { pattern: /\b(memor\w*|recall|retention|forgetting|mnemonic|spaced|repetition)/i, strength: 3, weights: { MIND: 46, STUBBORNNESS: 22, FAITH: 18, PHYSICAL: 14 } },
-  { pattern: /\b(risk|uncertain\w*|bias|assumption|premise|evidence)/i, strength: 2, weights: { CRITICAL_THINKING: 34, REASON: 28, STATISTIC: 24, REBUTTAL: 14 } },
+  // ── Study craft and epistemics ───────────────────────────────────
+  { pattern: /\b(memori[sz]\w*|memory|recall|retention|forgetting curve|mnemonic|spaced repetition|encoding specificity|interleav\w*)/i, strength: 3, weights: { MIND: 46, STUBBORNNESS: 22, FAITH: 18, PHYSICAL: 14 } },
+  { pattern: /\b(pedagog\w*|teaching|curricul\w*|assessment|feedback loop|deliberate practice|scaffold\w*)/i, strength: 2, weights: { MIND: 28, COMPASSION: 24, CRITICAL_THINKING: 24, REASON: 24 } },
+  { pattern: /\b(risk|uncertaint\w*|bias\b|assumption|premise|evidence|falsifiab\w*|confounder|base rate|causal\w*)/i, strength: 2, weights: { CRITICAL_THINKING: 34, REASON: 28, STATISTIC: 24, REBUTTAL: 14 } },
 ];
 
 /**
@@ -230,13 +286,29 @@ export function effectiveFieldComposition(
   fieldOwn: Composition,
   domains: { composition: Composition; totalPoints: number }[]
 ): Composition {
-  const scored = domains.filter((d) => d.totalPoints > 0);
-  if (scored.length === 0) return fieldOwn;
+  if (domains.length === 0) return fieldOwn;
 
-  const totalPoints = scored.reduce((sum, d) => sum + d.totalPoints, 0);
+  const scored = domains.filter((d) => d.totalPoints > 0);
+
+  /**
+   * Points weight the mix, but their absence no longer discards it.
+   *
+   * Previously any Domain with zero points was filtered out, so a Field with
+   * a dozen well-named Domains and no reviews yet fell back to whatever its
+   * own name happened to infer. That is exactly backwards at the moment it
+   * matters most — a fresh account, or one just reset, has all the structural
+   * evidence and none of the points, and it was throwing the evidence away.
+   *
+   * With no points anywhere, Domains contribute equally; otherwise the
+   * points-weighted mix stands, unchanged.
+   */
+  const contributing = scored.length > 0 ? scored : domains;
+  const totalWeight =
+    scored.length > 0 ? scored.reduce((sum, d) => sum + d.totalPoints, 0) : contributing.length;
+
   const domainMix = emptyComposition();
-  for (const d of scored) {
-    const share = d.totalPoints / totalPoints;
+  for (const d of contributing) {
+    const share = (scored.length > 0 ? d.totalPoints : 1) / totalWeight;
     for (const a of ATTRIBUTES) domainMix[a] += d.composition[a] * share;
   }
 

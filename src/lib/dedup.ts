@@ -164,9 +164,16 @@ export async function analyzeCandidate(
   fieldId: string,
   fieldName: string,
   contentText: string,
-  mergeThreshold = SIMILARITY_MERGE_MIN
+  mergeThreshold = SIMILARITY_MERGE_MIN,
+  /**
+   * Reuses a vector the caller already paid for. Field routing needs the
+   * embedding before deduplication runs, and embedding is the only external
+   * API call on the write path — doing it twice doubles the cost of every
+   * submission to answer two questions about the same text.
+   */
+  precomputed?: number[]
 ): Promise<AnalysisResult> {
-  const embedding = await embedText(contentText);
+  const embedding = precomputed ?? (await embedText(contentText));
   const neighbours = await findNearestNodes(fieldId, embedding);
   const nearest = neighbours[0];
 

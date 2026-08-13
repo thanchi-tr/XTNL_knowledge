@@ -5,6 +5,7 @@ import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { embedText, synthesizeNodeData } from "@/lib/gemini";
 import { routeFromNearest, createNoveltyDomain, countSimilarInDomain } from "@/lib/domain-discovery";
+import { pickField, type FieldChoice } from "@/lib/field-routing";
 import {
   analyzeCandidate,
   previewCandidate,
@@ -28,7 +29,14 @@ import { invalidate } from "@/lib/cache";
 export type SkillFreeResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 export interface SubmitIdeaInput {
-  fieldId: string;
+  /**
+   * Omit to have the Field chosen automatically — see `field-routing.ts`.
+   *
+   * Domains have been discovered automatically since the beginning; the Field
+   * was the one structural decision still forced on the user, and the one
+   * they were least able to make quickly before having written the idea down.
+   */
+  fieldId?: string;
   collectionLabel: CollectionLabel;
   content: IdeaContent;
   /**
@@ -53,6 +61,12 @@ export type SubmitIdeaResult =
       domainId: string;
       classification: "NOVELTY" | "EXPANSION" | "MANUAL";
       decision: DedupDecision;
+      /**
+       * Present only when the Field was chosen automatically, so the UI can
+       * say where the idea landed and on what evidence. A `WEAK` basis means
+       * nothing fitted well and the user should be offered a new Field.
+       */
+      routedField?: FieldChoice;
     }
   | { status: "merged"; targetIdeaId: string; similarity: number; decision: DedupDecision }
   | {
@@ -85,12 +99,41 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   const contentText = embeddingTextFromStored(questionType, question, answer);
 
   const userId = getCurrentUserId();
-  const [field, modifiers] = await Promise.all([
-    prisma.field.findUniqueOrThrow({ where: { id: input.fieldId } }),
-    loadModifiers(userId),
-  ]);
+  const modifiers = await loadModifiers(userId);
+
+  /**
+   * The Field is chosen automatically when the caller does not name one.
+   *
+   * The embedding is computed here and handed to `analyzeCandidate` rather
+   * than letting it embed again — routing and deduplication ask different
+   * questions of the same vector, and embedding is the only external API
+   * call on the write path.
+   */
+  let fieldId = input.fieldId;
+  let precomputed: number[] | undefined;
+  let routedField: FieldChoice | null = null;
+  if (!fieldId) {
+    precomputed = await embedText(contentText);
+    routedField = await pickField(precomputed, contentText);
+    if (!routedField) {
+      // Only reachable with zero Fields in the account. Thrown rather than
+      // returned because the result union describes where an Idea *went*,
+      // and there is no answer to give — the same treatment the other
+      // impossible-precondition paths here already get.
+      throw new Error("Create a Field before adding ideas — there is nowhere to file this yet.");
+    }
+    fieldId = routedField.fieldId;
+  }
+
+  const field = await prisma.field.findUniqueOrThrow({ where: { id: fieldId } });
   const mergeThreshold = SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta;
-  const { decision, embedding, neighbours } = await analyzeCandidate(input.fieldId, field.name, contentText, mergeThreshold);
+  const { decision, embedding, neighbours } = await analyzeCandidate(
+    fieldId,
+    field.name,
+    contentText,
+    mergeThreshold,
+    precomputed
+  );
 
   if (decision.action === "MERGE_EXACT" && decision.target_node_id) {
     await mergeIntoNode(decision.target_node_id, decision.node_data?.tags ?? []);
@@ -121,7 +164,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
 
   if (input.domainId) {
     domain = await prisma.domain.findFirstOrThrow({
-      where: { id: input.domainId, fieldId: input.fieldId },
+      where: { id: input.domainId, fieldId },
     });
     classification = "MANUAL";
     nSimilar = await countSimilarInDomain(domain.id, embedding);
@@ -142,7 +185,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
 
     domain =
       routing.classification === "NOVELTY"
-        ? await createNoveltyDomain(input.fieldId, field.name, contentText)
+        ? await createNoveltyDomain(fieldId, field.name, contentText)
         : await prisma.domain.findUniqueOrThrow({ where: { id: routing.domainId } });
     classification = routing.classification;
     nSimilar = routing.nSimilar;
@@ -196,6 +239,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
     domainId: domain.id,
     classification,
     decision,
+    ...(routedField ? { routedField } : {}),
   };
 }
 
