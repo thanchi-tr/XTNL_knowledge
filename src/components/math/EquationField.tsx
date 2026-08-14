@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { MathText } from "./MathText";
 import { LatexPalette } from "./LatexPalette";
+import { LatexEditor } from "./LatexEditor";
 import { insertLatexSnippet } from "./latex-snippets";
 import { isInsideMathSpan } from "@/lib/latex";
 
@@ -64,10 +65,6 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
     commit(next, selected ? start + wrapped.length : start + delim.length);
   }
 
-  function syncCaret() {
-    setCaret(textareaRef.current?.selectionStart ?? 0);
-  }
-
   const inSpan = isInsideMathSpan(value, caret);
 
   return (
@@ -86,19 +83,13 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
         </span>
       </div>
 
-      <textarea
-        ref={textareaRef}
+      <LatexEditor
+        editorRef={textareaRef}
         value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setCaret(e.target.selectionStart);
-        }}
-        onKeyUp={syncCaret}
-        onClick={syncCaret}
-        onSelect={syncCaret}
+        onChange={onChange}
+        onCaret={setCaret}
         rows={rows}
-        className="input font-mono"
-        style={{ width: "100%" }}
+        ariaLabel="Formula prompt"
         placeholder="e.g. Simplify $\frac{x^2-1}{x-1}$ for $x \neq 1$."
       />
 

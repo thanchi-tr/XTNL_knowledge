@@ -4,6 +4,7 @@ import "katex/dist/katex.min.css";
 import katex from "katex";
 import { useMemo, useRef } from "react";
 import { LatexPalette } from "./LatexPalette";
+import { LatexEditor } from "./LatexEditor";
 import { insertLatexSnippet } from "./latex-snippets";
 import { previewExpression } from "@/lib/latex";
 
@@ -34,7 +35,7 @@ interface Props {
 }
 
 export function AnswerExpressionField({ value, onChange }: Props) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const result = useMemo(() => (value.trim() ? previewExpression(value) : null), [value]);
 
   function insert(snippet: string) {
@@ -62,13 +63,13 @@ export function AnswerExpressionField({ value, onChange }: Props) {
 
   return (
     <div>
-      <input
-        ref={inputRef}
-        type="text"
+      <LatexEditor
+        editorRef={inputRef}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="input font-mono"
-        style={{ width: "100%" }}
+        onChange={onChange}
+        rows={2}
+        singleLine
+        ariaLabel="Answer expression"
         placeholder="sqrt(x^2 + y^2)  or  \sqrt{x^2 + y^2}"
       />
 
