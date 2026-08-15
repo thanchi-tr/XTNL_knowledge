@@ -110,7 +110,7 @@ export function AppNav({ titleSlot }: AppNavProps) {
           rather than being hidden entirely, which is what the previous
           `hidden md:flex` did — leaving phones with no way to navigate. */}
       <div
-        className="flex items-center gap-6 overflow-x-auto px-5 pb-2 md:hidden"
+        className="flex items-center gap-1 overflow-x-auto px-4 pb-1.5 md:hidden"
         style={{ scrollbarWidth: "none" }}
       >
         {LINKS.map((link) => {
@@ -122,11 +122,21 @@ export function AppNav({ titleSlot }: AppNavProps) {
               aria-current={active ? "page" : undefined}
               className="whitespace-nowrap no-underline"
               style={{
+                // Padding, not just text. These were bare 19px-tall labels —
+                // half the 44px a thumb actually needs, and the tap target of
+                // every link in the app on a phone. The gap shrinks to
+                // compensate so the strip still fits the same links.
+                display: "inline-flex",
+                alignItems: "center",
+                minHeight: 40,
+                padding: "0 10px",
+                borderRadius: 8,
                 fontSize: 11,
                 fontWeight: active ? 600 : 500,
                 letterSpacing: "0.05em",
                 textTransform: "uppercase",
                 color: active ? "var(--green)" : "var(--ink-2)",
+                background: active ? "var(--green-10)" : "transparent",
               }}
             >
               {link.label}
