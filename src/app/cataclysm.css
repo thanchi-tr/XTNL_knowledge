@@ -1,0 +1,243 @@
+/* ═══ CATACLYSM ══════════════════════════════════════════
+   One-shot, page-wide attach events for the two terminal ranks.
+
+   Distinct from atmosphere.css, which is the *ambient* layer: that one
+   persists for as long as a resonance grade is held and is deliberately
+   calm enough to work behind text for hours. This fires once, is over in
+   under three seconds, and is allowed to be loud precisely because it is
+   rare — an Apex or an Ultimate is the end of a path costing thousands of
+   mastery, and slotting one should not look like slotting a trinket.
+
+   Both layers are fixed, pointer-events:none, and sit at z-index 16 —
+   above the page surge (15), below the loadout bar (20) and far below the
+   picker and modals. A full-screen event must never eat the click after it.
+   ═══════════════════════════════════════════════════════ */
+
+.cataclysm {
+  position: fixed;
+  inset: 0;
+  z-index: 16;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ── APEX — meteor rain ──────────────────────────────────
+   Gold, because Apex is the gold rank. Streaks enter above the viewport
+   and fall past it on a shallow diagonal, each with its own delay so the
+   shower reads as a sky rather than as a volley fired at once. */
+.cat-meteor {
+  position: absolute;
+  top: -12vh;
+  left: var(--mx, 50%);
+  width: 2px;
+  height: 16vh;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, transparent, var(--cat-color, #f0a030));
+  box-shadow: 0 0 12px var(--cat-color, #f0a030);
+  opacity: 0;
+  transform: rotate(18deg);
+  animation: cat-meteor var(--cat-dur, 1500ms) cubic-bezier(.35, 0, .7, 1) var(--md, 0ms) both;
+}
+
+/* The head — a bright point leading the tail, so a streak reads as an
+   object with mass rather than as a gradient sliding down the screen. */
+.cat-meteor::after {
+  content: "";
+  position: absolute;
+  bottom: -3px;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 14px 3px var(--cat-color, #f0a030);
+}
+
+@keyframes cat-meteor {
+  0%   { opacity: 0;   transform: translate3d(0, 0, 0) rotate(18deg); }
+  8%   { opacity: .95; }
+  70%  { opacity: .8; }
+  100% { opacity: 0;   transform: translate3d(38vw, 128vh, 0) rotate(18deg); }
+}
+
+/* A brief warm wash over the whole page, so the shower lights the room. */
+.cat-skyglow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 70% at 50% 0%, rgba(240, 160, 48, .18) 0%, transparent 62%);
+  opacity: 0;
+  animation: cat-skyglow var(--cat-dur, 1500ms) ease-out both;
+}
+
+@keyframes cat-skyglow {
+  0%   { opacity: 0; }
+  18%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── ULTIMATE — collapse ─────────────────────────────────
+   The screen is pulled into a point, the point turns, and the glass
+   fractures. Ordered back-to-front in the markup so the event horizon
+   genuinely occludes what falls past it. */
+
+/* Everything on the page dims as the well opens — the only effect in the
+   app that takes light away before giving any back. */
+.cat-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  animation: cat-dim 2600ms ease-in-out both;
+}
+
+@keyframes cat-dim {
+  0%   { opacity: 0; }
+  22%  { opacity: .62; }
+  72%  { opacity: .38; }
+  100% { opacity: 0; }
+}
+
+/* Matter drawn in from the edges. Accelerating, never easing out — gravity
+   does not decelerate on arrival. */
+.cat-pull {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46vmax;
+  height: 2px;
+  transform-origin: left center;
+  border-radius: 2px;
+  background: linear-gradient(to left, transparent, var(--cat-color, #ff5eb0));
+  box-shadow: 0 0 10px var(--cat-color, #ff5eb0);
+  opacity: 0;
+  animation: cat-pull 2200ms cubic-bezier(.55, 0, .95, .35) var(--md, 0ms) both;
+}
+
+@keyframes cat-pull {
+  0%   { opacity: 0;   transform: rotate(var(--a, 0deg)) scaleX(1); }
+  16%  { opacity: .9; }
+  100% { opacity: 0;   transform: rotate(var(--a, 0deg)) scaleX(.02); }
+}
+
+/* The accretion disc. Masked to a ring so the centre stays black. */
+.cat-disk {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44vmin;
+  height: 44vmin;
+  margin: -22vmin 0 0 -22vmin;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent) 70deg,
+    rgba(255, 255, 255, .65) 130deg,
+    color-mix(in srgb, var(--cat-color, #ff5eb0) 75%, transparent) 200deg,
+    transparent 290deg,
+    color-mix(in srgb, var(--cat-color, #ff5eb0) 40%, transparent) 350deg,
+    transparent 360deg
+  );
+  -webkit-mask-image: radial-gradient(circle, transparent 26%, #000 36%, #000 54%, transparent 68%);
+  mask-image: radial-gradient(circle, transparent 26%, #000 36%, #000 54%, transparent 68%);
+  filter: blur(3px);
+  opacity: 0;
+  animation: cat-disk 2600ms cubic-bezier(.2, .6, .3, 1) both;
+}
+
+@keyframes cat-disk {
+  0%   { opacity: 0; transform: rotate(0deg)   scale(.25); }
+  18%  { opacity: .95; }
+  64%  { opacity: .7; }
+  100% { opacity: 0; transform: rotate(760deg) scale(1.25); }
+}
+
+/* The event horizon itself. */
+.cat-hole {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20vmin;
+  height: 20vmin;
+  margin: -10vmin 0 0 -10vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, #000 0%, #000 56%, rgba(0, 0, 0, .82) 76%, transparent 100%);
+  box-shadow: 0 0 60px 18px rgba(0, 0, 0, .9);
+  opacity: 0;
+  animation: cat-hole 2600ms cubic-bezier(.2, .7, .3, 1) both;
+}
+
+@keyframes cat-hole {
+  0%   { opacity: 0; transform: scale(.1); }
+  16%  { opacity: 1; transform: scale(1); }
+  66%  { opacity: 1; transform: scale(1.04); }
+  100% { opacity: 0; transform: scale(.2); }
+}
+
+/* ── The crack ───────────────────────────────────────────
+   Drawn rather than painted: each fracture is a stroked path revealed by
+   animating `stroke-dashoffset`, so the glass splits outward from the
+   centre instead of appearing all at once. Held a beat at full, then
+   released — the page is not actually broken. */
+.cat-crack {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  animation: cat-crack-fade 2600ms ease-out both;
+}
+
+.cat-crack path {
+  fill: none;
+  stroke: rgba(255, 255, 255, .92);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px var(--cat-color, #ff5eb0));
+  stroke-dasharray: 220;
+  stroke-dashoffset: 220;
+  animation: cat-crack-draw 620ms cubic-bezier(.2, .9, .3, 1) var(--cd, 0ms) both;
+}
+
+@keyframes cat-crack-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes cat-crack-fade {
+  0%   { opacity: 0; }
+  30%  { opacity: 1; }
+  74%  { opacity: .85; }
+  100% { opacity: 0; }
+}
+
+/* One hard white frame at the instant the glass gives. */
+.cat-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  animation: cat-flash 2600ms ease-out both;
+}
+
+@keyframes cat-flash {
+  0%, 26% { opacity: 0; }
+  29%     { opacity: .5; }
+  36%     { opacity: 0; }
+  100%    { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-meteor,
+  .cat-skyglow,
+  .cat-dim,
+  .cat-pull,
+  .cat-disk,
+  .cat-hole,
+  .cat-crack,
+  .cat-crack path,
+  .cat-flash {
+    animation: none;
+    opacity: 0;
+  }
+}

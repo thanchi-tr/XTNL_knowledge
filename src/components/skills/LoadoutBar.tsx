@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
 import { BarCharge, type ChargeVariant } from "./BarCharge";
+import { Cataclysm } from "./Cataclysm";
 import { ComboPopup } from "./ComboPopup";
 import { ComboCodex } from "./ComboCodex";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
@@ -274,6 +275,13 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
           would trap a fixed full-viewport layer inside the footer. Only the
           real shell bar raises it — the reference page renders many bars and
           would otherwise flash the whole document per row. */}
+      {/* Terminal ranks get their own event on top of the surge — see
+          Cataclysm for why the last two rungs are a different kind of thing
+          rather than a bigger version of the same one. */}
+      {ambient && barCharge && (barCharge.skill.rank === "APEX" || barCharge.skill.rank === "ULTIMATE") && (
+        <Cataclysm rank={barCharge.skill.rank} replayKey={barCharge.key} />
+      )}
+
       {ambient && barCharge && (
         <span
           key={`surge-${barCharge.key}`}
