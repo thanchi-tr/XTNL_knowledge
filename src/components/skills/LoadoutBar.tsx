@@ -9,6 +9,8 @@ import { ComboPopup } from "./ComboPopup";
 import { ComboCodex } from "./ComboCodex";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
+import { skinFor } from "@/lib/skill-form";
+import { themeFor } from "@/lib/attribute-themes";
 import { resolveResonance, SOLO_SHARE, type LoadoutResonance, type ActiveSet } from "@/lib/loadout-sets";
 import { attachOutcome } from "@/lib/bar-charge-select";
 import { loadSeenSetIds, markSetsSeen } from "@/lib/combo-discovery";
@@ -161,9 +163,15 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
    * percent points at the wrong place the moment the viewport isn't exactly
    * the one it was tuned against.
    */
-  const [barCharge, setBarCharge] = useState<{ key: number; skill: Skill; variant: ChargeVariant; origin: number } | null>(
-    null
-  );
+  const [barCharge, setBarCharge] = useState<{
+    key: number;
+    skill: Skill;
+    variant: ChargeVariant;
+    origin: number;
+    color: string;
+    intensity: string;
+    surgeMs: number;
+  } | null>(null);
   const chargeSeq = useRef(0);
   const barRef = useRef<HTMLDivElement | null>(null);
   const slotRefs = useRef<Record<number, HTMLButtonElement | null>>({});
@@ -179,12 +187,27 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
           100
         : 50;
     chargeSeq.current += 1;
-    setBarCharge({ key: chargeSeq.current, skill, variant: outcome.variant, origin });
+    // Same charge ladder the emblem and the bar are drawn from, so the page
+    // and the footer escalate together instead of disagreeing about how big
+    // the moment was.
+    const { charge } = skinFor(skill);
+    const legendary = skill.rank === "APEX" || skill.rank === "ULTIMATE";
+    setBarCharge({
+      key: chargeSeq.current,
+      skill,
+      variant: outcome.variant,
+      origin,
+      color: legendary ? RANK_META[skill.rank].color : themeFor(skill.attributes[0]).color,
+      // Cubed, like the bar's own intensity: the low tiers stay a flicker and
+      // only the top of the ladder washes the whole page.
+      intensity: (0.10 + Math.pow(charge, 3) * 0.62).toFixed(2),
+      surgeMs: 720 + Math.round(charge * 780),
+    });
     // Ultimate/Apex hold an aftermath (halo or gravity well) for ~3.4s on top
     // of the burst itself; everything else is done well under 2s. Generous
     // fixed windows rather than replicating BarCharge's own duration math —
-    // this only needs to outlast the animation, not choreograph it.
-    const legendary = skill.rank === "APEX" || skill.rank === "ULTIMATE";
+    // this only needs to outlast the animation, not choreograph it. Reuses
+    // the `legendary` decided above.
     setTimeout(() => setBarCharge(null), legendary ? 4600 : 1600);
   }
 
@@ -245,6 +268,27 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
           would trap the atmosphere's negative z-index inside the footer
           instead of letting it sit behind the whole page. */}
       {ambient && <ResonanceAtmosphere resonance={resonance} />}
+
+      {/* The same attach event, read at page scale. A sibling of the bar
+          rather than a child: `.loadout-bar` sets `isolation: isolate`, which
+          would trap a fixed full-viewport layer inside the footer. Only the
+          real shell bar raises it — the reference page renders many bars and
+          would otherwise flash the whole document per row. */}
+      {ambient && barCharge && (
+        <span
+          key={`surge-${barCharge.key}`}
+          className="page-surge"
+          aria-hidden="true"
+          style={
+            {
+              "--ps-color": barCharge.color,
+              "--ps-origin": `${barCharge.origin}%`,
+              "--ps-dur": `${barCharge.surgeMs}ms`,
+              "--ps-intensity": barCharge.intensity,
+            } as React.CSSProperties
+          }
+        />
+      )}
 
       <ComboPopup queue={discoveryQueue} onDismiss={() => setDiscoveryQueue([])} />
       {/* Read fresh rather than kept in React state: by the time this can

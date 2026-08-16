@@ -201,3 +201,76 @@ body {
   .btn-primary::after { animation: none; }
   .btn-primary::after { opacity: 0; }
 }
+
+/* ═══ PAGE SURGE ═════════════════════════════════════════
+   The equip reaction, escalated from the footer to the whole document.
+
+   `BarCharge` reacts inside the loadout bar, which is correct for the bar
+   but means the most consequential action in the app happens in a strip at
+   the bottom of the screen. This is the same event read at page scale: the
+   edges of the viewport take the emblem's colour and a wash crosses the
+   page from the slot outward.
+
+   Fixed and pointer-events:none, above the atmosphere but below the bar
+   itself (z 20) — a full-screen flourish must never intercept the click
+   that follows it, or swallow the picker the player just used. */
+.page-surge {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* The vignette: colour crawls in from every edge and drains away. This is
+   what makes the moment read as "the whole app noticed". */
+.page-surge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 92% at var(--ps-origin, 50%) 100%,
+    transparent 42%,
+    color-mix(in srgb, var(--ps-color, #00cc7a) 16%, transparent) 78%,
+    color-mix(in srgb, var(--ps-color, #00cc7a) 30%, transparent) 100%
+  );
+  opacity: 0;
+  animation: page-surge-vignette var(--ps-dur, 900ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes page-surge-vignette {
+  0%   { opacity: 0; }
+  22%  { opacity: var(--ps-intensity, .8); }
+  100% { opacity: 0; }
+}
+
+/* A single band of light crossing the page, rising from the slot. Skewed so
+   it reads as a sweep rather than a horizontal bar sliding up. */
+.page-surge::after {
+  content: "";
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  height: 42vh;
+  bottom: -42vh;
+  transform: skewY(-4deg);
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ps-color, #00cc7a) 22%, transparent),
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0;
+  animation: page-surge-wash var(--ps-dur, 900ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes page-surge-wash {
+  0%   { opacity: 0;                        bottom: -42vh; }
+  26%  { opacity: var(--ps-intensity, .8); }
+  100% { opacity: 0;                        bottom: 108vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-surge::before,
+  .page-surge::after { animation: none; opacity: 0; }
+}
