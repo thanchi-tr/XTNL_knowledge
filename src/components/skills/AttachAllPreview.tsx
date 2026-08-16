@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
 import { BarCharge, type ChargeVariant } from "./BarCharge";
-import { Cataclysm } from "./Cataclysm";
+import { Cataclysm, tierForDepth } from "./Cataclysm";
 import { skinFor, depthOf } from "@/lib/skill-form";
 import { themeFor } from "@/lib/attribute-themes";
 import { RANK_META } from "@/lib/skill-visuals";
@@ -110,13 +110,14 @@ export function AttachAllPreview({ groups }: Props) {
     });
     timers.current.push(window.setTimeout(() => setSurge(null), dur + 400));
 
-    if (skill.rank === "APEX" || skill.rank === "ULTIMATE") {
+    if (tierForDepth(depthOf(skill)) !== "none") {
       setCataclysm({ key: surgeSeq.current, skill });
       // Must outlive the branch it started: Apex runs 2.6s, and Ultimate's
       // collapse runs 4.2s with the rebound ring finishing at 4.4s.
       // Emblem prelude plus the event itself: Apex 1.2s + 3.4s, Ultimate
       // 1.8s + 3.6s with the rebound finishing last.
-      timers.current.push(window.setTimeout(() => setCataclysm(null), skill.rank === "ULTIMATE" ? 6000 : 4000));
+      const life = skill.rank === "ULTIMATE" ? 5300 : skill.rank === "APEX" ? 3700 : depthOf(skill) === 13 ? 3400 : 1800;
+      timers.current.push(window.setTimeout(() => setCataclysm(null), life));
     }
   }, []);
 

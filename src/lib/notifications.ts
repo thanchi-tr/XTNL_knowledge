@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { cached } from "./cache";
 import { loadWeeklyQuotas } from "./field-quota";
+import { loadDailyFocus } from "./daily-focus";
+import { loadProgression } from "./skill-effects";
 import { loadBossStates } from "./bosses";
 import { loadActiveBoons } from "./boons";
 import { loadActiveDebuffs } from "./debuffs";
@@ -55,6 +57,9 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     loadActiveDebuffs(userId, now),
   ]);
 
+  const progression = await loadProgression(userId);
+  const focus = await loadDailyFocus(userId, progression.activeSkills, now);
+
   const notices: Notice[] = [];
 
   // ── Due ──────────────────────────────────────────────
@@ -105,6 +110,22 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       tone: "good",
       title: "Weekly quota met",
       detail: `Every field has its new ideas in. ${quotas.length} field${quotas.length === 1 ? "" : "s"} clear.`,
+    });
+  }
+
+  // ── Today's focus ────────────────────────────────────
+  if (focus) {
+    const pct = Math.round((focus.multiplier - 1) * 100);
+    notices.push({
+      id: "focus",
+      group: "Due",
+      tone: "good",
+      title: `${focus.fieldName} pays +${pct}% today`,
+      detail:
+        focus.boostedBy.length > 0
+          ? `Today's focus field. Raised by ${focus.boostedBy.slice(0, 2).join(", ")}${focus.boostedBy.length > 2 ? ` +${focus.boostedBy.length - 2} more` : ""}.`
+          : "Today's focus field — new ideas filed here are worth more until midnight UTC.",
+      href: "/add",
     });
   }
 

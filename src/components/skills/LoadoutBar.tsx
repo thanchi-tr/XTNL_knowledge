@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { SkillLogo } from "./SkillLogo";
 import { EquipPulse } from "./EquipPulse";
 import { BarCharge, type ChargeVariant } from "./BarCharge";
-import { Cataclysm } from "./Cataclysm";
+import { Cataclysm, tierForDepth } from "./Cataclysm";
 import { ComboPopup } from "./ComboPopup";
 import { ComboCodex } from "./ComboCodex";
 import { equipSkill, clearSlot } from "@/app/actions/skills";
 import { RANK_META } from "@/lib/skill-visuals";
-import { skinFor } from "@/lib/skill-form";
+import { skinFor, depthOf } from "@/lib/skill-form";
 import { themeFor } from "@/lib/attribute-themes";
 import { resolveResonance, SOLO_SHARE, type LoadoutResonance, type ActiveSet } from "@/lib/loadout-sets";
 import { attachOutcome } from "@/lib/bar-charge-select";
@@ -284,7 +284,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
       {/* Terminal ranks get their own event on top of the surge — see
           Cataclysm for why the last two rungs are a different kind of thing
           rather than a bigger version of the same one. */}
-      {ambient && barCharge && (barCharge.skill.rank === "APEX" || barCharge.skill.rank === "ULTIMATE") && (
+      {ambient && barCharge && tierForDepth(depthOf(barCharge.skill)) !== "none" && (
         <Cataclysm skill={barCharge.skill} replayKey={barCharge.key} />
       )}
 

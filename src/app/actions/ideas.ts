@@ -20,7 +20,8 @@ import { estimateDifficulty } from "@/lib/difficulty";
 import { embeddingTextFromStored } from "@/lib/embedding-text";
 import { toVectorLiteral } from "@/lib/vector";
 import { XP_BASE, yieldXp, graceEndsAt, SIMILARITY_MERGE_MIN } from "@/lib/xp";
-import { loadModifiers } from "@/lib/skill-effects";
+import { loadDailyFocus } from "@/lib/daily-focus";
+import { loadModifiers, loadProgression } from "@/lib/skill-effects";
 import { assignIdeaAttribution } from "@/lib/attribute-assignment";
 import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
@@ -100,7 +101,10 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   const contentText = embeddingTextFromStored(questionType, question, answer);
 
   const userId = getCurrentUserId();
-  const modifiers = await loadModifiers(userId);
+  // Progression rather than modifiers alone: the daily focus draw is skewed
+  // by which rare emblems are actually equipped, so it needs the loadout.
+  const progression = await loadProgression(userId);
+  const modifiers = progression.modifiers;
 
   /**
    * The Field is chosen automatically when the caller does not name one.
@@ -193,7 +197,13 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   }
 
   const base = XP_BASE[questionType];
-  const yieldPoints = yieldXp(base, nSimilar, modifiers.lambda, modifiers.yieldFloorFraction);
+  // The daily focus Field pays more for new Ideas. Applied to the *yield*
+  // rather than the base so it compounds with the decay and floor the rest
+  // of the curve already applies, instead of quietly bypassing them.
+  const focus = await loadDailyFocus(userId, progression.activeSkills);
+  const focusMultiplier = focus && focus.fieldId === fieldId ? focus.multiplier : 1;
+  const yieldPoints =
+    yieldXp(base, nSimilar, modifiers.lambda, modifiers.yieldFloorFraction) * focusMultiplier;
   const dueDate = new Date();
   const level = 1;
 

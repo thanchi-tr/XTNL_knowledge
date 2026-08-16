@@ -2,6 +2,8 @@
 
 import { RANK_META } from "@/lib/skill-visuals";
 import { SkillLogo } from "./SkillLogo";
+import { depthOf } from "@/lib/skill-form";
+import { themeFor } from "@/lib/attribute-themes";
 import type { Skill } from "@/lib/skill-pool";
 
 /**
@@ -28,10 +30,38 @@ interface Props {
   replayKey: number;
 }
 
-/** How long the emblem holds the screen before the event takes it. */
-const PRELUDE_MS = { APEX: 1200, ULTIMATE: 1800 } as const;
-const EMBLEM_MS = { APEX: 2000, ULTIMATE: 2600 } as const;
+/**
+ * How long the emblem holds the screen before the event takes it.
+ *
+ * Trimmed 18% from the first pass — the mark was readable well before the
+ * hold ended, and the extra dwell pushed the whole event past the point
+ * where it still felt like a reward rather than a wait. Prelude is cut by
+ * the same factor, not just the emblem: shortening only the emblem would
+ * leave it gone while the collapse still waited to begin.
+ */
+const EMBLEM_TRIM = 0.82;
+const PRELUDE_MS = { APEX: Math.round(1200 * EMBLEM_TRIM), ULTIMATE: Math.round(1800 * EMBLEM_TRIM) } as const;
+const EMBLEM_MS = { APEX: Math.round(2000 * EMBLEM_TRIM), ULTIMATE: Math.round(2600 * EMBLEM_TRIM) } as const;
 const IMPACTS = 7;
+const AURORA_BANDS = 3;
+
+/**
+ * Which page event a depth earns.
+ *
+ * The ladder is 15 rungs and only the top three deserve a full-screen
+ * event; below that the slot burst and the bar charge already say enough.
+ * d11 and d12 are folded into `shimmer` rather than left blank — a dead gap
+ * between the mid-tiers and the bloom would read as a bug, not as restraint.
+ */
+export type CataclysmTier = "collapse" | "meteor" | "bloom" | "shimmer" | "none";
+
+export function tierForDepth(depth: number): CataclysmTier {
+  if (depth >= 15) return "collapse";
+  if (depth === 14) return "meteor";
+  if (depth === 13) return "bloom";
+  if (depth >= 5) return "shimmer";
+  return "none";
+}
 
 const METEORS = 30;
 const PULL_SPOKES = 22;
@@ -66,10 +96,69 @@ function meteorGeometry(index: number) {
 }
 
 export function Cataclysm({ skill, replayKey }: Props) {
-  const rank = skill.rank as "APEX" | "ULTIMATE";
-  const color = RANK_META[rank].color;
+  const depth = depthOf(skill);
+  const tier = tierForDepth(depth);
+  if (tier === "none") return null;
 
-  if (rank === "APEX") {
+  // Terminal ranks are read by rank first; everything below is read by the
+  // attribute it trains, which is what its emblem is coloured by too.
+  const legendary = skill.rank === "APEX" || skill.rank === "ULTIMATE";
+  const color = legendary ? RANK_META[skill.rank].color : themeFor(skill.attributes[0]).color;
+
+  if (tier === "shimmer") {
+    return (
+      <span
+        key={replayKey}
+        className="cataclysm"
+        aria-hidden="true"
+        style={
+          {
+            "--cat-color": color,
+            "--cat-dur": `${1100 + (depth - 5) * 45}ms`,
+            // Climbs gently across the band so d10 is perceptibly more than
+            // d5 without either becoming loud.
+            "--sh-peak": (0.42 + (depth - 5) * 0.045).toFixed(2),
+            "--sh-x": "50%",
+          } as React.CSSProperties
+        }
+      >
+        <span className="cat-shimmer" />
+      </span>
+    );
+  }
+
+  if (tier === "bloom") {
+    return (
+      <span
+        key={replayKey}
+        className="cataclysm"
+        aria-hidden="true"
+        style={
+          {
+            "--cat-color": color,
+            "--cat-dur": "2600ms",
+            "--prelude": "700ms",
+          } as React.CSSProperties
+        }
+      >
+        {Array.from({ length: AURORA_BANDS }, (_, i) => (
+          <span
+            key={`a${i}`}
+            className="cat-aurora"
+            style={
+              {
+                "--au-tilt": `${88 + i * 16}deg`,
+                "--ad": `${i * 260}ms`,
+              } as React.CSSProperties
+            }
+          />
+        ))}
+        <span className="cat-bloom-ring" />
+      </span>
+    );
+  }
+
+  if (tier === "meteor") {
     return (
       <span
         key={replayKey}
