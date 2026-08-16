@@ -46,7 +46,7 @@ export async function NavTitleBadge() {
   return (
     <Link
       href="/skills"
-      className="hidden items-baseline gap-2 no-underline lg:flex"
+      className="nav-title hidden items-baseline gap-2 no-underline lg:flex"
       title={`${title.full}${title.nextRank ? ` · ${title.levelsToNext} to ${title.nextRank}` : ""}`}
     >
       <span

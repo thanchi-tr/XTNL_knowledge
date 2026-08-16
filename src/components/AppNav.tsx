@@ -100,7 +100,7 @@ export function AppNav({ titleSlot }: AppNavProps) {
               </span>
             </span>
           )}
-          <Link href="/add" className="btn-primary" style={{ padding: "8px 16px" }}>
+          <Link href="/add" className="btn-primary nav-new-idea" style={{ padding: "8px 16px" }}>
             New Idea
           </Link>
         </div>

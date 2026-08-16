@@ -4,6 +4,7 @@ import { useState } from "react";
 import { LoadoutBar, type LoadoutSlotView } from "./LoadoutBar";
 import { tierForSkill, meteorVariantFor, collapseVariantFor } from "@/lib/cataclysm-variants";
 import { depthOf } from "@/lib/skill-form";
+import { SKY_LADDER } from "@/lib/sky";
 import type { Skill } from "@/lib/skill-pool";
 
 /**
@@ -117,6 +118,60 @@ export function FooterPreview({ bench, slotCount }: Props) {
           ))}
         </ul>
 
+      </section>
+
+      {/* ── Insignia reference ────────────────────────────
+          The nav above is already live — attaching an emblem re-cuts its
+          New Idea button and re-marks its title, because the sky writes
+          `data-sky` onto the root. This grid is the other fourteen, so all
+          fifteen can be compared without equipping fifteen emblems.
+
+          Each row scopes `data-sky` and the palette to itself. `.insignia-row`
+          is what makes that work: `html` carries `data-sky` too, so a rule
+          keyed on the bare attribute matches every row as well as the nav.
+          The class buys the row enough specificity to win. */}
+      <section className="card mt-4" style={{ padding: 14 }}>
+        <p className="panel-title">Insignia — all fifteen</p>
+        <p className="panel-sub mt-0.5">
+          The primary action takes the era&apos;s silhouette and palette; the title takes its mark, over a rule
+          whose weight is how much of that rung you are carrying. Silhouette does most of the work — it is
+          the part that survives being seen out of the corner of an eye — with the sky&apos;s own two hues
+          behind it. With an empty bar none of this applies and the button stays the default green, which is
+          what the nav above is showing until you fire something.
+        </p>
+
+        <ul className="mt-3 grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(212px, 1fr))" }}>
+          {SKY_LADDER.map((sky) => (
+            <li
+              key={sky.id}
+              data-sky={sky.id}
+              className="insignia-row flex items-center gap-3"
+              style={
+                {
+                  "--sky-a": sky.rgb,
+                  "--sky-b": sky.rgb2,
+                  "--atmos-rarity": "0.8",
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  border: "1px solid var(--line)",
+                  background: "var(--sub)",
+                } as React.CSSProperties
+              }
+            >
+              <span className="btn-primary nav-new-idea" style={{ padding: "8px 16px", fontSize: 11 }}>
+                New Idea
+              </span>
+              <span className="nav-title flex items-baseline gap-1.5" style={{ flex: 1 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".04em", color: "var(--ink-1)" }}>
+                  Novice
+                </span>
+                <span className="mono" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+                  {sky.depth}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
       </section>
 
       {/* Spacer so the sticky footer has something to stick over. */}

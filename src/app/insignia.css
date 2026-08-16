@@ -1,0 +1,363 @@
+/* ═══ INSIGNIA ═══════════════════════════════════════════
+   The sky reaches the chrome.
+
+   Fifteen backgrounds is a lot of work for something you stop seeing after a
+   week, because a background is the one part of an interface the eye is
+   trained to discard. So the era also cuts the shape of the primary action
+   and marks the title beside it — two things you *do* look at, in the two
+   places you look most often.
+
+   ── Shape, and why no polygons ───────────────────────────
+   The first version cut most of these with `clip-path: polygon()`. Polygons
+   give a mathematically exact outline and a razor corner at every vertex,
+   and a razor corner on a 36px button reads as a rendering artefact rather
+   than as a decision — worse at small sizes, worse on a phone, worst of all
+   next to the rounded chrome of the rest of the app.
+
+   All fifteen are now `border-radius` compositions instead. Every corner is
+   an arc, the two-value `/` syntax gives elliptical corners a polygon cannot
+   express at all, and — a real bonus — `border-radius` interpolates, so
+   changing era cross-fades the silhouette instead of cutting to it.
+
+   ── Colour ───────────────────────────────────────────────
+   The button takes the sky's palette too. The conflict with the emblem-rank
+   ramp (green through prismatic) is real but narrow: it applies to *one*
+   button, never to an emblem, a chip or a card, so nothing that currently
+   means "this is Capstone-hard" changes meaning. What it buys is that the
+   primary action stops being the one green thing sitting on top of fourteen
+   sky palettes it has nothing to do with.
+
+   Text stays dark throughout. Every entry in `SKY_LADDER` is a light filmic
+   value — they are all lights in a scene — so a dark label clears contrast
+   on all fifteen without a per-sky exception.
+
+   ── How this is scoped ───────────────────────────────────
+   Two prefixes per rule, with deliberately unequal specificity:
+
+     html[data-sky="x"]          (0,2,1)  the app — the sky writes the
+                                          attribute onto the root
+     .insignia-row[data-sky="x"] (0,3,0)  one row of the reference grid
+
+   The first attempt used a bare `[data-sky="x"]` for both, on the theory
+   that it would match either ancestor. It does — including `html`, which
+   also carries the attribute, so every row of the grid matched the *root's*
+   sky as well as its own. Equal specificity, so the rule later in the file
+   won, and all fifteen rows rendered as First Light because that is the last
+   block here. Three classes beats two classes regardless of source order, so
+   a scoped row now always wins. The shape table is still written once — the
+   two prefixes share every declaration block.
+   ═══════════════════════════════════════════════════════ */
+
+.nav-new-idea {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    border-radius 480ms cubic-bezier(.22, .61, .36, 1),
+    background 350ms ease,
+    box-shadow 350ms ease,
+    color 350ms ease,
+    transform 120ms ease;
+}
+
+/* ── Colour and depth ────────────────────────────────────
+   One rule, not fifteen: the palette is already on the element as
+   `--sky-a`/`--sky-b`, so the era only has to be *present*, not enumerated.
+   Beats `.btn-primary`'s own gradient on specificity (0,2,1 against 0,1,0)
+   and its hover (0,3,1 against 0,3,0) without an `!important`.
+
+   The depth comes from four things stacked, in the order light actually
+   works on a physical object:
+
+     1. a vertical gradient — lit from above, so the top of the face is the
+        brightest part of it and the bottom sits in its own shade;
+     2. a 1px inner highlight along the top edge: the specular line where a
+        bevel catches the light;
+     3. a 2px inner shade along the bottom edge: the underside of that same
+        bevel;
+     4. a cast shadow below, plus a bloom in the button's own hue — an object
+        this bright would spill light onto what it sits on.
+
+   Doing only (1) is why most "gradient buttons" still look flat. A gradient
+   has no edges, and edges are where an eye reads depth. */
+html[data-sky] .nav-new-idea,
+.insignia-row[data-sky] .nav-new-idea {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, rgb(var(--sky-a)) 82%, #fff) 0%,
+      rgb(var(--sky-a)) 42%,
+      color-mix(in srgb, rgb(var(--sky-a)) 62%, rgb(var(--sky-b))) 100%);
+  color: #0a0c12;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .55),
+    inset 0 -2px 0 rgb(0 0 0 / .22),
+    inset 0 0 0 1px rgb(255 255 255 / .10),
+    0 3px 10px rgb(0 0 0 / .34),
+    0 0 18px rgb(var(--sky-a) / .22);
+}
+
+html[data-sky] .nav-new-idea:hover:not(:disabled),
+.insignia-row[data-sky] .nav-new-idea:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, rgb(var(--sky-a)) 68%, #fff) 0%,
+      color-mix(in srgb, rgb(var(--sky-a)) 92%, #fff) 44%,
+      rgb(var(--sky-b)) 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .7),
+    inset 0 -2px 0 rgb(0 0 0 / .18),
+    inset 0 0 0 1px rgb(255 255 255 / .16),
+    0 6px 18px rgb(0 0 0 / .38),
+    0 0 30px rgb(var(--sky-a) / .40);
+}
+
+/* Pressed: the object goes down and its cast shadow collapses with it. A
+   button that only changes colour on `:active` reads as a picture of a
+   button; one whose shadow shortens reads as a thing being pushed. */
+html[data-sky] .nav-new-idea:active:not(:disabled),
+.insignia-row[data-sky] .nav-new-idea:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 5px rgb(0 0 0 / .28),
+    inset 0 0 0 1px rgb(255 255 255 / .08),
+    0 1px 3px rgb(0 0 0 / .3),
+    0 0 12px rgb(var(--sky-a) / .22);
+}
+
+/* ── Motes ───────────────────────────────────────────────
+   Sparks drifting up inside the face. Clipped by the button's own
+   `overflow: hidden`, so they follow whatever silhouette the era gave it
+   without needing a second mask.
+
+   Two periods tall, `background-size: 100% 50%`, repeating — so translating
+   by exactly -50% lands the pattern back on itself and the loop is seamless.
+   The animation is `transform` only, never `background-position`: this
+   element is in the nav on every page, and a per-frame repaint there is the
+   last place in the app to put one. */
+html[data-sky] .nav-new-idea::before,
+.insignia-row[data-sky] .nav-new-idea::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 200%;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 14% 18%, rgb(255 255 255 / .55) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 33% 61%, rgb(255 255 255 / .38) 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 51% 29%, rgb(255 255 255 / .48) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 70% 73%, rgb(255 255 255 / .34) 0 1.3px, transparent 1.9px),
+    radial-gradient(circle at 86% 41%, rgb(255 255 255 / .5) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 24% 87%, rgb(255 255 255 / .30) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 61% 7%, rgb(255 255 255 / .42) 0 1px, transparent 1.6px);
+  background-size: 100% 50%;
+  background-repeat: repeat;
+  animation: nav-motes 6.5s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes nav-motes {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(0, -50%, 0); }
+}
+
+/* ═══ THE FIFTEEN SILHOUETTES ════════════════════════════
+   Every one is arcs. The `/` syntax sets horizontal and vertical radii
+   separately, which is what makes a dome different from a pill and a crest
+   different from a dome — a single radius can only ever make a rounded
+   rectangle, and fifteen rounded rectangles would be one shape fifteen times.
+   ═══════════════════════════════════════════════════════ */
+
+/* d1 · Neon Grid — chamfer, softened into opposite arcs. */
+html[data-sky="grid"] .nav-new-idea,
+.insignia-row[data-sky="grid"] .nav-new-idea {
+  border-radius: 3px 15px 3px 15px;
+}
+
+/* d2 · Datastream — square-ish, with a rule down the leading edge. */
+html[data-sky="datastream"] .nav-new-idea,
+.insignia-row[data-sky="datastream"] .nav-new-idea {
+  border-radius: 3px 12px 12px 3px;
+  border-left: 3px solid rgb(var(--sky-b));
+}
+
+/* d3 · Orbital — pill. */
+html[data-sky="orbital"] .nav-new-idea,
+.insignia-row[data-sky="orbital"] .nav-new-idea {
+  border-radius: 999px;
+}
+
+/* d4 · Terraform — dome. */
+html[data-sky="terraform"] .nav-new-idea,
+.insignia-row[data-sky="terraform"] .nav-new-idea {
+  border-radius: 999px 999px 7px 7px / 999px 999px 7px 7px;
+}
+
+/* d5 · Aurora — soft and asymmetric. */
+html[data-sky="aurora"] .nav-new-idea,
+.insignia-row[data-sky="aurora"] .nav-new-idea {
+  border-radius: 22px 7px 22px 7px / 26px 8px 26px 8px;
+}
+
+/* d6 · Skyfall — swept, the way driven rain leans. */
+html[data-sky="storm"] .nav-new-idea,
+.insignia-row[data-sky="storm"] .nav-new-idea {
+  border-radius: 20px 5px 20px 5px / 40px 8px 40px 8px;
+}
+
+/* d7 · Cinder — an anvil: light on top, heavy and round below. */
+html[data-sky="cinder"] .nav-new-idea,
+.insignia-row[data-sky="cinder"] .nav-new-idea {
+  border-radius: 8px 8px 26px 26px / 8px 8px 20px 20px;
+}
+
+/* d8 · Glacier — a cut stone: wide flat faces, tall shallow corners. */
+html[data-sky="glacier"] .nav-new-idea,
+.insignia-row[data-sky="glacier"] .nav-new-idea {
+  border-radius: 16px / 999px;
+}
+
+/* d9 · Verdance — leaf. */
+html[data-sky="verdance"] .nav-new-idea,
+.insignia-row[data-sky="verdance"] .nav-new-idea {
+  border-radius: 60% 8px 60% 8px / 70% 10px 70% 10px;
+}
+
+/* d10 · Cathedral — an arch, springing from square jambs. */
+html[data-sky="cathedral"] .nav-new-idea,
+.insignia-row[data-sky="cathedral"] .nav-new-idea {
+  border-radius: 50% 50% 9px 9px / 80% 80% 9px 9px;
+}
+
+/* d11 · Sanctum — the niche: that arch inverted, held below. */
+html[data-sky="sanctum"] .nav-new-idea,
+.insignia-row[data-sky="sanctum"] .nav-new-idea {
+  border-radius: 9px 9px 50% 50% / 9px 9px 80% 80%;
+}
+
+/* d12 · Runeflow — a struck seal, fully elliptical. */
+html[data-sky="runeflow"] .nav-new-idea,
+.insignia-row[data-sky="runeflow"] .nav-new-idea {
+  border-radius: 50%;
+  padding-left: 26px;
+  padding-right: 26px;
+}
+
+/* d13 · Dunes — a crest: one long windward slope, one short leeward. */
+html[data-sky="dunes"] .nav-new-idea,
+.insignia-row[data-sky="dunes"] .nav-new-idea {
+  border-radius: 62% 34% 10px 10px / 90% 60% 10px 10px;
+}
+
+/* d14 · Monolith — raised and barely dressed. The least rounded of the
+   fifteen, which at this end of the ladder is the point. */
+html[data-sky="monolith"] .nav-new-idea,
+.insignia-row[data-sky="monolith"] .nav-new-idea {
+  border-radius: 5px 4px 2px 3px / 7px 5px 2px 3px;
+}
+
+/* d15 · First Light — hand-cut: every corner a different arc, none of them
+   matching, none of them sharp. */
+html[data-sky="firstlight"] .nav-new-idea,
+.insignia-row[data-sky="firstlight"] .nav-new-idea {
+  border-radius: 26px 9px 20px 13px / 18px 15px 26px 11px;
+}
+
+/* ═══ THE TITLE ══════════════════════════════════════════
+   A mark before the rank and a rule under it. Deliberately small: this sits
+   next to the account level in the nav on every screen, and a badge that
+   competes with the primary action beside it is a badge that has been
+   over-designed. The mark carries the era; the rule carries how *much* is
+   equipped, through `--atmos-rarity`, so the title keeps climbing after the
+   sky has stopped changing.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-sky] .nav-title,
+.insignia-row[data-sky] .nav-title {
+  position: relative;
+  padding-left: 15px;
+  padding-bottom: 3px;
+}
+
+html[data-sky] .nav-title::before,
+.insignia-row[data-sky] .nav-title::before {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-52%);
+  font-size: 9px;
+  line-height: 1;
+  color: rgb(var(--sky-a, 122 214 255));
+  text-shadow: 0 0 8px rgb(var(--sky-a, 122 214 255) / .55);
+}
+
+/* The rule. Its opacity is rarity, so a bar carrying one emblem of a rung
+   gets a hairline and a full bar gets a solid stroke. */
+html[data-sky] .nav-title::after,
+.insignia-row[data-sky] .nav-title::after {
+  content: "";
+  position: absolute;
+  left: 15px;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  opacity: calc(.25 + var(--atmos-rarity, 0) * .75);
+  background: linear-gradient(to right,
+    rgb(var(--sky-a, 122 214 255) / .8), rgb(var(--sky-a, 122 214 255) / 0));
+}
+
+/* Geometric and dingbat glyphs only — widely present in default stacks.
+   Runic and alchemical codepoints fall back to tofu boxes, which is a
+   conspicuous way to break the one ornament that has to render everywhere. */
+html[data-sky="grid"] .nav-title::before,
+.insignia-row[data-sky="grid"] .nav-title::before { content: "▸"; }
+html[data-sky="datastream"] .nav-title::before,
+.insignia-row[data-sky="datastream"] .nav-title::before { content: "▪"; }
+html[data-sky="orbital"] .nav-title::before,
+.insignia-row[data-sky="orbital"] .nav-title::before { content: "○"; }
+html[data-sky="terraform"] .nav-title::before,
+.insignia-row[data-sky="terraform"] .nav-title::before { content: "△"; }
+html[data-sky="aurora"] .nav-title::before,
+.insignia-row[data-sky="aurora"] .nav-title::before { content: "≈"; }
+html[data-sky="storm"] .nav-title::before,
+.insignia-row[data-sky="storm"] .nav-title::before { content: "▽"; }
+html[data-sky="cinder"] .nav-title::before,
+.insignia-row[data-sky="cinder"] .nav-title::before { content: "◆"; }
+html[data-sky="glacier"] .nav-title::before,
+.insignia-row[data-sky="glacier"] .nav-title::before { content: "◈"; }
+html[data-sky="verdance"] .nav-title::before,
+.insignia-row[data-sky="verdance"] .nav-title::before { content: "❖"; }
+html[data-sky="cathedral"] .nav-title::before,
+.insignia-row[data-sky="cathedral"] .nav-title::before { content: "✚"; }
+html[data-sky="sanctum"] .nav-title::before,
+.insignia-row[data-sky="sanctum"] .nav-title::before { content: "✦"; }
+html[data-sky="runeflow"] .nav-title::before,
+.insignia-row[data-sky="runeflow"] .nav-title::before { content: "✕"; }
+html[data-sky="dunes"] .nav-title::before,
+.insignia-row[data-sky="dunes"] .nav-title::before { content: "⌒"; }
+html[data-sky="monolith"] .nav-title::before,
+.insignia-row[data-sky="monolith"] .nav-title::before { content: "▮"; }
+html[data-sky="firstlight"] .nav-title::before,
+.insignia-row[data-sky="firstlight"] .nav-title::before { content: "✶"; }
+
+/* Rule styling shifts across the run: continuous while things are still
+   being manufactured, broken once they are being excavated. */
+html[data-sky="runeflow"] .nav-title::after,
+.insignia-row[data-sky="runeflow"] .nav-title::after,
+html[data-sky="dunes"] .nav-title::after,
+.insignia-row[data-sky="dunes"] .nav-title::after,
+html[data-sky="monolith"] .nav-title::after,
+.insignia-row[data-sky="monolith"] .nav-title::after,
+html[data-sky="firstlight"] .nav-title::after,
+.insignia-row[data-sky="firstlight"] .nav-title::after {
+  background: repeating-linear-gradient(to right,
+    rgb(var(--sky-a) / .8) 0 3px, transparent 3px 6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-new-idea { transition: none; }
+  html[data-sky] .nav-new-idea::before,
+  .insignia-row[data-sky] .nav-new-idea::before { animation: none; }
+}

@@ -15,6 +15,7 @@ import "./globals.css";
 import "./arcane.css";
 import "./skies.css";
 import "./powerbar.css";
+import "./insignia.css";
 import "./cataclysm.css";
 import "./cataclysm-extra.css";
 
