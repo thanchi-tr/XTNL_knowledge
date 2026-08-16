@@ -16,6 +16,7 @@ import { resolveResonance, SOLO_SHARE, type LoadoutResonance, type ActiveSet } f
 import { attachOutcome } from "@/lib/bar-charge-select";
 import { loadSeenSetIds, markSetsSeen } from "@/lib/combo-discovery";
 import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
+import { skyFor } from "@/lib/sky";
 import { ResonanceAtmosphere } from "./ResonanceAtmosphere";
 import type { Skill } from "@/lib/skill-pool";
 
@@ -119,13 +120,31 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
    * the moment it exists to mark. The server still owns the real modifiers;
    * this only decides how the bar looks.
    */
-  const resonance = useMemo(
-    () => resolveResonance(localSlots.filter((s) => s.skill && s.active).map((s) => s.skill!)),
+  const activeSkills = useMemo(
+    () => localSlots.filter((s) => s.skill && s.active).map((s) => s.skill!),
     [localSlots]
   );
+  const resonance = useMemo(() => resolveResonance(activeSkills), [activeSkills]);
   const visual = GRADE_VISUALS[resonance.grade];
   const lit = resonance.sets.length > 0;
   const motes = useMemo(() => motesFor(visual.motes), [visual.motes]);
+
+  /** Which of the fifteen skies this loadout stands under, and whether it has earned the hole. */
+  const sky = useMemo(() => skyFor(activeSkills, resonance), [activeSkills, resonance]);
+
+  /**
+   * The charge reading.
+   *
+   * `powerShare` is the number that actually decides payouts, so it is what
+   * the meter shows rather than a slot count — filling ten slots with
+   * unrelated emblems is *supposed* to leave the bar nearly flat. Everything
+   * up to 1.0 is charge; anything past it is overcharge, which only
+   * `OVERDRIVE_RATE` on top of a saturated set strength can produce.
+   */
+  const charge = Math.min(1, resonance.powerShare);
+  const overcharge = Math.max(0, resonance.powerShare - 1);
+  /** Deepest emblem equipped — d13+ is what unlocks the overcharge treatment. */
+  const peakDepth = sky.depth;
 
   /** One-shot flash when a shape completes that was not held a moment ago. */
   const [locking, setLocking] = useState(false);
@@ -311,7 +330,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
       {/* Sibling of the bar, never a child: `.loadout-bar` isolates, which
           would trap the atmosphere's negative z-index inside the footer
           instead of letting it sit behind the whole page. */}
-      {ambient && <ResonanceAtmosphere resonance={resonance} />}
+      {ambient && <ResonanceAtmosphere resonance={resonance} active={activeSkills} />}
 
       {/* The same attach event, read at page scale. A sibling of the bar
           rather than a child: `.loadout-bar` sets `isolation: isolate`, which
@@ -465,19 +484,74 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
         )}
         {lit && visual.sweep && <div className="res-sweep" aria-hidden="true" />}
 
+        {/* ── The charge rail ──────────────────────────────
+            The footer's top edge *is* the meter. It used to be a plain 1px
+            border with the share printed beside it as text, which stated the
+            number without ever making it felt — the bar looked identical at
+            15% and at 112%.
+
+            Now the edge fills. Everything up to 1.0 is charge; past it the
+            rail overfills into a second, brighter segment that only
+            overdrive on a saturated loadout can produce, so an overcharged
+            footer is proof of something specific rather than decoration. */}
+        <div
+          className="pw-rail"
+          data-over={overcharge > 0 ? "1" : undefined}
+          data-deep={peakDepth >= 13 ? "1" : undefined}
+          aria-hidden="true"
+          style={
+            {
+              "--charge": charge.toFixed(4),
+              // Overdrive pays at 0.3/unit and set strength caps at 1.4, so
+              // the reachable overcharge headroom is ~0.12. Normalising
+              // against that rather than against 1.0 means a real overcharge
+              // fills the segment instead of nudging it by a hair.
+              "--over": Math.min(1, overcharge / 0.12).toFixed(4),
+            } as React.CSSProperties
+          }
+        >
+          <span className="pw-fill" />
+          <span className="pw-head" />
+          {overcharge > 0 && (
+            <>
+              <span className="pw-over" />
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <span
+                  key={i}
+                  className="pw-arc"
+                  style={
+                    {
+                      "--ax": `${8 + i * 16.4}%`,
+                      "--adelay": `${(i * 0.37).toFixed(2)}s`,
+                    } as React.CSSProperties
+                  }
+                />
+              ))}
+            </>
+          )}
+        </div>
+
         <div className="site-container relative flex items-center gap-4 py-2.5" style={{ zIndex: 1 }}>
           <div
-            className="shrink-0"
+            className="pw-readout shrink-0"
             onClick={handleLabelClick}
             style={{ cursor: "pointer" }}
             title="Triple-click for the combo codex"
           >
-            <p className="label-xs" style={{ color: lit ? visual.color : undefined }}>
+            <p className="label-xs flex items-baseline gap-1.5" style={{ color: lit ? visual.color : undefined }}>
               {lit ? visual.label : "Loadout"}
+              {/* Which of the fifteen skies is overhead. Named rather than
+                  left to be inferred, because the sky is the one part of
+                  this system with no other label anywhere in the app. */}
+              {sky.sky && (
+                <span className="pw-sky" style={{ color: "var(--ink-3)" }}>
+                  {sky.sky.name}
+                </span>
+              )}
             </p>
             <p
-              className="mono"
-              style={{ fontSize: 11, color: filled === slots.length ? "var(--green)" : "var(--ink-2)" }}
+              className="pw-value mono"
+              data-over={overcharge > 0 ? "1" : undefined}
               // The share is the number that actually decides payouts, so it
               // is stated rather than left to be inferred from the colour.
               title={
@@ -486,7 +560,11 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                   : `Unlinked emblems realise ${(SOLO_SHARE * 100).toFixed(0)}% of their printed effect`
               }
             >
-              {filled}/{slots.length} · {(resonance.powerShare * 100).toFixed(0)}%
+              <span className="pw-pct">{(resonance.powerShare * 100).toFixed(0)}%</span>
+              <span className="pw-slots" style={{ color: filled === slots.length ? "var(--green)" : "var(--ink-3)" }}>
+                {filled}/{slots.length}
+              </span>
+              {overcharge > 0 && <span className="pw-tag">OVERCHARGE</span>}
             </p>
           </div>
 

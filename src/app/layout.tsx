@@ -13,6 +13,8 @@ import "./globals.css";
 // other rules, which put every globals declaration *after* it and let
 // same-specificity selectors there win on source order.
 import "./arcane.css";
+import "./skies.css";
+import "./powerbar.css";
 import "./cataclysm.css";
 import "./cataclysm-extra.css";
 

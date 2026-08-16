@@ -3,6 +3,7 @@ import { SKILL_POOL, type Skill, type SkillRank } from "@/lib/skill-pool";
 import { resolveResonance, SOLO_SHARE, SET_SHAPES } from "@/lib/loadout-sets";
 import { GRADE_VISUALS } from "@/lib/resonance-visuals";
 import { foldEffects, attenuateModifiers } from "@/lib/skill-gates";
+import { skyFor } from "@/lib/sky";
 import { LoadoutBar } from "@/components/skills/LoadoutBar";
 import { ResonanceAtmosphere } from "@/components/skills/ResonanceAtmosphere";
 import { LOADOUT_SLOTS } from "@/lib/loadout";
@@ -166,8 +167,8 @@ function BuildRow({ build }: { build: Build }) {
           nine of them can be compared at once. `ambient={false}` on the bar
           below stops each one also claiming the real full-viewport layer. */}
       <div
+        className="sky-frame"
         style={{
-          position: "relative",
           height: 260,
           overflow: "hidden",
           background: "var(--canvas)",
@@ -175,12 +176,13 @@ function BuildRow({ build }: { build: Build }) {
           borderBottom: "1px solid var(--line)",
         }}
       >
-        <ResonanceAtmosphere resonance={r} scoped />
+        <ResonanceAtmosphere resonance={r} active={build.skills} scoped />
         <p
           className="mono absolute left-4 top-3"
           style={{ zIndex: 1, fontSize: 10.5, color: "var(--ink-3)" }}
         >
-          {v.layers.length === 0 ? "no atmosphere — bare" : v.layers.join(" · ")}
+          {skyFor(build.skills, r).sky?.name ?? "no sky — bare"}
+          {skyFor(build.skills, r).singularity ? " · singularity" : ""}
         </p>
       </div>
 

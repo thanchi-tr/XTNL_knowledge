@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { GRADE_VISUALS } from "@/lib/resonance-visuals";
+import { skyFor, type Sky } from "@/lib/sky";
 import type { LoadoutResonance } from "@/lib/loadout-sets";
+import type { Skill } from "@/lib/skill-pool";
 
 /**
  * The app's ambient sky, driven by what the loadout adds up to.
@@ -10,13 +11,22 @@ import type { LoadoutResonance } from "@/lib/loadout-sets";
  * The whole point is the *contrast*. With nothing equipped the site is
  * deliberately bare — `html[data-res-grade="NONE"]` strips the background
  * gradients, card sheen and accent glow back to flat panels on flat black
- * (see the ATMOSPHERE block in globals.css). Everything decorative is
+ * (see the ATMOSPHERE block in atmosphere.css). Everything decorative is
  * something the loadout puts there, so an empty bar is not a neutral state
  * you stop noticing; it is visibly an unlit room.
  *
- * Layers accumulate rather than swap, so the ceiling reads as an event: at
- * TRANSCENDENT dust, meteors, orbiting bodies, a sun and a black hole are all
- * running at once, and the hole periodically freezes the field around it.
+ * What is put there used to be a single scene at five brightnesses, keyed to
+ * the resonance grade — and since one Apex satisfying one shape already
+ * reached the top grade, nearly every real loadout stood under the same
+ * magenta sky with the same black hole in it. The rarest thing in the game
+ * was also the most common thing on screen.
+ *
+ * Now the *scene* comes from the depth ladder (`src/lib/sky.ts`): fifteen
+ * skies, one per rung, futuristic at d1 through primordial at d15, each with
+ * its own motif and its own direction of travel. Rarity decides how strongly
+ * that scene is present, and the grade keeps its old job of stripping the
+ * site bare when nothing is linked. The black hole is no longer a rung at
+ * all — it is reserved, and mounts on top of whichever sky you are under.
  *
  * Three rules keep spectacle from becoming a usability problem:
  *
@@ -30,22 +40,28 @@ import type { LoadoutResonance } from "@/lib/loadout-sets";
  *  3. Everything loops, so everything opts into `--ambient-play`. A hidden
  *     tab or a phone under 20% battery stops paying for all of it — which is
  *     what makes it affordable to run app-wide rather than on one screen.
- *
- * Renders nothing at NONE beyond the stripping attribute.
  */
 
 interface Props {
   resonance: LoadoutResonance;
+  /** The equipped, non-dormant skills — what the sky is chosen from. */
+  active: Skill[];
   /**
    * Renders inside its own box instead of over the viewport, and does not
    * touch the root attribute.
    *
-   * For the reference page, which shows every grade at once: nine fixed
-   * full-viewport layers would stack on top of each other, and nine
-   * components racing to set `data-res-grade` would leave whichever mounted
-   * last deciding how the entire page looks.
+   * For the reference page, which shows every sky at once: fifteen fixed
+   * full-viewport layers would stack on top of each other, and fifteen
+   * components racing to set `data-sky` would leave whichever mounted last
+   * deciding how the entire page looks.
    */
   scoped?: boolean;
+  /** Overrides the resolved sky. Reference page only. */
+  forceSky?: Sky;
+  /** Overrides resolved rarity, 0–1. Reference page only. */
+  forceRarity?: number;
+  /** Overrides the singularity gate. Reference page only. */
+  forceSingularity?: boolean;
 }
 
 /** Deterministic pseudo-random in [0,1) — never `Math.random()`, which would desync SSR from hydration. */
@@ -54,24 +70,28 @@ function rand(i: number, salt: number): number {
   return h - Math.floor(h);
 }
 
-export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
-  const grade = resonance.grade;
-  const rarity = resonance.rarity;
-  const visual = GRADE_VISUALS[grade];
-  const has = (l: string) => visual.layers.includes(l as never);
+/**
+ * Glyphs for the Runeflow sky.
+ *
+ * Greek and geometric rather than actual Elder Futhark: runic codepoints are
+ * missing from most default stacks and fall back to tofu boxes, which is a
+ * conspicuous way to break the one sky whose entire idea is legible marks.
+ */
+const GLYPHS = ["Δ", "Ω", "Ψ", "Φ", "Σ", "Λ", "Ξ", "△", "▽", "◇", "○", "✦"];
 
-  /**
-   * Density, not just presence.
-   *
-   * Each layer is generated at full size once and *sliced* by the current
-   * count, so raising rarity adds particles to a field that is already there
-   * rather than regenerating it — the existing dust keeps its exact position
-   * and phase, and the sky visibly thickens instead of flickering and
-   * reshuffling on every equip.
-   */
-  const dustCount = 8 + Math.round(rarity * 24);
-  const meteorCount = 2 + Math.round(rarity * 7);
-  const orbitCount = 2 + Math.round(rarity * 3);
+export function ResonanceAtmosphere({
+  resonance,
+  active,
+  scoped = false,
+  forceSky,
+  forceRarity,
+  forceSingularity,
+}: Props) {
+  const resolved = useMemo(() => skyFor(active, resonance), [active, resonance]);
+  const sky = forceSky ?? resolved.sky;
+  const rarity = forceRarity ?? resonance.rarity;
+  const singularity = forceSingularity ?? resolved.singularity;
+  const grade = resonance.grade;
 
   // Drives the bare-site stripping in atmosphere.css. Set on the root rather
   // than passed through props because it has to reach rules for the body
@@ -85,59 +105,51 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
   }, [grade, scoped]);
 
   /**
-   * The continuous half of the same signal, on the same element.
+   * The continuous channels, on the same element.
    *
-   * Separate effect from the grade because it changes far more often — every
-   * attach moves rarity, where grade moves maybe five times in an account's
-   * life — and because it is a style rather than an attribute. `--atmos-rarity`
-   * is registered as a `<number>` in atmosphere.css, so writing it here is
-   * what makes the body gradients interpolate rather than snap.
+   * Separate effect from the grade because these change far more often —
+   * every attach moves rarity and can move the sky, where grade moves maybe
+   * five times in an account's life. `--atmos-rarity` is registered as a
+   * `<number>` in atmosphere.css, so writing it here is what makes the body
+   * gradients interpolate rather than snap.
    */
   useEffect(() => {
     if (scoped) return;
-    document.documentElement.style.setProperty("--atmos-rarity", rarity.toFixed(3));
+    const root = document.documentElement;
+    root.style.setProperty("--atmos-rarity", rarity.toFixed(3));
+    if (sky) {
+      root.style.setProperty("--sky-a", sky.rgb);
+      root.style.setProperty("--sky-b", sky.rgb2);
+      root.dataset.sky = sky.id;
+    }
     return () => {
-      document.documentElement.style.removeProperty("--atmos-rarity");
+      root.style.removeProperty("--atmos-rarity");
+      root.style.removeProperty("--sky-a");
+      root.style.removeProperty("--sky-b");
+      delete root.dataset.sky;
     };
-  }, [rarity, scoped]);
+  }, [rarity, sky, scoped]);
 
-  const dust = useMemo(
-    () =>
-      Array.from({ length: 32 }, (_, i) => ({
-        left: rand(i, 1) * 100,
-        top: rand(i, 2) * 100,
-        dur: 12 + rand(i, 3) * 16,
-        delay: rand(i, 4) * -24,
-        size: rand(i, 5) > 0.86 ? 2.5 : 1.5,
-      })),
-    []
-  );
-
-  const meteors = useMemo(
-    () =>
-      Array.from({ length: 9 }, (_, i) => ({
-        top: rand(i, 11) * 70 - 10,
-        left: 40 + rand(i, 12) * 70,
-        dur: 2.4 + rand(i, 13) * 2.2,
-        // Long, staggered gaps — a meteor is an event, and one every few
-        // seconds forever would read as rain.
-        delay: rand(i, 14) * 26,
-        len: 120 + rand(i, 15) * 190,
-      })),
-    []
-  );
-
-  const orbits = useMemo(
-    () =>
-      Array.from({ length: 5 }, (_, i) => ({
-        size: 220 + i * 165,
-        dur: 26 + i * 15,
-        reverse: i % 2 === 1,
-        bodySize: 3 + rand(i, 21) * 4,
-        tilt: -18 + rand(i, 22) * 36,
-      })),
-    []
-  );
+  /**
+   * Particles are generated at full count once and *sliced* to the current
+   * count, so raising rarity adds to a field that is already there rather
+   * than regenerating it — existing particles keep their exact position and
+   * phase, and the sky thickens instead of reshuffling on every equip.
+   */
+  const particles = useMemo(() => {
+    if (!sky) return [];
+    return Array.from({ length: sky.particles }, (_, i) => ({
+      x: rand(i, 1) * 100,
+      y: rand(i, 2) * 100,
+      dur: 5 + rand(i, 3) * 14,
+      delay: rand(i, 4) * -18,
+      size: 1.5 + rand(i, 5) * 3,
+      len: 26 + rand(i, 6) * 60,
+      dx: (rand(i, 7) - 0.5) * 14,
+      dy: (rand(i, 8) - 0.5) * 16,
+      glyph: GLYPHS[Math.floor(rand(i, 9) * GLYPHS.length)],
+    }));
+  }, [sky]);
 
   /** Matter spiralling into the hole. */
   const infall = useMemo(
@@ -150,94 +162,72 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
     []
   );
 
-  if (grade === "NONE") return null;
+  if (!sky) return null;
+
+  const shown = Math.max(3, Math.round(sky.particles * (0.3 + rarity * 0.7)));
+  const isGlyph = sky.motif === "runeflow";
 
   return (
     <div
-      className={scoped ? "atmos atmos-scoped" : "atmos"}
+      className={scoped ? "sky sky-scoped" : "sky"}
       aria-hidden="true"
-      data-grade={grade}
+      data-sky={sky.id}
       style={
         {
-          "--res-color": visual.color,
-          "--res-glow": visual.glow,
-          // Also set locally so the scoped variant, which deliberately never
-          // touches the root, still evolves on the reference page.
+          "--sky-a": sky.rgb,
+          "--sky-b": sky.rgb2,
           "--atmos-rarity": rarity.toFixed(3),
+          // The singularity's own layers predate the sky ladder and still
+          // read `--res-color`; feeding it the sky hue keeps the hole tinted
+          // by whatever it is collapsing.
+          "--res-color": `rgb(${sky.rgb})`,
         } as React.CSSProperties
       }
     >
-      {has("dust") && (
-        <div className="atmos-dust">
-          {dust.slice(0, dustCount).map((d, i) => (
-            <span
-              key={i}
-              className="atmos-speck"
-              style={
-                {
-                  left: `${d.left}%`,
-                  top: `${d.top}%`,
-                  width: d.size,
-                  height: d.size,
-                  "--d": `${d.dur}s`,
-                  "--delay": `${d.delay}s`,
-                } as React.CSSProperties
-              }
-            />
-          ))}
-        </div>
-      )}
+      {/* Three parallax bands plus grain and a vignette. The bands each own
+          their own `::before`/`::after`, so a motif gets up to nine paint
+          layers out of three DOM nodes — and the depth between them is what
+          stops a background reading as wallpaper. */}
+      <div className="sky-far" data-motif={sky.motif} />
+      <div className="sky-mid" data-motif={sky.motif} />
+      <div className="sky-near" data-motif={sky.motif} />
 
-      {has("meteors") &&
-        meteors.slice(0, meteorCount).map((m, i) => (
-          <span
-            key={i}
-            className="atmos-meteor"
-            style={
-              {
-                top: `${m.top}%`,
-                left: `${m.left}%`,
-                width: m.len,
-                "--d": `${m.dur}s`,
-                "--delay": `${m.delay}s`,
-              } as React.CSSProperties
-            }
-          />
-        ))}
+      {particles.slice(0, shown).map((p, i) => (
+        <span
+          key={i}
+          className="sky-p"
+          data-drift={sky.drift}
+          data-glyph={isGlyph ? "" : undefined}
+          style={
+            {
+              "--x": `${p.x}%`,
+              "--y": `${p.y}%`,
+              "--s": isGlyph ? `${10 + p.size * 4}px` : `${p.size}px`,
+              "--len": `${p.len}px`,
+              "--d": `${p.dur}s`,
+              "--delay": `${p.delay}s`,
+              // Unitless: skies.css multiplies these by `--uw`/`--uh`, which
+              // resolve against the container when the sky is scoped.
+              "--dx": p.dx.toFixed(2),
+              "--dy": p.dy.toFixed(2),
+            } as React.CSSProperties
+          }
+        >
+          {isGlyph ? p.glyph : null}
+        </span>
+      ))}
 
-      {has("orbits") && (
-        <div className="atmos-system">
-          {orbits.slice(0, orbitCount).map((o, i) => (
-            <div
-              key={i}
-              className="atmos-orbit"
-              // The tilt lives here and the spin on the child: animating
-              // `transform` on one element would overwrite the other.
-              style={{
-                width: o.size,
-                height: o.size,
-                transform: `translate(-50%,-50%) rotateX(72deg) rotateZ(${o.tilt}deg)`,
-              }}
-            >
-              <div
-                className={`atmos-orbit-spin ${o.reverse ? "rev" : ""}`}
-                style={{ "--d": `${o.dur}s` } as React.CSSProperties}
-              >
-                <span className="atmos-body" style={{ width: o.bodySize, height: o.bodySize }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Above the motif, below the particles' own light: grain first so it
+          textures the scene, vignette last so it also pulls the particles
+          away from the edges. */}
+      <div className="sky-grain" />
+      <div className="sky-vignette" />
 
-      {has("sun") && (
-        <div className="atmos-sun">
-          <span className="atmos-sun-core" />
-          <span className="atmos-sun-rays" />
-        </div>
-      )}
-
-      {has("blackhole") && (
+      {/* Reserved. Only an Ultimate or a full d14 combo mounts this — see
+          `reservesTheHole`. It sits on top of whichever sky you are under
+          rather than replacing it, so the singularity reads as something
+          that arrived rather than as one more rung. */}
+      {singularity && (
         <div className="atmos-hole">
           {/* Order matters: disk, then lensing ring, then the horizon on top,
               so the dark core actually occludes the disk behind it. */}

@@ -71,14 +71,12 @@ html {
   transition: --atmos-rarity 1100ms cubic-bezier(.22, .61, .36, 1);
 }
 
-/* Grade hue as a bare triplet, so alpha can be computed per layer rather
-   than frozen into each colour. Same five hues as `GRADE_VISUALS` and the
-   skill-rarity ramp in globals.css. */
-html[data-res-grade="FAINT"]        { --atmos-rgb: 0 204 122; }
-html[data-res-grade="ALIGNED"]      { --atmos-rgb: 77 156 245; }
-html[data-res-grade="HARMONIC"]     { --atmos-rgb: 155 107 255; }
-html[data-res-grade="RESONANT"]     { --atmos-rgb: 240 160 48; }
-html[data-res-grade="TRANSCENDENT"] { --atmos-rgb: 255 94 176; }
+/* The hue comes from the sky, not the grade.
+   `--sky-a`/`--sky-b` are written onto the root by `ResonanceAtmosphere`
+   from the `Sky` record, so all fifteen palettes live in one TypeScript
+   table rather than in fifteen CSS blocks that would have to be kept in
+   sync by hand. The fallback is d1's cyan, used only in the one frame
+   before hydration. */
 
 /* Lit: the body's ambient light takes the grade's hue, so the whole page —
    not only the footer — is tinted by what is equipped. Three layers, each
@@ -89,19 +87,19 @@ html[data-res-grade]:not([data-res-grade="NONE"]) body {
     /* Crown. Present from the first lit emblem, deepening throughout — this
        is the layer that was previously the entire effect. */
     radial-gradient(ellipse 130% 50% at 50% -6%,
-      rgb(var(--atmos-rgb, 0 204 122) / calc(0.030 + var(--atmos-rarity) * 0.075)) 0%,
+      rgb(var(--sky-a, 0 229 255) / calc(0.030 + var(--atmos-rarity) * 0.075)) 0%,
       transparent 62%),
     /* Horizon. Zero-alpha at rarity 0, so it is visibly something rare
        emblems *add* rather than something that was always faintly there. */
     radial-gradient(ellipse 80% 44% at 50% 106%,
-      rgb(var(--atmos-rgb, 0 204 122) / calc(var(--atmos-rarity) * 0.070)) 0%,
+      rgb(var(--sky-a, 0 229 255) / calc(var(--atmos-rarity) * 0.070)) 0%,
       transparent 68%),
     /* Counter-light. Held shut until past the midpoint of the axis, then
        opens from the side: a second light source is the strongest cue that
        the room has changed, and it is worth reserving for a loadout that
        has genuinely earned it. */
     radial-gradient(ellipse 58% 46% at 6% 26%,
-      rgb(150 205 255 / calc(max(0, var(--atmos-rarity) - 0.45) * 0.055)) 0%,
+      rgb(var(--sky-b, 255 0 160) / calc(max(0, var(--atmos-rarity) - 0.45) * 0.065)) 0%,
       transparent 60%),
     radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0, 130, 255, 0.014) 0%, transparent 50%);
 }
@@ -111,7 +109,7 @@ html[data-res-grade]:not([data-res-grade="NONE"]) body {
    is a reading surface first. */
 html[data-res-grade]:not([data-res-grade="NONE"]) .card,
 html[data-res-grade]:not([data-res-grade="NONE"]) .panel {
-  border-color: rgb(var(--atmos-rgb, 0 204 122) / calc(0.05 + var(--atmos-rarity) * 0.16));
+  border-color: rgb(var(--sky-a, 0 229 255) / calc(0.05 + var(--atmos-rarity) * 0.16));
 }
 
 /* ── The layer itself ────────────────────────────────────
