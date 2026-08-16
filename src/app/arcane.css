@@ -184,10 +184,29 @@ body {
     align-items: center;
   }
 
-  /* The page title and its eyebrow eat a disproportionate share of a
-     344px-wide screen; tightening them buys back most of a card. */
-  .section-eyebrow { font-size: 9px; }
-  .panel-sub { font-size: 10.5px; }
+  /* ── Type, one size up ────────────────────────────────
+     The previous pass here shrank type to buy back vertical space, which
+     was the wrong trade on a screen you hold at arm's length in one hand.
+     A 344px-wide phone is not a small desktop; it is a device read at a
+     greater distance than a laptop, and 10.5px body copy on it is a squint.
+
+     Everything goes up roughly one step. The space that costs is taken back
+     from padding and margins instead, which is the right place to take it
+     from — whitespace scales down without becoming unreadable, and text
+     does not. */
+  html { font-size: 17px; }
+
+  .section-eyebrow { font-size: 10.5px; }
+  .panel-sub { font-size: 12px; }
+  .panel-title { font-size: 13.5px; }
+  .label-xs { font-size: 10.5px; }
+  .mono { font-size: 12px; }
+  .btn, .btn-primary, .btn-secondary, .btn-ghost { font-size: 13px; }
+  body { font-size: 14.5px; }
+
+  /* Paid for out of spacing, not out of legibility. */
+  .card, .panel { padding: 12px; }
+  main > header { margin-bottom: 14px; }
 }
 
 /* ── Fold: the unfolded main screen ──────────────────────
@@ -204,6 +223,18 @@ body {
   /* Page headers are the other easy win — a 32px bottom margin on a 704px
      screen is a line of content. */
   main > header { margin-bottom: 14px; }
+
+  /* Type goes up here too. The main display is *wider* than a laptop's
+     content column but read at phone distance, so the line lengths are
+     already generous — spending some of that width on larger glyphs costs
+     nothing but a few characters per line. Chrome stays compact; only the
+     things you actually read grow. */
+  html { font-size: 17px; }
+  body { font-size: 14.5px; }
+  .panel-sub { font-size: 12.5px; }
+  .panel-title { font-size: 14px; }
+  .section-eyebrow { font-size: 10.5px; }
+  .mono { font-size: 12.5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

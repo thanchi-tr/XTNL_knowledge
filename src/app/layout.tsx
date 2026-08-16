@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { AppNav } from "@/components/AppNav";
 import { NavTitleBadge } from "@/components/NavTitleBadge";
+import { NavReviewLink } from "@/components/NavReviewLink";
 import { LoadoutBarSlot } from "@/components/skills/LoadoutBarSlot";
 import { NotificationSlot } from "@/components/notifications/NotificationSlot";
 import { StreakProvider } from "@/components/StreakProvider";
@@ -84,6 +85,11 @@ export default function RootLayout({
             titleSlot={
               <Suspense fallback={null}>
                 <NavTitleBadge />
+              </Suspense>
+            }
+            reviewSlot={
+              <Suspense fallback={null}>
+                <NavReviewLink />
               </Suspense>
             }
           />

@@ -17,9 +17,11 @@ const LINKS = [
 interface AppNavProps {
   /** Rendered as a slot so an async Server Component (NavTitleBadge) can live inside this client component. */
   titleSlot?: React.ReactNode;
+  /** Same arrangement for the due-review shortcut, which needs a count from the database. */
+  reviewSlot?: React.ReactNode;
 }
 
-export function AppNav({ titleSlot }: AppNavProps) {
+export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
   const pathname = usePathname();
   const { streak } = useStreak();
 
@@ -100,6 +102,7 @@ export function AppNav({ titleSlot }: AppNavProps) {
               </span>
             </span>
           )}
+          {reviewSlot}
           <Link href="/add" className="btn-primary nav-new-idea" style={{ padding: "8px 16px" }}>
             New Idea
           </Link>

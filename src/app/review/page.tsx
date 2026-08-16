@@ -1,4 +1,5 @@
 import { loadFieldTree } from "@/lib/queries";
+import { isDue, formatDue, daysUntilDue } from "@/lib/due";
 import { displayQuestion } from "@/lib/idea-display";
 import { loadBossStates } from "@/lib/bosses";
 import { getCurrentUserId } from "@/lib/user";
@@ -7,17 +8,6 @@ import { WorkspaceView, type WorkspaceField } from "@/components/workspace/Works
 // Due-ness changes by the second (dueDate <= now) — never let this be
 // statically cached/prerendered.
 export const dynamic = "force-dynamic";
-
-function formatDue(dueDate: Date, now: Date): { label: string; overdue: boolean } {
-  const diffDays = Math.round((dueDate.getTime() - now.getTime()) / 86_400_000);
-  if (diffDays < 0) {
-    return { label: `Overdue ${Math.abs(diffDays)}d`, overdue: true };
-  }
-  if (diffDays === 0) {
-    return { label: "Due today", overdue: false };
-  }
-  return { label: `Due in ${diffDays}d`, overdue: false };
-}
 
 export default async function WorkspacePage() {
   const now = new Date();
@@ -33,7 +23,10 @@ export default async function WorkspacePage() {
     ...field,
     domains: field.domains.map((domain) => ({
       ...domain,
-      ideas: domain.ideas.filter((idea) => idea.dueDate <= now),
+      // Day-granular, not instant — see `src/lib/due.ts`. A card due today
+      // is reviewable today, not from whatever time of day it happened to
+      // be scheduled at.
+      ideas: domain.ideas.filter((idea) => isDue(idea.dueDate, now)),
     })),
   }));
 
@@ -68,6 +61,25 @@ export default async function WorkspacePage() {
     .filter((field) => field.domains.length > 0);
 
   const totalDue = fieldsWithDue.reduce((sum, f) => sum + f.domains.reduce((s, d) => s + d.ideas.length, 0), 0);
+
+  /**
+   * The soonest thing that is *not* due yet, so an empty queue can say when
+   * to come back instead of "check back later".
+   */
+  const notYetDue = allFields
+    .flatMap((f) => f.domains.flatMap((d) => d.ideas))
+    .filter((i) => !isDue(i.dueDate, now))
+    .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+
+  const nextDate = notYetDue[0]?.dueDate ?? null;
+  const upcoming = nextDate
+    ? {
+        label: formatDue(nextDate, now).label.replace(/^Due /, ""),
+        // Everything landing on the same day, not just the single soonest —
+        // "next 1 tomorrow" when six arrive tomorrow is a worse answer.
+        count: notYetDue.filter((i) => daysUntilDue(i.dueDate, now) === daysUntilDue(nextDate, now)).length,
+      }
+    : null;
 
   const overdueCount = fieldsWithDue.reduce(
     (sum, f) => sum + f.domains.reduce((s, d) => s + d.ideas.filter((i) => i.overdue).length, 0),
@@ -105,6 +117,8 @@ export default async function WorkspacePage() {
           allFieldNames={allFieldNames}
           totalDue={totalDue}
           bosses={bosses}
+          upcoming={upcoming}
+          scheduledCount={notYetDue.length}
         />
       </div>
     </main>

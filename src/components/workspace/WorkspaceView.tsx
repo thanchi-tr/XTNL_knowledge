@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { QuestionType } from "@prisma/client";
@@ -44,6 +46,20 @@ interface Props {
   allFieldNames: string[];
   totalDue: number;
   bosses: BossState[];
+  /**
+   * What is coming, when nothing is due yet.
+   *
+   * The empty state used to say "Nothing due right now. Check back later."
+   * and stop. That is the screen a player lands on most often, it is the
+   * screen this app is named after, and it answered none of the three
+   * questions actually being asked: is this broken, is there anything in
+   * here at all, and when do I come back. It also hid a real bug for days —
+   * two ideas were due today and withheld by an off-by-half-a-day rule, and
+   * an empty page with no "next up" gave nothing to notice that against.
+   */
+  upcoming: { label: string; count: number } | null;
+  /** Ideas that exist but are not due. Zero means the library is empty, which is a different problem. */
+  scheduledCount: number;
 }
 
 interface RunIdea extends WorkspaceIdea {
@@ -97,7 +113,7 @@ function flattenIdeas(fields: WorkspaceField[]): RunIdea[] {
   return out;
 }
 
-export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses }: Props) {
+export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, upcoming, scheduledCount }: Props) {
   const router = useRouter();
   const { streak } = useStreak();
   const [selected, setSelected] = useState<string>("ALL");
@@ -399,16 +415,47 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses }
         </div>
       )}
 
-      {allCaughtUp ? (
-        <div className="card fade-up px-6 py-12 text-center">
-          <span className="chip chip-green">Clear</span>
-          <p className="mt-3 text-[15px] font-semibold" style={{ color: "var(--ink-0)" }}>All caught up</p>
-          <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-            Nothing due right now. Check back later.
+      {allCaughtUp || (totalDue === 0 && selected === "ALL") ? (
+        <div className="card fade-up px-6 py-10 text-center">
+          <span className={scheduledCount > 0 ? "chip chip-green" : "chip"}>
+            {allCaughtUp ? "Cleared" : scheduledCount > 0 ? "Nothing due" : "Empty"}
+          </span>
+          <p className="mt-3 text-[15px] font-semibold" style={{ color: "var(--ink-0)" }}>
+            {allCaughtUp ? "That is everything for today" : scheduledCount > 0 ? "Nothing due today" : "No ideas yet"}
           </p>
+
+          {/* The three questions an empty queue has to answer: is anything
+              in here, when does it come back, and what do I do now. */}
+          {scheduledCount > 0 ? (
+            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-2)" }}>
+              {scheduledCount} idea{scheduledCount === 1 ? "" : "s"} scheduled
+              {upcoming ? (
+                <>
+                  {" · next "}
+                  <span style={{ color: "var(--ink-1)" }}>
+                    {upcoming.count} {upcoming.label}
+                  </span>
+                </>
+              ) : null}
+            </p>
+          ) : (
+            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-2)" }}>
+              Add one and it enters the rotation immediately.
+            </p>
+          )}
+
+          <Link
+            href="/add"
+            className="btn-primary nav-new-idea mt-4 inline-flex"
+            style={{ padding: "9px 18px" }}
+          >
+            New Idea
+          </Link>
         </div>
       ) : visibleDueCount === 0 ? (
-        <p style={{ fontSize: 13, color: "var(--ink-2)" }}>Nothing due in this field right now.</p>
+        <p style={{ fontSize: 13, color: "var(--ink-2)" }}>
+          Nothing due in this field. Switch to All Fields to see the rest.
+        </p>
       ) : (
         <div className="mx-auto max-w-lg">
           <SessionSummary

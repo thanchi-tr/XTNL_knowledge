@@ -361,3 +361,67 @@ html[data-sky="firstlight"] .nav-title::after,
   html[data-sky] .nav-new-idea::before,
   .insignia-row[data-sky] .nav-new-idea::before { animation: none; }
 }
+
+/* ═══ THE REVIEW SHORTCUT ════════════════════════════════
+   Same cloth as New Idea — it carries `nav-new-idea`, so the era gives it the
+   same silhouette, palette, bevel and motes — with two deliberate
+   differences, because two identical buttons side by side is worse than one.
+
+   It leads with the sky's *second* hue rather than its first, and it carries
+   a count. Reading the pair left to right you get "N waiting" then "add
+   another", which is the order the work actually happens in.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-sky] .nav-review,
+.insignia-row[data-sky] .nav-review {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, rgb(var(--sky-b)) 78%, #fff) 0%,
+      rgb(var(--sky-b)) 44%,
+      color-mix(in srgb, rgb(var(--sky-b)) 66%, rgb(var(--sky-a))) 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .5),
+    inset 0 -2px 0 rgb(0 0 0 / .24),
+    inset 0 0 0 1px rgb(255 255 255 / .10),
+    0 3px 10px rgb(0 0 0 / .34),
+    0 0 18px rgb(var(--sky-b) / .22);
+}
+
+html[data-sky] .nav-review:hover:not(:disabled),
+.insignia-row[data-sky] .nav-review:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, rgb(var(--sky-b)) 64%, #fff) 0%,
+      color-mix(in srgb, rgb(var(--sky-b)) 90%, #fff) 46%,
+      rgb(var(--sky-a)) 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .68),
+    inset 0 -2px 0 rgb(0 0 0 / .18),
+    inset 0 0 0 1px rgb(255 255 255 / .16),
+    0 6px 18px rgb(0 0 0 / .38),
+    0 0 30px rgb(var(--sky-b) / .40);
+}
+
+/* With no sky, the default: distinguishable from New Idea's green without
+   claiming an accent the rank ramp owns. */
+.nav-review {
+  background: linear-gradient(180deg, #7fd8ff 0%, #35b6ec 46%, #1f8fc4 100%);
+  color: #04121a;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .5),
+    inset 0 -2px 0 rgb(0 0 0 / .24),
+    0 3px 10px rgb(0 0 0 / .34);
+}
+
+.nav-review-count {
+  margin-left: 7px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  /* Dark on the light face, which is the inverse of every other count badge
+     in the app — those sit on dark panels. Same idea, opposite ground. */
+  background: rgb(0 0 0 / .26);
+  color: inherit;
+}

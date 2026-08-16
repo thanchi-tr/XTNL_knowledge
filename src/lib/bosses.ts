@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { dueCutoff } from "./due";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
@@ -251,7 +252,7 @@ export interface DrawnCard {
  */
 export async function drawBossBatch(fieldId: string, size: number, now: Date = new Date()): Promise<DrawnCard[]> {
   const candidates = await prisma.idea.findMany({
-    where: { isArchived: false, dueDate: { lte: now }, domain: { fieldId } },
+    where: { isArchived: false, dueDate: { lte: dueCutoff(now) }, domain: { fieldId } },
     select: { id: true, level: true },
   });
 

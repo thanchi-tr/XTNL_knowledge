@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { loadFieldTree } from "@/lib/queries";
+import { isDue, dueCutoff, daysUntilDue } from "@/lib/due";
 import { domainLevelProgress, fieldLevel } from "@/lib/xp";
 import { recordTodaySnapshot, getGhostLevelsFromDaysAgo } from "@/lib/snapshot";
 import { FieldLevelChart, type FieldLevelDatum } from "@/components/dashboard/FieldLevelChart";
@@ -43,13 +44,16 @@ export default async function DashboardPage() {
 
   const allIdeas = fields.flatMap((f) => f.domains.flatMap((d) => d.ideas));
   const activeIdeas = allIdeas.filter((i) => !i.isArchived);
-  const dueIdeas = activeIdeas.filter((i) => i.dueDate <= now);
+  const dueIdeas = activeIdeas.filter((i) => isDue(i.dueDate, now));
   const atRiskCount = activeIdeas.filter((i) => i.graceEndsAt !== null && i.graceEndsAt <= now).length;
 
   const dueBreakdown: FieldDueCount[] = fields
     .map((f) => ({
       name: f.name,
-      count: f.domains.reduce((sum, d) => sum + d.ideas.filter((i) => !i.isArchived && i.dueDate <= now).length, 0),
+      count: f.domains.reduce(
+        (sum, d) => sum + d.ideas.filter((i) => !i.isArchived && isDue(i.dueDate, now)).length,
+        0
+      ),
     }))
     .filter((f) => f.count > 0);
 
@@ -71,11 +75,13 @@ export default async function DashboardPage() {
   let overdue = 0;
   let dueToday = 0;
   let upcoming = 0;
-  const todayEnd = new Date(now);
-  todayEnd.setUTCHours(23, 59, 59, 999);
+  // `dueCutoff` rather than a local `todayEnd` computed with `setUTCHours`:
+  // the old one rolled over at UTC midnight while every label around it read
+  // in local days, so the chart disagreed with the queue for part of each day.
+  const cutoff = dueCutoff(now);
   for (const idea of activeIdeas) {
-    if (idea.dueDate < now) overdue += 1;
-    else if (idea.dueDate <= todayEnd) dueToday += 1;
+    if (daysUntilDue(idea.dueDate, now) < 0) overdue += 1;
+    else if (idea.dueDate <= cutoff) dueToday += 1;
     else upcoming += 1;
   }
   const reviewStatusData = [

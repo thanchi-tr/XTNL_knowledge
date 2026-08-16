@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { dueCutoff } from "./due";
 import { cached } from "./cache";
 import { loadWeeklyQuotas } from "./field-quota";
 import { loadDailyFocus } from "./daily-focus";
@@ -49,7 +50,9 @@ export interface NotificationFeed {
 
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   const [dueCount, overdueCount, quotas, bosses, boons, debuffs] = await Promise.all([
-    prisma.idea.count({ where: { isArchived: false, dueDate: { lte: now } } }),
+    // `dueCutoff`, not `now`: the bubble and the review queue have to agree
+    // about what is due, or the badge sends you to an empty page.
+    prisma.idea.count({ where: { isArchived: false, dueDate: { lte: dueCutoff(now) } } }),
     prisma.idea.count({ where: { isArchived: false, graceEndsAt: { lt: now } } }),
     loadWeeklyQuotas(userId, now),
     loadBossStates(userId),

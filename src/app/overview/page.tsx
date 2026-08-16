@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { loadFieldTree } from "@/lib/queries";
+import { isDue } from "@/lib/due";
 import { fieldLevel } from "@/lib/xp";
 import { getDailyStreak } from "@/lib/streak";
 import { FieldRadarChart, type RadarDatum } from "@/components/home/FieldRadarChart";
@@ -37,7 +38,7 @@ export default async function HomePage() {
 
   const allIdeas = fields.flatMap((f) => f.domains.flatMap((d) => d.ideas));
   const ideaCount = allIdeas.length;
-  const dueCount = allIdeas.filter((i) => i.dueDate <= now).length;
+  const dueCount = allIdeas.filter((i) => isDue(i.dueDate, now)).length;
   const overdueCount = allIdeas.filter((i) => i.dueDate < graceCutoff).length;
 
   // Proficiency index: the same sub-linear "breadth over depth" formula the
