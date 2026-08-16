@@ -114,6 +114,7 @@ model Field {
   attributes FieldAttribute[]
   streaks    FieldStreak[]
   bosses     BossEncounter[]
+  maintenance FieldMaintenance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -449,6 +450,33 @@ model ActiveDebuff {
  * Stored rather than derived because it needs a per-Field last-active day
  * and `Idea.updatedAt` alone can't distinguish a review from an edit.
  */
+/**
+ * A Field the user has put into maintenance mode.
+ *
+ * Stored as the *exception* rather than as the interest, which is what makes
+ * this safe to add to a live database with no backfill: no rows means every
+ * Field is of interest, exactly the behaviour that existed before this table.
+ * Marking a Field inserts a row; unmarking deletes it. There is no state in
+ * which the set is ambiguous or in which an empty table silently disables
+ * every challenge and quota at once.
+ *
+ * A maintained Field keeps reviewing normally — its Ideas come due, degrade
+ * and pay out exactly as before. It is only excused the weekly new-Idea quota
+ * and excluded from Boss encounters.
+ */
+model FieldMaintenance {
+  id      String @id @default(cuid())
+  userId  String
+  fieldId String
+  field   Field  @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, fieldId])
+  @@index([fieldId])
+  @@schema("public")
+}
+
 model FieldStreak {
   id            String   @id @default(cuid())
   userId        String

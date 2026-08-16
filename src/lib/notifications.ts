@@ -49,7 +49,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   const [dueCount, overdueCount, quotas, bosses, boons, debuffs] = await Promise.all([
     prisma.idea.count({ where: { isArchived: false, dueDate: { lte: now } } }),
     prisma.idea.count({ where: { isArchived: false, graceEndsAt: { lt: now } } }),
-    loadWeeklyQuotas(now),
+    loadWeeklyQuotas(userId, now),
     loadBossStates(userId),
     loadActiveBoons(userId, now),
     loadActiveDebuffs(userId, now),

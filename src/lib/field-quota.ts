@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { cached } from "./cache";
 import { applyDebuff } from "./debuffs";
+import { loadMaintenanceIds } from "./field-focus";
 
 /**
  * The weekly contribution quota: how many new Ideas each Field owes per week,
@@ -82,10 +83,20 @@ async function loadQuotasUncached(weekStart: Date): Promise<FieldQuota[]> {
   });
 }
 
-/** Every Field's standing for the current week. Cached on the same tags Idea writes already invalidate. */
-export async function loadWeeklyQuotas(now: Date = new Date()): Promise<FieldQuota[]> {
+/**
+ * Every Field's standing for the current week.
+ *
+ * Fields in maintenance are dropped entirely rather than reported as met:
+ * they are not owed, so showing them as satisfying a quota would misstate
+ * what the player is actually being asked for.
+ */
+export async function loadWeeklyQuotas(userId: string, now: Date = new Date()): Promise<FieldQuota[]> {
   const weekStart = currentWeekAnchor(now);
-  return cached(`quotas:${weekStart.toISOString()}`, ["fields", "ideas"], () => loadQuotasUncached(weekStart));
+  const [all, maintained] = await Promise.all([
+    cached(`quotas:${weekStart.toISOString()}`, ["fields", "ideas"], () => loadQuotasUncached(weekStart)),
+    loadMaintenanceIds(userId),
+  ]);
+  return all.filter((q) => !maintained.has(q.fieldId));
 }
 
 // ============================================================================
@@ -136,7 +147,14 @@ export async function enforceWeeklyQuotas(
   // The week being judged is the one that just closed, not the one underway.
   const lastWeekStart = new Date(weekStart);
   lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 7);
-  const quotas = await loadQuotasUncached(lastWeekStart);
+  const [all, maintained] = await Promise.all([
+    loadQuotasUncached(lastWeekStart),
+    loadMaintenanceIds(userId),
+  ]);
+  // Maintenance is checked at judgement time, not at the start of the week:
+  // putting a Field down mid-week should excuse it, not punish a decision the
+  // player has already made.
+  const quotas = all.filter((q) => !maintained.has(q.fieldId));
   if (quotas.length === 0) return { status: "skipped", why: "no_fields" };
 
   // A Field created mid-week was never given a full week to meet its quota,

@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
 import { drawBoon, grantBoon, type BoonKind } from "./boons";
+import { loadMaintenanceIds } from "./field-focus";
 
 /**
  * Bosses — the chance-and-stakes layer, and the app's one real set-piece.
@@ -160,7 +161,7 @@ export const loadBossStates = cache(async (userId: string): Promise<BossState[]>
 });
 
 async function loadBossStatesUncached(userId: string, now: Date): Promise<BossState[]> {
-  const [fields, encounters] = await Promise.all([
+  const [allFields, encounters, maintained] = await Promise.all([
     prisma.field.findMany({
       orderBy: { name: "asc" },
       select: {
@@ -171,7 +172,16 @@ async function loadBossStatesUncached(userId: string, now: Date): Promise<BossSt
       },
     }),
     prisma.bossEncounter.findMany({ where: { userId } }),
+    loadMaintenanceIds(userId),
   ]);
+
+  // A Field in maintenance fields no Boss at all — not a locked or cooling
+  // one. Challenges are the part of this system that asks for active
+  // attention, and maintenance is the statement that this subject is not
+  // getting any right now. Any encounter row it already had is left intact,
+  // so bringing the Field back restores its tier and victory count rather
+  // than resetting the fight.
+  const fields = allFields.filter((f) => !maintained.has(f.id));
 
   const dueByField = await dueCountsByField(now);
   const encounterByField = new Map(encounters.map((e) => [e.fieldId, e]));

@@ -5,6 +5,9 @@ import { getDailyStreak } from "@/lib/streak";
 import { FieldRadarChart, type RadarDatum } from "@/components/home/FieldRadarChart";
 import { StreakDisplay } from "@/components/home/StreakDisplay";
 import { StatTile } from "@/components/dashboard/StatTile";
+import { FieldFocusPanel } from "@/components/home/FieldFocusPanel";
+import { loadFieldFocus } from "@/lib/field-focus";
+import { getCurrentUserId } from "@/lib/user";
 
 // Levels/streak change on every review — never statically cache this.
 export const dynamic = "force-dynamic";
@@ -17,7 +20,11 @@ export default async function HomePage() {
   // queries. The tree already carries every non-archived Idea, so the three
   // counts are derived from it in memory instead: same numbers, two round
   // trips instead of five, and both of them cached.
-  const [fields, streak] = await Promise.all([loadFieldTree(), getDailyStreak()]);
+  const [fields, streak, focus] = await Promise.all([
+    loadFieldTree(),
+    getDailyStreak(),
+    loadFieldFocus(getCurrentUserId()),
+  ]);
 
   const allIdeas = fields.flatMap((f) => f.domains.flatMap((d) => d.ideas));
   const ideaCount = allIdeas.length;
@@ -96,6 +103,12 @@ export default async function HomePage() {
         </section>
 
         <StreakDisplay streak={streak} />
+      </div>
+
+      {/* Directly under coverage: deciding what to focus on is the natural
+          next thought after seeing how the subjects actually compare. */}
+      <div className="fade-up fade-up-3 mt-3">
+        <FieldFocusPanel fields={focus} />
       </div>
 
       <section className="card fade-up fade-up-3 mt-3">
