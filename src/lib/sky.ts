@@ -239,7 +239,13 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "230 202 156",
     motif: "runeflow",
     drift: "wander",
-    particles: 9,
+    // None. Glyphs scattered at random over the rings read as debris around
+    // the instrument rather than as marks belonging to it, and there is no
+    // way to place them *on* a ring that is itself rotating. The rings, the
+    // ticks and the crosshair are the inscription; loose symbols floating
+    // near it only made it look untidy. The one sky with no particle field,
+    // and the better for it.
+    particles: 0,
     tagline: "Marks that meant something before anyone wrote them down.",
   },
   {

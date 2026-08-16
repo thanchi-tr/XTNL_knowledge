@@ -632,141 +632,231 @@
 }
 
 /* ═══════════════════════════════════════════════════════
-   d8 — GLACIER · slabs, not a pinwheel
-   The conic gradient here read as a pie chart, which was the most obviously
-   cheap thing on the page. Replaced with overlapping angled slabs at low
-   opacity: hard edges in one direction, soft falloff in the other, which is
-   what cut ice actually looks like.
+   d8 — GLACIER · a ridge, cut
+
+   The slabs it replaced were three diagonal bands crossing at unrelated
+   angles behind a soft radial mask, and they resolved into a large vague
+   chevron — a shape nobody chose. Ice reads as *cut*: straight edges,
+   consistent angles, one facet catching light and the next one not. So this
+   is a clipped silhouette with a lit face, and everything soft in it has
+   been taken out.
    ═══════════════════════════════════════════════════════ */
+
 [data-motif="glacier"].sky-far {
   background:
-    linear-gradient(to bottom, rgb(var(--sky-b) / .22) 0%, rgb(8 14 22 / .6) 52%, transparent 100%);
+    linear-gradient(to bottom,
+      rgb(var(--sky-b) / .26) 0%,
+      rgb(var(--sky-a) / .10) 38%,
+      rgb(10 16 26 / .55) 62%,
+      transparent 100%);
 }
 
+/* The far ridge: pale, low contrast, sitting behind. */
 [data-motif="glacier"].sky-mid::before {
   content: "";
   position: absolute;
-  inset: -10%;
-  background:
-    linear-gradient(114deg, transparent 0 28%, rgb(var(--sky-a) / .10) 28% 41%, transparent 41% 100%),
-    linear-gradient(66deg, transparent 0 46%, rgb(var(--sky-a) / .07) 46% 58%, transparent 58% 100%),
-    linear-gradient(128deg, transparent 0 62%, rgb(var(--sky-b) / .09) 62% 71%, transparent 71% 100%);
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 20%, transparent 88%);
-  animation: sky-slab 34s ease-in-out infinite alternate;
-  animation-play-state: var(--ambient-play, running);
+  inset: auto 0 26% 0;
+  height: calc(30 * var(--uh));
+  background: rgb(var(--sky-a) / .16);
+  clip-path: polygon(
+    0% 100%, 0% 62%, 12% 40%, 22% 56%, 34% 22%,
+    46% 48%, 58% 30%, 71% 58%, 84% 34%, 100% 60%, 100% 100%);
 }
 
-@keyframes sky-slab {
-  0%   { transform: translate3d(0, 0, 0) scale(1); opacity: .8; }
-  100% { transform: translate3d(-1.5%, 1%, 0) scale(1.04); opacity: 1; }
-}
-
-/* Cold haze at the floor, where the settled snow lands. */
-[data-motif="glacier"].sky-near::after {
+/* The near ridge: darker, taller, overlapping the far one. Two ridges at
+   different tones is the whole depth cue — no blur required. */
+[data-motif="glacier"].sky-mid::after {
   content: "";
   position: absolute;
   inset: auto 0 0 0;
-  height: calc(26 * var(--uh));
-  background: linear-gradient(to top, rgb(var(--sky-a) / .14), transparent);
-  filter: blur(calc(1.4 * var(--umin)));
+  height: calc(40 * var(--uh));
+  background: linear-gradient(to bottom, rgb(20 32 46) 0%, rgb(10 18 28) 100%);
+  clip-path: polygon(
+    0% 100%, 0% 54%, 15% 30%, 27% 62%, 41% 28%,
+    52% 52%, 66% 20%, 79% 50%, 92% 36%, 100% 58%, 100% 100%);
+}
+
+/* One lit facet. A single bright plane on an otherwise flat silhouette is
+   what makes it read as a solid object rather than a cut-out. */
+[data-motif="glacier"].sky-near::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: calc(40 * var(--uh));
+  background: linear-gradient(96deg, rgb(var(--sky-a) / .34) 0%, transparent 46%);
+  clip-path: polygon(41% 28%, 52% 52%, 66% 20%, 66% 100%, 41% 100%);
+  animation: sky-glint 11s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes sky-glint {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+
+/* Shared by Verdance and Cathedral: light shifting as whatever is casting it
+   moves. Lives here rather than inside either block because both use it, and
+   it previously sat inside d9 — where replacing that block silently took the
+   definition out from under d10 as well. */
+@keyframes sky-shaft {
+  0%, 100% { opacity: .62; transform: translateX(0); }
+  50%      { opacity: 1;   transform: translateX(-2%); }
+}
+
+/* A clean horizon rule where the sky meets the ice. */
+[data-motif="glacier"].sky-near::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom,
+    transparent 63.4%, rgb(var(--sky-a) / .34) 63.6%, transparent 64%);
 }
 
 /* ═══════════════════════════════════════════════════════
-   d9 — VERDANCE · shafts through canopy
-   Dapple alone was too dark and had no direction. Adding angled shafts gives
-   the light a source, and the dapple then reads as what is interrupting it.
+   d9 — VERDANCE · a colonnade
+
+   The dapple version layered four soft radial blobs — two of them pure
+   black — over a dark green field, and the result was mud: smudges with no
+   edge, no subject and no reason to be where they were. Old forest has one
+   very legible structure, which is verticals: trunks, evenly spaced, dark
+   against light coming from behind. That is what this draws now, and the
+   shafts run parallel to a single sun rather than in three directions.
    ═══════════════════════════════════════════════════════ */
+
 [data-motif="verdance"].sky-far {
   background:
-    linear-gradient(to bottom, rgb(10 26 16) 0%, rgb(12 30 18 / .7) 54%, rgb(6 16 10 / .45) 100%),
-    radial-gradient(ellipse 50% 40% at 76% 4%, rgb(var(--sky-b) / .26), transparent 70%);
+    radial-gradient(ellipse 44% 54% at 62% 74%, rgb(var(--sky-b) / .38), transparent 68%),
+    linear-gradient(to bottom, rgb(10 26 16) 0%, rgb(8 22 14 / .8) 58%, rgb(5 14 9) 100%);
 }
 
+/* Trunks. Irregular widths and spacings, all vertical, all the same
+   colour — the regularity is in the axis, not the rhythm. */
 [data-motif="verdance"].sky-mid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right,
+    rgb(4 12 8 / .94) 0 2.5%, transparent 2.5% 11%,
+    rgb(4 12 8 / .94) 11% 14.2%, transparent 14.2% 26%,
+    rgb(4 12 8 / .94) 26% 28%, transparent 28% 38%,
+    rgb(4 12 8 / .94) 38% 42%, transparent 42% 55%,
+    rgb(4 12 8 / .94) 55% 57.4%, transparent 57.4% 68%,
+    rgb(4 12 8 / .94) 68% 72%, transparent 72% 81%,
+    rgb(4 12 8 / .94) 81% 83.2%, transparent 83.2% 93%,
+    rgb(4 12 8 / .94) 93% 96.5%, transparent 96.5% 100%);
+}
+
+/* Canopy: a clean dark band closing the top, so the trunks have something
+   to grow into instead of fading out. */
+[data-motif="verdance"].sky-mid::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: calc(34 * var(--uh));
+  background: linear-gradient(to bottom, rgb(4 12 8) 0%, rgb(4 12 8 / .7) 52%, transparent 100%);
+}
+
+/* Shafts, all at one angle, from the direction of the clearing. */
+[data-motif="verdance"].sky-near::before {
   content: "";
   position: absolute;
   inset: -25% -20%;
   background: repeating-linear-gradient(80deg,
-    transparent 0 54px,
-    rgb(var(--sky-b) / .22) 54px 74px,
-    transparent 74px 118px);
-  mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / .4) 62%, transparent 92%);
+    transparent 0 58px,
+    rgb(var(--sky-b) / .20) 58px 66px,
+    transparent 66px 82px,
+    rgb(var(--sky-b) / .12) 82px 88px,
+    transparent 88px 132px);
+  mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / .35) 62%, transparent 92%);
   animation: sky-shaft 24s ease-in-out infinite;
   animation-play-state: var(--ambient-play, running);
 }
 
-@keyframes sky-shaft {
-  0%, 100% { opacity: .6;  transform: translateX(0); }
-  50%      { opacity: 1;   transform: translateX(-2%); }
-}
-
-/* Canopy: overlapping blobs breathing out of phase with the shafts. */
-[data-motif="verdance"].sky-near::before {
+/* Floor light, which is where shafts actually land. */
+[data-motif="verdance"].sky-near::after {
   content: "";
   position: absolute;
-  inset: -12%;
-  background:
-    radial-gradient(circle calc(20 * var(--umin)) at 16% 18%, rgb(0 0 0 / .5), transparent 70%),
-    radial-gradient(circle calc(28 * var(--umin)) at 68% 8%, rgb(0 0 0 / .45), transparent 68%),
-    radial-gradient(circle calc(16 * var(--umin)) at 44% 30%, rgb(var(--sky-a) / .20), transparent 72%),
-    radial-gradient(circle calc(24 * var(--umin)) at 88% 44%, rgb(0 0 0 / .4), transparent 70%);
-  animation: sky-dapple 26s ease-in-out infinite;
-  animation-play-state: var(--ambient-play, running);
-}
-
-@keyframes sky-dapple {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate3d(2%, 1.2%, 0) scale(1.05); }
+  inset: auto 0 0 0;
+  height: calc(18 * var(--uh));
+  background: linear-gradient(to top, rgb(var(--sky-a) / .16), transparent);
 }
 
 /* ═══════════════════════════════════════════════════════
-   d10 — CATHEDRAL · a window, at the right size
-   The rose window was 44vmin and read as a pinwheel. It is now small, high,
-   off-centre and heavily blurred — a light *source*, with the shafts it
-   casts doing the actual work in the foreground.
+   d10 — CATHEDRAL · a window, not a sparkle
+
+   The rose window was a conic gradient in a circle, which at any real size
+   resolves into a twelve-pointed asterisk — clipart, and the least
+   architectural thing that could have been put on this rung. Gothic reads
+   through *one* silhouette: the lancet. So the window is now a clipped
+   pointed arch with real tracery — two mullions and a quatrefoil — lit from
+   behind, with the shafts it throws falling in front of it.
    ═══════════════════════════════════════════════════════ */
+
 [data-motif="cathedral"].sky-far {
-  background: linear-gradient(to bottom, rgb(14 10 6) 0%, rgb(18 12 8 / .72) 56%, rgb(10 7 5 / .4) 100%);
+  background: linear-gradient(to bottom, rgb(14 10 6) 0%, rgb(18 12 8 / .78) 56%, rgb(9 6 4) 100%);
 }
 
+/* The window aperture: a pointed arch of warm light. */
 [data-motif="cathedral"].sky-mid::before {
   content: "";
   position: absolute;
-  top: calc(4 * var(--umin));
-  right: calc(12 * var(--umin));
-  width: calc(20 * var(--umin));
-  height: calc(20 * var(--umin));
-  border-radius: 50%;
-  background:
-    radial-gradient(circle, rgb(var(--sky-a) / .55) 0%, rgb(var(--sky-b) / .30) 46%, transparent 74%),
-    conic-gradient(from 0deg,
-      rgb(var(--sky-a) / .5) 0deg 22deg, transparent 22deg 45deg,
-      rgb(var(--sky-b) / .4) 45deg 67deg, transparent 67deg 90deg,
-      rgb(var(--sky-a) / .5) 90deg 112deg, transparent 112deg 135deg,
-      rgb(var(--sky-b) / .4) 135deg 157deg, transparent 157deg 180deg,
-      rgb(var(--sky-a) / .5) 180deg 202deg, transparent 202deg 225deg,
-      rgb(var(--sky-b) / .4) 225deg 247deg, transparent 247deg 270deg,
-      rgb(var(--sky-a) / .5) 270deg 292deg, transparent 292deg 315deg,
-      rgb(var(--sky-b) / .4) 315deg 337deg, transparent 337deg 360deg);
-  filter: blur(calc(.9 * var(--umin)));
-  box-shadow: 0 0 calc(10 * var(--umin)) calc(2 * var(--umin)) rgb(var(--sky-a) / .18);
+  top: calc(10 * var(--uh));
+  left: 50%;
+  width: calc(26 * var(--umin));
+  height: calc(48 * var(--umin));
+  margin-left: calc(-13 * var(--umin));
+  background: linear-gradient(to bottom,
+    rgb(var(--sky-a) / .62) 0%,
+    rgb(var(--sky-b) / .34) 52%,
+    rgb(var(--sky-a) / .22) 100%);
+  clip-path: polygon(
+    50% 0%, 62% 4%, 72% 11%, 80% 21%, 86% 33%, 89% 46%, 90% 100%,
+    10% 100%, 11% 46%, 14% 33%, 20% 21%, 28% 11%, 38% 4%);
 }
 
-/* The shafts it throws, angled away from the window and fading with
-   distance — the reason the window can afford to be small. */
+/* Tracery: two mullions and a quatrefoil, drawn over the aperture so the
+   light is divided rather than a flat panel. */
+[data-motif="cathedral"].sky-mid::after {
+  content: "";
+  position: absolute;
+  top: calc(10 * var(--uh));
+  left: 50%;
+  width: calc(26 * var(--umin));
+  height: calc(48 * var(--umin));
+  margin-left: calc(-13 * var(--umin));
+  background:
+    radial-gradient(circle calc(2.6 * var(--umin)) at 50% 30%,
+      transparent 0 calc(2.1 * var(--umin)),
+      rgb(10 7 4 / .9) calc(2.1 * var(--umin)) calc(2.6 * var(--umin)),
+      transparent calc(2.6 * var(--umin))),
+    linear-gradient(to right,
+      transparent 0 32%, rgb(10 7 4 / .9) 32% 34%, transparent 34% 66%,
+      rgb(10 7 4 / .9) 66% 68%, transparent 68% 100%),
+    linear-gradient(to bottom,
+      transparent 0 54%, rgb(10 7 4 / .9) 54% 55.6%, transparent 55.6% 100%);
+  clip-path: polygon(
+    50% 0%, 62% 4%, 72% 11%, 80% 21%, 86% 33%, 89% 46%, 90% 100%,
+    10% 100%, 11% 46%, 14% 33%, 20% 21%, 28% 11%, 38% 4%);
+}
+
+/* The light it throws. Vertical, spreading slightly, landing on a floor. */
 [data-motif="cathedral"].sky-near::before {
   content: "";
   position: absolute;
-  inset: -20% -30%;
-  background: repeating-linear-gradient(66deg,
-    transparent 0 70px,
-    rgb(var(--sky-a) / .09) 70px 104px,
-    transparent 104px 150px);
-  /* The radial already falls off downward as well as outward, so the
-     second mask bought very little for a whole extra rasterisation. */
-  mask-image: radial-gradient(ellipse 96% 88% at 80% 2%, #000 0%, transparent 74%);
+  inset: calc(10 * var(--uh)) 0 0 0;
+  background: linear-gradient(to bottom,
+    rgb(var(--sky-a) / .13) 0%, rgb(var(--sky-a) / .05) 44%, transparent 82%);
+  clip-path: polygon(41% 0%, 59% 0%, 76% 100%, 24% 100%);
   animation: sky-shaft 21s ease-in-out infinite;
   animation-play-state: var(--ambient-play, running);
+}
+
+[data-motif="cathedral"].sky-near::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: calc(16 * var(--uh));
+  background: radial-gradient(ellipse 34% 100% at 50% 100%, rgb(var(--sky-a) / .18), transparent 72%);
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -824,46 +914,89 @@
 }
 
 /* ═══════════════════════════════════════════════════════
-   d12 — RUNEFLOW · an inscription, dimly lit
-   Two concentric rings of marks turning at different speeds and in opposite
-   directions, masked to thin bands so they read as engraved rather than
-   drawn. The glyph particles float between them.
+   d12 — RUNEFLOW · an instrument
+
+   Two rings of ~150 conic slivers each turning against each other read as
+   dotted noise, and the scattered glyphs on top made it look like debris.
+   An inscription is a made object: few marks, evenly spaced, concentric,
+   with an axis. This is closer to an astrolabe — three crisp rings, sparse
+   ticks, and a crosshair — which is both cleaner and more obviously
+   *deliberate* than a hundred small marks ever were.
    ═══════════════════════════════════════════════════════ */
+
 [data-motif="runeflow"].sky-far {
   background:
-    radial-gradient(ellipse 70% 60% at 50% 50%, rgb(var(--sky-a) / .10), transparent 72%),
-    linear-gradient(to bottom, rgb(10 7 18) 0%, rgb(14 9 24 / .6) 60%, transparent 100%);
+    radial-gradient(ellipse 58% 52% at 50% 48%, rgb(var(--sky-a) / .14), transparent 70%),
+    linear-gradient(to bottom, rgb(10 7 18) 0%, rgb(14 9 24 / .7) 60%, rgb(8 5 14) 100%);
 }
 
-[data-motif="runeflow"].sky-mid::before,
+/* Outer ring with sparse ticks. 24 marks, not 150. */
+[data-motif="runeflow"].sky-mid::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(72 * var(--umin));
+  height: calc(72 * var(--umin));
+  margin: calc(-36 * var(--umin)) 0 0 calc(-36 * var(--umin));
+  border-radius: 50%;
+  border: 1px solid rgb(var(--sky-a) / .32);
+  background: repeating-conic-gradient(from 0deg,
+    rgb(var(--sky-a) / .40) 0deg 0.7deg, transparent 0.7deg 15deg);
+  mask-image: radial-gradient(circle, transparent 0 88%, #000 89%, #000 100%);
+  animation: sky-inscribe 150s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+/* Inner ring, counter-rotating, with a crosshair through it. */
 [data-motif="runeflow"].sky-mid::after {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
+  width: calc(40 * var(--umin));
+  height: calc(40 * var(--umin));
+  margin: calc(-20 * var(--umin)) 0 0 calc(-20 * var(--umin));
   border-radius: 50%;
-  animation: sky-inscribe 130s linear infinite;
+  border: 1px solid rgb(var(--sky-b) / .30);
+  background: repeating-conic-gradient(from 7.5deg,
+    rgb(var(--sky-b) / .34) 0deg 1deg, transparent 1deg 30deg);
+  mask-image: radial-gradient(circle, transparent 0 82%, #000 84%, #000 100%);
+  animation: sky-inscribe 96s linear infinite reverse;
   animation-play-state: var(--ambient-play, running);
 }
 
-[data-motif="runeflow"].sky-mid::before {
-  width: calc(88 * var(--umin));
-  height: calc(88 * var(--umin));
-  margin: calc(-44 * var(--umin)) 0 0 calc(-44 * var(--umin));
-  background: repeating-conic-gradient(from 0deg,
-    rgb(var(--sky-a) / .34) 0deg 2.4deg, transparent 2.4deg 14deg);
-  mask-image: radial-gradient(circle, transparent 66%, #000 68%, #000 74%, transparent 76%);
+/* The axis. One horizontal and one vertical hairline through the centre,
+   held still while both rings turn — the still element is what makes the
+   turning ones read as an instrument being read. */
+[data-motif="runeflow"].sky-near::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(84 * var(--umin));
+  height: calc(84 * var(--umin));
+  margin: calc(-42 * var(--umin)) 0 0 calc(-42 * var(--umin));
+  background:
+    linear-gradient(to right, transparent 0 49.85%, rgb(var(--sky-a) / .16) 49.85% 50.15%, transparent 50.15%),
+    linear-gradient(to bottom, transparent 0 49.85%, rgb(var(--sky-a) / .16) 49.85% 50.15%, transparent 50.15%);
+  mask-image: radial-gradient(circle, #000 0 46%, transparent 50%);
 }
 
-[data-motif="runeflow"].sky-mid::after {
-  width: calc(52 * var(--umin));
-  height: calc(52 * var(--umin));
-  margin: calc(-26 * var(--umin)) 0 0 calc(-26 * var(--umin));
-  background: repeating-conic-gradient(from 12deg,
-    rgb(var(--sky-b) / .30) 0deg 3deg, transparent 3deg 22deg);
-  mask-image: radial-gradient(circle, transparent 84%, #000 86%, #000 94%, transparent 96%);
-  animation-duration: 78s;
-  animation-direction: reverse;
+/* Innermost mark. */
+[data-motif="runeflow"].sky-near::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(11 * var(--umin));
+  height: calc(11 * var(--umin));
+  margin: calc(-5.5 * var(--umin)) 0 0 calc(-5.5 * var(--umin));
+  border-radius: 50%;
+  border: 1px solid rgb(var(--sky-b) / .34);
+  background: radial-gradient(circle, rgb(var(--sky-a) / .18), transparent 70%);
+  animation: sky-glint 9s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
 }
 
 @keyframes sky-inscribe {
@@ -872,39 +1005,73 @@
 }
 
 /* ═══════════════════════════════════════════════════════
-   d13 — DUNES · three crests, three distances
-   Parallax is the whole trick here: near crests are darker and larger, far
-   ones paler and flatter, and the haze between them is what makes the depth
-   readable rather than merely present.
+   d13 — DUNES · ridgelines, not smears
+
+   Four overlapping blurred ellipses in near-identical browns produced a
+   uniform smudge across the lower half — no edge anywhere, so no ridge
+   anywhere, so no distance. A dune field is legible for exactly one reason:
+   each crest is a hard line against the paler haze behind it. Three crests
+   now, hard-edged, each a step darker than the one behind, with a clean sun
+   sitting between two of them.
    ═══════════════════════════════════════════════════════ */
+
 [data-motif="dunes"].sky-far {
   background:
-    linear-gradient(to bottom, rgb(26 16 10) 0%, rgb(var(--sky-b) / .22) 44%, rgb(var(--sky-a) / .10) 62%, transparent 78%),
-    radial-gradient(ellipse calc(30 * var(--umin)) calc(16 * var(--umin)) at 30% 58%, rgb(var(--sky-a) / .30), transparent 70%);
+    linear-gradient(to bottom,
+      rgb(36 22 14) 0%,
+      rgb(var(--sky-b) / .30) 34%,
+      rgb(var(--sky-a) / .22) 52%,
+      rgb(var(--sky-a) / .10) 62%,
+      transparent 72%);
 }
 
+/* The sun, low and clean, behind every crest. */
+[data-motif="dunes"].sky-far::before {
+  content: "";
+  position: absolute;
+  left: 34%;
+  top: 40%;
+  width: calc(14 * var(--umin));
+  height: calc(14 * var(--umin));
+  margin: calc(-7 * var(--umin)) 0 0 calc(-7 * var(--umin));
+  border-radius: 50%;
+  background: rgb(var(--sky-a) / .8);
+  box-shadow: 0 0 calc(14 * var(--umin)) calc(3 * var(--umin)) rgb(var(--sky-a) / .28);
+}
+
+/* Far crest — palest, flattest, highest. */
 [data-motif="dunes"].sky-mid::before {
   content: "";
   position: absolute;
-  inset: auto -10% 22% -10%;
-  height: calc(30 * var(--uh));
-  background: radial-gradient(ellipse 60% 100% at 30% 100%, rgb(38 24 16 / .9), transparent 72%),
-    radial-gradient(ellipse 55% 90% at 78% 100%, rgb(42 27 18 / .85), transparent 70%);
-  filter: blur(calc(.4 * var(--umin)));
+  inset: auto -6% 34% -6%;
+  height: calc(26 * var(--uh));
+  background: rgb(92 62 40);
+  clip-path: ellipse(62% 100% at 28% 100%);
 }
 
+/* Middle crest, offset the other way so the two cross. */
+[data-motif="dunes"].sky-mid::after {
+  content: "";
+  position: absolute;
+  inset: auto -6% 18% -6%;
+  height: calc(28 * var(--uh));
+  background: rgb(62 40 25);
+  clip-path: ellipse(58% 100% at 76% 100%);
+}
+
+/* Near crest — darkest, largest, and the one the eye reads as the floor. */
 [data-motif="dunes"].sky-near::before {
   content: "";
   position: absolute;
-  inset: auto -10% -6% -10%;
+  inset: auto -8% -2% -8%;
   height: calc(34 * var(--uh));
-  background: radial-gradient(ellipse 70% 100% at 62% 100%, rgb(18 11 7 / .96), transparent 74%),
-    radial-gradient(ellipse 60% 90% at 12% 100%, rgb(22 14 9 / .94), transparent 72%);
+  background: linear-gradient(to bottom, rgb(38 24 15) 0%, rgb(22 14 9) 100%);
+  clip-path: ellipse(72% 100% at 40% 100%);
 }
 
-/* Blown sand, crossing in front of everything. */
-/* Overhangs by more than it travels, so translating it leaves no seam --
-   the compositor-friendly equivalent of scrolling `background-position`. */
+/* Blown sand, crossing in front of everything. Overhangs by more than it
+   travels, so translating it leaves no seam — the compositor-friendly
+   equivalent of scrolling `background-position`. */
 [data-motif="dunes"].sky-near::after {
   content: "";
   position: absolute;
