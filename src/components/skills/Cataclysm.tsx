@@ -108,7 +108,6 @@ const METEOR_STYLE: Record<MeteorVariant, MeteorStyle> = {
   bolts: { color: "#ffffff", color2: "#9b6bff", sky: false, ground: false, impacts: true, count: 7 },
 };
 
-const METEORS = 30;
 const PULL_SPOKES = 22;
 const WARP_RINGS = 3;
 

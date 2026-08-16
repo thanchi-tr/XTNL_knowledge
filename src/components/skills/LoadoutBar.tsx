@@ -33,6 +33,27 @@ interface Props {
   /** Owned but unequipped, offered in the picker. */
   bench: Skill[];
   /**
+   * When false, equipping and detaching stay local — the server actions are
+   * never called and nothing is written.
+   *
+   * Only the local preview passes this. Every animation in the bar is driven
+   * by the optimistic update that already runs before the round trip, so a
+   * non-persisting bar is visually identical to a real one; it simply never
+   * reaches the database. That is what makes it safe to sit a full bench of
+   * all 749 emblems in front of it.
+   */
+  persist?: boolean;
+  /**
+   * Asks the bar to attach an emblem through its own `attach()` path.
+   *
+   * The preview's shortcut buttons need the *real* code path — writing slot
+   * state from outside skips `attach()` entirely, and with it the burst, the
+   * bar charge, the page surge and the cataclysm, which is the whole thing
+   * being previewed. Bumping `nonce` is what re-triggers it, so firing the
+   * same emblem twice still plays twice.
+   */
+  attachRequest?: { skill: Skill; nonce: number } | null;
+  /**
    * Whether this bar owns the app-wide atmosphere. Only the real one in the
    * shell should — the reference page renders many bars and would otherwise
    * stack a full-viewport layer per grade.
@@ -54,7 +75,7 @@ interface Props {
  * Sticky, because the answer to "what does this do for me" should be
  * visible while browsing the tree, not one navigation away.
  */
-export function LoadoutBar({ slots, bench, ambient = true }: Props) {
+export function LoadoutBar({ slots, bench, ambient = true, persist = true, attachRequest = null }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [picking, setPicking] = useState<number | null>(null);
@@ -236,6 +257,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     const after = resolveResonance(nextSlots.filter((s) => s.skill && s.active).map((s) => s.skill!));
     fireBarCharge(skill, resonance, after, slot);
 
+    if (!persist) return;
     startTransition(async () => {
       const res = await equipSkill(skill.code, slot);
       if (!res.ok) {
@@ -255,6 +277,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     setLocalSlots((prev) => prev.map((s) => (s.slot === slot ? { ...s, skill: null, active: false } : s)));
     if (removed) setLocalBench((prev) => [...prev, removed]);
 
+    if (!persist) return;
     startTransition(async () => {
       const res = await clearSlot(slot);
       if (!res.ok) {
@@ -266,6 +289,20 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
       router.refresh();
     });
   }
+
+  /** Fires an external attach request through the bar's own path, once per nonce. */
+  const lastRequest = useRef<number>(-1);
+  useEffect(() => {
+    if (!attachRequest || attachRequest.nonce === lastRequest.current) return;
+    lastRequest.current = attachRequest.nonce;
+    const free = localSlots.find((s) => !s.skill);
+    // Genuinely the "external trigger" case the rule exists to allow: a
+    // parent asks the bar to run its own attach, which is a user action
+    // arriving by prop rather than by click. Doing it during render is not
+    // an option — `attach` starts timers and a transition.
+    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    if (free) attach(free.slot, attachRequest.skill);
+  }, [attachRequest]);
 
   const activeSetIds = useMemo(() => new Set(resonance.sets.map((s) => s.id)), [resonance.sets]);
 
