@@ -8,6 +8,11 @@ import { NotificationSlot } from "@/components/notifications/NotificationSlot";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
+// Loaded after globals so the arcane layer can refine it. A trailing
+// `@import` inside globals.css cannot do this: `@import` must precede all
+// other rules, which put every globals declaration *after* it and let
+// same-specificity selectors there win on source order.
+import "./arcane.css";
 
 // Inter + JetBrains Mono, matching XTNL_thesis. Was Geist/Geist Mono — the
 // ecosystem's typographic identity is set by the thesis app, and the CSS

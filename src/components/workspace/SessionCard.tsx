@@ -290,7 +290,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
   }
 
   return (
-    <div className="card px-6 py-7">
+    <div className="card arcane-circle px-6 py-7">
       <div className="mb-5 flex items-center justify-between">
         <span className={`shrink-0 ${TYPE_STYLES[questionType]}`}>{questionType}</span>
         <span className="font-mono text-xs text-ink-2">

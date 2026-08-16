@@ -1,0 +1,203 @@
+/* ═══ ARCANE ═════════════════════════════════════════════
+   The magician layer.
+
+   globals.css records that an earlier "Arcane Terminal" direction — violet
+   cast, gold metal, glow rings — was replaced by the current instrument
+   palette. This does not undo that. The instrument reading is what makes the
+   app legible: green still means "you did the work", the ink ramp still
+   carries hierarchy, and every panel is still built from the same tokens.
+
+   What this adds is *character* on top of that discipline. The conceit is a
+   practitioner's workbench rather than a wizard's cartoon: arcane violet and
+   old gold as light sources, sigil marks where a heading begins, a faint
+   ruled circle behind the surfaces that matter. Nothing here changes a
+   colour that carries meaning — rank hues, the green/amber/red state ramp
+   and every chip stay exactly as they were, because those are data.
+
+   Layered last so it can be removed by deleting one import.
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* Two new light sources. Violet is the arcane one, gold is what it
+     leaves behind — chosen to sit beside the existing green rather than
+     compete with it, so nothing already coloured has to move. */
+  --arcane:     #9b6bff;
+  --arcane-hi:  #c4a2ff;
+  --arcane-10:  rgba(155, 107, 255, 0.10);
+  --arcane-06:  rgba(155, 107, 255, 0.06);
+  --gold:       #e8b34a;
+  --gold-10:    rgba(232, 179, 74, 0.10);
+}
+
+/* ── The workbench ───────────────────────────────────────
+   A third light source on the page ground, violet and very low, so the
+   void reads as lit from somewhere rather than as flat black. Same
+   intensity discipline as the two gradients it joins in globals.css:
+   under the threshold where it would make two identical cards look like
+   different weights. */
+body {
+  background-image:
+    radial-gradient(ellipse 130% 50% at 50% -6%, rgba(0, 204, 122, 0.034) 0%, transparent 62%),
+    radial-gradient(ellipse 70% 40% at 12% 4%, rgba(155, 107, 255, 0.030) 0%, transparent 60%),
+    radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0, 130, 255, 0.014) 0%, transparent 50%);
+}
+
+/* ── Sigil headings ──────────────────────────────────────
+   A small arcane tick before a panel title. Rendered from a pseudo-element
+   rather than added to markup, so every existing `.panel-title` in the app
+   gains it without touching a component. */
+.panel-title {
+  position: relative;
+  padding-left: 13px;
+}
+
+.panel-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 1px;
+  /* A diamond, not a dot — a bullet reads as a list, a rotated square reads
+     as a mark someone struck. */
+  transform: rotate(45deg);
+  background: var(--arcane);
+  box-shadow: 0 0 7px var(--arcane-hi);
+  opacity: 0.85;
+}
+
+/* The eyebrow above a page title takes the gold, so the two heading levels
+   are told apart by hue as well as size. */
+/* `:root` prefix only to raise specificity. A plain `.section-eyebrow` here
+   matched — its `opacity` applied — but lost the colour to a later
+   equal-specificity declaration, so the eyebrow stayed muted. */
+:root .section-eyebrow {
+  color: var(--gold);
+  opacity: 0.85;
+  text-shadow: 0 0 14px rgba(232, 179, 74, 0.18);
+}
+
+/* ── Inscribed surfaces ──────────────────────────────────
+   Cards gain a hairline inner rule inset from the border — the ruled margin
+   of a page in a working notebook. One inset shadow, no extra element and
+   no layout cost, so it applies to hundreds of cards for free. */
+:root .card {
+  position: relative;
+  /* globals.css sets `.card` inside `@layer components`, and unlayered rules
+     beat layered ones — so this declaration replaces the card's shadow
+     outright rather than adding to it. The original top highlight is
+     restated first; dropping it would flatten every card in the app. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    inset 0 0 0 1px rgba(155, 107, 255, 0.045),
+    0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+/* ── The circle ──────────────────────────────────────────
+   A faint conic sweep behind the review card, the one surface the player
+   actually looks at for minutes at a time. Opt-in by class so it stays on
+   the screen that earns it rather than becoming wallpaper. */
+.arcane-circle {
+  position: relative;
+  isolation: isolate;
+}
+
+.arcane-circle::before {
+  content: "";
+  position: absolute;
+  inset: -30% -10%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    conic-gradient(
+      from 210deg at 50% 50%,
+      transparent 0deg,
+      rgba(155, 107, 255, 0.10) 55deg,
+      transparent 130deg,
+      rgba(232, 179, 74, 0.07) 210deg,
+      transparent 290deg
+    );
+  filter: blur(26px);
+  opacity: 0.75;
+  animation: arcane-turn 44s linear infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes arcane-turn {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Enchanted controls ──────────────────────────────────
+   The primary button gets a slow sheen crossing it. Long period on purpose:
+   it should read as a surface catching light occasionally, not as something
+   demanding to be pressed. */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 62%
+  );
+  transform: translateX(-120%);
+  animation: arcane-sheen 7s ease-in-out infinite;
+  animation-play-state: var(--ambient-play, running);
+}
+
+@keyframes arcane-sheen {
+  0%, 72% { transform: translateX(-120%); }
+  86%     { transform: translateX(120%); }
+  100%    { transform: translateX(120%); }
+}
+
+/* ── Fold: the cover screen ──────────────────────────────
+   ~344 CSS px. Everything already fits without horizontal overflow; what
+   fails there is touch. Any control that renders under 32px on the narrow
+   screen is lifted to a thumb-sized target, without changing its desktop
+   size — measured on the live site, where the Boss cards' "Lore" toggles
+   came out 45x31. */
+@media (max-width: 420px) {
+  .btn-ghost,
+  .chip {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The page title and its eyebrow eat a disproportionate share of a
+     344px-wide screen; tightening them buys back most of a card. */
+  .section-eyebrow { font-size: 9px; }
+  .panel-sub { font-size: 10.5px; }
+}
+
+/* ── Fold: the unfolded main screen ──────────────────────
+   932x704 measured on the device. Wide but *short*, which is the unusual
+   part: nav plus loadout bar were taking 124px, 18% of the viewport, before
+   any content. Both shrink on short screens so the reading area keeps the
+   space the extra width was supposed to buy. */
+@media (min-width: 900px) and (max-height: 780px) {
+  :root { --nav-h: 48px; }
+
+  .loadout-bar .site-container { padding-top: 5px; padding-bottom: 5px; }
+  .slot { width: 34px; height: 34px; }
+
+  /* Page headers are the other easy win — a 32px bottom margin on a 704px
+     screen is a line of content. */
+  main > header { margin-bottom: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcane-circle::before,
+  .btn-primary::after { animation: none; }
+  .btn-primary::after { opacity: 0; }
+}
