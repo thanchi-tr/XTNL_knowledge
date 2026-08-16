@@ -88,6 +88,57 @@ export function reviewReward(ideaLevel: number, combo = 0, comboCap = COMBO_CAP,
   return REVIEW_XP_BASE * levelFactor * comboFactor * yieldMultiplier;
 }
 
+// ============================================================================
+// Reward variance
+// ============================================================================
+/**
+ * Bounded variance on a review payout — RPG damage roll, not a slot machine.
+ *
+ * The README records this project refusing a variable-ratio reinforcement
+ * schedule: a claim button that ran a suspense animation before resolving to
+ * a hidden 15% jackpot. That refusal stands, and this is deliberately not
+ * that. The distinction is where the uncertainty sits:
+ *
+ *   - A slot machine makes *whether you are rewarded* uncertain, on a
+ *     schedule tuned for compulsion. Nothing here does that: clearing a card
+ *     always pays, and always pays close to its stated value.
+ *   - This makes only the *exact size* wobble, inside a stated band, with an
+ *     expected value of 1.0. Over any real session it averages out to
+ *     precisely the deterministic number the curve always produced.
+ *
+ * No hidden jackpot, no suspense delay, no schedule that pays off
+ * unpredictably enough to hook anyone. The band is published in the UI and
+ * the top of it is labelled rather than concealed, which is the opposite of
+ * how a gacha reveal works.
+ *
+ * `random` is injected so the roll is reproducible in tests.
+ */
+export const VARIANCE_MIN = 0.88;
+export const VARIANCE_MAX = 1.12;
+/** Top slice of the band, called out so a good roll reads as a moment. */
+export const VARIANCE_STRONG_AT = 1.08;
+
+export type RewardBand = "low" | "normal" | "strong";
+
+export interface RewardRoll {
+  factor: number;
+  band: RewardBand;
+}
+
+/**
+ * Triangular rather than uniform: averaging two uniform draws clusters
+ * results near the centre, so most reviews land close to the printed number
+ * and the extremes stay genuinely uncommon. A uniform roll would make the
+ * band's edges as ordinary as its middle, which reads as noise rather than
+ * as a good or bad roll.
+ */
+export function rollRewardVariance(random: () => number = Math.random): RewardRoll {
+  const centred = (random() + random()) / 2;
+  const factor = VARIANCE_MIN + (VARIANCE_MAX - VARIANCE_MIN) * centred;
+  const band: RewardBand = factor >= VARIANCE_STRONG_AT ? "strong" : factor <= 0.94 ? "low" : "normal";
+  return { factor: Math.round(factor * 1000) / 1000, band };
+}
+
 /**
  * XP_yield = XP_base * e^(-lambda * N_similar)
  * N_similar = count of existing Ideas in the target Domain with similarity >= 0.70.

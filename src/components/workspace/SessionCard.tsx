@@ -260,13 +260,23 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
           <>
             {/* The real figure. This was hardcoded "+2 XP" and had already
                 stopped matching what the server actually credits. */}
+            {/* The band is named rather than left as an unexplained bigger
+                number — the variance is published, not concealed. */}
             <span
               aria-hidden
               className="animate-float-up-fade mono pointer-events-none absolute right-6 top-1/2 -translate-y-1/2 text-base font-bold"
-              style={{ color: "var(--green)" }}
+              style={{
+                color: advanced.rewardBand === "strong" ? "var(--amber)" : "var(--green)",
+                textShadow: advanced.rewardBand === "strong" ? "0 0 12px rgba(240,160,48,.55)" : undefined,
+              }}
             >
               +{advanced.pointsAwarded.toFixed(1)}
             </span>
+            {advanced.rewardBand === "strong" && (
+              <p className="label-xs mt-2" style={{ color: "var(--amber)" }}>
+                Strong roll
+              </p>
+            )}
             {streak >= 2 && (
               <p className="label-xs mt-2" style={{ color: "var(--green)" }}>
                 {streak} in a row · x{(1 + Math.min(streak, COMBO_CAP) * COMBO_STEP).toFixed(2)}

@@ -5,6 +5,8 @@ import { invalidate } from "./cache";
 import {
   graceEndsAt,
   reviewReward,
+  rollRewardVariance,
+  type RewardBand,
   domainLevelProgress,
   nextIntervalDays,
   MAX_LEVEL,
@@ -51,6 +53,8 @@ export type ReviewOutcome =
       pointsAwarded: number;
       /** True only on the review that first reaches MASTERY_LEVEL. */
       mastered: boolean;
+      /** Where this payout landed inside the variance band — lets the card call out a good roll. */
+      rewardBand: RewardBand;
       domainProgress: DomainProgress;
       /** Next session combo value — server-authoritative (COMBO_ANCHOR-aware); the client just stores it. */
       nextCombo: number;
@@ -180,7 +184,11 @@ export async function applyReviewResult(
 
     // Reward scales with the level being *cleared*, not the one being
     // entered — you are paid for the recall you just performed.
-    const base = reviewReward(idea.level, combo, modifiers.comboCap, modifiers.reviewYieldMultiplier);
+    // Variance applies to the review payout only — never to the mastery
+    // lump, which is a once-per-Idea milestone and should read as a fixed
+    // reward for reaching the top of the ladder rather than a roll.
+    const roll = rollRewardVariance();
+    const base = reviewReward(idea.level, combo, modifiers.comboCap, modifiers.reviewYieldMultiplier) * roll.factor;
     // Mastery fires only on the transition, so re-reviewing a capped Idea
     // (level 12 -> Math.min keeps it at 12) never re-pays the bonus.
     const mastered = newLevel === MASTERY_LEVEL && idea.level < MASTERY_LEVEL;
@@ -227,6 +235,7 @@ export async function applyReviewResult(
       newDomainLevel,
       pointsAwarded,
       mastered,
+      rewardBand: roll.band,
       domainProgress: {
         domainName: domainAfter.name,
         level: progress.level,
