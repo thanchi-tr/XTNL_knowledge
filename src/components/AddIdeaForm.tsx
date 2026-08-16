@@ -15,6 +15,7 @@ import {
 import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
+import { suggestDistractors } from "@/app/actions/ideas";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
 import { EquationField } from "@/components/math/EquationField";
@@ -74,6 +75,63 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
    * to its ref, so wiring it into another textarea is `{...completeBind}` and a
    * ref, with no extra state anywhere.
    */
+  /**
+   * Which option rows came from the model, so they can be marked as needing
+   * a read. Cleared per-row the moment the author edits it — an option they
+   * have looked at and changed is theirs, not a suggestion any more.
+   */
+  const [generatedIndices, setGeneratedIndices] = useState<Set<number>>(new Set());
+  const [distractorError, setDistractorError] = useState<string | null>(null);
+  const [distractorsPending, startDistractors] = useTransition();
+
+  /**
+   * Fills every option *except* the correct one, then marks them.
+   *
+   * Overwrites rather than appends: the author has usually left the other
+   * rows blank or half-written, and appending would leave those stubs in the
+   * list as free eliminations. If there are fewer than four rows it grows the
+   * list, so this always yields one right answer and three wrong ones.
+   */
+  function fillDistractors() {
+    const correct = options[correctIndex]?.trim();
+    if (!correct) return;
+    setDistractorError(null);
+    startDistractors(async () => {
+      const field = fields.find((f) => f.id === fieldId);
+      const res = await suggestDistractors({
+        correctAnswer: correct,
+        fieldName: field?.name,
+        // MULTI has no separate prompt field in this schema, so the other
+        // options are the only context there is — often enough to pin the
+        // subject when the answer alone is ambiguous.
+        prompt: options.filter((_, i) => i !== correctIndex).map((o) => o.trim()).filter(Boolean).join(" / ") || undefined,
+      });
+      if (!res.ok) {
+        setDistractorError(res.error);
+        return;
+      }
+      const wrong = [...res.distractors];
+      const filled: string[] = [];
+      const marked = new Set<number>();
+      for (let i = 0; i < Math.max(options.length, wrong.length + 1); i++) {
+        if (i === correctIndex) {
+          filled.push(correct);
+          continue;
+        }
+        const next = wrong.shift();
+        if (next === undefined) {
+          // Keep any surplus rows the author had already written.
+          filled.push(options[i] ?? "");
+          continue;
+        }
+        filled.push(next);
+        marked.add(i);
+      }
+      setOptions(filled);
+      setGeneratedIndices(marked);
+    });
+  }
+
   const {
     registerField: completeRef,
     suggestions: wordHints,
@@ -701,10 +759,13 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
         <>
           <label className="block">
             <span className={LABEL_CLASS}>Question</span>
+            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
             <textarea
+              ref={completeRef}
               value={shortQuestion}
               onChange={(e) => setShortQuestion(e.target.value)}
               {...typing(setShortQuestion)}
+              {...completeBind}
               rows={2}
               className={FIELD_CLASS}
             />
@@ -712,9 +773,11 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
           <label className="block">
             <span className={LABEL_CLASS}>Answer</span>
             <input
+              ref={completeRef}
               type="text"
               value={shortAnswer}
               onChange={(e) => setShortAnswer(e.target.value)}
+              {...completeBind}
               className={FIELD_CLASS}
             />
           </label>
@@ -750,10 +813,26 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
                 style={{ accentColor: "var(--green)" }}
               />
               <input
+                ref={completeRef}
                 type="text"
                 value={opt}
-                onChange={(e) => setOptions((prev) => prev.map((o, idx) => (idx === i ? e.target.value : o)))}
+                onChange={(e) => {
+                  setOptions((prev) => prev.map((o, idx) => (idx === i ? e.target.value : o)));
+                  setGeneratedIndices((prev) => {
+                    if (!prev.has(i)) return prev;
+                    const next = new Set(prev);
+                    next.delete(i);
+                    return next;
+                  });
+                }}
+                {...completeBind}
                 className={`flex-1 ${FIELD_CLASS}`}
+                data-generated={generatedIndices.has(i) ? "1" : undefined}
+                style={
+                  generatedIndices.has(i)
+                    ? { borderColor: "rgba(240,160,48,0.35)" }
+                    : undefined
+                }
               />
               {options.length > 2 && (
                 <button
@@ -769,13 +848,46 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
               )}
             </div>
           ))}
-          <button
-            type="button"
-            onClick={() => setOptions((prev) => [...prev, ""])}
-            style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}
-          >
-            + Add option
-          </button>
+          <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setOptions((prev) => [...prev, ""])}
+              style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}
+            >
+              + Add option
+            </button>
+
+            {/* Writing distractors is the part of multiple choice people do
+                worst, and the failure is invisible to the author: knowing the
+                answer makes it impossible to see that the other three are
+                obviously wrong. Everything it returns lands in these same
+                editable fields — nothing reaches the database unread. */}
+            <button
+              type="button"
+              onClick={fillDistractors}
+              disabled={distractorsPending || !options[correctIndex]?.trim()}
+              className="btn-secondary"
+              style={{ fontSize: 11, padding: "5px 11px" }}
+              title={
+                options[correctIndex]?.trim()
+                  ? "Generate three wrong options that look right"
+                  : "Fill in the correct option first"
+              }
+            >
+              {distractorsPending ? "Writing options…" : "Suggest 3 wrong options"}
+            </button>
+
+            {distractorError && (
+              <span style={{ fontSize: 11, color: "var(--amber)" }}>{distractorError}</span>
+            )}
+            {generatedIndices.size > 0 && !distractorError && (
+              <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                {generatedIndices.size} suggested — edit any word before submitting.
+              </span>
+            )}
+          </div>
         </div>
       )}
 

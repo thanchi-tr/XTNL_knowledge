@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import type { CollectionLabel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { embedText, synthesizeNodeData } from "@/lib/gemini";
+import { embedText, synthesizeNodeData, generateDistractors } from "@/lib/gemini";
 import { routeFromNearest, createNoveltyDomain, countSimilarInDomain } from "@/lib/domain-discovery";
 import { pickField, type FieldChoice } from "@/lib/field-routing";
 import {
@@ -459,4 +459,49 @@ export async function deleteIdea(ideaId: string): Promise<SkillFreeResult<Delete
   invalidate("ideas", "fields", "progress");
 
   return { ok: true, value: { ideaId, domainId: idea.domainId, pointsRemoved, domainLevel } };
+}
+
+export interface DistractorsInput {
+  correctAnswer: string;
+  fieldName?: string;
+  prompt?: string;
+}
+
+export type DistractorsResult =
+  | { ok: true; distractors: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Three wrong options for a MULTI card, from the right one.
+ *
+ * Authoring is where multiple choice is usually lost: the author knows the
+ * answer, so they cannot see that their three wrong options are obviously
+ * wrong, and the card quietly becomes a reading test. Generating them is the
+ * one part of capture where a model is straightforwardly better than the
+ * person — it does not know which one is supposed to be right.
+ *
+ * Advisory, never authoritative. The result lands in editable fields, so
+ * every word can be changed or thrown away before anything is written. That
+ * is what makes it safe to use a model here at all: nothing it produces
+ * reaches the database without passing under the author's eye first.
+ */
+export async function suggestDistractors(input: DistractorsInput): Promise<DistractorsResult> {
+  const answer = input.correctAnswer.trim();
+  if (!answer) return { ok: false, error: "Enter the correct answer first." };
+
+  try {
+    const distractors = await generateDistractors(answer, {
+      fieldName: input.fieldName,
+      prompt: input.prompt,
+    });
+    if (distractors.length === 0) {
+      return { ok: false, error: "No usable options came back — try rewording the answer." };
+    }
+    return { ok: true, distractors };
+  } catch (err) {
+    // Surfaced rather than thrown: this is an optional assist on a form the
+    // author can complete by hand, so a missing API key or a cold model
+    // should degrade to a message beside the button, not a broken page.
+    return { ok: false, error: err instanceof Error ? err.message : "Could not generate options." };
+  }
 }
