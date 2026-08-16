@@ -52,7 +52,17 @@ export default function SkiesPreview() {
             <section
               key={sky.id}
               className="card overflow-hidden"
-              style={{ position: "relative", padding: 0, borderRadius: 12 }}
+              // Sixteen full sky stacks on one page is a load no real route
+              // ever carries — the app mounts exactly one. `content-visibility`
+              // lets the browser skip rendering, and skip running the
+              // animations of, every card that is not on screen.
+              style={{
+                position: "relative",
+                padding: 0,
+                borderRadius: 12,
+                contentVisibility: "auto",
+                containIntrinsicSize: "auto 220px",
+              }}
             >
               <div className="sky-frame" style={{ height: 220, background: "var(--canvas)" }}>
                 <ResonanceAtmosphere

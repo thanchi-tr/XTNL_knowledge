@@ -94,27 +94,40 @@
 .pw-over {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  opacity: calc(.45 + var(--over, 0) * .55);
+}
+
+/* The travelling highlight is a child that translates, not a background
+   whose `background-position` animates. The old form repainted the strip on
+   every frame, and this element is live on every page the moment a loadout
+   overcharges -- the one animation here that is never off-screen. The
+   `screen` blend went with it: a blend mode makes the compositor read back
+   what is underneath, which is the footer, which is sticky. */
+.pw-over::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 46%;
   background: linear-gradient(
     to right,
     rgb(var(--sky-b, 255 0 160) / 0) 0%,
-    rgb(var(--sky-b, 255 0 160) / .55) 22%,
-    #fff 50%,
-    rgb(var(--sky-b, 255 0 160) / .55) 78%,
+    rgb(var(--sky-b, 255 0 160) / .6) 22%,
+    rgb(255 255 255 / .95) 50%,
+    rgb(var(--sky-b, 255 0 160) / .6) 78%,
     rgb(var(--sky-b, 255 0 160) / 0) 100%
   );
-  background-size: 46% 100%;
-  background-repeat: no-repeat;
-  opacity: calc(.45 + var(--over, 0) * .55);
-  mix-blend-mode: screen;
-  filter: blur(.4px);
   animation: pw-over-run 1.9s linear infinite;
   animation-play-state: var(--ambient-play, running);
 }
 
-/* Energy running the length of the rail, continuously. */
+/* Energy running the length of the rail, continuously. 220% of its own
+   width carries it from fully off the left to fully off the right. */
 @keyframes pw-over-run {
-  from { background-position: -46% 0; }
-  to   { background-position: 146% 0; }
+  from { transform: translate3d(-100%, 0, 0); }
+  to   { transform: translate3d(220%, 0, 0); }
 }
 
 /* Arcs jumping off the rail. Six, evenly spaced, each on its own delay, so
@@ -245,7 +258,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pw-head, .pw-over, .pw-arc, .pw-value[data-over="1"] .pw-pct { animation: none; }
+  .pw-head, .pw-over::before, .pw-arc, .pw-value[data-over="1"] .pw-pct { animation: none; }
   .pw-arc { opacity: .5; }
   .loadout-bar:has(.pw-rail[data-over="1"])::after { animation: none; }
   .pw-fill, .pw-head { transition: none; }

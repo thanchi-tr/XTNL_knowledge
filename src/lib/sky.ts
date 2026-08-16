@@ -75,7 +75,14 @@ export interface Sky {
   rgb2: string;
   motif: SkyMotif;
   drift: SkyDrift;
-  /** How many particles at full rarity. 0 disables the layer. */
+  /**
+   * How many particles at full rarity. 0 disables the layer.
+   *
+   * Kept deliberately low. Each particle is a separately composited layer
+   * running its own infinite animation, and this is a background — thirty of
+   * them was more layers than the rest of the page uses in total, spent on
+   * the one thing nobody is looking directly at.
+   */
   particles: number;
   /** One line naming what you are standing in. */
   tagline: string;
@@ -100,7 +107,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "255 96 158",
     motif: "grid",
     drift: "cross",
-    particles: 10,
+    particles: 8,
     tagline: "A lattice of light, receding to a vanishing point.",
   },
   {
@@ -112,7 +119,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "70 146 198",
     motif: "datastream",
     drift: "fall-fast",
-    particles: 22,
+    particles: 12,
     tagline: "Information falling faster than it can be read.",
   },
   {
@@ -124,7 +131,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "224 234 252",
     motif: "orbital",
     drift: "cross",
-    particles: 12,
+    particles: 9,
     tagline: "Structures holding station above a dark curve.",
   },
   {
@@ -136,7 +143,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "228 172 110",
     motif: "terraform",
     drift: "rise",
-    particles: 16,
+    particles: 11,
     tagline: "An atmosphere still being argued into existence.",
   },
   {
@@ -148,7 +155,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "158 130 226",
     motif: "aurora",
     drift: "wander",
-    particles: 14,
+    particles: 10,
     tagline: "Curtains of charged air, moving without wind.",
   },
   {
@@ -160,7 +167,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "96 120 156",
     motif: "storm",
     drift: "fall-fast",
-    particles: 30,
+    particles: 16,
     tagline: "Weather with an opinion about you.",
   },
   {
@@ -172,7 +179,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "186 68 48",
     motif: "cinder",
     drift: "rise",
-    particles: 20,
+    particles: 12,
     tagline: "Everything here was made by being burned first.",
   },
   {
@@ -184,7 +191,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "122 158 200",
     motif: "glacier",
     drift: "settle",
-    particles: 26,
+    particles: 14,
     tagline: "Slow enough that the cold seems patient.",
   },
   {
@@ -196,7 +203,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "226 210 152",
     motif: "verdance",
     drift: "wander",
-    particles: 18,
+    particles: 12,
     tagline: "Light arriving late, through a great deal of leaf.",
   },
   {
@@ -208,7 +215,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "138 160 224",
     motif: "cathedral",
     drift: "fall-slow",
-    particles: 16,
+    particles: 11,
     tagline: "Coloured light, falling a very long way.",
   },
   {
@@ -220,7 +227,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "180 100 72",
     motif: "sanctum",
     drift: "rise",
-    particles: 14,
+    particles: 10,
     tagline: "Small flames, kept alight by someone for a long time.",
   },
   {
@@ -232,7 +239,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "230 202 156",
     motif: "runeflow",
     drift: "wander",
-    particles: 12,
+    particles: 9,
     tagline: "Marks that meant something before anyone wrote them down.",
   },
   {
@@ -244,7 +251,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "164 118 82",
     motif: "dunes",
     drift: "cross",
-    particles: 22,
+    particles: 12,
     tagline: "A country that has buried more than it has kept.",
   },
   {
@@ -256,7 +263,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "126 114 142",
     motif: "monolith",
     drift: "settle",
-    particles: 16,
+    particles: 11,
     tagline: "Raised by people who left nothing else behind.",
   },
   {
@@ -268,7 +275,7 @@ export const SKY_LADDER: readonly Sky[] = [
     rgb2: "224 92 130",
     motif: "firstlight",
     drift: "rise",
-    particles: 20,
+    particles: 12,
     tagline: "The oldest light there is, still arriving.",
   },
 ];

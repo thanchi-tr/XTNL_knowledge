@@ -110,16 +110,26 @@ body {
   inset: -30% -10%;
   z-index: -1;
   pointer-events: none;
+  /* Wide stops instead of a wide blur.
+     This rotated a `blur(26px)` conic forever, on the review session card --
+     the screen this app is used on more than every other screen combined.
+     Blur cost scales with radius, and rotating a blurred surface re-rasters
+     it rather than reusing a cached layer, so the most-visited screen in the
+     app was paying the most expensive paint in it on every frame.
+     A conic already interpolates smoothly between stops; the blur was really
+     only hiding the hard seam where 360deg meets 0deg, which spreading the
+     stops out and closing the loop on the same colour does for free. */
   background:
     conic-gradient(
       from 210deg at 50% 50%,
       transparent 0deg,
-      rgba(155, 107, 255, 0.10) 55deg,
-      transparent 130deg,
-      rgba(232, 179, 74, 0.07) 210deg,
-      transparent 290deg
+      rgba(155, 107, 255, 0.10) 70deg,
+      transparent 150deg,
+      rgba(232, 179, 74, 0.07) 230deg,
+      transparent 320deg,
+      transparent 360deg
     );
-  filter: blur(26px);
+  filter: blur(8px);
   opacity: 0.75;
   animation: arcane-turn 44s linear infinite;
   animation-play-state: var(--ambient-play, running);
