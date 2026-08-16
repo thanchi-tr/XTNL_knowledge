@@ -7,6 +7,7 @@ import { themeFor } from "@/lib/attribute-themes";
 import type { Skill } from "@/lib/skill-pool";
 import {
   tierForDepth,
+  type MeteorVariant,
   meteorVariantFor,
   collapseVariantFor,
 } from "@/lib/cataclysm-variants";
@@ -66,6 +67,46 @@ const VIOLET_BODY = "#05010a";
 const VIOLET_HEAD = "#1a0033";
 /** Glyph marks around the d13 circle. */
 const TICKS = 16;
+
+/**
+ * Per-variant staging for d14.
+ *
+ * The six were reading as one animation, and the cause was not the moving
+ * parts — those already differed. It was everything *around* them: skyglow,
+ * ground and impacts rendered unconditionally, so four of the layers on
+ * screen were identical whichever variant fired, all in the same gold. The
+ * shared frame drowned the differences.
+ *
+ * So the frame varies too. Each variant owns its palette, decides whether
+ * there is a sky or a floor at all, and sits at a deliberately different
+ * density — the three things read before any question of *shape* does.
+ */
+interface MeteorStyle {
+  /** Primary hue. Still recognisably Apex, but no two are the same. */
+  color: string;
+  /** The material it burns against. */
+  color2: string;
+  sky: boolean;
+  ground: boolean;
+  impacts: boolean;
+  count: number;
+}
+
+const METEOR_STYLE: Record<MeteorVariant, MeteorStyle> = {
+  // Warm gold, full frame, dense: the reference the others depart from.
+  rain: { color: "#f0a030", color2: "#6d28d9", sky: true, ground: true, impacts: true, count: 30 },
+  // One body against a lit sky. No floor — it passes, it does not land.
+  comet: { color: "#7fd4ff", color2: "#6d28d9", sky: true, ground: false, impacts: false, count: 1 },
+  // Silver, airless, twice the count at a fraction of the size. No sky, no
+  // floor: it should feel like nothing is holding it up.
+  starfall: { color: "#dfe8f5", color2: "#8aa0c0", sky: false, ground: false, impacts: false, count: 64 },
+  // Cold crystal, sparse and large, striking a floor.
+  shards: { color: "#a8e6ff", color2: "#2f6f9e", sky: false, ground: true, impacts: true, count: 14 },
+  // Deep fire from below. Ground only — the light source is the floor.
+  embers: { color: "#ff6a1f", color2: "#8c1d0d", sky: false, ground: true, impacts: false, count: 46 },
+  // Stark and bare. Nothing ambient at all, so the strikes carry it alone.
+  bolts: { color: "#ffffff", color2: "#9b6bff", sky: false, ground: false, impacts: true, count: 7 },
+};
 
 const METEORS = 30;
 const PULL_SPOKES = 22;
@@ -196,6 +237,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
   if (tier === "meteor") {
     const variant = meteorVariantFor(skill);
+    const st = METEOR_STYLE[variant];
     return (
       <span
         key={replayKey}
@@ -203,18 +245,17 @@ export function Cataclysm({ skill, replayKey }: Props) {
         aria-hidden="true"
         style={
           {
-            "--cat-color": color,
-            // Apex burns gold against deep violet — the rank's own hue lit
-            // against the arcane one, so the shower reads as two materials
-            // rather than one colour at two brightnesses.
-            "--cat-color-2": APEX_VIOLET,
+            // Palette is the variant's, not the rank's: colour is the first
+            // thing read, so sharing one across six events made them one event.
+            "--cat-color": st.color,
+            "--cat-color-2": st.color2,
             "--cat-dur": "3400ms",
             "--emblem-dur": `${EMBLEM_MS.APEX}ms`,
           } as React.CSSProperties
         }
       >
-        <span className="cat-skyglow" />
-        <span className="cat-ground" />
+        {st.sky && <span className="cat-skyglow" />}
+        {st.ground && <span className="cat-ground" />}
 
         <span className="cat-emblem">
           <SkillLogo skill={skill} size={132} />
@@ -223,7 +264,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
         {/* Impacts land along the bottom as the first streaks reach it.
             Starfall has none — nothing in it strikes anything. */}
-        {variant !== "starfall" && variant !== "embers" && Array.from({ length: IMPACTS }, (_, i) => (
+        {st.impacts && Array.from({ length: IMPACTS }, (_, i) => (
           <span
             key={`i${i}`}
             className="cat-impact"
@@ -260,13 +301,13 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
         {/* C — slow motes settling, no heads and no impacts. */}
         {variant === "starfall" &&
-          Array.from({ length: 46 }, (_, i) => (
+          Array.from({ length: st.count }, (_, i) => (
             <span
               key={`m${i}`}
               className="cat-mote"
               style={
                 {
-                  "--mx": `${(97 / 46) * i + (i % 3)}%`,
+                  "--mx": `${(97 / st.count) * i + (i % 3)}%`,
                   "--drift": `${2 + (i % 5)}vw`,
                   "--md": `${PRELUDE_MS.APEX + (i % 12) * 190}ms`,
                 } as React.CSSProperties
@@ -276,13 +317,13 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
         {/* D — angular fragments, tumbling as they fall. */}
         {variant === "shards" &&
-          Array.from({ length: 26 }, (_, i) => (
+          Array.from({ length: st.count }, (_, i) => (
             <span
               key={`sh${i}`}
               className="cat-shard"
               style={
                 {
-                  "--mx": `${-6 + (108 / 26) * i}%`,
+                  "--mx": `${-6 + (108 / st.count) * i}%`,
                   "--drift": `${4 + (i % 5) * 3}vw`,
                   "--spin": `${360 + (i % 4) * 220}deg`,
                   "--md": `${PRELUDE_MS.APEX + (i % 8) * 165}ms`,
@@ -295,13 +336,13 @@ export function Cataclysm({ skill, replayKey }: Props) {
         {variant === "embers" && (
           <>
             <span className="cat-heat" />
-            {Array.from({ length: 42 }, (_, i) => (
+            {Array.from({ length: st.count }, (_, i) => (
               <span
                 key={`eu${i}`}
                 className="cat-emberup"
                 style={
                   {
-                    "--mx": `${(99 / 42) * i}%`,
+                    "--mx": `${(99 / st.count) * i}%`,
                     "--drift": `${-5 + (i % 7) * 1.8}vw`,
                     "--md": `${PRELUDE_MS.APEX + (i % 11) * 175}ms`,
                   } as React.CSSProperties
@@ -313,13 +354,13 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
         {/* F — struck, not travelled. */}
         {variant === "bolts" &&
-          Array.from({ length: 7 }, (_, i) => (
+          Array.from({ length: st.count }, (_, i) => (
             <span
               key={`b${i}`}
               className="cat-bolt"
               style={
                 {
-                  "--mx": `${9 + i * 13}%`,
+                  "--mx": `${8 + i * (84 / (st.count - 1))}%`,
                   "--md": `${PRELUDE_MS.APEX + i * 240}ms`,
                 } as React.CSSProperties
               }
@@ -327,7 +368,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
           ))}
 
         {/* A — the shower. */}
-        {variant === "rain" && Array.from({ length: METEORS }, (_, i) => {
+        {variant === "rain" && Array.from({ length: st.count }, (_, i) => {
           const g = meteorGeometry(i);
           const dark = i % 3 === 2;
           return (
@@ -338,7 +379,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
                 {
                   // Start left of the viewport too, since every streak drifts
                   // right — otherwise the left edge stays empty throughout.
-                  "--mx": `${-45 + (150 / METEORS) * i}%`,
+                  "--mx": `${-45 + (150 / st.count) * i}%`,
                   // Offset past the prelude so the rain begins once the
                   // emblem is on screen rather than obscuring its arrival.
                   "--md": `${PRELUDE_MS.APEX + (i % 9) * 130 + (i % 4) * 55}ms`,
