@@ -1,7 +1,8 @@
 "use client";
 
 import { RANK_META } from "@/lib/skill-visuals";
-import type { SkillRank } from "@/lib/skill-pool";
+import { SkillLogo } from "./SkillLogo";
+import type { Skill } from "@/lib/skill-pool";
 
 /**
  * The two terminal-rank attach events, at page scale.
@@ -21,12 +22,18 @@ import type { SkillRank } from "@/lib/skill-pool";
  */
 
 interface Props {
-  rank: Extract<SkillRank, "APEX" | "ULTIMATE">;
+  /** The emblem being slotted — shown at the centre before it is consumed. */
+  skill: Skill;
   /** Bumping this remounts the layer, which is what replays a one-shot. */
   replayKey: number;
 }
 
-const METEORS = 22;
+/** How long the emblem holds the screen before the event takes it. */
+const PRELUDE_MS = { APEX: 1200, ULTIMATE: 1800 } as const;
+const EMBLEM_MS = { APEX: 2000, ULTIMATE: 2600 } as const;
+const IMPACTS = 7;
+
+const METEORS = 30;
 const PULL_SPOKES = 22;
 const WARP_RINGS = 3;
 
@@ -58,7 +65,8 @@ function meteorGeometry(index: number) {
   };
 }
 
-export function Cataclysm({ rank, replayKey }: Props) {
+export function Cataclysm({ skill, replayKey }: Props) {
+  const rank = skill.rank as "APEX" | "ULTIMATE";
   const color = RANK_META[rank].color;
 
   if (rank === "APEX") {
@@ -67,9 +75,35 @@ export function Cataclysm({ rank, replayKey }: Props) {
         key={replayKey}
         className="cataclysm"
         aria-hidden="true"
-        style={{ ["--cat-color" as string]: color, ["--cat-dur" as string]: "2600ms" }}
+        style={
+          {
+            "--cat-color": color,
+            "--cat-dur": "3400ms",
+            "--emblem-dur": `${EMBLEM_MS.APEX}ms`,
+          } as React.CSSProperties
+        }
       >
         <span className="cat-skyglow" />
+        <span className="cat-ground" />
+
+        <span className="cat-emblem">
+          <SkillLogo skill={skill} size={132} />
+        </span>
+        <span className="cat-emblem-ring" />
+
+        {/* Impacts land along the bottom as the first streaks reach it. */}
+        {Array.from({ length: IMPACTS }, (_, i) => (
+          <span
+            key={`i${i}`}
+            className="cat-impact"
+            style={
+              {
+                "--ix": `${8 + (84 / (IMPACTS - 1)) * i}%`,
+                "--id": `${PRELUDE_MS.APEX + 300 + (i % 5) * 210}ms`,
+              } as React.CSSProperties
+            }
+          />
+        ))}
         {Array.from({ length: METEORS }, (_, i) => {
           const g = meteorGeometry(i);
           return (
@@ -81,7 +115,9 @@ export function Cataclysm({ rank, replayKey }: Props) {
                   // Start left of the viewport too, since every streak drifts
                   // right — otherwise the left edge stays empty throughout.
                   "--mx": `${-45 + (150 / METEORS) * i}%`,
-                  "--md": `${(i % 7) * 150 + (i % 4) * 55}ms`,
+                  // Offset past the prelude so the rain begins once the
+                  // emblem is on screen rather than obscuring its arrival.
+                  "--md": `${PRELUDE_MS.APEX + (i % 9) * 130 + (i % 4) * 55}ms`,
                   "--rot": `${g.rot}deg`,
                   "--dx": g.dx,
                   "--dy": g.dy,
@@ -96,8 +132,28 @@ export function Cataclysm({ rank, replayKey }: Props) {
   }
 
   return (
-    <span key={replayKey} className="cataclysm" aria-hidden="true" style={{ ["--cat-color" as string]: color }}>
+    <span
+      key={replayKey}
+      className="cataclysm"
+      aria-hidden="true"
+      style={
+        {
+          "--cat-color": color,
+          "--cat-dur": "5600ms",
+          "--prelude": `${PRELUDE_MS.ULTIMATE}ms`,
+          "--emblem-dur": `${EMBLEM_MS.ULTIMATE}ms`,
+        } as React.CSSProperties
+      }
+    >
       <span className="cat-dim" />
+
+      {/* The mark arrives, is read, and is then crushed inward — the well
+          opens underneath it rather than on an empty page. */}
+      <span className="cat-emblem">
+        <SkillLogo skill={skill} size={148} />
+      </span>
+      <span className="cat-emblem-ring" />
+
       <span className="cat-halo" />
 
       {/* Staggered rings reading as space bending outward from the well. */}

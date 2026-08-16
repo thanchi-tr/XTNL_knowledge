@@ -99,12 +99,23 @@
    outer halo alone, so the emblem's identity survives without flattening
    the effect. */
 
+/* Mahogany, not neutral black.
+   A black vignette reads as "the lights went out"; a deep red-brown one
+   reads as heat behind the dark, which is what a collapse should feel
+   like. Kept near-black at the centre so the horizon still has something
+   to be darker than, and warmest at the edges where the room is lit. */
 .cat-dim {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 50%, rgba(0,0,0,.96) 0%, rgba(0,0,0,.82) 34%, rgba(0,0,0,.55) 100%);
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(4, 2, 2, .97) 0%,
+      rgba(38, 10, 8, .93) 26%,
+      rgba(74, 21, 16, .86) 52%,
+      rgba(96, 30, 22, .78) 76%,
+      rgba(58, 18, 14, .70) 100%);
   opacity: 0;
-  animation: cat-dim 4200ms cubic-bezier(.3,.5,.4,1) both;
+  animation: cat-dim var(--cat-dur, 5600ms) cubic-bezier(.3,.5,.4,1) both;
 }
 
 @keyframes cat-dim {
@@ -127,7 +138,7 @@
   border: 2px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 55%, transparent);
   box-shadow: 0 0 40px color-mix(in srgb, var(--cat-color, #ff5eb0) 40%, transparent);
   opacity: 0;
-  animation: cat-warp 4200ms cubic-bezier(.16,1,.3,1) var(--wd, 0ms) both;
+  animation: cat-warp 3400ms cubic-bezier(.16,1,.3,1) calc(var(--prelude, 1800ms) + var(--wd, 0ms)) both;
 }
 
 @keyframes cat-warp {
@@ -149,7 +160,7 @@
   background: linear-gradient(to left, transparent, #ffd9a0 70%, #fff);
   box-shadow: 0 0 12px rgba(255, 200, 120, .9);
   opacity: 0;
-  animation: cat-pull 3400ms cubic-bezier(.6, 0, .95, .3) var(--md, 0ms) both;
+  animation: cat-pull 3400ms cubic-bezier(.6, 0, .95, .3) calc(var(--prelude, 1800ms) + var(--md, 0ms)) both;
 }
 
 @keyframes cat-pull {
@@ -181,7 +192,7 @@
   mask-image: radial-gradient(circle, transparent 27%, #000 34%, #000 56%, transparent 72%);
   filter: blur(2px) saturate(1.3);
   opacity: 0;
-  animation: cat-disk 4200ms cubic-bezier(.2, .55, .3, 1) both;
+  animation: cat-disk 3600ms cubic-bezier(.2, .55, .3, 1) var(--prelude, 1800ms) both;
 }
 
 @keyframes cat-disk {
@@ -206,7 +217,7 @@
     0 0 26px 6px rgba(255, 190, 110, .8),
     inset 0 0 18px 3px rgba(255, 210, 150, .55);
   opacity: 0;
-  animation: cat-photon 4200ms cubic-bezier(.2, .7, .3, 1) both;
+  animation: cat-photon 3600ms cubic-bezier(.2, .7, .3, 1) var(--prelude, 1800ms) both;
 }
 
 @keyframes cat-photon {
@@ -228,7 +239,7 @@
   background: #000;
   box-shadow: 0 0 80px 30px rgba(0, 0, 0, .95);
   opacity: 0;
-  animation: cat-hole 4200ms cubic-bezier(.2, .7, .3, 1) both;
+  animation: cat-hole 3600ms cubic-bezier(.2, .7, .3, 1) var(--prelude, 1800ms) both;
 }
 
 @keyframes cat-hole {
@@ -250,7 +261,7 @@
     transparent 74%
   );
   opacity: 0;
-  animation: cat-halo 4200ms ease-in-out both;
+  animation: cat-halo 3600ms ease-in-out var(--prelude, 1800ms) both;
 }
 
 @keyframes cat-halo {
@@ -272,7 +283,7 @@
   border: 3px solid rgba(255, 245, 225, .95);
   box-shadow: 0 0 50px 12px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent);
   opacity: 0;
-  animation: cat-shock 1500ms cubic-bezier(.1, .9, .3, 1) 2900ms both;
+  animation: cat-shock 1500ms cubic-bezier(.1, .9, .3, 1) calc(var(--prelude, 1800ms) + 2500ms) both;
 }
 
 @keyframes cat-shock {
@@ -295,4 +306,110 @@
     animation: none;
     opacity: 0;
   }
+}
+
+
+/* ── The emblem, before it is taken ──────────────────────
+   Both terminal events now open on the mark itself: it materialises at the
+   centre of the screen, holds long enough to be read, and only then is
+   consumed by whatever follows. The collapse used to begin on an empty
+   page, which meant the most expensive thing in the game arrived as an
+   effect with no subject — you saw a black hole, not *your emblem* being
+   swallowed by one.
+
+   Every collapse layer is delayed by `--prelude`, so this is the one number
+   that keeps the two halves in sync. */
+.cat-emblem {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  transform-origin: 50% 50%;
+  opacity: 0;
+  filter: drop-shadow(0 0 26px var(--cat-color, #ff5eb0));
+  animation: cat-emblem var(--emblem-dur, 2600ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+
+/* Arrives large and settles, holds, then is crushed inward — accelerating
+   into nothing rather than fading, so it reads as taken rather than
+   dismissed. */
+@keyframes cat-emblem {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(.2)  rotate(-25deg); }
+  16%  { opacity: 1; transform: translate(-50%, -50%) scale(1.14) rotate(4deg); }
+  26%  {             transform: translate(-50%, -50%) scale(1)    rotate(0deg); }
+  62%  { opacity: 1; transform: translate(-50%, -50%) scale(1)    rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(.04) rotate(220deg); }
+}
+
+/* A ring that closes on the emblem as it is drawn in, so the crush has a
+   visible cause rather than the mark simply shrinking. */
+.cat-emblem-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44vmin;
+  height: 44vmin;
+  margin: -22vmin 0 0 -22vmin;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 70%, transparent);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--cat-color, #ff5eb0) 50%, transparent);
+  opacity: 0;
+  animation: cat-emblem-ring var(--emblem-dur, 2600ms) cubic-bezier(.5, 0, .9, .4) both;
+}
+
+@keyframes cat-emblem-ring {
+  0%   { opacity: 0;   transform: scale(1.9); }
+  20%  { opacity: .85; transform: scale(1.35); }
+  62%  { opacity: .7;  transform: scale(1.2); }
+  100% { opacity: 0;   transform: scale(.05); }
+}
+
+/* ── Meteor rain, escalated ──────────────────────────────
+   The shower was 22 identical streaks falling past. What was missing was
+   consequence: nothing arrived anywhere. These give the rain a floor. */
+
+/* Impact flares along the bottom edge, timed to land as the streaks reach
+   it. The rain now hits something. */
+.cat-impact {
+  position: absolute;
+  bottom: -6vh;
+  left: var(--ix, 50%);
+  width: 22vmin;
+  height: 22vmin;
+  margin-left: -11vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.95) 0%, var(--cat-color, #f0a030) 24%, transparent 66%);
+  opacity: 0;
+  animation: cat-impact 900ms cubic-bezier(.1, .9, .3, 1) var(--id, 0ms) both;
+}
+
+@keyframes cat-impact {
+  0%   { opacity: 0;   transform: scale(.15); }
+  18%  { opacity: .95; }
+  100% { opacity: 0;   transform: scale(2.4); }
+}
+
+/* Ground glow: the horizon lighting up under the barrage. */
+.cat-ground {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 34vh;
+  background: linear-gradient(to top, color-mix(in srgb, var(--cat-color, #f0a030) 34%, transparent), transparent);
+  opacity: 0;
+  animation: cat-ground var(--cat-dur, 3400ms) ease-in-out both;
+}
+
+@keyframes cat-ground {
+  0%, 12% { opacity: 0; }
+  40%     { opacity: .8; }
+  72%     { opacity: .5; }
+  100%    { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-emblem,
+  .cat-emblem-ring,
+  .cat-impact,
+  .cat-ground { animation: none; opacity: 0; }
 }

@@ -212,7 +212,10 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     // The terminal ranks now carry a Cataclysm keyed to this same state, and
     // Ultimate's collapse plus its rebound ring runs to 4.4s — clearing at
     // 4.6s would cut the last of it off mid-flight.
-    setTimeout(() => setBarCharge(null), skill.rank === "ULTIMATE" ? 4800 : legendary ? 4600 : 1600);
+    setTimeout(
+      () => setBarCharge(null),
+      skill.rank === "ULTIMATE" ? 6000 : skill.rank === "APEX" ? 4200 : 1600
+    );
   }
 
   function attach(slot: number, skill: Skill) {
@@ -282,7 +285,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
           Cataclysm for why the last two rungs are a different kind of thing
           rather than a bigger version of the same one. */}
       {ambient && barCharge && (barCharge.skill.rank === "APEX" || barCharge.skill.rank === "ULTIMATE") && (
-        <Cataclysm rank={barCharge.skill.rank} replayKey={barCharge.key} />
+        <Cataclysm skill={barCharge.skill} replayKey={barCharge.key} />
       )}
 
       {ambient && barCharge && (

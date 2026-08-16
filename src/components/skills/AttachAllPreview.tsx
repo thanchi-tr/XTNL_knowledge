@@ -83,7 +83,7 @@ export function AttachAllPreview({ groups }: Props) {
   /** Per-skill replay counter. Bumping it remounts both layers, which is what replays a one-shot. */
   const [takes, setTakes] = useState<Record<string, number>>({});
   const [surge, setSurge] = useState<{ key: number; color: string; intensity: string; dur: number } | null>(null);
-  const [cataclysm, setCataclysm] = useState<{ key: number; rank: "APEX" | "ULTIMATE" } | null>(null);
+  const [cataclysm, setCataclysm] = useState<{ key: number; skill: Skill } | null>(null);
   const surgeSeq = useRef(0);
   const timers = useRef<number[]>([]);
 
@@ -111,10 +111,12 @@ export function AttachAllPreview({ groups }: Props) {
     timers.current.push(window.setTimeout(() => setSurge(null), dur + 400));
 
     if (skill.rank === "APEX" || skill.rank === "ULTIMATE") {
-      setCataclysm({ key: surgeSeq.current, rank: skill.rank });
+      setCataclysm({ key: surgeSeq.current, skill });
       // Must outlive the branch it started: Apex runs 2.6s, and Ultimate's
       // collapse runs 4.2s with the rebound ring finishing at 4.4s.
-      timers.current.push(window.setTimeout(() => setCataclysm(null), skill.rank === "ULTIMATE" ? 4700 : 3000));
+      // Emblem prelude plus the event itself: Apex 1.2s + 3.4s, Ultimate
+      // 1.8s + 3.6s with the rebound finishing last.
+      timers.current.push(window.setTimeout(() => setCataclysm(null), skill.rank === "ULTIMATE" ? 6000 : 4000));
     }
   }, []);
 
@@ -132,7 +134,7 @@ export function AttachAllPreview({ groups }: Props) {
 
   return (
     <div className="space-y-4">
-      {cataclysm && <Cataclysm rank={cataclysm.rank} replayKey={cataclysm.key} />}
+      {cataclysm && <Cataclysm skill={cataclysm.skill} replayKey={cataclysm.key} />}
 
       {surge && (
         <span
