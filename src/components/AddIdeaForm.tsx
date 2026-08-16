@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useRef, useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Attribute, CollectionLabel } from "@prisma/client";
@@ -87,6 +87,9 @@ export function AddIdeaForm({ fields }: Props) {
   const [result, setResult] = useState<SubmitIdeaResult | null>(null);
   const [pendingContent, setPendingContent] = useState<IdeaContent | null>(null);
   const [addedCount, setAddedCount] = useState(0);
+  /** Transient confirmation shown above the form after a create, instead of replacing it. */
+  const [justCreated, setJustCreated] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [enrichOutcome, setEnrichOutcome] = useState<"enriched" | "no_new_information" | null>(null);
 
   const [preview, setPreview] = useState<PreviewIdeaResult | null>(null);
@@ -173,6 +176,7 @@ export function AddIdeaForm({ fields }: Props) {
     const content = buildContent();
     if (!content || !fieldId) return;
     setPendingContent(content);
+    setJustCreated(null);
     startTransition(async () => {
       const res = await submitIdea({
         fieldId,
@@ -180,10 +184,35 @@ export function AddIdeaForm({ fields }: Props) {
         content,
         domainId: domainId === AUTO_DOMAIN ? undefined : domainId,
       });
-      setResult(res);
       if (res.status === "created") {
+        // Straight back to an empty form rather than a success screen with an
+        // "Add another" button on it. Capturing several ideas in one sitting
+        // is the normal case, and that button was a mandatory click between
+        // every one of them — while the Field, Domain and question type you
+        // had chosen are exactly what you want to keep for the next.
         setAddedCount((c) => c + 1);
+        setResult(null);
+        setPendingContent(null);
+        clearContentFields();
+        setJustCreated(
+          res.classification === "NOVELTY"
+            ? "Created — new domain, this matched nothing existing."
+            : res.classification === "MANUAL"
+              ? "Created — filed in the domain you selected."
+              : "Created — filed in the nearest matching domain."
+        );
         router.refresh();
+        // Focus returns to the first content field so the next idea can be
+        // typed without touching the mouse. Everything above it in the form
+        // is a <select> or a button, so the first text control in DOM order
+        // is that field whatever question type is selected.
+        requestAnimationFrame(() => {
+          formRef.current?.querySelector<HTMLElement>('textarea, input[type="text"]')?.focus();
+        });
+      } else {
+        // Merge, enrich and duplicate all need reading and a decision, so
+        // they still take over the form.
+        setResult(res);
       }
     });
   }
@@ -215,10 +244,8 @@ export function AddIdeaForm({ fields }: Props) {
     });
   }
 
-  function reset() {
-    setResult(null);
-    setPendingContent(null);
-    setEnrichOutcome(null);
+  /** Content only — Field, Domain and question type deliberately survive, since the next idea is usually a sibling of the last. */
+  function clearContentFields() {
     setShortQuestion("");
     setShortAnswer("");
     setFormulaQuestion("");
@@ -227,39 +254,17 @@ export function AddIdeaForm({ fields }: Props) {
     setCorrectIndex(0);
   }
 
-  if (result?.status === "created") {
-    const note =
-      result.classification === "NOVELTY"
-        ? "New domain created — this idea matched nothing existing."
-        : result.classification === "MANUAL"
-          ? "Filed in the domain you selected."
-          : "Filed in the nearest matching domain.";
-
-    return (
-      <div className="card fade-up p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="chip chip-green">Created</span>
-          {addedCount > 1 && (
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              {addedCount} added this session
-            </span>
-          )}
-        </div>
-        <p className="mt-2.5" style={{ fontSize: 13, color: "var(--ink-1)" }}>
-          {note}
-        </p>
-        {result.decision.node_data && (
-          <p className="mt-1.5" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-            Indexed as &ldquo;{result.decision.node_data.title}&rdquo;
-          </p>
-        )}
-        <button type="button" className="btn-secondary mt-4" onClick={reset}>
-          Add another
-        </button>
-      </div>
-    );
+  function reset() {
+    setResult(null);
+    setPendingContent(null);
+    setEnrichOutcome(null);
+    clearContentFields();
   }
 
+  // There is deliberately no `status === "created"` branch here: a plain
+  // create keeps the form on screen and reports through `justCreated`
+  // instead. See `handleSubmit`.
+  //
   // Above the merge line the submission was folded into an existing node and
   // no Idea was created — deliberately styled as information rather than
   // success, since nothing new entered the knowledge base.
@@ -361,7 +366,27 @@ export function AddIdeaForm({ fields }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card space-y-5 p-5" style={{ fontSize: 13 }}>
+    <form ref={formRef} onSubmit={handleSubmit} className="card space-y-5 p-5" style={{ fontSize: 13 }}>
+      {/* Sits above the form rather than replacing it, so the next idea can be
+          typed straight away. Dismissed by the next submission, not a timer —
+          it should still be readable if you paused to think. */}
+      {justCreated && (
+        <div
+          className="fade-up flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
+          style={{
+            borderRadius: 10,
+            background: "var(--green-06, rgba(0,204,122,0.06))",
+            border: "1px solid rgba(0,204,122,0.22)",
+          }}
+          role="status"
+        >
+          <span style={{ fontSize: 12, color: "var(--green)" }}>{justCreated}</span>
+          <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+            {addedCount} added this session
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <label className="block">
           <span className={LABEL_CLASS}>Field</span>

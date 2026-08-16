@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { QuestionType } from "@prisma/client";
 import { submitReview, type SubmitReviewResult } from "@/app/actions/review";
 import { useStreak } from "@/components/StreakProvider";
@@ -96,6 +96,8 @@ const RESULT_HOLD_MS = 650;
 const LEVEL_UP_HOLD_MS = 1400;
 // Mastery is once per Idea, ever — it earns the longest hold in the app.
 const MASTERY_HOLD_MS = 2200;
+/** Grace before a keypress can dismiss the result it just produced. */
+const DISMISS_ARM_MS = 220;
 
 const INPUT_CLASS =
   "input";
@@ -109,6 +111,17 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
   const [formulaAnswer, setFormulaAnswer] = useState("");
   const [diagramLabels, setDiagramLabels] = useState<Record<string, string>>({});
 
+  /** Parsed once here rather than inside the render branch, so the number-key handler can reach it too. */
+  const multiOptions = useMemo(() => {
+    if (questionType !== "MULTI") return [];
+    try {
+      const parsed: unknown = JSON.parse(question);
+      return Array.isArray(parsed) ? parsed.filter((o): o is string => typeof o === "string") : [];
+    } catch {
+      return [];
+    }
+  }, [questionType, question]);
+
   function submit(userAnswer: string | string[] | Record<string, string>) {
     startTransition(async () => {
       // `streak` is the run *before* this answer, which is exactly the
@@ -120,6 +133,43 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
     });
   }
 
+  /**
+   * Number keys answer a multiple choice.
+   *
+   * Reaching for the mouse to click one of four boxes is the slowest input
+   * in the run, and it is the only card type where the answer is already a
+   * small numbered list. Only active before an answer is submitted, so it
+   * can never collide with the dismiss handler below.
+   */
+  useEffect(() => {
+    if (questionType !== "MULTI" || result || isPending || multiOptions.length === 0) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const n = Number(e.key);
+      if (!Number.isInteger(n) || n < 1 || n > Math.min(9, multiOptions.length)) return;
+      e.preventDefault();
+      submit(multiOptions[n - 1]);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // `submit` is stable enough for this purpose — it only closes over ids
+    // and the streak, both of which are correct for the card on screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionType, result, isPending, multiOptions]);
+
+  /**
+   * The hold is now a *ceiling*, not a toll.
+   *
+   * Every answer used to cost a server round trip plus a fixed wait before
+   * the next card, with no way to move on — so a fast reader clearing thirty
+   * due cards spent twenty seconds watching ticks they had already read. Any
+   * key or click now advances immediately, and the timer only covers the
+   * case where you look away.
+   *
+   * Armed on a short delay so the very keypress that submitted an answer
+   * cannot also dismiss its own result: Enter to submit would otherwise skip
+   * the feedback entirely on fast connections.
+   */
   useEffect(() => {
     if (!result) return;
     const advanced = result.outcome.outcome === "advanced" ? result.outcome : null;
@@ -128,8 +178,26 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
       : advanced?.domainLeveledUp
         ? LEVEL_UP_HOLD_MS
         : RESULT_HOLD_MS;
-    const t = setTimeout(() => onComplete(result), hold);
-    return () => clearTimeout(t);
+
+    let done = false;
+    const advance = () => {
+      if (done) return;
+      done = true;
+      onComplete(result);
+    };
+
+    const t = setTimeout(advance, hold);
+    const arm = setTimeout(() => {
+      window.addEventListener("keydown", advance);
+      window.addEventListener("pointerdown", advance);
+    }, DISMISS_ARM_MS);
+
+    return () => {
+      clearTimeout(t);
+      clearTimeout(arm);
+      window.removeEventListener("keydown", advance);
+      window.removeEventListener("pointerdown", advance);
+    };
     // onComplete intentionally excluded — it closes over stale run state by
     // design each render, and re-firing this timer on every parent render
     // would break the hold duration.
@@ -263,25 +331,43 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
         />
       ) : questionType === "MULTI" ? (
         (() => {
-          let options: string[] = [];
-          try {
-            options = JSON.parse(question);
-          } catch {
-            // malformed stored question — fall through with an empty list
-          }
+          const options = multiOptions;
           return (
             <>
-              <p className="mb-5 text-[17px] leading-snug text-ink-0">Choose the correct answer</p>
+              <p className="mb-1.5 text-[17px] leading-snug text-ink-0">Choose the correct answer</p>
+              <p className="label-xs mb-4" style={{ fontSize: 9.5 }}>
+                Press {options.length === 1 ? "1" : `1–${Math.min(9, options.length)}`} to answer
+              </p>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {options.map((opt) => (
+                {options.map((opt, i) => (
                   <button
                     key={opt}
                     type="button"
                     disabled={isPending}
                     onClick={() => submit(opt)}
-                    className="rounded-control border border-[var(--line-hi)] bg-sub px-4 py-3 text-left text-sm text-ink-1 transition hover:border-[rgba(0,204,122,0.45)] hover:text-ink-0 disabled:opacity-40"
+                    className="flex items-center gap-2.5 rounded-control border border-[var(--line-hi)] bg-sub px-4 py-3 text-left text-sm text-ink-1 transition hover:border-[rgba(0,204,122,0.45)] hover:text-ink-0 disabled:opacity-40"
                   >
-                    {opt}
+                    {/* The number is the shortcut, shown rather than hidden in
+                        a hint — a shortcut nobody can see is one nobody uses. */}
+                    {i < 9 && (
+                      <span
+                        aria-hidden
+                        className="mono shrink-0 grid place-items-center"
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 5,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          background: "var(--raised)",
+                          border: "1px solid var(--line)",
+                          color: "var(--ink-2)",
+                        }}
+                      >
+                        {i + 1}
+                      </span>
+                    )}
+                    <span className="min-w-0">{opt}</span>
                   </button>
                 ))}
               </div>

@@ -67,7 +67,7 @@ export function ReviewQueueWidget({ totalDue, breakdown, atRiskCount }: Props) {
             ))}
           </ul>
 
-          <Link href="/workspace" className="btn-primary mt-5 w-full no-underline">
+          <Link href="/review" className="btn-primary mt-5 w-full no-underline">
             Start Review
           </Link>
         </>

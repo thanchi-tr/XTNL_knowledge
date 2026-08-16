@@ -29,7 +29,7 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
     shortcuts: [
-      { name: "Review due", short_name: "Review", url: "/workspace" },
+      { name: "Review due", short_name: "Review", url: "/review" },
       { name: "New idea", short_name: "Add", url: "/add" },
     ],
   };

@@ -65,7 +65,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       tone: overdueCount > 0 ? "warn" : "info",
       title: `${dueCount} card${dueCount === 1 ? "" : "s"} due`,
       detail: "Ready to review now.",
-      href: "/workspace",
+      href: "/review",
     });
   }
 
@@ -79,7 +79,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       tone: "bad",
       title: `${overdueCount} past grace`,
       detail: "These degrade a level on the next daily sweep unless reviewed.",
-      href: "/workspace",
+      href: "/review",
     });
   }
 
@@ -117,7 +117,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       tone: "good",
       title: `${ready.length} encounter${ready.length === 1 ? "" : "s"} ready`,
       detail: ready.map((b) => b.archetype.name).join(", ") + ".",
-      href: "/workspace",
+      href: "/review",
     });
   }
 

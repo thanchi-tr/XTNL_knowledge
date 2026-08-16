@@ -6,8 +6,8 @@ import { XtnlLogo } from "./Logo";
 import { useStreak } from "./StreakProvider";
 
 const LINKS = [
-  { href: "/", label: "Overview" },
-  { href: "/workspace", label: "Review" },
+  { href: "/overview", label: "Overview" },
+  { href: "/review", label: "Review" },
   { href: "/library", label: "Library" },
   { href: "/dashboard", label: "Analytics" },
   { href: "/taxonomy", label: "Taxonomy" },
