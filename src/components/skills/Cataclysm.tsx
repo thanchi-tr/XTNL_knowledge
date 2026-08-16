@@ -7,22 +7,17 @@ import type { SkillRank } from "@/lib/skill-pool";
  * The two terminal-rank attach events, at page scale.
  *
  * `EquipPulse` fires in the slot and `BarCharge` across the footer, both
- * scaled continuously by charge — which is right for the 15 rungs below the
- * top, where the difference between neighbours should be a matter of degree.
- * It is wrong for the last two. An Apex completes a whole attribute and an
- * Ultimate ends a lineage costing thousands of mastery; those should not be
- * a slightly larger version of slotting a Tier VII, they should be a
- * different *kind* of event. So they get their own layer and their own
- * vocabulary:
+ * scaled continuously by charge — which is right for the fifteen rungs
+ * below the top, where neighbours should differ by degree. It is wrong for
+ * the last two. An Apex completes a whole attribute and an Ultimate ends a
+ * lineage costing thousands of mastery, so they get their own layer, their
+ * own vocabulary, and by a wide margin the longest durations in the app:
  *
- *   APEX     — meteor rain. Gold, matching the rank, falling past the whole
- *              viewport. Arrival from outside.
- *   ULTIMATE — collapse. The page is pulled into a point, the point turns,
- *              and the glass fractures. Arrival from inside.
+ *   APEX     — meteor rain, 2.6s. Arrival from outside.
+ *   ULTIMATE — gravitational collapse, 4.2s. Arrival from inside.
  *
  * Deterministic geometry, never random: server and client must agree, and a
- * spectacle that rolls differently each time is a spectacle you cannot
- * design against.
+ * spectacle that rolls differently each time cannot be designed against.
  */
 
 interface Props {
@@ -31,26 +26,37 @@ interface Props {
   replayKey: number;
 }
 
-const METEORS = 18;
-const PULL_SPOKES = 14;
+const METEORS = 22;
+const PULL_SPOKES = 22;
+const WARP_RINGS = 3;
 
 /**
- * Fracture paths, hand-placed in a 0..100 viewBox so they scale to any
- * viewport. Each starts near the centre and forks outward; the kinks are
- * what stop them reading as clean rays rather than as broken glass.
+ * One meteor's geometry, derived from a single angle.
+ *
+ * This is the fix for the trail pointing the wrong way. A meteor's tail lies
+ * *along* its velocity, so the rotation and the displacement have to come
+ * from one number. CSS `rotate()` is clockwise, which sends a downward bar
+ * to the left — so travelling down-and-right needs a *negative* rotation,
+ * and the displacement is that same angle resolved into components.
+ *
+ * `--dy` is fixed at the distance needed to clear the viewport; `--dx` is
+ * whatever that implies at this angle, rather than a number picked to look
+ * about right.
  */
-const CRACKS: string[] = [
-  "M50 50 L44 38 L46 27 L39 14 L41 2",
-  "M50 50 L58 41 L57 29 L65 18 L63 4",
-  "M50 50 L62 52 L74 47 L86 51 L99 45",
-  "M50 50 L60 60 L59 72 L68 84 L66 99",
-  "M50 50 L48 63 L40 73 L43 87 L36 99",
-  "M50 50 L38 55 L27 51 L14 57 L1 53",
-  "M50 50 L41 45 L30 44 L18 36 L4 33",
-  "M50 50 L67 46 L80 37 L94 33",
-  "M50 50 L55 66 L52 80 L57 96",
-  "M50 50 L33 60 L21 70 L8 77",
-];
+function meteorGeometry(index: number) {
+  // 14deg to 34deg from vertical. Varied so the shower does not look combed,
+  // bounded so no streak travels so flat it reads as a horizontal wipe.
+  const deg = 14 + ((index * 7) % 21);
+  const rad = (deg * Math.PI) / 180;
+  const travel = 165; // vh — comfortably past the bottom edge from -22vh
+  return {
+    rot: -deg,
+    dx: `${(Math.tan(rad) * travel).toFixed(1)}vh`,
+    dy: `${travel}vh`,
+    // Faster streaks are longer, which is the other half of reading as speed.
+    len: `${16 + (index % 4) * 5}vh`,
+  };
+}
 
 export function Cataclysm({ rank, replayKey }: Props) {
   const color = RANK_META[rank].color;
@@ -61,61 +67,64 @@ export function Cataclysm({ rank, replayKey }: Props) {
         key={replayKey}
         className="cataclysm"
         aria-hidden="true"
-        style={{ ["--cat-color" as string]: color, ["--cat-dur" as string]: "1500ms" }}
+        style={{ ["--cat-color" as string]: color, ["--cat-dur" as string]: "2600ms" }}
       >
         <span className="cat-skyglow" />
-        {Array.from({ length: METEORS }, (_, i) => (
-          <span
-            key={i}
-            className="cat-meteor"
-            style={
-              {
-                // Spread across the width plus a margin, so streaks also
-                // enter from off-screen left rather than all starting inside.
-                "--mx": `${-18 + (118 / METEORS) * i}%`,
-                "--md": `${(i % 6) * 120 + (i % 3) * 45}ms`,
-              } as React.CSSProperties
-            }
-          />
-        ))}
+        {Array.from({ length: METEORS }, (_, i) => {
+          const g = meteorGeometry(i);
+          return (
+            <span
+              key={i}
+              className="cat-meteor"
+              style={
+                {
+                  // Start left of the viewport too, since every streak drifts
+                  // right — otherwise the left edge stays empty throughout.
+                  "--mx": `${-45 + (150 / METEORS) * i}%`,
+                  "--md": `${(i % 7) * 150 + (i % 4) * 55}ms`,
+                  "--rot": `${g.rot}deg`,
+                  "--dx": g.dx,
+                  "--dy": g.dy,
+                  "--len": g.len,
+                } as React.CSSProperties
+              }
+            />
+          );
+        })}
       </span>
     );
   }
 
   return (
-    <span
-      key={replayKey}
-      className="cataclysm"
-      aria-hidden="true"
-      style={{ ["--cat-color" as string]: color }}
-    >
+    <span key={replayKey} className="cataclysm" aria-hidden="true" style={{ ["--cat-color" as string]: color }}>
       <span className="cat-dim" />
+      <span className="cat-halo" />
 
-      {/* Order is the effect: streaks, then the disc, then the horizon on
-          top, so the black centre genuinely occludes what falls into it. */}
+      {/* Staggered rings reading as space bending outward from the well. */}
+      {Array.from({ length: WARP_RINGS }, (_, i) => (
+        <span key={`w${i}`} className="cat-warp" style={{ ["--wd" as string]: `${i * 420}ms` }} />
+      ))}
+
+      {/* Order is the effect: matter, then the disc, then the photon ring,
+          then the horizon on top — so the black centre genuinely occludes
+          everything falling into it rather than sitting behind it. */}
       {Array.from({ length: PULL_SPOKES }, (_, i) => (
         <span
-          key={i}
+          key={`p${i}`}
           className="cat-pull"
           style={
             {
               "--a": `${(360 / PULL_SPOKES) * i}deg`,
-              "--md": `${(i % 5) * 90}ms`,
+              "--md": `${(i % 6) * 110}ms`,
             } as React.CSSProperties
           }
         />
       ))}
 
       <span className="cat-disk" />
+      <span className="cat-photon" />
       <span className="cat-hole" />
-
-      <svg className="cat-crack" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {CRACKS.map((d, i) => (
-          <path key={i} d={d} style={{ ["--cd" as string]: `${700 + i * 45}ms` }} />
-        ))}
-      </svg>
-
-      <span className="cat-flash" />
+      <span className="cat-shock" />
     </span>
   );
 }

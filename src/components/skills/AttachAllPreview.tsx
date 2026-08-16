@@ -112,8 +112,9 @@ export function AttachAllPreview({ groups }: Props) {
 
     if (skill.rank === "APEX" || skill.rank === "ULTIMATE") {
       setCataclysm({ key: surgeSeq.current, rank: skill.rank });
-      // Outlives the longest branch — Ultimate's collapse runs 2600ms.
-      timers.current.push(window.setTimeout(() => setCataclysm(null), 3000));
+      // Must outlive the branch it started: Apex runs 2.6s, and Ultimate's
+      // collapse runs 4.2s with the rebound ring finishing at 4.4s.
+      timers.current.push(window.setTimeout(() => setCataclysm(null), skill.rank === "ULTIMATE" ? 4700 : 3000));
     }
   }, []);
 

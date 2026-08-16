@@ -209,7 +209,10 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     // fixed windows rather than replicating BarCharge's own duration math —
     // this only needs to outlast the animation, not choreograph it. Reuses
     // the `legendary` decided above.
-    setTimeout(() => setBarCharge(null), legendary ? 4600 : 1600);
+    // The terminal ranks now carry a Cataclysm keyed to this same state, and
+    // Ultimate's collapse plus its rebound ring runs to 4.4s — clearing at
+    // 4.6s would cut the last of it off mid-flight.
+    setTimeout(() => setBarCharge(null), skill.rank === "ULTIMATE" ? 4800 : legendary ? 4600 : 1600);
   }
 
   function attach(slot: number, skill: Skill) {
