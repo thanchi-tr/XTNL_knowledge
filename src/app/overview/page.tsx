@@ -7,6 +7,11 @@ import { StreakDisplay } from "@/components/home/StreakDisplay";
 import { StatTile } from "@/components/dashboard/StatTile";
 import { FieldFocusPanel } from "@/components/home/FieldFocusPanel";
 import { loadFieldFocus } from "@/lib/field-focus";
+import { ProgressionPanel } from "@/components/home/ProgressionPanel";
+import { loadProgression } from "@/lib/skill-effects";
+import { getSkill } from "@/lib/skill-pool";
+import { computeTitle } from "@/lib/titles";
+import { pendingDividend, getCapitalBalance } from "@/lib/capital";
 import { getCurrentUserId } from "@/lib/user";
 
 // Levels/streak change on every review — never statically cache this.
@@ -20,11 +25,15 @@ export default async function HomePage() {
   // queries. The tree already carries every non-archived Idea, so the three
   // counts are derived from it in memory instead: same numbers, two round
   // trips instead of five, and both of them cached.
-  const [fields, streak, focus] = await Promise.all([
+  const userId = getCurrentUserId();
+  const [fields, streak, focus, progression, balance] = await Promise.all([
     loadFieldTree(),
     getDailyStreak(),
-    loadFieldFocus(getCurrentUserId()),
+    loadFieldFocus(userId),
+    loadProgression(userId),
+    getCapitalBalance(userId),
   ]);
+  const pending = await pendingDividend(userId, progression.activeSkills);
 
   const allIdeas = fields.flatMap((f) => f.domains.flatMap((d) => d.ideas));
   const ideaCount = allIdeas.length;
@@ -35,6 +44,11 @@ export default async function HomePage() {
   // spec uses for Field level (floor(sum(level^0.75))), applied one level up
   // over the Field levels instead of a Field's Domain levels.
   const proficiency = fieldLevel(fields.map((f) => f.level));
+  // Transcendent ranks key off Ultimates actually owned, matching how the
+  // nav badge computes the same title. Resolved through the pool rather than
+  // by code prefix: every Ultimate happens to start "U_" today, but that is
+  // a naming coincidence, not a contract the generator promises to keep.
+  const ownedUltimates = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
 
   const rows = fields
     .map((f) => ({
@@ -69,6 +83,17 @@ export default async function HomePage() {
           {now.toISOString().slice(0, 10)} · {ideaCount} ideas tracked
         </p>
       </header>
+
+      {/* Above the counters on purpose: standing and the unclaimed reward
+          are why someone opens this page; the metrics explain the standing. */}
+      <div className="fade-up fade-up-1 mb-3">
+        <ProgressionPanel
+          title={computeTitle(proficiency, progression.scores, ownedUltimates)}
+          accountLevel={proficiency}
+          pending={{ amount: pending.amount, perHour: pending.perHour, capped: pending.capped }}
+          balance={balance}
+        />
+      </div>
 
       <section className="fade-up fade-up-1 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatTile label="Proficiency Index" value={String(proficiency)} sub="Breadth-weighted across fields" />
