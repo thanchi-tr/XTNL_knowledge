@@ -33,17 +33,23 @@ interface Props {
 /**
  * How long the emblem holds the screen before the event takes it.
  *
- * Trimmed 18% from the first pass — the mark was readable well before the
- * hold ended, and the extra dwell pushed the whole event past the point
- * where it still felt like a reward rather than a wait. Prelude is cut by
- * the same factor, not just the emblem: shortening only the emblem would
- * leave it gone while the collapse still waited to begin.
+ * Trimmed twice: 18% off the first pass, then a further 40%, landing at
+ * 0.49 of the original. The mark was readable long before either hold
+ * ended, and dwell past the point of recognition reads as a wait rather
+ * than a reward. Apex now holds ~980ms and Ultimate ~1270ms.
+ *
+ * Prelude is cut by the same factor, never the emblem alone: shortening
+ * only the emblem would leave it gone while the collapse still waited to
+ * begin, opening a dead beat in the middle of the event.
  */
-const EMBLEM_TRIM = 0.82;
+const EMBLEM_TRIM = 0.49;
 const PRELUDE_MS = { APEX: Math.round(1200 * EMBLEM_TRIM), ULTIMATE: Math.round(1800 * EMBLEM_TRIM) } as const;
 const EMBLEM_MS = { APEX: Math.round(2000 * EMBLEM_TRIM), ULTIMATE: Math.round(2600 * EMBLEM_TRIM) } as const;
 const IMPACTS = 7;
-const AURORA_BANDS = 3;
+/** The violet Apex burns against. Deep enough to read as shadow beside gold, not as a second highlight. */
+const APEX_VIOLET = "#6d28d9";
+/** Glyph marks around the d13 circle. */
+const TICKS = 16;
 
 /**
  * Which page event a depth earns.
@@ -128,32 +134,64 @@ export function Cataclysm({ skill, replayKey }: Props) {
   }
 
   if (tier === "bloom") {
+    // Ring radii in a 0..100 viewBox. Counter-rotating pairs, and dash
+    // patterns chosen so no two rings resolve into the same broken circle.
+    const rings = [
+      { r: 46, w: 1.2, dash: "6 10", spin: "26s", dir: "360deg", draw: 1000, delay: 0 },
+      { r: 38, w: 1.8, dash: "289", spin: "0s", dir: "0deg", draw: 900, delay: 140 },
+      { r: 30, w: 1.0, dash: "3 7", spin: "17s", dir: "-360deg", draw: 800, delay: 280 },
+      { r: 21, w: 1.5, dash: "132", spin: "12s", dir: "360deg", draw: 700, delay: 420 },
+    ];
     return (
       <span
         key={replayKey}
         className="cataclysm"
         aria-hidden="true"
-        style={
-          {
-            "--cat-color": color,
-            "--cat-dur": "2600ms",
-            "--prelude": "700ms",
-          } as React.CSSProperties
-        }
+        style={{ "--cat-color": color, "--cat-dur": "2600ms" } as React.CSSProperties}
       >
-        {Array.from({ length: AURORA_BANDS }, (_, i) => (
-          <span
-            key={`a${i}`}
-            className="cat-aurora"
-            style={
-              {
-                "--au-tilt": `${88 + i * 16}deg`,
-                "--ad": `${i * 260}ms`,
-              } as React.CSSProperties
-            }
-          />
-        ))}
-        <span className="cat-bloom-ring" />
+        <span className="cat-inscribe-ground" />
+        <span className="cat-inscribe">
+          <svg viewBox="0 0 100 100" width="100%" height="100%">
+            {rings.map((ring, i) => (
+              <circle
+                key={`r${i}`}
+                className="cat-ring"
+                cx="50"
+                cy="50"
+                r={ring.r}
+                strokeWidth={ring.w}
+                style={
+                  {
+                    "--dash": ring.dash,
+                    "--spin": ring.spin,
+                    "--dir": ring.dir,
+                    "--draw": `${ring.draw}ms`,
+                    "--rd": `${ring.delay}ms`,
+                  } as React.CSSProperties
+                }
+              />
+            ))}
+
+            {/* Glyph ticks around the outer ring, struck in sequence. */}
+            {Array.from({ length: TICKS }, (_, i) => {
+              const a = (360 / TICKS) * i;
+              const rad = (a * Math.PI) / 180;
+              const inner = 40.5;
+              const outer = i % 3 === 0 ? 51 : 48;
+              return (
+                <line
+                  key={`t${i}`}
+                  className="cat-tick"
+                  x1={50 + Math.cos(rad) * inner}
+                  y1={50 + Math.sin(rad) * inner}
+                  x2={50 + Math.cos(rad) * outer}
+                  y2={50 + Math.sin(rad) * outer}
+                  style={{ ["--td" as string]: `${260 + i * 42}ms` }}
+                />
+              );
+            })}
+          </svg>
+        </span>
       </span>
     );
   }
@@ -167,6 +205,10 @@ export function Cataclysm({ skill, replayKey }: Props) {
         style={
           {
             "--cat-color": color,
+            // Apex burns gold against deep violet — the rank's own hue lit
+            // against the arcane one, so the shower reads as two materials
+            // rather than one colour at two brightnesses.
+            "--cat-color-2": APEX_VIOLET,
             "--cat-dur": "3400ms",
             "--emblem-dur": `${EMBLEM_MS.APEX}ms`,
           } as React.CSSProperties
@@ -189,6 +231,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
               {
                 "--ix": `${8 + (84 / (IMPACTS - 1)) * i}%`,
                 "--id": `${PRELUDE_MS.APEX + 300 + (i % 5) * 210}ms`,
+                ...(i % 2 === 1 ? { "--streak": APEX_VIOLET } : {}),
               } as React.CSSProperties
             }
           />
@@ -211,6 +254,9 @@ export function Cataclysm({ skill, replayKey }: Props) {
                   "--dx": g.dx,
                   "--dy": g.dy,
                   "--len": g.len,
+                  // Every third streak burns violet, so the two materials are
+                  // interleaved rather than split into two visible groups.
+                  ...(i % 3 === 2 ? { "--streak": APEX_VIOLET } : {}),
                 } as React.CSSProperties
               }
             />
