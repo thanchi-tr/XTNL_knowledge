@@ -30,7 +30,13 @@ import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
  * cannot be finished inside a single subject.
  */
 
-export const IDEA_MASTERY_POINTS = 1;
+/**
+ * Driving one Idea to level 12 is roughly a 500-day campaign. Paying 1 point
+ * for it — against a pool whose cheapest emblem is 4 and whose dearest is in
+ * the thousands — made the single most demanding thing a player does the
+ * least rewarding. 25 is measured, not chosen: see `balance:horizon`.
+ */
+export const IDEA_MASTERY_POINTS = 25;
 const ATTESTATION_MAX_POINTS = 3;
 
 /**
@@ -41,7 +47,14 @@ const ATTESTATION_MAX_POINTS = 3;
  * grinding easy cards from being a viable strategy against the far larger
  * costs at the top of the tree.
  */
-export const REVIEW_MASTERY_PER_LEVEL = 0.02;
+/**
+ * Per level, per passed review. At 0.02 a full day of reviewing bought a
+ * fortieth of the cheapest emblem in the game, and the whole pool needed
+ * seven million reviews — the emblem tail was not expensive, it was
+ * decorative. This is the main income lever and it is why a deep library is
+ * worth having: a level-20 Idea pays twenty times what a level-1 does.
+ */
+export const REVIEW_MASTERY_PER_LEVEL = 0.1;
 
 export function reviewMasteryFraction(ideaLevel: number): number {
   return REVIEW_MASTERY_PER_LEVEL * Math.max(1, ideaLevel);

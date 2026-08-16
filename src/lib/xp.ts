@@ -68,6 +68,21 @@ export const COMBO_CAP = 10; // +50% ceiling
 export const MASTERY_BONUS = 25;
 
 /** Top of the interval ladder; an Idea here is Mastered. Mirrors srs.MAX_LEVEL. */
+/**
+ * Mastered, which is no longer the same as maxed.
+ *
+ * Deliberately still 12 after `MAX_LEVEL` moved to 20. Summing the interval
+ * ladder, reaching 12 takes about 500 days — a year and a half, which is a
+ * fair claim that something is known. Reaching 20 takes roughly eighteen
+ * years, and hanging the mastery lump off *that* would have meant the lump
+ * effectively never pays: the reward for a decade of work would arrive after
+ * the decade the game is designed to fill.
+ *
+ * So 13–20 are a post-mastery ladder. An Idea is *known* at 12 and keeps
+ * deepening afterwards, paying review mastery at a rate that rises the whole
+ * way. That split is what makes the long game long without making the middle
+ * of it empty.
+ */
 export const MASTERY_LEVEL = 12;
 
 /**
@@ -170,7 +185,23 @@ export function yieldXp(base: number, nSimilar: number, lambda = DEFAULT_LAMBDA,
 //   - Staggered (9-12): deterministic again, with large unevenly-sized
 //     jumps (the unevenness IS the staggering).
 // ============================================================================
-export const MAX_LEVEL = 12;
+/**
+ * Twenty rungs, not twelve.
+ *
+ * The design target is a decade-plus of play, and a ladder topping out at a
+ * 160-day interval cannot express that: an Idea reached its final state in
+ * about a year and a half and then repeated forever at the same spacing.
+ * Twelve rungs is a ladder for a course; twenty is a ladder for a practice.
+ *
+ * The eight new rungs are where the years live. Level 20 sits near an eight-
+ * year interval, which is the honest claim for something genuinely known —
+ * and, mattering more for pacing, the extra rungs mean every Idea keeps
+ * paying review mastery for far longer, at a rate that rises with its level.
+ * That is what lets the emblem tail be reachable without making it cheap:
+ * income grows with the depth of the library rather than staying flat while
+ * costs climb.
+ */
+export const MAX_LEVEL = 20;
 
 const BASE_INTERVAL_DAYS: Record<number, number> = {
   1: 1,
@@ -185,6 +216,18 @@ const BASE_INTERVAL_DAYS: Record<number, number> = {
   10: 75,
   11: 110,
   12: 160,
+  // ── The long tail ──────────────────────────────────────
+  // Still staggered rather than geometric: the gaps are uneven on purpose,
+  // so the schedule never becomes a rhythm you can anticipate. Ratios drift
+  // between 1.36x and 1.47x instead of sitting on one constant.
+  13: 230,
+  14: 330,
+  15: 470,
+  16: 660,
+  17: 950,
+  18: 1350,
+  19: 1950,
+  20: 2850,
 };
 
 /** `multiplier` is the INTERVAL_DILATION skill hook — stretches the schedule uniformly across all three tiers. */

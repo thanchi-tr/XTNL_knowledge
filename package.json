@@ -15,7 +15,8 @@
     "db:backfill-embeddings": "tsx scripts/backfill-embeddings.ts",
     "db:backfill-compositions": "tsx scripts/backfill-compositions.ts",
     "db:backfill-attributes": "tsx scripts/backfill-attributes.ts",
-    "skills:stats": "tsx scripts/print-skill-pool-stats.ts"
+    "skills:stats": "tsx scripts/print-skill-pool-stats.ts",
+    "balance:horizon": "tsx scripts/balance-horizon.ts"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",

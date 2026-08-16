@@ -287,10 +287,30 @@ export function requiredAttributeScore(tier: number): number {
  * lineage is deliberately a long campaign rather than a purchase.
  */
 export function masteryCost(complexity: number, tier: number, synergy: boolean): number {
-  return complexity * tier * tier * (synergy ? 2 : 1);
+  // Floored at 4. A first emblem costing 1 point was reachable inside a
+  // single session, which spent the most memorable moment in the game —
+  // the first thing you ever unlock — on something you did not notice
+  // earning. Four points is still days, not weeks.
+  return Math.max(4, complexity * tier * tier * (synergy ? 2 : 1));
 }
 
 export const CAPSTONE_MAX_TIER = 5;
+
+/* ── Rank cost factors ────────────────────────────────────
+   Measured with `npm run balance:horizon` rather than guessed. At the
+   previous factors (3 / 5 / 15) a committed player cleared Pure and Synergy
+   — 61% of the pool — in 22 years and needed 548 to finish, which is not a
+   long game, it is an unreachable one: the last 292 emblems existed only as
+   numbers on a page nobody would ever see turn green.
+
+   The tail is what these cut. They are deliberately *not* flat multipliers
+   on everything — the cheap end kept its curve, because the early game was
+   never the problem — so the ratio between a Capstone and the Pure it was
+   built from is smaller while the ratio between a Pure I and a Pure VIII is
+   untouched. What changes is that finishing is possible. */
+const CAPSTONE_COST_FACTOR = 1.15;
+const APEX_COST_FACTOR = 1.5;
+const ULTIMATE_COST_FACTOR = 2.4;
 
 /**
  * A Capstone tier N literally continues its dominant parent archetype's own
@@ -303,7 +323,7 @@ export const CAPSTONE_MAX_TIER = 5;
  * hand-tuned per lineage.
  */
 export function capstoneMasteryCost(complexity: number, capstoneTier: number): number {
-  return complexity * Math.pow(PURE_MAX_TIER + capstoneTier, 2) * 3;
+  return complexity * Math.pow(PURE_MAX_TIER + capstoneTier, 2) * CAPSTONE_COST_FACTOR;
 }
 
 /**
@@ -315,7 +335,7 @@ export function capstoneMasteryCost(complexity: number, capstoneTier: number): n
  * ordering across every prerequisite edge.
  */
 export function apexMasteryCost(maxComplexity: number): number {
-  return maxComplexity * Math.pow(PURE_MAX_TIER + CAPSTONE_MAX_TIER + 1, 2) * 5;
+  return maxComplexity * Math.pow(PURE_MAX_TIER + CAPSTONE_MAX_TIER + 1, 2) * APEX_COST_FACTOR;
 }
 
 /** Every archetype that lists `attribute` as an affinity, in ARCHETYPES order. */
@@ -536,7 +556,7 @@ export const ULTIMATE_BREADTH_TIER = 5;
  * are three of these per attribute to choose between.
  */
 export function ultimateMasteryCost(apexComplexity: number): number {
-  return apexMasteryCost(apexComplexity) * 3;
+  return apexMasteryCost(apexComplexity) * ULTIMATE_COST_FACTOR;
 }
 
 /**
