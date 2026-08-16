@@ -46,6 +46,8 @@ const EMBLEM_TRIM = 0.49;
 const PRELUDE_MS = { APEX: Math.round(1200 * EMBLEM_TRIM), ULTIMATE: Math.round(1800 * EMBLEM_TRIM) } as const;
 const EMBLEM_MS = { APEX: Math.round(2000 * EMBLEM_TRIM), ULTIMATE: Math.round(2600 * EMBLEM_TRIM) } as const;
 const IMPACTS = 7;
+/** The d15 field: out before the collapse, held through it, released after. */
+const BLACKOUT_MS = 6400;
 /** The violet Apex burns against. Deep enough to read as shadow beside gold, not as a second highlight. */
 const APEX_VIOLET = "#6d28d9";
 /** Gold streaks run to white-hot; violet streaks run to black. */
@@ -287,11 +289,19 @@ export function Cataclysm({ skill, replayKey }: Props) {
           "--cat-color": color,
           "--cat-dur": "5600ms",
           "--prelude": `${PRELUDE_MS.ULTIMATE}ms`,
+          "--blackout-dur": `${BLACKOUT_MS}ms`,
           "--emblem-dur": `${EMBLEM_MS.ULTIMATE}ms`,
         } as React.CSSProperties
       }
     >
       <span className="cat-dim" />
+
+      {/* First in the stack, so every layer below is drawn *on top* of it.
+          The page goes out during the emblem hold and stays out for the whole
+          collapse, which is what gives the horizon something to be darker
+          than. Ordering is the entire trick here — as the last child it was
+          a curtain dropped after the show. */}
+      <span className="cat-blackout" />
 
       {/* The mark arrives, is read, and is then crushed inward — the well
           opens underneath it rather than on an empty page. */}
@@ -324,12 +334,11 @@ export function Cataclysm({ skill, replayKey }: Props) {
       ))}
 
       <span className="cat-disk" />
+      {/* Above the disc, below the horizon — light bent over the top. */}
+      <span className="cat-lens-arc" />
       <span className="cat-photon" />
       <span className="cat-hole" />
       <span className="cat-shock" />
-
-      {/* Last: painted over everything, including the shock it follows. */}
-      <span className="cat-blackout" />
     </span>
   );
 }
