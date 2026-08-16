@@ -425,3 +425,85 @@ html[data-sky] .nav-review:hover:not(:disabled),
   background: rgb(0 0 0 / .26);
   color: inherit;
 }
+
+/* ═══ WORD HINTS ═════════════════════════════════════════
+   The completion strip for capture. Two positions, one component:
+
+     desktop  in flow, directly above the field
+     mobile   fixed, pushed up by the height of the virtual keyboard
+
+   The second is the reason this exists at all. A hint bar below the fold, or
+   underneath the keyboard, is a hint bar nobody sees — and on iOS the
+   keyboard does not resize the layout viewport, so `bottom: 0` puts it there.
+   `visualViewport` is what the component measures instead.
+   ═══════════════════════════════════════════════════════ */
+
+.word-hints {
+  margin-bottom: 6px;
+}
+
+.word-hints[data-floating="1"] {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--raised);
+  border-top: 1px solid var(--line-hi);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / .4);
+}
+
+.word-hints-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.word-hints-list::-webkit-scrollbar { display: none; }
+
+.word-hint {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-hi);
+  background: var(--sub);
+  font-size: 12.5px;
+  cursor: pointer;
+  /* Thumb-sized on a phone, where this bar sits against the keyboard and a
+     mis-tap costs a wrong word rather than nothing. */
+  min-height: 34px;
+}
+
+.word-hint:hover { border-color: rgb(var(--sky-a, 122 214 255) / .5); }
+
+.word-hint[data-primary="1"] {
+  border-color: rgb(var(--sky-a, 122 214 255) / .55);
+  background: rgb(var(--sky-a, 122 214 255) / .10);
+}
+
+/* The half already typed is dimmed, so the chip reads as a completion rather
+   than as a word — you see what Tab is about to *add*, not what it replaces. */
+.word-hint-typed { color: var(--ink-3); }
+.word-hint-rest { color: var(--ink-0); font-weight: 600; }
+
+.word-hint-key {
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--line-hi);
+  background: var(--canvas);
+  font-size: 9px;
+  letter-spacing: .04em;
+  color: var(--ink-3);
+}
+
+/* No room for the key hint on a cover screen; the chips themselves stay. */
+@media (max-width: 420px) {
+  .word-hint-key { display: none; }
+}

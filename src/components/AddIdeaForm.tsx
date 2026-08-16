@@ -14,6 +14,7 @@ import {
 } from "@/app/actions/ideas";
 import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
 import { useAutocorrect } from "@/components/useAutocorrect";
+import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { themeFor } from "@/lib/attribute-themes";
 import { EquationField } from "@/components/math/EquationField";
@@ -30,6 +31,12 @@ export interface AddFormField {
 
 interface Props {
   fields: AddFormField[];
+  /**
+   * The player's own words, most frequent first — see `src/lib/vocabulary.ts`.
+   * Passed down rather than fetched here so capture stays a single render
+   * with no request in the typing path.
+   */
+  vocabulary: string[];
 }
 
 /** Glyphs already used on review cards elsewhere — same vocabulary, so a type is recognisable across screens. */
@@ -58,7 +65,22 @@ type CreatableQuestionType = "SHORT" | "CLOZE" | "NUMERIC" | "MULTI" | "LIST" | 
 const LABEL_CLASS = "label-xs mb-1.5 block";
 const FIELD_CLASS = "input";
 
-export function AddIdeaForm({ fields }: Props) {
+export function AddIdeaForm({ fields, vocabulary }: Props) {
+  /**
+   * One completer, shared by every prose field on the form.
+   *
+   * Shared rather than one per field because only one field can hold the
+   * caret at a time: the hook keys off whichever element is currently bound
+   * to its ref, so wiring it into another textarea is `{...completeBind}` and a
+   * ref, with no extra state anywhere.
+   */
+  const {
+    registerField: completeRef,
+    suggestions: wordHints,
+    accept: acceptWord,
+    bind: completeBind,
+    visible: hintsVisible,
+  } = useWordComplete(vocabulary);
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -513,10 +535,13 @@ export function AddIdeaForm({ fields }: Props) {
       {questionType === "CLOZE" && (
         <label className="block">
           <span className={LABEL_CLASS}>Sentence</span>
+          <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
           <textarea
+            ref={completeRef}
             value={clozeText}
             onChange={(e) => setClozeText(e.target.value)}
             {...typing(setClozeText)}
+            {...completeBind}
             rows={3}
             placeholder="The capital of France is {{Paris}}, founded in {{3rd century BC}}."
             className={FIELD_CLASS}
@@ -555,10 +580,13 @@ export function AddIdeaForm({ fields }: Props) {
         <>
           <label className="block">
             <span className={LABEL_CLASS}>Question</span>
+            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
             <textarea
+              ref={completeRef}
               value={numericPrompt}
               onChange={(e) => setNumericPrompt(e.target.value)}
               {...typing(setNumericPrompt)}
+              {...completeBind}
               rows={2}
               placeholder="Acceleration due to gravity at sea level?"
               className={FIELD_CLASS}
