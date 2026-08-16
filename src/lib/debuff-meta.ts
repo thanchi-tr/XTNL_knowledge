@@ -10,7 +10,7 @@
  * never destructive, always self-expiring.
  */
 
-export type DebuffKind = "SHAKEN" | "FATIGUED" | "DOUBT";
+export type DebuffKind = "SHAKEN" | "FATIGUED" | "DOUBT" | "STAGNATION";
 
 export interface DebuffMeta {
   kind: DebuffKind;
@@ -52,6 +52,24 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
     defaultMagnitude: 8,
     maxMagnitude: 15,
     durationHours: 72,
+  },
+  /**
+   * A week where a Field owed new Ideas and did not get them.
+   *
+   * Runs a full week rather than the usual day or three, and that duration
+   * is load-bearing in two ways: the penalty should hold until the next
+   * quota comes due rather than lapsing mid-week into a free ride, and
+   * `enforceWeeklyQuotas` reads the row's own presence as its
+   * once-per-week guard. See `STAGNATION_MIN_HOURS` in field-quota.ts.
+   */
+  STAGNATION: {
+    kind: "STAGNATION",
+    label: "Stagnation",
+    effectText: (m) => `−${Math.round(m * 100)}% points per review`,
+    blurb: "A Field went a week without new material. Review alone stops paying full rate.",
+    defaultMagnitude: 0.08,
+    maxMagnitude: 0.3,
+    durationHours: 168,
   },
 };
 

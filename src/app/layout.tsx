@@ -4,6 +4,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { AppNav } from "@/components/AppNav";
 import { NavTitleBadge } from "@/components/NavTitleBadge";
 import { LoadoutBarSlot } from "@/components/skills/LoadoutBarSlot";
+import { NotificationSlot } from "@/components/notifications/NotificationSlot";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
@@ -58,7 +59,14 @@ export default function RootLayout({
           // it directly blocks the shell on `loadProgression`, which is
           // request-deduped and cross-request cached, so a warm load pays
           // nothing for it.
-          bottomSlot={<LoadoutBarSlot />}
+          bottomSlot={
+            <>
+              <LoadoutBarSlot />
+              {/* Same rule as above — a prop, never inside <Suspense>, or the
+                  bubble renders but its button never hydrates. */}
+              <NotificationSlot />
+            </>
+          }
         >
           {/* The title badge streams in — the nav renders immediately and the
               badge fills once its query resolves, so no route waits on it. */}

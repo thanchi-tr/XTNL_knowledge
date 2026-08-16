@@ -3,6 +3,7 @@ import { degradeOverdueIdeas } from "@/lib/srs";
 import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
 import { purgeExpiredBoons } from "@/lib/boons";
+import { enforceWeeklyQuotas } from "@/lib/field-quota";
 import { getCurrentUserId } from "@/lib/user";
 
 // Never statically cache/prerender a Cron endpoint.
@@ -20,10 +21,15 @@ export const dynamic = "force-dynamic";
  *   1. Degrade Ideas whose grace period lapsed unattended.
  *   2. Erode idle mastery points (`decayStaleMastery` — no-ops entirely
  *      while the balance is being saved toward something still locked).
- *   3. Delete expired debuff rows, which are already inert by then.
+ *   3. Judge last week's Field contribution quotas, once per week — the
+ *      job runs daily but `enforceWeeklyQuotas` no-ops for the rest of the
+ *      week once it has ruled.
+ *   4. Delete expired debuff rows, which are already inert by then.
  *
  * Each is independently idempotent per day, so a double-invocation cannot
- * double-charge.
+ * double-charge. Quota enforcement runs *before* the purge so the Stagnation
+ * row it relies on for its own weekly guard is never swept in the same pass
+ * that created it.
  */
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -34,9 +40,11 @@ export async function GET(request: Request) {
     }
   }
 
+  const userId = getCurrentUserId();
   const results = await degradeOverdueIdeas();
-  const decay = await decayStaleMastery(getCurrentUserId());
+  const decay = await decayStaleMastery(userId);
+  const quota = await enforceWeeklyQuotas(userId);
   const [debuffsPurged, boonsPurged] = await Promise.all([purgeExpiredBoons(), purgeExpiredDebuffs()]);
 
-  return NextResponse.json({ degraded: results.length, results, decay, debuffsPurged, boonsPurged });
+  return NextResponse.json({ degraded: results.length, results, decay, quota, debuffsPurged, boonsPurged });
 }

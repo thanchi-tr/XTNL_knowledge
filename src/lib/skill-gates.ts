@@ -186,6 +186,12 @@ export function foldDebuffs(base: ActiveModifiers, debuffs: ActiveDebuffRow[]): 
   if (worst.DOUBT) {
     m.attributePenaltyPercent = worst.DOUBT;
   }
+  if (worst.STAGNATION) {
+    // Multiplied, not summed, with SHAKEN — two separate setbacks should
+    // compound the way two separate buffs do, and this keeps the result
+    // strictly above zero however many land at once.
+    m.reviewYieldMultiplier = m.reviewYieldMultiplier * (1 - worst.STAGNATION);
+  }
 
   return m;
 }
