@@ -5,6 +5,16 @@ import { SkillLogo } from "./SkillLogo";
 import { depthOf } from "@/lib/skill-form";
 import { themeFor } from "@/lib/attribute-themes";
 import type { Skill } from "@/lib/skill-pool";
+import {
+  tierForDepth,
+  meteorVariantFor,
+  collapseVariantFor,
+} from "@/lib/cataclysm-variants";
+
+// Re-exported so existing importers keep one call site, but the definitions
+// live outside this client module — see cataclysm-variants.ts.
+export { tierForDepth, meteorVariantFor, collapseVariantFor } from "@/lib/cataclysm-variants";
+export type { CataclysmTier } from "@/lib/cataclysm-variants";
 
 /**
  * The two terminal-rank attach events, at page scale.
@@ -56,24 +66,6 @@ const VIOLET_BODY = "#05010a";
 const VIOLET_HEAD = "#1a0033";
 /** Glyph marks around the d13 circle. */
 const TICKS = 16;
-
-/**
- * Which page event a depth earns.
- *
- * The ladder is 15 rungs and only the top three deserve a full-screen
- * event; below that the slot burst and the bar charge already say enough.
- * d11 and d12 are folded into `shimmer` rather than left blank — a dead gap
- * between the mid-tiers and the bloom would read as a bug, not as restraint.
- */
-export type CataclysmTier = "collapse" | "meteor" | "bloom" | "shimmer" | "none";
-
-export function tierForDepth(depth: number): CataclysmTier {
-  if (depth >= 15) return "collapse";
-  if (depth === 14) return "meteor";
-  if (depth === 13) return "bloom";
-  if (depth >= 5) return "shimmer";
-  return "none";
-}
 
 const METEORS = 30;
 const PULL_SPOKES = 22;
@@ -203,6 +195,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
   }
 
   if (tier === "meteor") {
+    const variant = meteorVariantFor(skill);
     return (
       <span
         key={replayKey}
@@ -228,8 +221,9 @@ export function Cataclysm({ skill, replayKey }: Props) {
         </span>
         <span className="cat-emblem-ring" />
 
-        {/* Impacts land along the bottom as the first streaks reach it. */}
-        {Array.from({ length: IMPACTS }, (_, i) => (
+        {/* Impacts land along the bottom as the first streaks reach it.
+            Starfall has none — nothing in it strikes anything. */}
+        {variant !== "starfall" && Array.from({ length: IMPACTS }, (_, i) => (
           <span
             key={`i${i}`}
             className="cat-impact"
@@ -243,7 +237,44 @@ export function Cataclysm({ skill, replayKey }: Props) {
             }
           />
         ))}
-        {Array.from({ length: METEORS }, (_, i) => {
+        {/* B — one mass crossing, with debris shed behind it. */}
+        {variant === "comet" && (
+          <>
+            <span className="cat-comet" style={{ ["--md" as string]: `${PRELUDE_MS.APEX}ms` }} />
+            {Array.from({ length: 14 }, (_, i) => (
+              <span
+                key={`e${i}`}
+                className="cat-ember"
+                style={
+                  {
+                    "--ex": `${8 + i * 6.4}%`,
+                    "--ey": `${6 + i * 5.8}%`,
+                    "--md": `${PRELUDE_MS.APEX + 240 + i * 105}ms`,
+                  } as React.CSSProperties
+                }
+              />
+            ))}
+          </>
+        )}
+
+        {/* C — slow motes settling, no heads and no impacts. */}
+        {variant === "starfall" &&
+          Array.from({ length: 46 }, (_, i) => (
+            <span
+              key={`m${i}`}
+              className="cat-mote"
+              style={
+                {
+                  "--mx": `${(97 / 46) * i + (i % 3)}%`,
+                  "--drift": `${2 + (i % 5)}vw`,
+                  "--md": `${PRELUDE_MS.APEX + (i % 12) * 190}ms`,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+
+        {/* A — the shower. */}
+        {variant === "rain" && Array.from({ length: METEORS }, (_, i) => {
           const g = meteorGeometry(i);
           const dark = i % 3 === 2;
           return (
@@ -279,6 +310,8 @@ export function Cataclysm({ skill, replayKey }: Props) {
     );
   }
 
+  const variant = collapseVariantFor(skill);
+
   return (
     <span
       key={replayKey}
@@ -312,33 +345,56 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
       <span className="cat-halo" />
 
-      {/* Staggered rings reading as space bending outward from the well. */}
-      {Array.from({ length: WARP_RINGS }, (_, i) => (
-        <span key={`w${i}`} className="cat-warp" style={{ ["--wd" as string]: `${i * 420}ms` }} />
-      ))}
+      {variant === "hole" && (
+        <>
+        {/* Staggered rings reading as space bending outward from the well. */}
+        {Array.from({ length: WARP_RINGS }, (_, i) => (
+          <span key={`w${i}`} className="cat-warp" style={{ ["--wd" as string]: `${i * 420}ms` }} />
+        ))}
 
-      {/* Order is the effect: matter, then the disc, then the photon ring,
-          then the horizon on top — so the black centre genuinely occludes
-          everything falling into it rather than sitting behind it. */}
-      {Array.from({ length: PULL_SPOKES }, (_, i) => (
-        <span
-          key={`p${i}`}
-          className="cat-pull"
-          style={
-            {
-              "--a": `${(360 / PULL_SPOKES) * i}deg`,
-              "--md": `${(i % 6) * 110}ms`,
-            } as React.CSSProperties
-          }
-        />
-      ))}
+        {/* Order is the effect: matter, then the disc, then the photon ring,
+            then the horizon on top — so the black centre genuinely occludes
+            everything falling into it rather than sitting behind it. */}
+        {Array.from({ length: PULL_SPOKES }, (_, i) => (
+          <span
+            key={`p${i}`}
+            className="cat-pull"
+            style={
+              {
+                "--a": `${(360 / PULL_SPOKES) * i}deg`,
+                "--md": `${(i % 6) * 110}ms`,
+              } as React.CSSProperties
+            }
+          />
+        ))}
 
-      <span className="cat-disk" />
-      {/* Above the disc, below the horizon — light bent over the top. */}
-      <span className="cat-lens-arc" />
-      <span className="cat-photon" />
-      <span className="cat-hole" />
-      <span className="cat-shock" />
+        <span className="cat-disk" />
+        {/* Above the disc, below the horizon — light bent over the top. */}
+        <span className="cat-lens-arc" />
+        <span className="cat-photon" />
+        <span className="cat-hole" />
+          <span className="cat-shock" />
+        </>
+      )}
+
+      {/* B — the inverse of a collapse: everything thrown outward. Shares
+          the blackout, so it detonates on the same empty field. */}
+      {variant === "nova" && (
+        <>
+          <span className="cat-nova" />
+          {Array.from({ length: 4 }, (_, i) => (
+            <span key={`s${i}`} className="cat-shell" style={{ ["--sd" as string]: `${i * 260}ms` }} />
+          ))}
+        </>
+      )}
+
+      {/* C — neither in nor out: space is opened, held, and sealed. */}
+      {variant === "rift" && (
+        <>
+          <span className="cat-rift-glow" />
+          <span className="cat-rift" />
+        </>
+      )}
     </span>
   );
 }

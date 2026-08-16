@@ -644,3 +644,200 @@
 @media (prefers-reduced-motion: reduce) {
   .cat-lens-arc { animation: none; opacity: 0; }
 }
+
+/* ═══ VARIANTS ═══════════════════════════════════════════
+   d14 and d15 each carry three events rather than one.
+
+   Thirteen Apexes and thirty-nine Ultimates all firing the identical
+   animation made the rank the only thing the spectacle said — you learned
+   what "an Ultimate" looks like once and then saw the same clip forever.
+   Splitting each tier three ways means the *emblem* is legible in its own
+   arrival, not just its rarity.
+
+   Assignment is by attribute, not random: the same emblem must always
+   produce the same event, and grouping by attribute means the twelve
+   Ultimates of one attribute share an identity the way their emblems
+   already share a silhouette.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── d14-B — the comet ───────────────────────────────────
+   One body instead of thirty. A single mass crossing the whole viewport,
+   which reads as an event that happened *to* the sky rather than weather
+   in it. */
+.cat-comet {
+  position: absolute;
+  top: -18vh;
+  left: -22vw;
+  width: 5px;
+  height: 46vh;
+  border-radius: 5px;
+  background: linear-gradient(to bottom, transparent, var(--cat-color-2, #6d28d9) 55%, #fff6d8);
+  box-shadow: 0 0 40px 8px var(--cat-color, #f0a030);
+  transform-origin: 50% 100%;
+  opacity: 0;
+  animation: cat-comet 2400ms cubic-bezier(.5, 0, .75, 1) var(--md, 0ms) both;
+}
+
+.cat-comet::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  left: -7px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 46px 16px var(--cat-color, #f0a030);
+}
+
+@keyframes cat-comet {
+  0%   { opacity: 0;   transform: translate3d(0, 0, 0) rotate(-38deg); }
+  10%  { opacity: 1; }
+  82%  { opacity: 1; }
+  100% { opacity: 0;   transform: translate3d(150vw, 150vh, 0) rotate(-38deg); }
+}
+
+/* Debris shed along the path, so the comet leaves something behind. */
+.cat-ember {
+  position: absolute;
+  top: var(--ey, 40%);
+  left: var(--ex, 40%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--cat-color, #f0a030);
+  box-shadow: 0 0 12px 3px var(--cat-color, #f0a030);
+  opacity: 0;
+  animation: cat-ember 1600ms ease-out var(--md, 0ms) both;
+}
+
+@keyframes cat-ember {
+  0%   { opacity: 0;   transform: scale(.4) translate3d(0, 0, 0); }
+  16%  { opacity: .9; }
+  100% { opacity: 0;   transform: scale(.1) translate3d(-6vw, 14vh, 0); }
+}
+
+/* ── d14-C — starfall ────────────────────────────────────
+   The quiet one. Slow motes descending and fading, no heads, no impacts —
+   an attribute that arrives by settling rather than striking. */
+.cat-mote {
+  position: absolute;
+  top: -6vh;
+  left: var(--mx, 50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px 2px var(--cat-color, #f0a030);
+  opacity: 0;
+  animation: cat-mote var(--cat-dur, 3400ms) cubic-bezier(.3, .1, .5, 1) var(--md, 0ms) both;
+}
+
+@keyframes cat-mote {
+  0%   { opacity: 0;   transform: translate3d(0, 0, 0); }
+  14%  { opacity: .95; }
+  76%  { opacity: .7; }
+  100% { opacity: 0;   transform: translate3d(var(--drift, 4vw), 112vh, 0); }
+}
+
+/* ── d15-B — supernova ───────────────────────────────────
+   The inverse of a collapse: everything thrown outward. Shares the
+   blackout, so it detonates on an empty field the same way. */
+.cat-nova {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24vmin;
+  height: 24vmin;
+  margin: -12vmin 0 0 -12vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, #ffe9a8 22%, var(--cat-color, #ff5eb0) 46%, transparent 72%);
+  opacity: 0;
+  animation: cat-nova 3600ms cubic-bezier(.1, .85, .3, 1) var(--prelude, 886ms) both;
+}
+
+@keyframes cat-nova {
+  0%   { opacity: 0;   transform: scale(.05); }
+  8%   { opacity: 1;   transform: scale(1); }
+  100% { opacity: 0;   transform: scale(11); }
+}
+
+/* Expanding shells, staggered, so the blast has structure. */
+.cat-shell {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20vmin;
+  height: 20vmin;
+  margin: -10vmin 0 0 -10vmin;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 70%, transparent);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 45%, transparent);
+  opacity: 0;
+  animation: cat-shell 3200ms cubic-bezier(.15, .9, .3, 1) calc(var(--prelude, 886ms) + var(--sd, 0ms)) both;
+}
+
+@keyframes cat-shell {
+  0%   { opacity: 0;   transform: scale(.1);  border-width: 4px; }
+  12%  { opacity: .95; }
+  100% { opacity: 0;   transform: scale(8.5); border-width: 0; }
+}
+
+/* ── d15-C — the rift ────────────────────────────────────
+   Neither in nor out: space is opened. A vertical tear that widens, holds,
+   and seals. */
+.cat-rift {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 8vmin;
+  margin-left: -1px;
+  transform-origin: 50% 50%;
+  background: linear-gradient(to bottom, transparent, #fff 18%, #fff 82%, transparent);
+  box-shadow:
+    0 0 40px 12px var(--cat-color, #ff5eb0),
+    0 0 120px 40px color-mix(in srgb, var(--cat-color, #ff5eb0) 45%, transparent);
+  opacity: 0;
+  animation: cat-rift 3600ms cubic-bezier(.2, .8, .25, 1) var(--prelude, 886ms) both;
+}
+
+@keyframes cat-rift {
+  0%   { opacity: 0;   transform: translate(-50%, -50%) scaleY(.1)  scaleX(1); }
+  14%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(1); }
+  46%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(26); }
+  74%  { opacity: .9;  transform: translate(-50%, -50%) scaleY(9)   scaleX(26); }
+  100% { opacity: 0;   transform: translate(-50%, -50%) scaleY(.06) scaleX(1); }
+}
+
+/* What spills out of the tear while it is open. */
+.cat-rift-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 76vmin;
+  height: 34vmin;
+  margin: -17vmin 0 0 -38vmin;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    color-mix(in srgb, var(--cat-color, #ff5eb0) 55%, transparent) 0%,
+    transparent 68%
+  );
+  filter: blur(24px);
+  opacity: 0;
+  animation: cat-rift-glow 3600ms ease-in-out var(--prelude, 886ms) both;
+}
+
+@keyframes cat-rift-glow {
+  0%   { opacity: 0;   transform: scaleX(.1); }
+  30%  { opacity: .9;  transform: scaleX(1); }
+  72%  { opacity: .7; }
+  100% { opacity: 0;   transform: scaleX(.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-comet, .cat-ember, .cat-mote,
+  .cat-nova, .cat-shell,
+  .cat-rift, .cat-rift-glow { animation: none; opacity: 0; }
+}

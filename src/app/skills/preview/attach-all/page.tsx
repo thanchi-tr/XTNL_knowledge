@@ -5,6 +5,7 @@ import { SKILL_POOL, type Skill } from "@/lib/skill-pool";
 import { depthOf } from "@/lib/skill-form";
 import { ATTRIBUTES } from "@/lib/attributes";
 import { AttachAllPreview } from "@/components/skills/AttachAllPreview";
+import { meteorVariantFor, collapseVariantFor } from "@/lib/cataclysm-variants";
 
 export const metadata: Metadata = { title: "Attach — All Emblems" };
 
@@ -69,7 +70,28 @@ function rankSpectrum(): Skill[] {
 export default function AttachAllPage() {
   assertLocal();
 
+  // One emblem per variant, so all six terminal events are reachable in a
+  // single row rather than by hunting for an attribute that happens to map
+  // to the one you want to see.
+  const oneOfEach = (rank: "APEX" | "ULTIMATE", variantOf: (s: Skill) => string): Skill[] => {
+    const seen = new Set<string>();
+    const out: Skill[] = [];
+    for (const s of SKILL_POOL) {
+      if (s.rank !== rank) continue;
+      const v = variantOf(s);
+      if (seen.has(v)) continue;
+      seen.add(v);
+      out.push(s);
+    }
+    return out;
+  };
+
   const groups = [
+    {
+      label: "Terminal variants — all six",
+      note: "d14 and d15 each carry three events, assigned by the emblem's own attribute rather than at random, so the same emblem always arrives the same way. d14: shower, comet, starfall. d15: collapse, supernova, rift. One example of each.",
+      skills: [...oneOfEach("APEX", meteorVariantFor), ...oneOfEach("ULTIMATE", collapseVariantFor)],
+    },
     {
       label: "Rank spectrum",
       note: "One of every rank, ordered by depth. The claim this page exists to test: a Pure I and an Ultimate should be recognisably different events, not the same event at two sizes. Watch the ring count, reach, duration and which extra layers appear at all.",
