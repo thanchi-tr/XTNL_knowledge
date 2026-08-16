@@ -214,7 +214,7 @@ export function LoadoutBar({ slots, bench, ambient = true }: Props) {
     // 4.6s would cut the last of it off mid-flight.
     setTimeout(
       () => setBarCharge(null),
-      skill.rank === "ULTIMATE" ? 6000 : skill.rank === "APEX" ? 4200 : 1600
+      skill.rank === "ULTIMATE" ? 7000 : skill.rank === "APEX" ? 4200 : 1600
     );
   }
 

@@ -48,6 +48,10 @@ const EMBLEM_MS = { APEX: Math.round(2000 * EMBLEM_TRIM), ULTIMATE: Math.round(2
 const IMPACTS = 7;
 /** The violet Apex burns against. Deep enough to read as shadow beside gold, not as a second highlight. */
 const APEX_VIOLET = "#6d28d9";
+/** Gold streaks run to white-hot; violet streaks run to black. */
+const GOLD_BODY = "#ffe9a8";
+const VIOLET_BODY = "#05010a";
+const VIOLET_HEAD = "#1a0033";
 /** Glyph marks around the d13 circle. */
 const TICKS = 16;
 
@@ -232,12 +236,14 @@ export function Cataclysm({ skill, replayKey }: Props) {
                 "--ix": `${8 + (84 / (IMPACTS - 1)) * i}%`,
                 "--id": `${PRELUDE_MS.APEX + 300 + (i % 5) * 210}ms`,
                 ...(i % 2 === 1 ? { "--streak": APEX_VIOLET } : {}),
+                // Impacts keep white cores either way — a strike is a strike.
               } as React.CSSProperties
             }
           />
         ))}
         {Array.from({ length: METEORS }, (_, i) => {
           const g = meteorGeometry(i);
+          const dark = i % 3 === 2;
           return (
             <span
               key={i}
@@ -254,9 +260,14 @@ export function Cataclysm({ skill, replayKey }: Props) {
                   "--dx": g.dx,
                   "--dy": g.dy,
                   "--len": g.len,
-                  // Every third streak burns violet, so the two materials are
+                  // Every third streak is the dark material, so the two are
                   // interleaved rather than split into two visible groups.
-                  ...(i % 3 === 2 ? { "--streak": APEX_VIOLET } : {}),
+                  // Written flat rather than spread: a conditional spread makes
+                  // the object a union, and the `as CSSProperties` cast then
+                  // fails because neither branch overlaps it.
+                  "--streak": dark ? APEX_VIOLET : color,
+                  "--streak-body": dark ? VIOLET_BODY : GOLD_BODY,
+                  "--streak-head": dark ? VIOLET_HEAD : "#fff",
                 } as React.CSSProperties
               }
             />
@@ -316,6 +327,9 @@ export function Cataclysm({ skill, replayKey }: Props) {
       <span className="cat-photon" />
       <span className="cat-hole" />
       <span className="cat-shock" />
+
+      {/* Last: painted over everything, including the shock it follows. */}
+      <span className="cat-blackout" />
     </span>
   );
 }

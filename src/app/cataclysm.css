@@ -44,7 +44,11 @@
   height: var(--len, 18vh);
   border-radius: 2px;
   /* Tail fades toward the top — the end furthest behind the head. */
-  background: linear-gradient(to bottom, transparent, var(--streak, var(--cat-color, #f0a030)));
+  /* Two materials, not two hues of one. The gold streak is burning — its
+     tail runs to white-hot at the head. The violet streak is the opposite:
+     a black body carrying a purple corona, so it reads as something that
+     swallows light rather than emits it. Same geometry, opposite substance. */
+  background: linear-gradient(to bottom, transparent, var(--streak-body, #ffe9a8));
   box-shadow: 0 0 14px var(--streak, var(--cat-color, #f0a030));
   opacity: 0;
   transform-origin: 50% 100%;
@@ -61,7 +65,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--streak-head, #fff);
   box-shadow: 0 0 16px 4px var(--streak, var(--cat-color, #f0a030));
 }
 
@@ -543,4 +547,39 @@
   .cat-tick,
   .cat-inscribe-ground,
   .cat-shimmer { animation: none; opacity: 0; }
+}
+
+
+/* ── d15 — the blackout ──────────────────────────────────
+   The last beat of the collapse. Once the well has taken everything the
+   screen goes fully black, holds there, and only then releases.
+
+   The hold is the point. Every other effect in this app resolves by fading,
+   which reads as "that is over"; a hard black that lingers reads as "there
+   is nothing left", which is the only honest ending for an animation about
+   something being swallowed. It is also the one moment in the app where the
+   interface is completely gone, which is why it is reserved for the single
+   rarest event in it.
+
+   Opaque black rather than a dark overlay: at anything less the page shows
+   through and the beat becomes a dip in brightness instead of an absence. */
+.cat-blackout {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  animation: cat-blackout 2200ms cubic-bezier(.4, 0, .2, 1) calc(var(--prelude, 886ms) + 3700ms) both;
+}
+
+@keyframes cat-blackout {
+  0%   { opacity: 0; }
+  /* Fast to full — the lights do not dim, they go out. */
+  16%  { opacity: 1; }
+  46%  { opacity: 1; }
+  /* Long release, so the page returns rather than snapping back. */
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-blackout { animation: none; opacity: 0; }
 }

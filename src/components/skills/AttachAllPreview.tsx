@@ -116,7 +116,9 @@ export function AttachAllPreview({ groups }: Props) {
       // collapse runs 4.2s with the rebound ring finishing at 4.4s.
       // Emblem prelude plus the event itself: Apex 1.2s + 3.4s, Ultimate
       // 1.8s + 3.6s with the rebound finishing last.
-      const life = skill.rank === "ULTIMATE" ? 5300 : skill.rank === "APEX" ? 3700 : depthOf(skill) === 13 ? 3400 : 1800;
+      // Ultimate now closes on a 2.2s blackout that starts 3.7s after its
+      // prelude — unmounting before that cuts the ending off entirely.
+      const life = skill.rank === "ULTIMATE" ? 7000 : skill.rank === "APEX" ? 3700 : depthOf(skill) === 13 ? 3400 : 1800;
       timers.current.push(window.setTimeout(() => setCataclysm(null), life));
     }
   }, []);
