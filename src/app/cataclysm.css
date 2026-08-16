@@ -671,7 +671,16 @@
   width: 5px;
   height: 46vh;
   border-radius: 5px;
-  background: linear-gradient(to bottom, transparent, var(--cat-color-2, #6d28d9) 55%, #fff6d8);
+  /* Tapered, not a bar: widest behind the head and thinning to nothing,
+     which is the difference between a comet and a stick sliding past. */
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--cat-color-2, #6d28d9) 55%, transparent) 34%,
+    var(--cat-color-2, #6d28d9) 66%,
+    #fff6d8 100%
+  );
+  clip-path: polygon(38% 0%, 62% 0%, 100% 100%, 0% 100%);
   box-shadow: 0 0 40px 8px var(--cat-color, #f0a030);
   transform-origin: 50% 100%;
   opacity: 0;
@@ -681,13 +690,15 @@
 .cat-comet::after {
   content: "";
   position: absolute;
-  bottom: -9px;
-  left: -7px;
-  width: 19px;
-  height: 19px;
+  /* The coma: a bright nucleus inside a wide halo, so the head reads as a
+     body with an atmosphere rather than a dot with a glow. */
+  bottom: -16px;
+  left: -14px;
+  width: 33px;
+  height: 33px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 46px 16px var(--cat-color, #f0a030);
+  background: radial-gradient(circle, #fff 0%, #fff6d8 26%, var(--cat-color, #f0a030) 52%, transparent 76%);
+  box-shadow: 0 0 70px 26px var(--cat-color, #f0a030);
 }
 
 @keyframes cat-comet {
@@ -794,7 +805,10 @@
   height: 8vmin;
   margin-left: -1px;
   transform-origin: 50% 50%;
-  background: linear-gradient(to bottom, transparent, #fff 18%, #fff 82%, transparent);
+  background: linear-gradient(to bottom, transparent, #fff 14%, #fff 86%, transparent);
+  /* Torn, not cut. A clean rectangle reads as a slot; the notched edge
+     reads as something that gave way under load. */
+  clip-path: polygon(0% 0%, 100% 4%, 62% 22%, 100% 38%, 55% 58%, 100% 74%, 68% 90%, 100% 100%, 0% 96%, 40% 78%, 0% 62%, 45% 42%, 0% 26%, 34% 12%);
   box-shadow:
     0 0 40px 12px var(--cat-color, #ff5eb0),
     0 0 120px 40px color-mix(in srgb, var(--cat-color, #ff5eb0) 45%, transparent);
@@ -806,8 +820,10 @@
   0%   { opacity: 0;   transform: translate(-50%, -50%) scaleY(.1)  scaleX(1); }
   14%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(1); }
   46%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(26); }
-  74%  { opacity: .9;  transform: translate(-50%, -50%) scaleY(9)   scaleX(26); }
-  100% { opacity: 0;   transform: translate(-50%, -50%) scaleY(.06) scaleX(1); }
+  74%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(26); }
+  /* Snaps shut rather than fading — a tear closes, it does not dissolve. */
+  88%  { opacity: 1;   transform: translate(-50%, -50%) scaleY(9)   scaleX(1.5); }
+  100% { opacity: 0;   transform: translate(-50%, -50%) scaleY(.04) scaleX(.4); }
 }
 
 /* What spills out of the tear while it is open. */

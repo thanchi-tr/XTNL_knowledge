@@ -1,0 +1,241 @@
+/* ═══ CATACLYSM — VARIANTS D–F ═══════════════════════════
+   Three more events per terminal tier, taking each to six.
+
+   With three, the twelve Ultimates of an attribute shared a look but the
+   tier still repeated every fourth emblem. Six halves that, and more
+   usefully it forces each variant to justify itself: the test applied here
+   is that any two must differ in *kind* — direction, motion, or what is
+   happening — not merely in colour or scale. A variant that is only a
+   recolour of another is worse than not having it, because it teaches the
+   player the distinction is meaningless.
+
+   d14 is the arrival family; d15 is the terminal family.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── d14-D — shards ──────────────────────────────────────
+   Angular where the others are linear, and tumbling where the others hold
+   a fixed attitude. The sky breaks rather than burns. */
+.cat-shard {
+  position: absolute;
+  top: -12vh;
+  left: var(--mx, 50%);
+  width: 12px;
+  height: 26px;
+  clip-path: polygon(50% 0%, 100% 62%, 50% 100%, 0% 62%);
+  background: linear-gradient(160deg, #fff 0%, var(--cat-color, #f0a030) 46%, transparent 100%);
+  box-shadow: 0 0 14px var(--cat-color, #f0a030);
+  opacity: 0;
+  animation: cat-shard var(--cat-dur, 3000ms) cubic-bezier(.42, 0, .8, 1) var(--md, 0ms) both;
+}
+
+@keyframes cat-shard {
+  0%   { opacity: 0;   transform: translate3d(0, 0, 0) rotate(0deg) scale(.6); }
+  9%   { opacity: 1; }
+  78%  { opacity: .9; }
+  100% { opacity: 0;   transform: translate3d(var(--drift, 8vw), 124vh, 0) rotate(var(--spin, 540deg)) scale(1); }
+}
+
+/* ── d14-E — embers ──────────────────────────────────────
+   The one that rises. Every other member of this family falls, so
+   reversing direction is the single cheapest way to make a variant
+   unmistakable at a glance. */
+.cat-emberup {
+  position: absolute;
+  bottom: -6vh;
+  left: var(--mx, 50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, var(--cat-color, #f0a030) 55%, transparent 78%);
+  box-shadow: 0 0 16px 4px var(--cat-color, #f0a030);
+  opacity: 0;
+  animation: cat-emberup var(--cat-dur, 3200ms) cubic-bezier(.3, .5, .4, 1) var(--md, 0ms) both;
+}
+
+@keyframes cat-emberup {
+  0%   { opacity: 0;   transform: translate3d(0, 0, 0) scale(1.2); }
+  12%  { opacity: 1; }
+  70%  { opacity: .8; }
+  100% { opacity: 0;   transform: translate3d(var(--drift, 6vw), -118vh, 0) scale(.2); }
+}
+
+/* Heat rising off the floor, under the embers. */
+.cat-heat {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 46vh;
+  background: linear-gradient(to top, color-mix(in srgb, var(--cat-color, #f0a030) 34%, transparent), transparent 76%);
+  filter: blur(14px);
+  opacity: 0;
+  animation: cat-heat var(--cat-dur, 3200ms) ease-in-out both;
+}
+
+@keyframes cat-heat {
+  0%   { opacity: 0; }
+  26%  { opacity: .85; }
+  70%  { opacity: .55; }
+  100% { opacity: 0; }
+}
+
+/* ── d14-F — bolts ───────────────────────────────────────
+   Instantaneous rather than travelling. Struck, flickered, gone: the only
+   member of the family with no translation at all, which is what stops it
+   reading as another kind of falling thing. */
+.cat-bolt {
+  position: absolute;
+  top: -4vh;
+  left: var(--mx, 50%);
+  width: 3px;
+  height: 118vh;
+  background: linear-gradient(to bottom, transparent, #fff 12%, var(--cat-color, #f0a030) 70%, transparent);
+  clip-path: polygon(40% 0%, 60% 0%, 44% 20%, 66% 22%, 38% 44%, 62% 46%, 42% 70%, 58% 72%, 48% 100%, 44% 100%);
+  box-shadow: 0 0 26px 6px var(--cat-color, #f0a030);
+  opacity: 0;
+  /* Stepped, not eased — lightning does not ramp. */
+  animation: cat-bolt 900ms steps(1, end) var(--md, 0ms) both;
+}
+
+@keyframes cat-bolt {
+  0%   { opacity: 0; }
+  8%   { opacity: 1; }
+  16%  { opacity: .2; }
+  24%  { opacity: 1; }
+  44%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* ── d15-D — eclipse ─────────────────────────────────────
+   Occlusion rather than gravity: nothing is destroyed, it is hidden. The
+   only terminal event that ends with everything still intact. */
+.cat-eclipse-sun {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34vmin;
+  height: 34vmin;
+  margin: -17vmin 0 0 -17vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, #ffeaa0 38%, var(--cat-color, #ff5eb0) 66%, transparent 82%);
+  box-shadow: 0 0 90px 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 55%, transparent);
+  opacity: 0;
+  animation: cat-eclipse-sun 3600ms ease-in-out var(--prelude, 886ms) both;
+}
+
+@keyframes cat-eclipse-sun {
+  0%   { opacity: 0; transform: scale(.4); }
+  14%  { opacity: 1; transform: scale(1); }
+  82%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.1); }
+}
+
+/* Crosses rather than expands — the transit is the whole event. */
+.cat-eclipse-moon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34vmin;
+  height: 34vmin;
+  margin: -17vmin 0 0 -17vmin;
+  border-radius: 50%;
+  background: #000;
+  opacity: 0;
+  animation: cat-eclipse-moon 3600ms cubic-bezier(.35, 0, .65, 1) var(--prelude, 886ms) both;
+}
+
+@keyframes cat-eclipse-moon {
+  0%   { opacity: 0; transform: translate3d(-64vmin, -14vmin, 0); }
+  12%  { opacity: 1; }
+  50%  { opacity: 1; transform: translate3d(0, 0, 0); }
+  88%  { opacity: 1; transform: translate3d(64vmin, 14vmin, 0); }
+  100% { opacity: 0; transform: translate3d(70vmin, 16vmin, 0); }
+}
+
+/* ── d15-E — pulsar ──────────────────────────────────────
+   Rotational, where every other terminal event is radial. The motion
+   itself is the tell: beams sweep past you rather than reaching you. */
+.cat-pulsar-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12vmin;
+  height: 12vmin;
+  margin: -6vmin 0 0 -6vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, var(--cat-color, #ff5eb0) 54%, transparent 78%);
+  box-shadow: 0 0 60px 18px var(--cat-color, #ff5eb0);
+  opacity: 0;
+  animation: cat-pulsar-core 3600ms ease-out var(--prelude, 886ms) both;
+}
+
+@keyframes cat-pulsar-core {
+  0%   { opacity: 0; transform: scale(.1); }
+  12%  { opacity: 1; transform: scale(1); }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(.3); }
+}
+
+.cat-beam {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150vmax;
+  height: 9vmin;
+  margin-top: -4.5vmin;
+  transform-origin: 0% 50%;
+  background: linear-gradient(to right, var(--cat-color, #ff5eb0), transparent 72%);
+  filter: blur(6px);
+  opacity: 0;
+  animation: cat-beam 3600ms linear var(--prelude, 886ms) both;
+}
+
+@keyframes cat-beam {
+  0%   { opacity: 0;   transform: rotate(var(--a, 0deg)); }
+  10%  { opacity: .9; }
+  82%  { opacity: .8; }
+  100% { opacity: 0;   transform: rotate(calc(var(--a, 0deg) + 1080deg)); }
+}
+
+/* ── d15-F — implosion ───────────────────────────────────
+   No object at the centre at all. The edges of the viewport simply arrive,
+   which is the one thing none of the other five do. */
+.cat-crush {
+  position: absolute;
+  inset: 0;
+  box-shadow:
+    inset 0 0 0 0 #000,
+    inset 0 0 120px 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent);
+  opacity: 0;
+  animation: cat-crush 3600ms cubic-bezier(.6, 0, .9, .4) var(--prelude, 886ms) both;
+}
+
+@keyframes cat-crush {
+  0%   { opacity: 0; box-shadow: inset 0 0 0 0 #000, inset 0 0 120px 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent); }
+  14%  { opacity: 1; }
+  84%  { opacity: 1; box-shadow: inset 0 0 0 46vmax #000, inset 0 0 90px 20px var(--cat-color, #ff5eb0); }
+  100% { opacity: 0; box-shadow: inset 0 0 0 50vmax #000, inset 0 0 0 0 transparent; }
+}
+
+/* ── comet, improved ─────────────────────────────────────
+   Was a bar with a dot on it. A comet needs a coma — a bright nucleus
+   inside a wide halo — and a tail that tapers rather than ending square. */
+.cat-comet-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(90% 70% at 42% 34%, color-mix(in srgb, var(--cat-color, #f0a030) 26%, transparent) 0%, transparent 62%);
+  opacity: 0;
+  animation: cat-comet-flash 2400ms ease-in-out var(--md, 0ms) both;
+}
+
+@keyframes cat-comet-flash {
+  0%   { opacity: 0; }
+  30%  { opacity: 1; }
+  58%  { opacity: .7; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-shard, .cat-emberup, .cat-heat, .cat-bolt,
+  .cat-eclipse-sun, .cat-eclipse-moon,
+  .cat-pulsar-core, .cat-beam, .cat-crush,
+  .cat-comet-flash { animation: none; opacity: 0; }
+}

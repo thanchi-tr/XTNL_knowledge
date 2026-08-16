@@ -14,6 +14,7 @@ import "./globals.css";
 // same-specificity selectors there win on source order.
 import "./arcane.css";
 import "./cataclysm.css";
+import "./cataclysm-extra.css";
 
 // Inter + JetBrains Mono, matching XTNL_thesis. Was Geist/Geist Mono — the
 // ecosystem's typographic identity is set by the thesis app, and the CSS

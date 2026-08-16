@@ -119,7 +119,14 @@ export function AttachAllPreview({ groups }: Props) {
       // Ultimate now closes on a 2.2s blackout that starts 3.7s after its
       // prelude — unmounting before that cuts the ending off entirely.
       const life = skill.rank === "ULTIMATE" ? 7000 : skill.rank === "APEX" ? 3700 : depthOf(skill) === 13 ? 3400 : 1800;
-      timers.current.push(window.setTimeout(() => setCataclysm(null), life));
+      // Clear only if this is still the animation we started. Firing a second
+      // emblem before the first finished left the older timer to null the
+      // newer one, so a quick sequence of clicks cancelled its own animations
+      // — which looked exactly like the variants failing to render.
+      const mine = surgeSeq.current;
+      timers.current.push(
+        window.setTimeout(() => setCataclysm((c) => (c && c.key === mine ? null : c)), life)
+      );
     }
   }, []);
 

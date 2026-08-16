@@ -223,7 +223,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
 
         {/* Impacts land along the bottom as the first streaks reach it.
             Starfall has none — nothing in it strikes anything. */}
-        {variant !== "starfall" && Array.from({ length: IMPACTS }, (_, i) => (
+        {variant !== "starfall" && variant !== "embers" && Array.from({ length: IMPACTS }, (_, i) => (
           <span
             key={`i${i}`}
             className="cat-impact"
@@ -240,6 +240,7 @@ export function Cataclysm({ skill, replayKey }: Props) {
         {/* B — one mass crossing, with debris shed behind it. */}
         {variant === "comet" && (
           <>
+            <span className="cat-comet-flash" style={{ ["--md" as string]: `${PRELUDE_MS.APEX}ms` }} />
             <span className="cat-comet" style={{ ["--md" as string]: `${PRELUDE_MS.APEX}ms` }} />
             {Array.from({ length: 14 }, (_, i) => (
               <span
@@ -268,6 +269,58 @@ export function Cataclysm({ skill, replayKey }: Props) {
                   "--mx": `${(97 / 46) * i + (i % 3)}%`,
                   "--drift": `${2 + (i % 5)}vw`,
                   "--md": `${PRELUDE_MS.APEX + (i % 12) * 190}ms`,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+
+        {/* D — angular fragments, tumbling as they fall. */}
+        {variant === "shards" &&
+          Array.from({ length: 26 }, (_, i) => (
+            <span
+              key={`sh${i}`}
+              className="cat-shard"
+              style={
+                {
+                  "--mx": `${-6 + (108 / 26) * i}%`,
+                  "--drift": `${4 + (i % 5) * 3}vw`,
+                  "--spin": `${360 + (i % 4) * 220}deg`,
+                  "--md": `${PRELUDE_MS.APEX + (i % 8) * 165}ms`,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+
+        {/* E — the one that rises. */}
+        {variant === "embers" && (
+          <>
+            <span className="cat-heat" />
+            {Array.from({ length: 42 }, (_, i) => (
+              <span
+                key={`eu${i}`}
+                className="cat-emberup"
+                style={
+                  {
+                    "--mx": `${(99 / 42) * i}%`,
+                    "--drift": `${-5 + (i % 7) * 1.8}vw`,
+                    "--md": `${PRELUDE_MS.APEX + (i % 11) * 175}ms`,
+                  } as React.CSSProperties
+                }
+              />
+            ))}
+          </>
+        )}
+
+        {/* F — struck, not travelled. */}
+        {variant === "bolts" &&
+          Array.from({ length: 7 }, (_, i) => (
+            <span
+              key={`b${i}`}
+              className="cat-bolt"
+              style={
+                {
+                  "--mx": `${9 + i * 13}%`,
+                  "--md": `${PRELUDE_MS.APEX + i * 240}ms`,
                 } as React.CSSProperties
               }
             />
@@ -395,6 +448,26 @@ export function Cataclysm({ skill, replayKey }: Props) {
           <span className="cat-rift" />
         </>
       )}
+
+      {/* D — occlusion, not destruction. Ends with everything intact. */}
+      {variant === "eclipse" && (
+        <>
+          <span className="cat-eclipse-sun" />
+          <span className="cat-eclipse-moon" />
+        </>
+      )}
+
+      {/* E — rotational where the rest are radial. */}
+      {variant === "pulsar" && (
+        <>
+          <span className="cat-beam" style={{ ["--a" as string]: "0deg" }} />
+          <span className="cat-beam" style={{ ["--a" as string]: "180deg" }} />
+          <span className="cat-pulsar-core" />
+        </>
+      )}
+
+      {/* F — no centre at all; the edges arrive instead. */}
+      {variant === "implosion" && <span className="cat-crush" />}
     </span>
   );
 }

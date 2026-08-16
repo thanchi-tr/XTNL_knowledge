@@ -39,14 +39,28 @@ export function tierForSkill(skill: Skill): CataclysmTier {
   return tierForDepth(depthOf(skill));
 }
 
-export const METEOR_VARIANTS = ["rain", "comet", "starfall"] as const;
-export const COLLAPSE_VARIANTS = ["hole", "nova", "rift"] as const;
+export const METEOR_VARIANTS = ["rain", "comet", "starfall", "shards", "embers", "bolts"] as const;
+export const COLLAPSE_VARIANTS = ["hole", "nova", "rift", "eclipse", "pulsar", "implosion"] as const;
 export type MeteorVariant = (typeof METEOR_VARIANTS)[number];
 export type CollapseVariant = (typeof COLLAPSE_VARIANTS)[number];
 
+/**
+ * Six per tier rather than three.
+ *
+ * At three, the tier still repeated every fourth emblem. Six halves that,
+ * and forces each variant to justify itself: any two must differ in *kind*
+ * — direction, motion, or what is actually happening — never only in colour
+ * or scale. A variant that is a recolour of another is worse than not
+ * having it, because it teaches the player the distinction is meaningless.
+ *
+ * Thirteen attributes over six variants does not divide evenly, so the
+ * spread is 3/2/2/2/2/2. Accepted deliberately: forcing evenness would mean
+ * breaking the one-attribute-one-variant rule, and a shared identity within
+ * an attribute is worth more than a perfectly flat histogram.
+ */
 export function variantIndex(skill: Skill): number {
   const i = ATTRIBUTES.indexOf(skill.attributes[0]);
-  return ((i % 3) + 3) % 3;
+  return ((i % 6) + 6) % 6;
 }
 
 export function meteorVariantFor(skill: Skill): MeteorVariant {
