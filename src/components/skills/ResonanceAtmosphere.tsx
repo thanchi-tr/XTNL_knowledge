@@ -56,8 +56,22 @@ function rand(i: number, salt: number): number {
 
 export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
   const grade = resonance.grade;
+  const rarity = resonance.rarity;
   const visual = GRADE_VISUALS[grade];
   const has = (l: string) => visual.layers.includes(l as never);
+
+  /**
+   * Density, not just presence.
+   *
+   * Each layer is generated at full size once and *sliced* by the current
+   * count, so raising rarity adds particles to a field that is already there
+   * rather than regenerating it — the existing dust keeps its exact position
+   * and phase, and the sky visibly thickens instead of flickering and
+   * reshuffling on every equip.
+   */
+  const dustCount = 8 + Math.round(rarity * 24);
+  const meteorCount = 2 + Math.round(rarity * 7);
+  const orbitCount = 2 + Math.round(rarity * 3);
 
   // Drives the bare-site stripping in atmosphere.css. Set on the root rather
   // than passed through props because it has to reach rules for the body
@@ -70,9 +84,26 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
     };
   }, [grade, scoped]);
 
+  /**
+   * The continuous half of the same signal, on the same element.
+   *
+   * Separate effect from the grade because it changes far more often — every
+   * attach moves rarity, where grade moves maybe five times in an account's
+   * life — and because it is a style rather than an attribute. `--atmos-rarity`
+   * is registered as a `<number>` in atmosphere.css, so writing it here is
+   * what makes the body gradients interpolate rather than snap.
+   */
+  useEffect(() => {
+    if (scoped) return;
+    document.documentElement.style.setProperty("--atmos-rarity", rarity.toFixed(3));
+    return () => {
+      document.documentElement.style.removeProperty("--atmos-rarity");
+    };
+  }, [rarity, scoped]);
+
   const dust = useMemo(
     () =>
-      Array.from({ length: 26 }, (_, i) => ({
+      Array.from({ length: 32 }, (_, i) => ({
         left: rand(i, 1) * 100,
         top: rand(i, 2) * 100,
         dur: 12 + rand(i, 3) * 16,
@@ -84,7 +115,7 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
 
   const meteors = useMemo(
     () =>
-      Array.from({ length: 7 }, (_, i) => ({
+      Array.from({ length: 9 }, (_, i) => ({
         top: rand(i, 11) * 70 - 10,
         left: 40 + rand(i, 12) * 70,
         dur: 2.4 + rand(i, 13) * 2.2,
@@ -98,7 +129,7 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
 
   const orbits = useMemo(
     () =>
-      Array.from({ length: 4 }, (_, i) => ({
+      Array.from({ length: 5 }, (_, i) => ({
         size: 220 + i * 165,
         dur: 26 + i * 15,
         reverse: i % 2 === 1,
@@ -126,11 +157,19 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
       className={scoped ? "atmos atmos-scoped" : "atmos"}
       aria-hidden="true"
       data-grade={grade}
-      style={{ "--res-color": visual.color, "--res-glow": visual.glow } as React.CSSProperties}
+      style={
+        {
+          "--res-color": visual.color,
+          "--res-glow": visual.glow,
+          // Also set locally so the scoped variant, which deliberately never
+          // touches the root, still evolves on the reference page.
+          "--atmos-rarity": rarity.toFixed(3),
+        } as React.CSSProperties
+      }
     >
       {has("dust") && (
         <div className="atmos-dust">
-          {dust.map((d, i) => (
+          {dust.slice(0, dustCount).map((d, i) => (
             <span
               key={i}
               className="atmos-speck"
@@ -150,7 +189,7 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
       )}
 
       {has("meteors") &&
-        meteors.map((m, i) => (
+        meteors.slice(0, meteorCount).map((m, i) => (
           <span
             key={i}
             className="atmos-meteor"
@@ -168,7 +207,7 @@ export function ResonanceAtmosphere({ resonance, scoped = false }: Props) {
 
       {has("orbits") && (
         <div className="atmos-system">
-          {orbits.map((o, i) => (
+          {orbits.slice(0, orbitCount).map((o, i) => (
             <div
               key={i}
               className="atmos-orbit"

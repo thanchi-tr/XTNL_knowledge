@@ -44,18 +44,75 @@ html[data-res-grade="NONE"] .card-hover:hover {
   border-color: var(--line-hi) !important;
 }
 
+/* ── Rarity: the continuous axis ─────────────────────────
+   Grade is a five-rung ladder, and it saturates early — a single Apex
+   already satisfies a shape, so most real loadouts sit at the top rung and
+   the sky stopped moving there. Everything a player does afterwards, which
+   is precisely the part where they are swapping in the rarest things they
+   own, changed nothing on screen.
+
+   So rarity gets its own channel: 0–1 over what is equipped, independent of
+   composition, and it moves on every single attach. Grade still picks the
+   hue — the rarity/colour language stays one language — while rarity decides
+   how much of the sky that hue actually reaches, and which layers open up.
+
+   Registered rather than merely set, for two reasons. `@property` gives it a
+   typed initial value, so the `calc()`s below are never resolving against an
+   invalid token; and a typed custom property is *interpolable*, which is the
+   only way to transition a gradient at all. Without this, attaching an
+   emblem would snap the background; with it, the sky slides. */
+@property --atmos-rarity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+html {
+  transition: --atmos-rarity 1100ms cubic-bezier(.22, .61, .36, 1);
+}
+
+/* Grade hue as a bare triplet, so alpha can be computed per layer rather
+   than frozen into each colour. Same five hues as `GRADE_VISUALS` and the
+   skill-rarity ramp in globals.css. */
+html[data-res-grade="FAINT"]        { --atmos-rgb: 0 204 122; }
+html[data-res-grade="ALIGNED"]      { --atmos-rgb: 77 156 245; }
+html[data-res-grade="HARMONIC"]     { --atmos-rgb: 155 107 255; }
+html[data-res-grade="RESONANT"]     { --atmos-rgb: 240 160 48; }
+html[data-res-grade="TRANSCENDENT"] { --atmos-rgb: 255 94 176; }
+
 /* Lit: the body's ambient light takes the grade's hue, so the whole page —
-   not only the footer — is tinted by what is equipped. */
+   not only the footer — is tinted by what is equipped. Three layers, each
+   entering at a different point on the rarity axis, so the background keeps
+   gaining structure long after the grade has topped out. */
 html[data-res-grade]:not([data-res-grade="NONE"]) body {
   background-image:
-    radial-gradient(ellipse 130% 50% at 50% -6%, var(--atmos-tint, rgba(0, 204, 122, 0.05)) 0%, transparent 62%),
+    /* Crown. Present from the first lit emblem, deepening throughout — this
+       is the layer that was previously the entire effect. */
+    radial-gradient(ellipse 130% 50% at 50% -6%,
+      rgb(var(--atmos-rgb, 0 204 122) / calc(0.030 + var(--atmos-rarity) * 0.075)) 0%,
+      transparent 62%),
+    /* Horizon. Zero-alpha at rarity 0, so it is visibly something rare
+       emblems *add* rather than something that was always faintly there. */
+    radial-gradient(ellipse 80% 44% at 50% 106%,
+      rgb(var(--atmos-rgb, 0 204 122) / calc(var(--atmos-rarity) * 0.070)) 0%,
+      transparent 68%),
+    /* Counter-light. Held shut until past the midpoint of the axis, then
+       opens from the side: a second light source is the strongest cue that
+       the room has changed, and it is worth reserving for a loadout that
+       has genuinely earned it. */
+    radial-gradient(ellipse 58% 46% at 6% 26%,
+      rgb(150 205 255 / calc(max(0, var(--atmos-rarity) - 0.45) * 0.055)) 0%,
+      transparent 60%),
     radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0, 130, 255, 0.014) 0%, transparent 50%);
 }
 
-html[data-res-grade="ALIGNED"] { --atmos-tint: rgba(77, 156, 245, 0.055); }
-html[data-res-grade="HARMONIC"] { --atmos-tint: rgba(155, 107, 255, 0.065); }
-html[data-res-grade="RESONANT"] { --atmos-tint: rgba(240, 160, 48, 0.075); }
-html[data-res-grade="TRANSCENDENT"] { --atmos-tint: rgba(255, 94, 176, 0.09); }
+/* Panels pick up the same climb, so the evolution is not confined to the
+   margins of the page. Kept an order of magnitude below the body's — a card
+   is a reading surface first. */
+html[data-res-grade]:not([data-res-grade="NONE"]) .card,
+html[data-res-grade]:not([data-res-grade="NONE"]) .panel {
+  border-color: rgb(var(--atmos-rgb, 0 204 122) / calc(0.05 + var(--atmos-rarity) * 0.16));
+}
 
 /* ── The layer itself ────────────────────────────────────
    Fixed, behind every pixel of content, inert to the pointer. `z-index: -1`
@@ -350,4 +407,17 @@ html[data-res-grade="TRANSCENDENT"] { --atmos-tint: rgba(255, 94, 176, 0.09); }
   0%   { opacity: 0; transform: translate(-50%, -50%) scale(.35); }
   30%  { opacity: .85; }
   100% { opacity: 0; transform: translate(-50%, -50%) scale(1.9); }
+}
+
+/* ── Reduced motion ──────────────────────────────────────
+   The rarity crossfade is the one thing here that is not a loop, so it is
+   also the one thing the POWER block's animation-play-state pause cannot
+   reach. Cut the transition and the sky still evolves — it simply arrives
+   at the new value immediately instead of sliding to it. */
+@media (prefers-reduced-motion: reduce) {
+  html { transition: none; }
+  .atmos-speck, .atmos-meteor, .atmos-orbit-spin,
+  .atmos-sun-core, .atmos-sun-rays,
+  .atmos-disk, .atmos-lens, .atmos-infall, .atmos-freeze { animation: none; }
+  .atmos-meteor, .atmos-infall, .atmos-freeze { opacity: 0; }
 }

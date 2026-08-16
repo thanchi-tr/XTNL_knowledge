@@ -1,7 +1,8 @@
 import type { Attribute } from "@prisma/client";
 import type { Skill, SkillRank } from "./skill-pool";
-import { PURE_MAX_TIER } from "./skill-pool";
+import { PURE_MAX_TIER, ULTIMATE_TIER } from "./skill-pool";
 import { NEUTRAL_MODIFIERS, type ActiveModifiers } from "./skill-gates";
+import { LOADOUT_SLOTS } from "./loadout";
 
 /**
  * Set bonuses: what ten emblems mean *together*.
@@ -70,6 +71,30 @@ const OVERDRIVE_RATE = 0.3;
 const STRENGTH_CAP = 1.4;
 
 /**
+ * How far rarity alone can push the sky, in raw-difficulty units.
+ *
+ * The sets own the ceiling and always will — 13 curves to a score of ~60, the
+ * top of HARMONIC, so a loadout of ten Ultimates that composes into nothing
+ * can never reach the sun or the black hole. What it *can* no longer do is
+ * leave the site looking exactly as bare as an empty bar. That was the old
+ * behaviour and it was wrong in both directions: it told a player holding a
+ * lineage terminus that they had earned nothing, and it made the one moment
+ * worth celebrating — a first Ultimate — completely invisible until it
+ * happened to line up with a second emblem.
+ */
+const RARITY_CEILING_RAW = 13;
+
+/**
+ * Bends rarity's contribution against accumulation.
+ *
+ * Above 1, so filling slots with cheap emblems pays less than proportionally
+ * while depth pays more: ten Tier I Pures reach a sixth of the rarity axis,
+ * a single Ultimate a tenth of it. Composition stays the way to a bright sky;
+ * rarity only decides how dark the floor is.
+ */
+const RARITY_SHAPE = 1.15;
+
+/**
  * How much each rank counts as "material". Roughly the effort to obtain one,
  * not its numerical strength — an Ultimate is a lineage's terminus, and a
  * loadout built from them should read as harder than one built from Tier I.
@@ -135,6 +160,11 @@ export interface LoadoutResonance {
   /** 0–100, curved. Drives the footer's grade, colour and particles. */
   score: number;
   grade: ResonanceGrade;
+  /**
+   * 0–1 richness of what is equipped, independent of composition. Drives the
+   * atmosphere continuously, between and within grades.
+   */
+  rarity: number;
   /**
    * Fraction of its printed power each emblem actually realises. `SOLO_SHARE`
    * with no sets, 1.0 for a fully-realised loadout, above that under overdrive.
@@ -845,13 +875,50 @@ export const SET_SHAPES: readonly SetShape[] = [
 /** Mean material of a set's members — rank, lifted by tier depth. */
 function materialOf(members: Skill[]): number {
   if (members.length === 0) return 0;
-  // Tier depth at 0.18 per step, not 0.12. Reaching Tier VIII is the whole
-  // length of a Pure lineage, and at the lower coefficient it counted for so
-  // little that a deep, deliberately-built loadout scored below a bag of ten
-  // Tier I emblems that merely filled the slots.
   let total = 0;
-  for (const m of members) total += RANK_MATERIAL[m.rank] * (1 + (m.tier - 1) * 0.18);
+  for (const m of members) total += materialOfOne(m);
   return total / members.length;
+}
+
+/**
+ * Per-tier lift on top of rank material. 0.18 rather than 0.12: reaching Tier
+ * VIII is the whole length of a Pure lineage, and at the lower coefficient it
+ * counted for so little that a deep, deliberately-built loadout scored below
+ * a bag of ten Tier I emblems that merely filled the slots.
+ */
+const TIER_LIFT = 0.18;
+
+/** One emblem's material: its rank, lifted by how deep into its lineage it sits. */
+function materialOfOne(skill: Skill): number {
+  return RANK_MATERIAL[skill.rank] * (1 + (skill.tier - 1) * TIER_LIFT);
+}
+
+/**
+ * The richest a full bar can be: every slot an Ultimate.
+ *
+ * `ULTIMATE_TIER` rather than 1 — Ultimates carry their depth (15) in `tier`,
+ * so the tier lift in `materialOfOne` applies to them as much as to a Pure
+ * VIII. Normalising against the rank material alone put a single Ultimate at
+ * 0.35 of the axis and saturated the whole thing at three of them.
+ */
+const MAX_LOADOUT_MATERIAL =
+  LOADOUT_SLOTS * RANK_MATERIAL.ULTIMATE * (1 + (ULTIMATE_TIER - 1) * TIER_LIFT);
+
+/**
+ * How rare the equipped emblems are, 0–1, ignoring whether they compose.
+ *
+ * Deliberately measured across *everything equipped* rather than across set
+ * members, because this is the one channel that answers "what am I carrying"
+ * instead of "what have I built". It is also continuous, which matters more
+ * than its size: the grade ladder has five rungs, so within a rung the sky
+ * used to be frozen no matter what was swapped in. This value moves on every
+ * single attach, and the atmosphere reads it directly.
+ */
+export function rarityOf(active: Skill[]): number {
+  if (active.length === 0) return 0;
+  let total = 0;
+  for (const s of active) total += materialOfOne(s);
+  return Math.min(1, total / MAX_LOADOUT_MATERIAL);
 }
 
 /**
@@ -934,7 +1001,14 @@ export function resolveResonance(active: Skill[]): LoadoutResonance {
   }
 
   const setStrength = Math.min(strength, STRENGTH_CAP);
-  const score = sets.length === 0 ? 0 : curve(raw);
+
+  // Rarity is added to raw difficulty rather than max()'d against the result,
+  // so it keeps mattering after the first set lands instead of going dead the
+  // moment composition overtakes it. Same curve, so the saturation that stops
+  // a fifth set from doubling the sky applies to rare emblems too.
+  const rarity = rarityOf(active);
+  const rarityRaw = RARITY_CEILING_RAW * Math.pow(rarity, RARITY_SHAPE);
+  const score = curve(raw + rarityRaw);
 
   // Below 1.0 the set fills in the 65% the solo emblem gives up; above it,
   // overdrive keeps paying at a shallower rate so a perfect loadout has
@@ -949,6 +1023,7 @@ export function resolveResonance(active: Skill[]): LoadoutResonance {
     setStrength,
     score,
     grade: gradeFor(score),
+    rarity,
     powerShare,
   };
 }
@@ -958,6 +1033,7 @@ export const NO_RESONANCE: LoadoutResonance = {
   setStrength: 0,
   score: 0,
   grade: "NONE",
+  rarity: 0,
   powerShare: SOLO_SHARE,
 };
 

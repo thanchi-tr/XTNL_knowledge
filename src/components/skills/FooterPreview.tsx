@@ -66,10 +66,9 @@ export function FooterPreview({ bench, slotCount }: Props) {
     setSlots(empty());
     setAvailable(bench);
     setRequest(null);
+    setNonce(0);
     setGeneration((g) => g + 1);
   }
-
-  const filled = nonce;
 
   return (
     <>
@@ -78,13 +77,15 @@ export function FooterPreview({ bench, slotCount }: Props) {
           <div>
             <p className="panel-title">Fire a terminal event</p>
             <p className="panel-sub mt-0.5">
-              All twelve d14/d15 variants, straight into the next free slot. Everything else is in the
-              footer&apos;s own picker.
+              All twelve d14/d15 variants, straight into the next free slot — and the background evolves
+              as the rarer ones land. Occupancy is the footer&apos;s own counter, on the left of the bar;
+              when it reads {slotCount}/{slotCount} these do nothing until you detach or reset. Everything
+              else is in the footer&apos;s picker.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              {filled}/{slotCount} equipped
+              {nonce} fired
             </span>
             <button type="button" className="btn-secondary" style={{ fontSize: 11, padding: "5px 11px" }} onClick={reset}>
               Reset
@@ -98,7 +99,6 @@ export function FooterPreview({ bench, slotCount }: Props) {
               <button
                 type="button"
                 onClick={() => quickEquip(s.skill)}
-                disabled={filled >= slotCount}
                 title={`${s.skill.name}\n${s.skill.effectText}`}
                 className="mono"
                 style={{
@@ -108,8 +108,7 @@ export function FooterPreview({ bench, slotCount }: Props) {
                   border: "1px solid var(--line-hi)",
                   background: "var(--sub)",
                   color: "var(--ink-1)",
-                  cursor: filled >= slotCount ? "not-allowed" : "pointer",
-                  opacity: filled >= slotCount ? 0.4 : 1,
+                  cursor: "pointer",
                 }}
               >
                 {s.label}
@@ -118,11 +117,6 @@ export function FooterPreview({ bench, slotCount }: Props) {
           ))}
         </ul>
 
-        {filled >= slotCount && (
-          <p className="mt-2" style={{ fontSize: 10.5, color: "var(--amber)" }}>
-            All {slotCount} slots full — detach one in the footer, or reset.
-          </p>
-        )}
       </section>
 
       {/* Spacer so the sticky footer has something to stick over. */}
