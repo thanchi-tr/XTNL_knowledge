@@ -25,6 +25,8 @@ import {
   type ActiveModifiers,
 } from "./skill-gates";
 import { resolveResonance, foldSetGrants, type LoadoutResonance } from "./loadout-sets";
+import { loadAugments, computeRate, type CapitalRate } from "./capital";
+import type { OwnedAugment } from "./augments";
 
 /**
  * The database half of the progression system: reads Field/streak/skill/
@@ -76,6 +78,10 @@ export interface ProgressionState {
   debuffs: ActiveDebuffRow[];
   /** Currently-active boons — Boss spoils, and equally worth naming. */
   boons: ActiveBoonRow[];
+  /** Permanent capital-bought upgrades on owned emblems. */
+  augments: OwnedAugment[];
+  /** Passive capital earned per hour by the active loadout. */
+  capitalRate: CapitalRate;
 }
 
 interface FieldRow {
@@ -168,12 +174,13 @@ export async function loadAttributeScores(userId: string): Promise<AttributeScor
 }
 
 async function loadProgressionUncached(userId: string, now: Date): Promise<ProgressionState> {
-  const [rows, streakBonuses, owned, debuffs, boons] = await Promise.all([
+  const [rows, streakBonuses, owned, debuffs, boons, augments] = await Promise.all([
     loadFieldRows(),
     loadFieldStreakBonuses(userId),
     prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true, equippedSlot: true } }),
     loadActiveDebuffs(userId, now),
     loadActiveBoons(userId, now),
+    loadAugments(userId),
   ]);
 
   const ownedSkills = owned
@@ -190,6 +197,10 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   }
   const equippedSkills = ownedSkills.filter((s) => slotOf.has(s.code));
 
+  // Augment lookups, built once and shared by both folding passes.
+  const amplified = new Set(augments.filter((a) => a.kind === "AMPLIFY").map((a) => a.skillCode));
+  const grafted = new Set(augments.filter((a) => a.kind === "GRAFT").map((a) => a.skillCode));
+
   // Debuffs are independent of which skills are active, so their penalty is
   // resolved up front and applied in every pass below.
   const penalty = foldDebuffs(NEUTRAL_MODIFIERS, debuffs).attributePenaltyPercent;
@@ -204,7 +215,7 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   // source of RESONANCE is a completed shape would gate as if it had none.
   const firstResonance = resolveResonance(firstPass);
   const firstFold = foldSetGrants(
-    attenuateModifiers(foldEffects(firstPass), firstResonance.powerShare),
+    attenuateModifiers(foldEffects(firstPass, amplified, grafted), firstResonance.powerShare),
     firstResonance.sets
   );
 
@@ -238,11 +249,13 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     // state you actually have rather than being cancelled out by a fresh
     // buff.
     modifiers: foldDebuffs(
-      foldBoons(foldSetGrants(attenuateModifiers(foldEffects(activeSkills), resonance.powerShare), resonance.sets), boons),
+      foldBoons(foldSetGrants(attenuateModifiers(foldEffects(activeSkills, amplified, grafted), resonance.powerShare), resonance.sets), boons),
       debuffs
     ),
     debuffs,
     boons,
+    augments,
+    capitalRate: computeRate(activeSkills, augments),
   };
 }
 

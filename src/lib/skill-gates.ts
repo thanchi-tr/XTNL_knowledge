@@ -4,6 +4,7 @@ import type { Skill, SkillEffect } from "./skill-pool";
 import { worstByKind, type ActiveDebuffRow } from "./debuff-meta";
 import { bestByKind, type ActiveBoonRow } from "./boon-meta";
 import { DEFAULT_LAMBDA, COMBO_CAP } from "./xp";
+import { AMPLIFY_BONUS } from "./augments";
 
 /**
  * The pure half of the progression system: what an unlocked skill *does*,
@@ -115,10 +116,78 @@ export function attenuateModifiers(m: ActiveModifiers, share: number): ActiveMod
   };
 }
 
-export function foldEffects(skills: Skill[]): ActiveModifiers {
+/**
+ * Applies AMPLIFY to one emblem's printed effect.
+ *
+ * Scales the *delta from neutral*, not the value, so direction is preserved
+ * whichever way an effect points — `lambda` improves downward and its delta
+ * is negative, and it amplifies correctly with no special case. Exactly the
+ * rule `attenuate` uses for the opposite job.
+ */
+function amplify(neutral: number, value: number, bonus: number): number {
+  return neutral + (value - neutral) * (1 + bonus);
+}
+
+/** One emblem's effect, rewritten as if its printed magnitude were `bonus` stronger. */
+function amplifiedEffect(skill: Skill, bonus: number): SkillEffect {
+  const e = skill.effect;
+  const n = NEUTRAL_MODIFIERS;
+  switch (e.kind) {
+    case "REVIEW_YIELD":
+      return { ...e, multiplier: amplify(n.reviewYieldMultiplier, e.multiplier, bonus) };
+    case "DECAY_RESISTANCE":
+      return { ...e, lambda: Math.max(0.02, amplify(n.lambda, e.lambda, bonus)) };
+    case "DEGRADATION_WARD":
+      return { ...e, weeklyCharges: Math.round(e.weeklyCharges * (1 + bonus)) };
+    case "GRACE_EXTENSION":
+      return { ...e, extraDays: Math.round(e.extraDays * (1 + bonus)) };
+    case "INTERVAL_DILATION":
+      return { ...e, multiplier: amplify(n.intervalMultiplier, e.multiplier, bonus) };
+    case "COMBO_CEILING":
+      return { ...e, extraSteps: Math.round(e.extraSteps * (1 + bonus)) };
+    case "COMBO_ANCHOR":
+      return { ...e, retained: Math.min(0.9, e.retained * (1 + bonus)) };
+    case "MASTERY_YIELD":
+      return { ...e, multiplier: amplify(n.masteryMultiplier, e.multiplier, bonus) };
+    case "STRIKE_TOLERANCE":
+      return { ...e, extraStrikes: Math.round(e.extraStrikes * (1 + bonus)) };
+    case "YIELD_FLOOR":
+      return { ...e, fractionOfBase: Math.min(0.9, e.fractionOfBase * (1 + bonus)) };
+    case "DEDUP_PRECISION":
+      return { ...e, thresholdDelta: e.thresholdDelta * (1 + bonus) };
+    case "STREAK_AMPLIFIER":
+      return { ...e, multiplier: amplify(n.streakMultiplier, e.multiplier, bonus) };
+    case "RESONANCE":
+      return { ...e, percent: e.percent * (1 + bonus) };
+  }
+}
+
+/**
+ * GRAFT — a second, modest effect on an emblem that never had one.
+ *
+ * Deliberately the same small effect for every emblem rather than something
+ * drawn per attribute: a grafted effect that could roll better or worse than
+ * another would turn a purchase into a gamble, which is the one thing this
+ * project's reward design has consistently refused to do.
+ */
+export const GRAFT_EFFECT: SkillEffect = { kind: "REVIEW_YIELD", multiplier: 1.05 };
+
+export function foldEffects(
+  skills: Skill[],
+  amplified: Set<string> = new Set(),
+  grafted: Set<string> = new Set()
+): ActiveModifiers {
   const m: ActiveModifiers = { ...NEUTRAL_MODIFIERS };
-  for (const s of skills) {
-    const e = s.effect;
+  // A graft is folded as one extra effect alongside the emblems themselves.
+  // Folding it once rather than per grafted emblem is not a shortcut: the
+  // best-value-per-kind rule below makes N identical effects and one
+  // identical effect the same result.
+  const effects: SkillEffect[] = skills.map((s) =>
+    amplified.has(s.code) ? amplifiedEffect(s, AMPLIFY_BONUS) : s.effect
+  );
+  if (skills.some((s) => grafted.has(s.code))) effects.push(GRAFT_EFFECT);
+
+  for (const e of effects) {
     switch (e.kind) {
       case "REVIEW_YIELD":
         m.reviewYieldMultiplier = Math.max(m.reviewYieldMultiplier, e.multiplier);

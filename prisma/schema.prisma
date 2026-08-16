@@ -477,6 +477,58 @@ model FieldMaintenance {
   @@schema("public")
 }
 
+/**
+ * Append-only capital ledger — the passive currency.
+ *
+ * Deliberately a third currency with a job the other two do not do. Domain
+ * points measure what a subject is worth; mastery is *earned by answering*
+ * and buys new emblems. Capital accrues from what you already hold, whether
+ * or not you show up, and is only ever spent deepening emblems you own. So
+ * the three never compete for the same decision.
+ *
+ * Append-only for the same reason `MasteryLedgerEntry` is: a balance that is
+ * the sum of its history can be audited and replayed, where a mutable
+ * counter silently loses the reason it changed.
+ */
+model CapitalLedgerEntry {
+  id     String @id @default(cuid())
+  userId String
+  /** Positive for a claimed dividend, negative for an augment purchase. */
+  delta  Float
+  /** DIVIDEND | AUGMENT | ADJUSTMENT */
+  reason String
+  detail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, reason])
+  @@schema("public")
+}
+
+/**
+ * A permanent upgrade burned onto an emblem the user already owns.
+ *
+ * Keyed by `skillCode` rather than by `UnlockedSkill.id` so an augment
+ * survives any future re-issue of the unlock row, and unique per kind so the
+ * same emblem cannot be sold the same upgrade twice.
+ */
+model EmblemAugment {
+  id        String @id @default(cuid())
+  userId    String
+  skillCode String
+  /** AugmentKind from augments.ts: AMPLIFY | GRAFT | YIELD | PRESTIGE */
+  kind      String
+  /** Capital actually burned — recorded so a future rebalance can refund honestly. */
+  costPaid  Float  @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, skillCode, kind])
+  @@index([userId])
+  @@schema("public")
+}
+
 model FieldStreak {
   id            String   @id @default(cuid())
   userId        String
