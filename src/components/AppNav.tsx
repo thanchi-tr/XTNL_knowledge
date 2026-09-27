@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/dashboard", label: "Analytics" },
   { href: "/taxonomy", label: "Taxonomy" },
   { href: "/skills", label: "Skills" },
+  { href: "/town", label: "Town" },
 ];
 
 interface AppNavProps {
