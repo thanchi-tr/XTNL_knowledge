@@ -13,6 +13,7 @@ import { TREE_EFFORT, TREE_WOOD, growWoods, treeStage, winterCull } from "./wood
 import { ASCEND_FROM, domainBonus, finishCrafts, gearCap, isAway, isSpecial, returnFromSortie, xpToNext } from "./loot";
 import { summonHaunt } from "./combat";
 import { stepWilds, wildsHourly } from "./wilds";
+import { WILD_EFFORT, sowWild, wildAmount, wildCrop } from "./forage";
 import {
   MAP_H, MILITARY, Overlay, RAW_FOODS, Terrain, type Caravan, type CaravanOffer, type GameState, type ResourceKey, type Structure, type Villager,
 } from "./types";
@@ -451,7 +452,7 @@ function hourly(s: GameState, ctx: SimContext) {
   for (const job of s.clearing) {
     if (effort <= 0) break;
     const o = s.map.overlay[job.tile];
-    const need = o === Overlay.Tree ? TREE_EFFORT[treeStage(s.map.meta[job.tile])] : o === Overlay.Rock ? 4 : 3;
+    const need = o === Overlay.Tree ? TREE_EFFORT[treeStage(s.map.meta[job.tile])] : o === Overlay.Rock ? 4 : o === Overlay.Crop ? WILD_EFFORT : 3;
     const put = Math.min(effort, need - job.progress);
     job.progress += put;
     effort -= put;
@@ -466,12 +467,14 @@ function hourly(s: GameState, ctx: SimContext) {
       } else if (o === Overlay.Debris) {
         s.res.stone += 3;
         s.res.wood += 2;
+      } else if (o === Overlay.Crop) {
+        s.res[wildCrop(s.map.meta[job.tile])] += wildAmount(s.map.meta[job.tile]);
       }
       s.map.overlay[job.tile] = Overlay.None;
       s.map.meta[job.tile] = 0;
     }
   }
-  s.clearing = s.clearing.filter((j) => s.map.overlay[j.tile] === Overlay.Tree || s.map.overlay[j.tile] === Overlay.Rock || s.map.overlay[j.tile] === Overlay.Debris);
+  s.clearing = s.clearing.filter((j) => s.map.overlay[j.tile] === Overlay.Tree || s.map.overlay[j.tile] === Overlay.Rock || s.map.overlay[j.tile] === Overlay.Debris || s.map.overlay[j.tile] === Overlay.Crop);
 
   // ── Knights' pay ───────────────────────────────────────
   // Knights are paid in silver, a day's pay spread over its hours. Unpaid
@@ -549,6 +552,9 @@ function hourly(s: GameState, ctx: SimContext) {
     const { gone, snags, stand } = winterCull(s, r);
     log(s, `Winter sets in. ${gone} sprout${gone === 1 ? "" : "s"} and seedling${gone === 1 ? "" : "s"} die${gone === 1 ? "s" : ""}; ${snags} tree${snags === 1 ? "" : "s"} die${snags === 1 ? "s" : ""} standing as snag${snags === 1 ? "" : "s"}; ${stand} live${stand === 1 ? "s" : ""} to spring.`, "info");
   }
+
+  // Wild crops come up at dawn; winter kills all but the potato.
+  if (c.hour === 6) sowWild(s, r);
 
   // ── Night haunts ───────────────────────────────────────
   // Three nights' grace, like the raids. A warning at dusk; at nine, one

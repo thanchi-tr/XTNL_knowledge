@@ -10,6 +10,7 @@ import {
 import { forgeOf, stock, store, take } from "./loot";
 import { inSight } from "./vision";
 import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage } from "./woods";
+import { WILD_EFFORT, wildAmount, wildCrop } from "./forage";
 import { MILITARY, Overlay, Terrain, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
 
 /**
@@ -30,8 +31,17 @@ export function place(s: GameState, ctx: SimContext, type: StructureType, x: num
   pay(s.res, cost);
   const st = makeStructure(s, type, x, y, false);
   st.buildUntil = s.time + buildMinutes(s, ctx, CATALOG[type].buildHours);
+  // Wild crops on the plot are trampled under the footings.
+  trample(s, x, y, st.w, st.h);
   log(s, `Work begins on a ${CATALOG[type].name.toLowerCase()}.`);
   return null;
+}
+
+function trample(s: GameState, x: number, y: number, w: number, h: number) {
+  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) {
+    const i = yy * s.map.w + xx;
+    if (s.map.overlay[i] === Overlay.Crop) s.map.overlay[i] = s.map.meta[i] = 0;
+  }
 }
 
 export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: number[]): Result {
@@ -50,6 +60,7 @@ export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: n
       break;
     }
     pay(s.res, unit);
+    if (s.map.overlay[i] === Overlay.Crop) s.map.overlay[i] = s.map.meta[i] = 0;
     if (kind === "pavement") s.map.terrain[i] = Terrain.Pavement;
     else if (kind === "wall") {
       s.map.overlay[i] = Overlay.Wall;
@@ -110,7 +121,7 @@ export function clear(s: GameState, tiles: number[]): Result {
   let n = 0;
   for (const i of tiles) {
     const o = s.map.overlay[i];
-    if (o !== Overlay.Tree && o !== Overlay.Rock && o !== Overlay.Debris) continue;
+    if (o !== Overlay.Tree && o !== Overlay.Rock && o !== Overlay.Debris && o !== Overlay.Crop) continue;
     if (!inSight(s, i % s.map.w, Math.floor(i / s.map.w))) continue;
     if (!s.clearing.some((j) => j.tile === i)) {
       s.clearing.push({ tile: i, progress: 0 });
@@ -140,6 +151,10 @@ export function harvestYield(s: GameState, tile: number): { label: string; verb:
     return { label, verb: "Break up", gives, effort: 4 };
   }
   if (o === Overlay.Debris) return { label: "Rubble", verb: "Clear", gives: "3 stone, 2 wood — and the plot is free to build on", effort: 3 };
+  if (o === Overlay.Crop) {
+    const kind = s.map.meta[tile];
+    return { label: `Wild ${wildCrop(kind)}`, verb: "Gather", gives: `${wildAmount(kind)} ${wildCrop(kind)}`, effort: WILD_EFFORT };
+  }
   return null;
 }
 

@@ -29,10 +29,10 @@ import {
   alertRadius, burnRate, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, houseWarm, warmFields,
   idx, irrigation, isLit, lightRange, occupancy, rng, unlitBuildings, warmthRange, LIGHT_TYPES, MILITARY_TYPES,
   BULK, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, passiveRadius, storageCap,
-  WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost,
+  WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost, fitAt,
 } from "@/lib/town/sim/world";
 import { FOREST_FLOOR, REGROW, TILE_WOOD, forestOf, regrows } from "@/lib/town/sim/woods";
-import { PACK_SLOTS, canPack, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
+import { LOST_MINUTES, PACK_SLOTS, RATION_MEALS, adventureReach, canPack, packRation, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
 import { MAP_H, MAP_W, Overlay, Terrain, TILE, type GameState, type MonsterKind, type Structure, type StructureType, type Villager } from "@/lib/town/sim/types";
 import {
   drawFrame, drawMinimap, newWorld, structureArt, MINI_H, MINI_W, VIEW_H, VIEW_W, WORLD_H, WORLD_W,
@@ -177,6 +177,8 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   const effectsRef = useRef<Map<number, Effect[]>>(new Map());
   const toolRef = useRef(tool);
   const selectedRef = useRef(selected);
+  /** A building offered in the Build here list, shown where it would go. */
+  const previewRef = useRef<{ type: StructureType; x: number; y: number } | null>(null);
   const tileRef = useRef(tileSel);
   const speedRef = useRef(speedIdx);
   useEffect(() => {
@@ -260,6 +262,12 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           const occ = occupancy(s);
           const ok = tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill" || tl.kind === "upwall" || tiles.every((i) => !checkTile(s, i, tl.kind as "pavement", occ));
           ov.paint = { tiles, ok, kind: tl.kind };
+        }
+        const pv = previewRef.current;
+        if (!ov.ghost && pv) {
+          const def = CATALOG[pv.type];
+          const fake: Structure = { id: 999999, type: pv.type, x: pv.x, y: pv.y, w: def.w, h: def.h, level: 1, hp: 1, condition: 100, workers: [] };
+          ov.ghost = { type: pv.type, x: pv.x, y: pv.y, w: def.w, h: def.h, ok: true, art: structureArt(fake, profile.archetype) };
         }
         drawFrame(c, world.current, s, cam.current, ov, (now - t0) / 1000);
         // The camera, mirrored onto the element: lets tests and tools map a
@@ -454,8 +462,9 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       setSelected(id || null);
       // Nothing built here: a tree, a rock or rubble can be picked to harvest.
       const tile = idx(t[0], t[1]);
-      const isWall = s.map.overlay[tile] === Overlay.Wall || s.map.overlay[tile] === Overlay.Gate;
-      const loose = !id && (harvestYield(s, tile) || s.map.terrain[tile] === Terrain.Forest || isWall) ? tile : null;
+      // Open ground too: it offers what could be built there.
+      const loose = !id ? tile : null;
+      previewRef.current = null;
       setTileSel(loose);
       if (id || loose !== null) {
         setTab("info");
@@ -681,8 +690,8 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               tool.kind === "fill" ? `Drag over water to fill it in from the bank. ${FILL_HOURS} villager-hours a tile (half with tools).` :
               tool.kind === "demolish" ? "Click a building to tear it down. It leaves rubble to clear." :
               tool.kind === "upwall" ? "Drag a box over wall and gate to raise every tile in it a level: more hits to break, and at 10, 20 and 30 rebuilt grander. Click a wall with Select to see its level." :
-              tool.kind === "scout" ? "Click where to scout — anywhere in the fog. The hero walks out with their torches and comes home when the last burns out." :
-              "Drag to pan · Ctrl+scroll or pinch to zoom · click a building to manage it · minimap to jump. Only troops posted to a watchtower defend."}
+              tool.kind === "scout" ? "Tap where to go — anywhere in the fog. The hero eats a ration every 12 hours and burns a torch every 2; lighting the last one turns them home. No torch beyond the town's light and they lose the way." :
+              "Drag to pan · Ctrl+scroll or pinch to zoom · tap a building to manage it, or open ground to build there · minimap to jump. Only troops posted to a watchtower defend."}
           </p>
         </div>
 
@@ -696,7 +705,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           <div className="tg-tabs" role="tablist">
             {(["build", "info", "hall", "raid", "trade", "log"] as const).map((k) => (
               <button key={k} role="tab" aria-selected={tab === k} className={`tg-tab ${tab === k ? "on" : ""} ${(k === "raid" && s.raid) || (k === "trade" && s.caravan) ? "alert" : ""}`} onClick={() => setTab(k)}>
-                {{ build: "Build", info: "Building", hall: "Census", raid: "Raids", trade: "Trade", log: "Chronicle" }[k]}
+                {{ build: "Build", info: sel ? "Building" : tileSel !== null ? "Here" : "Building", hall: "Census", raid: "Raids", trade: "Trade", log: "Chronicle" }[k]}
               </button>
             ))}
           </div>
@@ -712,7 +721,16 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               : tileSel !== null && harvestYield(s, tileSel) ? <TilePanel s={s} tile={tileSel} run={run} />
               : tileSel !== null && s.map.terrain[tileSel] === Terrain.Forest ? <ForestPanel s={s} tile={tileSel} />
               : tileSel !== null && (s.map.overlay[tileSel] === Overlay.Wall || s.map.overlay[tileSel] === Overlay.Gate) ? <WallPanel s={s} tile={tileSel} run={run} />
-              : <p className="town-sub">Click a building on the map — or a tree, rock or rubble to harvest it, or a forest to see its wood.</p>)}
+              : tileSel !== null ? <BuildHere s={s} tile={tileSel} preview={(p) => (previewRef.current = p)} build={(type, x, y) => {
+                previewRef.current = null;
+                const err = place(s, ctx, type, x, y);
+                run(() => err);
+                if (!err) {
+                  setTileSel(null);
+                  if (full) setQuest(false);
+                }
+              }} />
+              : <p className="town-sub">Tap a building on the map — or open ground to build there, a tree, rock, rubble or wild crop to gather it, or a forest to see its wood.</p>)}
             {tab === "hall" && (
               <>
                 <Goal s={s} scenario={scenario} />
@@ -1561,9 +1579,60 @@ function WallPanel({ s, tile, run }: { s: GameState; tile: number; run: (fn: () 
   );
 }
 
+/** Open ground: what could be built here, placed so it covers the tapped tile. */
+function BuildHere({ s, tile, preview, build }: {
+  s: GameState; tile: number;
+  preview: (p: { type: StructureType; x: number; y: number } | null) => void;
+  build: (type: StructureType, x: number, y: number) => void;
+}) {
+  const tx = tile % MAP_W;
+  const ty = Math.floor(tile / MAP_W);
+  const occ = occupancy(s);
+  const opts = BUILDABLE.map((t) => ({ t, fit: fitAt(s, t, tx, ty, occ) }));
+  const fits = opts.filter((o) => "x" in o.fit) as { t: StructureType; fit: { x: number; y: number } }[];
+  const not = opts.filter((o) => "reason" in o.fit) as { t: StructureType; fit: { reason: string } }[];
+  return (
+    <div className="tg-info">
+      <p className="town-kicker">Tile {tx}, {ty}</p>
+      <h2 className="town-title">Build here</h2>
+      {fits.length ? (
+        <div className="tg-here">
+          {fits.map(({ t, fit }) => {
+            const def = CATALOG[t];
+            const afford = Object.entries(def.cost).every(([k, v]) => s.res[k as keyof GameState["res"]] >= (v as number));
+            return (
+              <button
+                key={t} className={`tg-here-item ${afford ? "" : "poor"}`} disabled={!afford}
+                onPointerEnter={(e) => e.pointerType === "mouse" && preview({ type: t, ...fit })}
+                onPointerLeave={() => preview(null)}
+                onClick={() => build(t, fit.x, fit.y)}
+                title={def.blurb}
+              >
+                <b>{def.name}</b>
+                <span>{def.w}×{def.h} · {costText(def.cost) || "free"}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="town-sub">Nothing can be built here.</p>
+      )}
+      {not.length > 0 && (
+        <details className="tg-here-not">
+          <summary>Won&apos;t fit here ({not.length})</summary>
+          <ul>{not.map(({ t, fit }) => <li key={t}><b>{CATALOG[t].name}</b> — {fit.reason}</li>)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function HeroPack({ s, v, run, onScout }: { s: GameState; v: Villager; run: (fn: () => string | null) => void; onScout: (villagerId: number) => void }) {
   const pack = v.pack ?? Array(PACK_SLOTS).fill(null);
   const torches = pack.filter((p) => p?.startsWith("torch")).length;
+  const rations = pack.filter((p) => p === "ration").length;
+  const reach = adventureReach(v);
+  const sc = v.scout;
   return (
     <div className="tg-pack">
       <div className="tg-pack-slots" aria-label="Pack">
@@ -1573,24 +1642,35 @@ function HeroPack({ s, v, run, onScout }: { s: GameState; v: Villager; run: (fn:
           return (
             <button
               key={i} className={`tg-slot ${p ? "" : "empty"} ${lit ? "lit" : ""}`}
-              title={p ? (lit ? `Torch, burning — ${left}h left` : "Torch — burns 2 hours once lit. Click to put it back.") : "Empty slot"}
+              title={p === "ration" ? "Ration — feeds them half a day. Tap to put it back." : p ? (lit ? `Torch, burning — ${left}h left` : "Torch — burns 2 hours once lit. Tap to put it back.") : "Empty slot"}
               onClick={() => p && run(() => unpackSlot(s, v.id, i))}
             >
-              {p ? <IconCanvas id="torches" /> : null}
+              {p === "ration" ? <IconCanvas id="meals" /> : p ? <IconCanvas id="torches" /> : null}
               {lit && <span>{left}h</span>}
             </button>
           );
         })}
       </div>
-      {v.scout ? (
-        <span className="town-dim">
-          Out in the fog, {v.scout.phase === "out" ? "heading out" : "coming home"} — {torches} torch{torches === 1 ? "" : "es"} left.
+      {sc ? (
+        <span className={sc.lost !== undefined || (sc.fed ?? 1) <= 0 ? "warn-text" : "town-dim"}>
+          {sc.lost !== undefined
+            ? `Lost in the fog without a torch — ${Math.max(0, Math.ceil(LOST_MINUTES - sc.lost))} minutes before they are gone. Light the ground near them to guide them home.`
+            : `On an adventure, ${sc.phase === "out" ? "heading out" : "coming home"} — ${torches} torch${torches === 1 ? "" : "es"}, ${rations} ration${rations === 1 ? "" : "s"} left${(sc.fed ?? 1) <= 0 ? ", starving" : ""}.`}
+          {Object.keys(sc.haul ?? {}).length > 0 && ` Found so far: ${Object.entries(sc.haul!).map(([k, n]) => `${n} ${k}`).join(", ")}.`}
         </span>
       ) : (
-        <div className="town-row">
-          <button className="town-btn ghost sm" onClick={() => run(() => packTorch(s, v.id))} disabled={s.res.torches < 1 || pack.every(Boolean)}>+ Torch ({Math.floor(s.res.torches)})</button>
-          <button className="town-btn ghost sm" onClick={() => onScout(v.id)} disabled={!pack.some((p) => p === "torch")}>Scout the fog…</button>
-        </div>
+        <>
+          <div className="town-row">
+            <button className="town-btn ghost sm" onClick={() => run(() => packTorch(s, v.id))} disabled={s.res.torches < 1 || pack.every(Boolean)}>+ Torch ({Math.floor(s.res.torches)})</button>
+            <button className="town-btn ghost sm" onClick={() => run(() => packRation(s, v.id))} disabled={pack.every(Boolean)}>+ Ration ({RATION_MEALS} meals)</button>
+            <button className="town-btn sm" onClick={() => onScout(v.id)} disabled={!torches || !rations}>Adventure…</button>
+          </div>
+          <span className="town-dim">
+            {torches && rations
+              ? `Light for ${reach.lightHours}h, food for ${reach.foodHours}h: about ${reach.tiles} tiles out and back. The last torch lit turns them home — past the town's light without one, they are lost.`
+              : "Pack at least one torch and one ration to set out."}
+          </span>
+        </>
       )}
     </div>
   );

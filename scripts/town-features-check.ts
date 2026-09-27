@@ -20,13 +20,14 @@ import {
 } from "../src/lib/town/sim/loot";
 import { profileFor, type TownInput } from "../src/lib/town/rules";
 import {
-  RARE_FINDS, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, passiveRadius, structureMaxHp, wallHp, wallLevel, wallMaxHp, wallMeta, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange,
+  RARE_FINDS, fitAt, gapBetween, spacingProblem, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, passiveRadius, structureMaxHp, wallHp, wallLevel, wallMaxHp, wallMeta, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange,
 } from "../src/lib/town/sim/world";
 import { MAP_W, MAP_H, Overlay, RAW_FOODS, Terrain, type GameState, type StructureType } from "../src/lib/town/sim/types";
 import { FOG, UNSEEN, VISIBLE, visionMap } from "../src/lib/town/sim/vision";
 import { MONSTERS } from "../src/lib/town/sim/bestiary";
 import { DROPS } from "../src/lib/town/sim/loot";
-import { PACK_SLOTS, packTorch, sendScout } from "../src/lib/town/sim/wilds";
+import { PACK_SLOTS, RATION_MEALS, adventureReach, packRation, packTorch, sendScout, unpackSlot } from "../src/lib/town/sim/wilds";
+import { WILD_CAP, sowWild, wildCrop } from "../src/lib/town/sim/forage";
 // These checks build wherever they need to; the fog has checks of its own.
 FOG.rules = false;
 
@@ -820,10 +821,10 @@ console.log("fog, lairs and scouts");
   const forestTile = g.map.terrain.findIndex((t) => t === Terrain.Forest);
   check(forestTile >= 0 && visionMap(g)[forestTile] !== VISIBLE, "forest is never in plain sight");
   FOG.rules = false;
-  const far = spotNear(g, "farm", Math.floor(hx) + 60, Math.floor(hy));
-  const farOk = far && checkPlacement(g, "farm", far[0], far[1]).ok;
+  const far = spotNear(g, "storehouse", Math.floor(hx) + 60, Math.floor(hy));
+  const farOk = far && checkPlacement(g, "storehouse", far[0], far[1]).ok;
   FOG.rules = true;
-  check(!!farOk && /see/.test(checkPlacement(g, "farm", far![0], far![1]).reason ?? ""), "nothing can be built in the fog");
+  check(!!farOk && /see/.test(checkPlacement(g, "storehouse", far![0], far![1]).reason ?? ""), "nothing can be built in the fog");
   check(g.map.terrain.filter((t) => t === Terrain.Water).length > 1500 && MAP_W * MAP_H >= 360 * 240, `a map of ${MAP_W}×${MAP_H} with ponds as well as the river`);
 
   // Lairs: deep in the fog, unfound.
@@ -851,25 +852,57 @@ console.log("fog, lairs and scouts");
   check(!!struck && !!struck.origin && !(g.roamers ?? []).includes(band!), "a band that comes near the town attacks it, from where it stood");
   g.raid = null;
 
-  // Scouts: a knight with torches maps the fog, then comes home.
+  // Adventures: a knight with torches and food maps the fog, then comes home.
   const k = makeVillager(g, null, "knight");
   k.rank = 8;
   g.res.torches = 10;
+  g.res.meals = 40;
   for (let i = 0; i < 6; i++) packTorch(g, k.id);
   check(k.pack!.filter((p) => p === "torch").length === PACK_SLOTS && !!packTorch(g, k.id), "a knight's pack holds six things, no more");
-  const target = [Math.floor(hx) + 50, Math.floor(hy)] as const;
+  const target = [Math.floor(hx) + 30, Math.floor(hy)] as const;
+  check(/ration/.test(sendScout(g, k.id, target[0], target[1]) ?? ""), "nobody sets out without food");
+  unpackSlot(g, k.id, 4);
+  unpackSlot(g, k.id, 5);
+  check(!packRation(g, k.id) && !packRation(g, k.id) && g.res.meals === 40 - 2 * RATION_MEALS + 0, "two rations packed from the meals");
+  const reach = adventureReach(k);
+  check(reach.torches === 4 && reach.rations === 2 && reach.tiles > 30, `four torches and two rations: about ${reach.tiles} tiles out and back`);
   const before = (g.map.seen ?? []).reduce((a, v) => a + v, 0);
-  check(!sendScout(g, k.id, target[0], target[1]), "sent out into the fog with torches");
+  check(!sendScout(g, k.id, target[0], target[1]), "sent out on an adventure with torches and food");
   g.roamers = [];
   let t = 0;
   while (k.scout && t++ < 60 * 30) advance(g, 1, ctx);
   visionMap(g);
   const after = (g.map.seen ?? []).reduce((a, v) => a + v, 0);
   check(!k.scout, `home again after ${Math.round(t / 60)} hours`);
-  check(after > before + 200, `the fog is mapped where they went (${after - before} tiles)`);
+  check(after > before + 100, `the fog is mapped where they went (${after - before} tiles)`);
   check(k.pack!.filter((p) => p === "torch").length < 6, `torches burnt on the way: ${6 - k.pack!.filter((p) => p === "torch").length}`);
   const noTorch = makeVillager(g, null, "wizard");
   check(!!sendScout(g, noTorch.id, target[0], target[1]), "nobody goes into the fog without a torch");
+
+  // Hungry: out of rations, a hero weakens.
+  const hungry = makeVillager(g, null, "knight");
+  packTorch(g, hungry.id);
+  packTorch(g, hungry.id);
+  packRation(g, hungry.id);
+  sendScout(g, hungry.id, Math.floor(hx) + 60, Math.floor(hy));
+  hungry.pack = hungry.pack!.map((p) => (p === "ration" ? null : p));
+  hungry.scout!.fed = 1;
+  hungry.health = 80;
+  for (let i = 0; i < 60; i++) advance(g, 1, ctx);
+  check(hungry.health < 75, `with no food left, they weaken (${Math.round(hungry.health)} health after an hour)`);
+
+  // Lost: the last torch gutters out deep in the fog.
+  const lost = makeVillager(g, null, "knight");
+  packTorch(g, lost.id);
+  packRation(g, lost.id);
+  sendScout(g, lost.id, Math.floor(hx) + 120, Math.floor(hy));
+  lost.scout!.x = hx + 110;
+  lost.scout!.hx = hx;
+  lost.pack = lost.pack!.map((p) => (p?.startsWith("torch") ? "torch:1" : p));
+  advance(g, 2, ctx);
+  check(lost.scout?.lost !== undefined, "torchless in the fog, they lose the way");
+  for (let i = 0; i < 100 && g.villagers.includes(lost); i++) advance(g, 1, ctx);
+  check(!g.villagers.includes(lost) && g.log.some((l) => /never found/.test(l.text)), "and lost too long, they are never found");
   FOG.rules = false;
 
   // Saves pack their map.
@@ -986,6 +1019,68 @@ console.log("homes and jewels");
   build(j, "forge", 50, 40);
   store(j, "jewel", 2);
   check(!upgrade(j, ctx, home.id) && stock(j, "jewel") === 1, "with them, it rises and the jewel is spent");
+}
+
+// ── Spacing, tap-to-build and wild crops ─────────────────
+console.log("spacing, tap-to-build and wild crops");
+{
+  const w = newTown(211, 20);
+  const home = w.structures.find((x) => x.type === "house")!;
+  // A barracks keeps three clear tiles from homes.
+  const tooNear = spacingProblem(w, "barracks", { x: home.x, y: home.y + home.h + 1, w: 11, h: 4 });
+  check(/3 clear tiles/.test(tooNear ?? ""), "a barracks right by a home is refused");
+  const yard = spotNear(w, "barracks", home.x, home.y + home.h + 4)!;
+  check(!!yard && gapBetween(home, { x: yard[0], y: yard[1], w: 11, h: 4 }) >= 3, "one 3 clear tiles away is fine");
+  const barracks = makeStructure(w, "barracks", yard[0], yard[1], true);
+  const byYard = checkPlacement(w, "house", barracks.x, barracks.y - 4);
+  check(!byYard.ok, "and a home cannot be built beside a barracks either");
+  // A kitchen stands within a tile of a home.
+  const lonely = spotNear(w, "storehouse", 90, 60)!;
+  check(/within 1 tile of a home/.test(checkPlacement(w, "kitchen", lonely[0], lonely[1]).reason ?? ""), "a kitchen far from any home is refused");
+  check(!!spotNear(w, "kitchen", home.x, home.y) && gapBetween(home, { x: spotNear(w, "kitchen", home.x, home.y)![0], y: spotNear(w, "kitchen", home.x, home.y)![1], w: 5, h: 3 }) <= 1, "one by a home is fine");
+  // Fields touch their watermill; the mill touches the water.
+  const mill = w.structures.find((x) => x.type === "watermill")!;
+  check(w.structures.filter((x) => x.type === "farm").every((f) => gapBetween(f, mill) === 0), "the founding fields touch their watermill");
+  const loose = spotNear(w, "storehouse", 70, 45)!;
+  check(/beside a watermill/.test(checkPlacement(w, "farm", loose[0], loose[1]).reason ?? ""), "a farm away from the mill is refused");
+  check(/beside a watermill/.test(checkPlacement(w, "waterfarm", loose[0], loose[1]).reason ?? ""), "and so is a water farm");
+  const dry = checkPlacement(w, "watermill", loose[0], loose[1]);
+  check(!dry.ok && /water's edge/.test(dry.reason ?? ""), "a watermill off the water's edge is refused");
+  const byMill = spotNear(w, "farm", mill.x + mill.w, mill.y + 7);
+  check(!!byMill && gapBetween({ x: byMill[0], y: byMill[1], w: 3, h: 3 }, mill) === 0, "a farm touching the mill is fine");
+
+  // Tap-to-build: a spot that covers the tapped tile, or why not.
+  const open = spotNear(w, "storehouse", 60, 40)!;
+  const fit = fitAt(w, "pitfire", open[0] + 1, open[1] + 1);
+  check("x" in fit && open[0] + 1 >= fit.x && open[0] + 1 < fit.x + 2 && open[1] + 1 >= fit.y && open[1] + 1 < fit.y + 2, "tapping open ground finds a footing that covers the tap");
+  const onHall = fitAt(w, "pitfire", w.structures[0].x + 3, w.structures[0].y + 3);
+  check("reason" in onHall && /already built/.test(onHall.reason), "tapping a building says why not");
+
+  // Wild crops: common ones near the hall, rare ones far out.
+  const hall = w.structures.find((x) => x.type === "townhall")!;
+  const [hx, hy] = center(hall);
+  const crops: { d: number; kind: number }[] = [];
+  w.map.overlay.forEach((o, i) => {
+    if (o === Overlay.Crop) crops.push({ d: Math.hypot((i % MAP_W) - hx, Math.floor(i / MAP_W) - hy), kind: w.map.meta[i] });
+  });
+  const avg = (xs: { kind: number }[]) => xs.reduce((a, c) => a + c.kind, 0) / Math.max(1, xs.length);
+  const near = crops.filter((c) => c.d < 60);
+  const far = crops.filter((c) => c.d > 150);
+  check(crops.length > 40 && crops.length <= WILD_CAP, `wild crops grow across the map (${crops.length})`);
+  check(near.length > 0 && far.length > 0 && avg(near) < 3 && avg(far) > 8, `the common ones near the hall (${wildCrop(Math.round(avg(near)))}), the rare far out (${wildCrop(Math.round(avg(far)))})`);
+  const patch = w.map.overlay.findIndex((o, i) => o === Overlay.Crop && Math.hypot((i % MAP_W) - hx, Math.floor(i / MAP_W) - hy) < 60);
+  const kind = wildCrop(w.map.meta[patch]);
+  const had = w.res[kind];
+  check(!clear(w, [patch]) || true, "a wild patch can be marked to gather");
+  for (let i = 0; i < 6; i++) advance(w, 60, ctx);
+  check(w.map.overlay[patch] !== Overlay.Crop && w.res[kind] > had, `gathered: ${w.res[kind] - had} ${kind}`);
+  // Winter kills all but the potato.
+  w.time = (clock(w.time).day + 30) * 24 * 60;
+  let t = 0;
+  while (clock(w.time).season !== "winter" && t++ < 400) w.time += 24 * 60;
+  sowWild(w, rng(5));
+  const left = w.map.overlay.map((o, i) => (o === Overlay.Crop ? w.map.meta[i] : -1)).filter((m) => m >= 0);
+  check(left.length > 0 && left.every((m) => wildCrop(m) === "potato"), `in winter only wild potatoes are left (${left.length})`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

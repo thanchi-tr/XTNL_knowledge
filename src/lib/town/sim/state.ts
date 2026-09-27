@@ -8,6 +8,8 @@ import {
 } from "./types";
 import { MATURE, TILE_WOOD, treeMeta } from "./woods";
 import { placeLairs } from "./wilds";
+import { FOG } from "./vision";
+import { sowWild } from "./forage";
 
 /**
  * Founding a town, and the read-only questions everything else asks of it:
@@ -128,35 +130,44 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   if (founding === "starter") {
     foundStarter(s, bonus);
     placeLairs(s);
+    firstCrops(s);
     return s;
   }
   pave(20, 29, 60, 29); // high street under the hall
-  pave(21, 30, 21, 44); // lane down to the fields
   pave(37, 30, 37, 44); // lane to the market
 
   makeStructure(s, "house", 23, 30, true);
   makeStructure(s, "house", 29, 30, true);
   // The founders bring a few days' wood for the first fire.
   makeStructure(s, "pitfire", 34, 30, true).fuel = 60;
-  makeStructure(s, "kitchen", 43, 30, true);
+  // The kitchen stands by the homes it feeds, just behind them.
+  makeStructure(s, "kitchen", 29, 33, true);
   makeStructure(s, "market", 38, 34, true);
 
-  // Watermill: the first spot beside the river near the fields.
-  for (let y = 34; y < 44; y++) {
-    const x0 = riverCenter(y) + 2;
-    let placed = false;
-    for (let x = x0; x < x0 + 6; x++) {
+  // Watermill: the first spot on the river's edge near the fields.
+  // The founders know the riverbank before the fog closes in: sight is no bar here.
+  let mill: Structure | undefined;
+  const fogRules = FOG.rules;
+  FOG.rules = false;
+  for (let y = 34; y < 44 && !mill; y++) {
+    const x0 = riverCenter(y);
+    for (let x = x0; x < x0 + 8; x++) {
       if (checkPlacement(s, "watermill", x, y).ok) {
-        makeStructure(s, "watermill", x, y, true);
-        placed = true;
+        mill = makeStructure(s, "watermill", x, y, true);
         break;
       }
     }
-    if (placed) break;
   }
-  const farmA = makeStructure(s, "farm", 22, 33, true);
-  const farmB = makeStructure(s, "farm", 22, 36, true);
+  FOG.rules = fogRules;
+  // Its two fields right beside it, and a lane from them round to the market.
+  const fx = mill ? mill.x + mill.w : 22;
+  const fy = mill ? mill.y : 34;
+  const farmA = makeStructure(s, "farm", fx, fy, true);
+  const farmB = makeStructure(s, "farm", fx, fy + 3, true);
   farmB.mode = "wheat";
+  pave(fx + 3, fy, fx + 3, fy + 6);
+  pave(fx, fy + 6, 37, fy + 6);
+  pave(37, 44, 37, fy + 6);
 
   s.res = starterStores(bonus);
 
@@ -179,10 +190,17 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
 
   s.log.push({ t: s.time, text: "The town is founded. Six villagers, two fields, one fire, a few lamps.", tone: "info" });
   placeLairs(s);
+  firstCrops(s);
   // Everything above was placed while the occupancy was empty; confirm the
   // layout is still legal now that it is not, so a bad seed fails loudly.
   void occupancy(s);
   return s;
+}
+
+/** The country a town is founded in already has its wild crops. */
+function firstCrops(s: GameState) {
+  const r = rng(s.seed * 5 + 3);
+  for (let d = 0; d < 8; d++) sowWild(s, r);
 }
 
 /** Starting stores: enough to put up a fire, a field and a road or two, and not much more. */

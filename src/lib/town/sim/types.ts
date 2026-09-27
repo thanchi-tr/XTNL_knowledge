@@ -27,14 +27,14 @@ export const MAP_H = 240;
 /* Plain constant objects rather than `const enum`: Next compiles each file
    in isolation, and a const enum imported across files is not inlined. */
 export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4 } as const;
-export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5, Lair: 6 } as const;
+export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5, Lair: 6, Crop: 7 } as const;
 
 export interface MapState {
   w: number;
   h: number;
   terrain: number[];
   overlay: number[];
-  /** Per-tile extra: tree variant, rock kind, wall hp, forest pool. */
+  /** Per-tile extra: tree variant, rock kind, wall hp, forest pool, wild crop kind. */
   meta: number[];
   /** 1 where the town has ever seen: the fog lifts to a thin mist there, not the full cloud. */
   seen?: number[];
@@ -292,6 +292,14 @@ export interface Scout {
   hx: number;
   hy: number;
   phase: "out" | "back";
+  /** Minutes of food still in them; when it runs out they eat a ration, or go hungry. */
+  fed?: number;
+  /** Minutes wandering lost, torchless in the fog. Too long and they are never seen again. */
+  lost?: number;
+  /** What they have found out there, brought home if they come home. */
+  haul?: Partial<Record<ResourceKey, number>>;
+  /** When the next find is rolled for. */
+  nextFindAt?: number;
 }
 
 export type LairKind = "tomb" | "dragonpit" | "shadowgate";

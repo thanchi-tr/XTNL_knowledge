@@ -4,7 +4,8 @@ import { grass, cobbles, sandBank, iceField } from "../art/textures";
 import { frosted, type FrostMode } from "../art/winter";
 import { storehouse, armySchool, armyPoint, lairArt, unitHome, rowHouse, duplexHome, apartmentBlock } from "../art/buildings3";
 import { GRADES, then, mix, stampLight, applyEnvironmentLighting, type Grade } from "./lighting";
-import { pine, oak, crop, youngTree, seedling } from "../art/nature";
+import { pine, oak, crop, youngTree, seedling, type CropArt } from "../art/nature";
+import { wildCrop } from "@/lib/town/sim/forage";
 import { keep, townhouse, forge, barracks, tower, mine, type RoofStyle } from "../art/buildings";
 import {
   pitfire, school, watermill, drawWheel, kitchen, refinery, archery, armoury, wizardHut, nobleYard,
@@ -382,7 +383,7 @@ function chunkKey(s: GameState, arch: string, cx: number, cy: number, winterSig:
       const i = y * MAP_W + x;
       const o = overlay[i];
       const t = terrain[i];
-      const m = o === Overlay.Wall || o === Overlay.Gate ? grade(wallLevel(meta[i])) : o === Overlay.Tree || o === Overlay.Rock ? meta[i] : t === Terrain.Forest ? (meta[i] >= TILE_WOOD / 2 ? 3 : meta[i] >= TILE_WOOD / 5 ? 2 : meta[i] > TILE_WOOD / 20 ? 1 : 0) : 0;
+      const m = o === Overlay.Wall || o === Overlay.Gate ? grade(wallLevel(meta[i])) : o === Overlay.Tree || o === Overlay.Rock || o === Overlay.Crop ? meta[i] : t === Terrain.Forest ? (meta[i] >= TILE_WOOD / 2 ? 3 : meta[i] >= TILE_WOOD / 5 ? 2 : meta[i] > TILE_WOOD / 20 ? 1 : 0) : 0;
       h = (h * 31 + t * 7 + o * 13 + m) | 0;
     }
   }
@@ -473,6 +474,15 @@ function composeRegion(s: GameState, arch: TownProfile["archetype"], X0: number,
         upright(tree, X + TILE / 2 - tree.width / 2, Y + TILE - tree.height + 2, Y + TILE, X + TILE / 2);
       } else if (o === Overlay.Rock) {
         upright(dress(rockNode(meta[i], i % 3), "cap"), X - 2, Y - 2, Y + TILE, X + TILE / 2);
+      } else if (o === Overlay.Crop) {
+        // A wild patch: two plants of the crop, a little apart.
+        const plant = dress(crop(wildCrop(meta[i]) as CropArt, 2), "tree");
+        if (X + TILE > X0 && X < X0 + RW && Y + TILE > Y0 && Y < Y0 + RH) {
+          items.push({ base: Y + TILE - 1, draw: () => {
+            c.drawImage(plant, X, Y);
+            c.drawImage(plant, X + 3, Y - 1);
+          } });
+        }
       } else if (o === Overlay.Debris) {
         if (X + TILE > X0 && X < X0 + RW && Y + TILE > Y0 && Y < Y0 + RH) items.push({ base: Y + 1, draw: () => c.drawImage(debris(i % 5), X, Y) });
       } else if (o === Overlay.Wall || o === Overlay.Gate) {
@@ -1249,7 +1259,7 @@ export function drawMinimap(c: Ctx, s: GameState, cam: Camera, origin: [number, 
       }
       const o = s.map.overlay[i];
       const iced = !!warm && !warmAt(warm, [tx + 0.5, ty + 0.5]);
-      const hex = o === Overlay.Lair ? "#6a4a80" : o === Overlay.Wall || o === Overlay.Gate ? "#c4c0b8" : o === Overlay.Tree ? "#34583a" : o === Overlay.Rock ? "#747480" : o === Overlay.Debris ? "#5a4230" : (iced ? MINI_ICE : MINI_COLORS)[s.map.terrain[i]];
+      const hex = o === Overlay.Lair ? "#6a4a80" : o === Overlay.Wall || o === Overlay.Gate ? "#c4c0b8" : o === Overlay.Tree ? "#34583a" : o === Overlay.Rock ? "#747480" : o === Overlay.Debris ? "#5a4230" : o === Overlay.Crop ? "#8a9a4a" : (iced ? MINI_ICE : MINI_COLORS)[s.map.terrain[i]];
       let rgb = parseInt(hex.slice(1), 16);
       if (v === MAPPED) rgb = ((rgb >> 1) & 0x7f7f7f) + 0x141414; // dimmed: seen, not watched
       out[y * MINI_W + x] = (0xff000000 | ((rgb & 255) << 16) | (rgb & 0xff00) | (rgb >>> 16)) >>> 0;

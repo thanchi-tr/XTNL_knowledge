@@ -1,4 +1,4 @@
-import { ARMY_PER_POINT, CATALOG, KNIGHT_TITLES, STORE_PER_LEVEL, grade, knightTitle, type Cost } from "./catalog";
+import { ARMY_PER_POINT, BARRACKS_CLEARANCE, CATALOG, KITCHEN_REACH, KNIGHT_TITLES, STORE_PER_LEVEL, grade, knightTitle, type Cost } from "./catalog";
 import { MATURE, SEEDLING, SPROUT, TILE_WOOD, YOUNG, treeMeta } from "./woods";
 import { inSight } from "./vision";
 import {
@@ -89,7 +89,8 @@ export function generateMap(seed: number): MapState {
     const py0 = 4 + r() * (MAP_H - 8);
     const rx = 1.8 + r() * 3;
     const ry = 1.4 + r() * 2.4;
-    if (dist(home, [px0, py0]) < 16) continue;
+    // Keep the founding ground dry: the first fields and roads go there.
+    if (dist(home, [px0, py0]) < 16 || (px0 < 66 && py0 > 12 && py0 < 58)) continue;
     for (let y = Math.floor(py0 - ry - 2); y <= Math.ceil(py0 + ry + 2); y++) {
       for (let x = Math.floor(px0 - rx - 2); x <= Math.ceil(px0 + rx + 2); x++) {
         if (!inBounds(x, y)) continue;
@@ -221,7 +222,10 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
     }
   }
   const ring = ringOf(x, y, def.w, def.h);
-  if (!reason && def.needsRiver && !ring.some((i) => s.map.terrain[i] === Terrain.Water || s.map.terrain[i] === Terrain.Bank && ringOf(tx(i), ty(i), 1, 1).some((j) => s.map.terrain[j] === Terrain.Water))) {
+  if (!reason && type === "watermill" && !ring.some((i) => s.map.terrain[i] === Terrain.Water)) {
+    reason = "A watermill must stand right on the water's edge — touching the river or a pond.";
+  }
+  if (!reason && def.needsRiver && type !== "watermill" && !ring.some((i) => s.map.terrain[i] === Terrain.Water || s.map.terrain[i] === Terrain.Bank && ringOf(tx(i), ty(i), 1, 1).some((j) => s.map.terrain[j] === Terrain.Water))) {
     reason = `A ${def.name.toLowerCase()} must be placed next to the river.`;
   }
   if (!reason && def.needsForest && !ring.some((i) => s.map.terrain[i] === Terrain.Forest)) {
@@ -242,6 +246,7 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
       reason = `Each army point needs ${ARMY_PER_POINT} troops and a knight to lead it: the town has ${troops} troops and ${captains} knight${captains === 1 ? "" : "s"}, enough for ${allowed}${have ? `, and has ${have}` : ""}.`;
     }
   }
+  if (!reason) reason = spacingProblem(s, type, { x, y, w: def.w, h: def.h });
   // Last, so every other reason is given first: nobody builds blind.
   if (!reason && !inSight(s, x, y, def.w, def.h)) reason = "Nobody can see there — push the fog back with a fire, a lamp or the hall's reach first.";
   return { ok: !reason, reason, bad };
@@ -395,6 +400,60 @@ export function structureMaxHp(st: { type: StructureType; level: number }): numb
 
 /** A home: a house (at any of its tiers) or an apartment. */
 export const isHome = (st: { type: StructureType }) => st.type === "house" || st.type === "apartment";
+
+type Rect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Where a building of this type could go so that it covers a tapped tile:
+ * centred on it if that is legal, else the nearest legal footing that still
+ * covers it. Otherwise why not, as the centred placement sees it.
+ */
+export function fitAt(s: GameState, type: StructureType, tx: number, ty: number, occ = occupancy(s)): { x: number; y: number } | { reason: string } {
+  const def = CATALOG[type];
+  const cx = tx - Math.floor(def.w / 2);
+  const cy = ty - Math.floor(def.h / 2);
+  const tries: [number, number][] = [];
+  for (let y = ty - def.h + 1; y <= ty; y++) for (let x = tx - def.w + 1; x <= tx; x++) tries.push([x, y]);
+  tries.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
+  let why: string | undefined;
+  for (const [x, y] of tries) {
+    const c = checkPlacement(s, type, x, y, occ);
+    if (c.ok) return { x, y };
+    why ??= c.reason;
+  }
+  return { reason: why ?? "No room here." };
+}
+
+/** Clear tiles between two footprints, the nearer way: 0 when they touch, corners included. */
+export function gapBetween(a: Rect, b: Rect): number {
+  const dx = Math.max(0, b.x - (a.x + a.w), a.x - (b.x + b.w));
+  const dy = Math.max(0, b.y - (a.y + a.h), a.y - (b.y + b.h));
+  return Math.max(dx, dy);
+}
+
+/**
+ * The spacing rules between buildings: a barracks keeps three clear tiles
+ * from every home (and a home from every barracks); a kitchen stands within
+ * a tile of a home; fields touch the watermill that waters them.
+ */
+export function spacingProblem(s: GameState, type: StructureType, r: Rect): string | undefined {
+  const others = s.structures;
+  if (type === "barracks") {
+    const home = others.find((h) => isHome(h) && gapBetween(h, r) < BARRACKS_CLEARANCE);
+    if (home) return `A barracks must stand ${BARRACKS_CLEARANCE} clear tiles from any home — this is ${gapBetween(home, r)} from one.`;
+  }
+  if (type === "house") {
+    const yard = others.find((b) => b.type === "barracks" && gapBetween(b, r) < BARRACKS_CLEARANCE);
+    if (yard) return `Homes keep ${BARRACKS_CLEARANCE} clear tiles from a barracks — this is ${gapBetween(yard, r)} from one.`;
+  }
+  if (type === "kitchen" && !others.some((h) => isHome(h) && gapBetween(h, r) <= KITCHEN_REACH)) {
+    return `A kitchen must stand within ${KITCHEN_REACH} tile of a home.`;
+  }
+  if ((type === "farm" || type === "waterfarm") && !others.some((m) => m.type === "watermill" && gapBetween(m, r) === 0)) {
+    return `A ${type === "farm" ? "farm" : "water farm"} must be right beside a watermill, touching it — that is where its water comes from.`;
+  }
+  return undefined;
+}
 
 // ── Walls ─────────────────────────────────────────────────
 

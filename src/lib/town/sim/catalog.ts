@@ -153,6 +153,13 @@ export function upgradePeople(type: StructureType, level: number): number {
 export const DIG_HOURS = 60;
 export const FILL_HOURS = 45;
 
+/**
+ * Spacing, in clear tiles between footprints (0: touching). A barracks keeps
+ * its distance from homes; a kitchen stands by one.
+ */
+export const BARRACKS_CLEARANCE = 3;
+export const KITCHEN_REACH = 1;
+
 /** What a knight's recruitment costs at the army school. */
 export const KNIGHT_RECRUIT = { coin: 30, silver: 4 };
 
@@ -173,7 +180,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     blurb: "Beds for villagers — each bed is one resident. Utilities lift the mood of whoever lives here.",
     w: 5, h: 3, cost: { wood: 30, stone: 20 }, upgrade: growth({ wood: 30, stone: 24 }, { planks: 10, bricks: 6 }),
     buildHours: 4, maxLevel: 30, slots: () => 0, hpPerLevel: 80,
-    rules: ["Connect to a barracks by pavement so residents can be trained as troops."],
+    rules: ["Within the town hall's reach, and at least 3 clear tiles from a barracks.", "Connect to a barracks by pavement so residents can be trained as troops."],
   },
   pitfire: {
     type: "pitfire", name: "Pit Fire", category: "civic",
@@ -200,7 +207,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     w: 3, h: 3, cost: { wood: 10 }, upgrade: growth({ wood: 12, stone: 6 }),
     buildHours: 2, maxLevel: 30, slots: () => 1, workRole: "farmhand", hpPerLevel: 40,
     rules: [
-      "On grass. Needs a watermill within 14 tiles, at least as high a level.",
+      "On grass, right beside a watermill (touching it), which must be at least as high a level.",
       "Must touch pavement with a path to the market, or the harvest never reaches the granary.",
       "In winter it freezes and grows nothing unless a lit pit fire reaches it.",
     ],
@@ -210,14 +217,14 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     blurb: "Flooded paddies for rice, taro, lotus and reed.",
     w: 3, h: 3, cost: { wood: 15, stone: 10 }, upgrade: growth({ wood: 14, stone: 10 }),
     buildHours: 3, maxLevel: 30, slots: () => 1, workRole: "farmhand", hpPerLevel: 40,
-    rules: ["On grass, within 14 tiles of a watermill.", "Same market connection as a farm.", "Freezes in winter unless a lit pit fire reaches it."],
+    rules: ["On grass, next to a watermill (touching it).", "Same market connection as a farm.", "Freezes in winter unless a lit pit fire reaches it."],
   },
   watermill: {
     type: "watermill", name: "Watermill", category: "food",
     blurb: "Lifts river water to the fields. Farms cannot outgrow the mill that feeds them.",
     w: 5, h: 4, cost: { wood: 40, stone: 30 }, upgrade: growth({ wood: 30, stone: 30 }, { planks: 8 }),
     buildHours: 6, maxLevel: 30, slots: () => 0, needsRiver: true, hpPerLevel: 90,
-    rules: ["Must be placed next to the river.", "Irrigates farms within 14 tiles."],
+    rules: ["Must stand right on the water's edge, touching the river or a pond.", "Farms and water farms go right beside it, touching it."],
   },
   refinery: {
     type: "refinery", name: "Refinery", category: "industry",
@@ -231,7 +238,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     blurb: "Chefs cook raw crops into meals. Nobody eats a raw potato for long.",
     w: 5, h: 3, cost: { wood: 40, stone: 30 }, upgrade: growth({ wood: 30, stone: 30 }, { bricks: 6 }),
     buildHours: 5, maxLevel: 30, slots: (l) => 1 + l, workRole: "chef", hpPerLevel: 80,
-    rules: ["Staffed by chefs trained at the school."],
+    rules: ["Within 1 tile of a home — cooks feed the houses they stand by.", "Staffed by chefs trained at the school."],
   },
   market: {
     type: "market", name: "Market", category: "civic",
@@ -245,7 +252,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     blurb: "Recruits Peasant Levies and drills them up to Spearman Militia (level 4). Every rank past that is earned in battle.",
     w: 11, h: 4, cost: { wood: 60, stone: 50 }, upgrade: growth({ wood: 50, stone: 50, iron: 6 }, { ingots: 6 }),
     buildHours: 8, maxLevel: 30, slots: () => 0, hpPerLevel: 150,
-    rules: ["Connect to a house to recruit, and to a watchtower so its troops are counted."],
+    rules: ["At least 3 clear tiles from any home: nobody sleeps beside a drill yard.", "Connect to a house to recruit, and to a watchtower so its troops are counted."],
   },
   archery: {
     type: "archery", name: "Archery Range", category: "military",
