@@ -1,7 +1,8 @@
 import { CATALOG, HALL_YEARS, LADDERS } from "./catalog";
-import { assign, beds, makeStructure, makeVillager, newTown, residents } from "./state";
+import { assign, beds, clock, makeStructure, makeVillager, newTown, residents } from "./state";
 import { stats } from "./stats";
-import { alertRadius, checkPlacement, fuelCap, occupancy, structureMaxHp, wallMaxHp, wallMeta, WALL_MAX_LEVEL } from "./world";
+import { alertRadius, checkPlacement, fuelCap, occupancy, ringOf, structureMaxHp, unlitBuildings, wallMaxHp, wallMeta, WALL_MAX_LEVEL } from "./world";
+import { LAIR_START, lairGrowth, lairLevel } from "./wilds";
 import { store } from "./loot";
 import { TILE_WOOD } from "./woods";
 import { MAP_H, MAP_W, Overlay, Terrain, YEAR_DAYS, type GameState, type Role, type Structure, type StructureType } from "./types";
@@ -151,6 +152,11 @@ export function endgameTown(seed: number, bonus: number): GameState {
   }
   const sealedNear = before - s.lairs.length;
   s.roamers = [];
+  // The gates still open out in the fog are young ones, opened since the old ones fell: levels 35 to 45.
+  s.lairs.forEach((l, k) => {
+    l.bonus = 35 + (k % 3) * 5 - LAIR_START[l.kind] - lairGrowth(clock(s.time).day);
+    l.level = lairLevel(s, l);
+  });
 
   // Clear the ground inside the ring: forest felled, rock broken, marsh drained — but for a grove and a hill kept for the works.
   for (let y = RING[1]; y <= RING[3]; y++) for (let x = RING[0]; x <= RING[2]; x++) {
@@ -309,6 +315,12 @@ export function endgameTown(seed: number, bonus: number): GameState {
   }
   if (spire) spire.aug = { jewel: 8, eye: 5, heart: 3, feet: { dragon: 6 } };
 
+  // Nothing stands in the dark: a lamp beside anything no fire, brazier or lamp reaches.
+  for (const st of unlitBuildings(s)) {
+    const at = ringOf(st.x, st.y, st.w, st.h).find((i) => checkPlacement(s, "lamppost", i % MAP_W, Math.floor(i / MAP_W)).ok);
+    if (at !== undefined) makeStructure(s, "lamppost", at % MAP_W, Math.floor(at / MAP_W), true);
+  }
+
   // The ground of every district but the farms, relaid in stone flags; and every avenue.
   const occ2 = occupancy(s);
   for (let y = RING[1] + 1; y < RING[3]; y++) for (let x = RING[0] + 1; x < RING[2]; x++) {
@@ -387,7 +399,8 @@ export function endgameTown(seed: number, bonus: number): GameState {
     c.workers.push(lead.id);
   });
   // Knights ride from the camps, where there is room to charge; a dragon over the rooftops is the bowmen's.
-  const camps = [farmCamp, eastCamp, southCamp].filter(Boolean) as Structure[];
+  // The east camp, on the road the dragons come by, keeps only its captain-knight.
+  const camps = [farmCamp, southCamp].filter(Boolean) as Structure[];
   for (let k = 0; k < 3; k++) enlist("knight", 23 + k * 3, camps[k % Math.max(1, camps.length)] ?? towers[0], { weapon: "oathblade", armour: "aegis" });
   for (let k = 0; k < 5; k++) enlist("wizard", 15 + k * 20, towers[k % Math.max(1, towers.length)], { weapon: "hexstaff", armour: "starweave" });
 

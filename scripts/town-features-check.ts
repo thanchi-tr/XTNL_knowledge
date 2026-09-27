@@ -1486,6 +1486,16 @@ console.log("night work, newcomers, movers, monster parts, leisure, the end game
   check(pv.structures.filter((x) => x.type === "armypoint").length >= 3 && pv.villagers.filter((v) => v.role === "knight" && v.rank >= 23).length >= 3 && pv.villagers.filter((v) => v.role === "wizard" && v.rank >= 15).length >= 3,
     "army points with Emblem Knights, and Grand Wizards on the towers");
   check(!!pv.raid && pv.raid.party.some((p) => p.kind === "dragon") && clock(pv.time).year > 20, `year ${clock(pv.time).year}, and dragons on the way`);
+  check(unlitBuildings(pv).length === 0, "nothing in the preview stands in the dark");
+  // The fight, minute by minute as the game plays it, and six hours after.
+  const pvPop = pv.villagers.length;
+  for (let m = 0; m < 7 * 60; m++) {
+    if (pv.raid?.phase === "fighting") fight(pv);
+    else advance(pv, 1, ctx);
+  }
+  const pvKnights = pv.villagers.filter((v) => v.role === "knight").length;
+  check(!pv.fallen && pv.villagers.length > pvPop * 0.8 && pv.mood > 50 && pvKnights >= 3 && !!pv.victory,
+    `the dragons are beaten: ${pvPop - pv.villagers.length} fewer people six hours on, ${pvKnights} knights standing, Hope ${Math.round(pv.mood)} — and the end-game phase has begun`);
 
   // Kept study calms the land; a town down to two survivors has dwindled away; names read as English.
   const k = newTown(261, 20);
