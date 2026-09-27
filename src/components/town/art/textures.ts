@@ -106,6 +106,99 @@ export function grass(c: Ctx, x0: number, y0: number, w: number, h: number, seed
 }
 
 /**
+ * Meadow: richer, warmer grass than the common sward — long grass in the
+ * foliage ramp, thick with flowers. Fields ploughed here yield more.
+ */
+export function meadow(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(12, seed + 20, 0.24, 0.7);
+  g.despeckle();
+  g.paint(c, M.FOLIAGE);
+  for (let i = 0; i < (w * h) / 70; i++) {
+    const x = Math.floor(hash(i, 1, seed + 20) * (w - 2));
+    const y = Math.floor(hash(i, 2, seed + 20) * (h - 3));
+    const under = g.get(x, y + 1);
+    px(c, x0 + x, y0 + y, 1, 2, M.FOLIAGE[Math.max(LIT, under - 1)]);
+    px(c, x0 + x + 1, y0 + y + 1, 1, 1, M.FOLIAGE[Math.min(DEEP, under + 1)]);
+  }
+  const blooms = [M.OCHRE[LIT], M.LINEN[LIT], M.CLOTHRED[LIT], M.CLOTHBLU[LIT], M.ARCANE[LIT], M.BRASS[LIT]];
+  for (let i = 0; i < (w * h) / 160; i++) {
+    const x = x0 + Math.floor(hash(i, 7, seed + 20) * (w - 2));
+    const y = y0 + Math.floor(hash(i, 8, seed + 20) * (h - 2));
+    px(c, x, y, 2, 1, blooms[Math.floor(hash(i, 9, seed + 20) * blooms.length)]);
+    px(c, x, y + 1, 2, 1, M.FOLIAGE[SHADE]);
+  }
+}
+
+/**
+ * Hills: thin turf over stone. Terraces run across in ragged contour lines,
+ * each with a lit lip and a shaded riser under it, and stone breaks through
+ * in grey knuckles, so the ground reads as rising even from straight above.
+ */
+export function hillside(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(16, seed + 30, 0.3, 0.8);
+  g.despeckle();
+  g.paint(c, M.TURF);
+  // contour lines, every seven pixels or so, wandering with the noise
+  for (let x = 0; x < w; x++) {
+    const X = x0 + x;
+    const wob = Math.round(valueNoise(X, 0, 18, seed + 31) * 4);
+    for (let band = Math.floor(y0 / 7) - 1; band * 7 < y0 + h + 7; band++) {
+      const Y = band * 7 + wob + Math.round(valueNoise(X, band, 9, seed + 32) * 2);
+      if (Y < y0 || Y >= y0 + h - 1) continue;
+      if (hash(X >> 2, band, seed + 33) < 0.18) continue; // the line breaks now and then
+      px(c, X, Y, 1, 1, M.TURF[LIT]);
+      px(c, X, Y + 1, 1, 1, M.TURF[SHADE]);
+    }
+  }
+  // stone breaking through
+  for (let i = 0; i < (w * h) / 90; i++) {
+    const x = x0 + Math.floor(hash(i, 4, seed + 34) * (w - 3));
+    const y = y0 + Math.floor(hash(i, 5, seed + 34) * (h - 2));
+    const big = hash(i, 6, seed + 34) > 0.7;
+    px(c, x, y, big ? 3 : 2, 1, M.STONE[LIT]);
+    px(c, x, y + 1, big ? 3 : 2, 1, M.STONE[SHADE]);
+  }
+}
+
+/**
+ * Marsh: sodden ground in the moss ramp, broken by pools of black water
+ * and stands of reed. Nothing can be built here; it gives peat.
+ */
+export function marsh(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(10, seed + 40, 0.3, 0.8);
+  g.despeckle();
+  g.paint(c, M.MOSS);
+  // pools where the ground dips
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = valueNoise(x0 + x, y0 + y, 7, seed + 41);
+      if (v < 0.27) px(c, x0 + x, y0 + y, 1, 1, M.WATER[v < 0.2 ? SHADE : DEEP]);
+      else if (v < 0.3) px(c, x0 + x, y0 + y, 1, 1, M.MOSS[DEEP]); // the mud at the pool's rim
+    }
+  }
+  // reeds: a pale stem over its shadow, in little stands
+  for (let i = 0; i < (w * h) / 60; i++) {
+    const x = x0 + Math.floor(hash(i, 1, seed + 42) * (w - 2));
+    const y = y0 + Math.floor(hash(i, 2, seed + 42) * (h - 3));
+    px(c, x, y, 1, 2, M.THATCH[hash(i, 3, seed + 42) > 0.5 ? LIT : MID]);
+    px(c, x, y + 2, 1, 1, M.MOSS[DEEP]);
+  }
+}
+
+/** A stand of reeds with a bulrush head, for a marsh's wild plants. */
+export function reedStand(c: Ctx, x: number, y: number, seed: number) {
+  for (let k = 0; k < 3; k++) {
+    const h = 5 + Math.floor(hash(k, 1, seed) * 3);
+    px(c, x + k * 2, y + 7 - h, 1, h, M.MOSS[k === 1 ? LIT : MID]);
+  }
+  px(c, x + 2, y + 1, 1, 3, M.LEATHER[MID]);
+  px(c, x + 2, y + 1, 1, 1, M.LEATHER[LIT]);
+}
+
+/**
  * Winter ground: a sheet of ice. Mostly one plane; wide patches of clear
  * black ice a shade down and wind-packed rime a shade up, a few cracks, a
  * glint here and there, and dead grass poking through.
@@ -196,6 +289,33 @@ export function cobbles(c: Ctx, x0: number, y0: number, w: number, h: number, se
       x += sw;
     }
     sy += rowH;
+  }
+}
+
+/**
+ * Stone flags: a road relaid in dressed slabs. Anchored to the world pixel
+ * by pixel — slabs 8 wide and 6 deep, every other course set half a slab
+ * over — so neighbouring regions meet on the same joints. Each slab takes
+ * its own tone, a lit arris along its top and left edge, and now and then a
+ * crack.
+ */
+export function flagstones(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 11, ramp: Ramp4 = M.STONEWM) {
+  for (let y = 0; y < h; y++) {
+    const Y = y0 + y;
+    const row = Math.floor(Y / 6);
+    const off = row % 2 ? 4 : 0;
+    const inY = ((Y % 6) + 6) % 6;
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x;
+      const col = Math.floor((X + off) / 8);
+      const inX = (((X + off) % 8) + 8) % 8;
+      const tone = hash(col, row, seed);
+      let v: number = tone > 0.8 ? LIT : tone < 0.15 ? SHADE : MID;
+      if (inY === 5 || inX === 7) v = DEEP; // the joints
+      else if (inY === 0 || inX === 0) v = Math.max(LIT, v - 1); // the lit arris
+      else if (hash(col * 7 + inX, row * 5 + inY, seed + 3) > 0.985) v = SHADE; // a crack
+      px(c, X, Y, 1, 1, ramp[v]);
+    }
   }
 }
 

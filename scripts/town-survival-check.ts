@@ -20,6 +20,9 @@ import { resolveFrame } from "../src/lib/town/sim/frame";
 import { flowField, groupOf, downhill, fieldAt } from "../src/lib/town/sim/breach";
 import { addCorpse, enactDecree, factionOf } from "../src/lib/town/sim/psyche";
 import { Overlay, type Body, type GameState, type Villager } from "../src/lib/town/sim/types";
+import { knowledgeHourly, kmod, rollDrop } from "../src/lib/town/sim/knowledge";
+import { TACTICS, exp3Update, fitness, nemesisOf, neglect, pickTactic, scoreWave, stalkOrStrike, tacticOdds } from "../src/lib/town/sim/nemesis";
+import type { FieldDaily } from "../src/lib/town/rules";
 
 FOG.rules = false;
 const input: TownInput = {
@@ -252,6 +255,7 @@ const fightAll = (s: GameState) => {
   const mine = makeStructure(loud, "mine", 70, 20, true);
   for (let i = 0; i < 2; i++) {
     const v = makeVillager(loud, loud.structures.find((x) => x.type === "house")!.id, "miner");
+    v.rank = 3; // strong enough for a full day's hard work at the face (./work)
     v.work = mine.id;
     mine.workers.push(v.id);
   }
@@ -398,6 +402,124 @@ console.log("P — minds");
   const faithShare = s.villagers.filter((v) => factionOf(v) === 2).length / s.villagers.length;
   const err = enactDecree(s, "protein");
   check(!err && faithShare > 0.3 && s.society?.ultimatum?.faction === 2, `P2 emergency protein: the Faith faction (${Math.round(faithShare * 100)}%) makes its demand at once${err ? ` — ${err}` : ""}`);
+}
+
+// ── K: study into the town ───────────────────────────────
+console.log("K — study into the town");
+{
+  const f = (o: Partial<FieldDaily>): FieldDaily => ({
+    id: "fx", name: "Physiology", school: "science", level: 6, attrs: ["PHYSICAL", "STUBBORNNESS"], ideasToday: 0, ideasWeek: 0,
+    reviewedToday: 0, dueRemaining: 0, overdue: 0, streak: 0, bestStreak: 0, complete: false, ...o,
+  });
+  const base = { ...input, day: "2026-02-02" };
+  const s = newTown(81, 20);
+  knowledgeHourly(s, { ...base, fields: [f({ ideasToday: 3 })] });
+  const phys = kmod(s, "PHYSICAL");
+  const stub = kmod(s, "STUBBORNNESS");
+  check(Math.abs(phys - 0.3 * (1 - Math.exp(-1))) < 1e-6 && Math.abs(stub - 0.3 * (1 - Math.exp(-0.5))) < 1e-6, `K1 three ideas in a Physical/Stubbornness Field: strong backs +${(phys * 100).toFixed(0)}%, stubborn timbers +${(stub * 100).toFixed(0)}%`);
+  knowledgeHourly(s, { ...base, fields: [f({ ideasToday: 30 })] });
+  check(kmod(s, "PHYSICAL") <= 0.3 + 1e-9 && kmod(s, "PHYSICAL") > 0.29, `K1 … thirty saturate at the cap (+${(kmod(s, "PHYSICAL") * 100).toFixed(0)}%), not ten times more`);
+
+  const tiers = [0, 3, 7, 14, 30].map((streak) => rollDrop(f({ streak, reviewedToday: 9, complete: true }), "2026-02-02"));
+  check(tiers.map((t) => t.tier).join() === "0,1,2,3,4", `K2 streaks of 0, 3, 7, 14 and 30 days pay common, uncommon, rare, epic and legendary drops`);
+  const legendary = tiers[4];
+  const rare = ["diamond", "mithril", "gold", "platinum", "formula", "gunpowder"].some((k) => (legendary.res as Record<string, number>)[k]) || Object.keys(legendary.items).length > 0 || legendary.tools.includes("crucible");
+  const common = tiers[0];
+  const plain = Object.keys(common.res).every((k) => ["wood", "stone", "meals", "potato", "coin"].includes(k));
+  check(rare && plain, `K2 … a new streak brings ${Object.entries(common.res).map(([k, n]) => `${n} ${k}`).join(", ")}; a month-long one ${[...Object.entries(legendary.res).map(([k, n]) => `${n} ${k}`), ...Object.entries(legendary.items).map(([k, n]) => `${n} ${k}`), ...legendary.tools].join(", ")}`);
+
+  const t = newTown(83, 20);
+  const done = { ...base, fields: [f({ streak: 8, reviewedToday: 12, complete: true })] };
+  const silver0 = t.res.silver + t.res.ingots + t.res.planks + t.res.bricks + t.res.charcoal + t.res.fertiliser + (t.toolsPending?.length ?? 0);
+  knowledgeHourly(t, done);
+  const once = t.res.silver + t.res.ingots + t.res.planks + t.res.bricks + t.res.charcoal + t.res.fertiliser + (t.toolsPending?.length ?? 0);
+  knowledgeHourly(t, done);
+  const twice = t.res.silver + t.res.ingots + t.res.planks + t.res.bricks + t.res.charcoal + t.res.fertiliser + (t.toolsPending?.length ?? 0);
+  check(once > silver0 && twice === once, `K3 a finished daily pays once a day (+${Math.round(once - silver0)} in rare goods), not once an hour`);
+
+  const n = newTown(85, 20);
+  knowledgeHourly(n, { ...base, reviewsToday: 0, dueRemaining: 30, fields: [f({ overdue: 25, dueRemaining: 30, bestStreak: 14 })] });
+  const ng = neglect(n);
+  check(kmod(n, "PHYSICAL") < 0 && ng.budget > 2 && ng.rho > 0.1 && n.log.some((l) => /banner/.test(l.text)), `K4 neglect: the Field's buff turns (${(kmod(n, "PHYSICAL") * 100).toFixed(0)}%), the land's budget ×${ng.budget.toFixed(2)}, its aim +${ng.rho.toFixed(2)}, and a lapsed streak's banner falls`);
+}
+
+// ── N: the nemesis ───────────────────────────────────────
+console.log("N — the nemesis");
+{
+  const s = newTown(91, 20);
+  const nm = nemesisOf(s);
+  const r = rng(5);
+  const flyers = TACTICS.indexOf("flyers");
+  for (let k = 0; k < 80; k++) {
+    const { tactic, p } = pickTactic(s, r);
+    exp3Update(nm, TACTICS.indexOf(tactic), tactic === "flyers" ? 1 : 0.05, p);
+  }
+  const odds = tacticOdds(s);
+  check(odds[flyers] > 0.5, `N1 EXP3 learns what works: after 80 waves where only fliers paid, it sends them ${(odds[flyers] * 100).toFixed(0)}% of the time`);
+
+  const fit = fitness({ ranged: 0.05, walls: 60, coverage: 0.9, elite: 0, unlit: 0, foodDays: 1, fuelDays: 3, leverage: 0.2, hallWeak: 0, outdoors: 0 }, false, false);
+  const best = TACTICS[fit.indexOf(Math.max(...fit))];
+  const fit2 = fitness({ ranged: 0.95, walls: 0, coverage: 0.9, elite: 0, unlit: 0, foodDays: 1, fuelDays: 3, leverage: 0.2, hallWeak: 0, outdoors: 0 }, false, false);
+  const best2 = TACTICS[fit2.indexOf(Math.max(...fit2))];
+  check(best === "flyers" && best2 === "armoured", `N2 it counter-picks: walls and swords draw ${best}; a town of archers draws ${best2}`);
+
+  const t = newTown(93, 20);
+  nemesisOf(t).stalk = { since: t.time, best: 0, tactic: "night" };
+  while (clock(t.time).hour !== 12) t.time += 60;
+  const day = stalkOrStrike(t, rng(1));
+  while (clock(t.time).hour !== 23) t.time += 60;
+  const night = stalkOrStrike(t, rng(1));
+  check(day === null && night === "night", `N3 a night wave waits for the dark: at noon it holds, at 23:00 it strikes`);
+
+  const u = newTown(95, 20);
+  const rho0 = rho(u);
+  for (let k = 0; k < 3; k++) {
+    nemesisOf(u).before = { pop: u.villagers.length, buildings: u.structures.length, food: 0, hallHp: u.structures[0].hp, tactic: "assault", p: 0.2 };
+    scoreWave(u);
+  }
+  check(nemesisOf(u).pressure > 0.2 && rho(u) > rho0 + 0.2, `N4 three clean defences and it presses harder: aim ${rho0.toFixed(2)} → ${rho(u).toFixed(2)}`);
+
+  // N5: the answers work. The same flier wave on the same house: spearmen, then bowmen, posted beside it.
+  const flierFight = (rank: number) => {
+    const g = newTown(97, 20);
+    const house = g.structures.find((x) => x.type === "house")!;
+    const tower = makeStructure(g, "watchtower", house.x + house.w + 1, house.y, true);
+    for (let k = 0; k < 4; k++) {
+      const v = makeVillager(g, house.id, "infantry");
+      v.rank = rank;
+      v.guard = tower.id;
+    }
+    g.raid = { arrivesAt: g.time, party: [{ kind: "harpy", level: 2, count: 3 }], side: "west", target: house.id, phase: "fighting", combatants: [], projectiles: [], clock: 0, nextId: 1, archetype: "K" };
+    let guard = 0;
+    while (g.raid && guard++ < 20000) stepCombat(g, 0.05);
+    const standing = g.structures.includes(house);
+    const lost = 4 - g.villagers.filter((v) => v.role === "infantry").length;
+    return { standing, lost };
+  };
+  const melee = flierFight(3);
+  const bows = flierFight(5);
+  check((bows.standing && !melee.standing) || bows.lost < melee.lost, `N5 bowmen against fliers: spearmen ${melee.standing ? "hold" : "lose"} the house with ${melee.lost} dead; bowmen ${bows.standing ? "hold" : "lose"} it with ${bows.lost} dead`);
+
+  const hallFight = (guarded: boolean) => {
+    const g = newTown(99, 20);
+    const hall = g.structures.find((x) => x.type === "townhall")!;
+    if (guarded) {
+      const tw = makeStructure(g, "watchtower", hall.x - 5, hall.y + 2, true);
+      tw.level = 4;
+      for (let k = 0; k < 4; k++) {
+        const v = makeVillager(g, null, "infantry");
+        v.rank = 5;
+        v.guard = tw.id;
+      }
+    }
+    g.raid = { arrivesAt: g.time, party: [{ kind: "troll", level: 3, count: 2 }], side: "west", target: hall.id, phase: "fighting", combatants: [], projectiles: [], clock: 0, nextId: 1, archetype: "K" };
+    let guard = 0;
+    while (g.raid && guard++ < 20000) stepCombat(g, 0.05);
+    return !g.fallen;
+  };
+  const bare = hallFight(false);
+  const kept = hallFight(true);
+  check(!bare && kept, `N5 a blow at the hall: unguarded it ${bare ? "holds" : "falls"}; with a tower and four bowmen beside it, it ${kept ? "holds" : "falls"}`);
 }
 
 void clock;

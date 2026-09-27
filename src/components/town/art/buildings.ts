@@ -1,16 +1,12 @@
 import { makeCanvas, outline, cached, hash, px, type Ctx } from "./core";
-import { M, GLOW, VOID, LIT, MID, SHADE, DEEP, sag, occlude, eaveLine, type Ramp4, type RoofMat } from "./materials";
-import {
-  roofBlock, gableEnd, cone, crenellations, masonry, halfTimber, boards, casement, slit, doorway, chimney,
-} from "./textures";
+import { M, GLOW, VOID, LIT, MID, SHADE, DEEP, sag, occlude, type Ramp4, type RoofMat } from "./materials";
+import { cone, crenellations, masonry, boards, casement, slit, doorway } from "./textures";
 import { rockFace, ORE_COLORS } from "./nature";
-import { townhouse as obliqueTownhouse, forge as obliqueForge, barracks as obliqueBarracks } from "./oblique";
+import { townhouse as obliqueTownhouse } from "./oblique";
 
-/* Townhouse, forge and barracks now live in ./oblique, which gives them a
-   receding side face. These wrappers keep the style-keyed call sites. */
+/* The townhouse lives in ./oblique, which gives it a
+   receding side face; the forge and barracks live in ./special. This wrapper keeps the style-keyed call site. */
 export const townhouse = (variant: number, roof: RoofStyle, lit: boolean) => obliqueTownhouse(variant, ROOF[roof], lit);
-export const forge = (level: number, roof: RoofStyle) => obliqueForge(level, ROOF[roof]);
-export const barracks = (level: number, roof: RoofStyle, banner: Ramp4) => obliqueBarracks(level, ROOF[roof], banner);
 
 /**
  * Buildings, in the 3/4 top-down view of the references: a roof block seen
@@ -41,109 +37,6 @@ export const drum = (w: number) => (x: number) => {
   const t = x / Math.max(1, w - 1);
   return t < 0.18 ? LIT : t < 0.55 ? MID : t < 0.86 ? SHADE : DEEP;
 };
-
-function banner(c: Ctx, x: number, y: number, color: Ramp4) {
-  px(c, x, y, 6, 12, color[MID]);
-  px(c, x, y, 1, 12, color[LIT]);
-  px(c, x + 4, y, 2, 12, color[SHADE]);
-  px(c, x + 1, y + 12, 2, 2, color[MID]);
-  px(c, x + 3, y + 12, 2, 2, color[SHADE]);
-  px(c, x + 2, y + 4, 2, 3, M.BRASS[LIT]); // sigil
-  px(c, x - 1, y - 1, 8, 1, M.BRASS[MID]); // rod
-}
-
-// ── Town hall: a keep that grows ──────────────────────────
-
-export function keep(level: number, roof: RoofStyle, bannerColor: Ramp4): HTMLCanvasElement {
-  const tier = level >= 10 ? 3 : level >= 6 ? 2 : level >= 3 ? 1 : 0;
-  return cached(`keep:${tier}:${roof}:${bannerColor[MID]}`, () => {
-    const W = 128;
-    const H = 112;
-    const { cv, c } = makeCanvas(W, H);
-    const m = ROOF[roof];
-    const cx = W / 2;
-
-    // Hamlet: a large timbered hall rather than a castle — the keep is earned.
-    if (tier === 0) {
-      halfTimber(c, 24, 66, 80, 16, 5);
-      masonry(c, 24, 82, 80, 26, M.STONEWM, 6, { damp: true, ragged: true });
-      doorway(c, cx - 7, 90, 14, 18);
-      for (const x of [30, 44, 74, 88]) casement(c, x, 71, 6, 6, true);
-      for (const x of [32, 86]) casement(c, x, 90, 5, 6, true);
-      banner(c, 38, 86, bannerColor);
-      banner(c, 84, 86, bannerColor);
-      roofBlock(c, 22, 40, 84, 26, m, 3);
-      eaveLine(c, m, 22, 66, 84, 3, 4);
-      gableEnd(c, 46, 30, 36, 20, m, 4);
-      chimney(c, 92, 30, 12);
-      outline(cv);
-      return cv;
-    }
-
-    const towerH = [0, 50, 62, 74][tier];
-    const towerW = tier === 3 ? 26 : 22;
-
-    // keep face
-    masonry(c, 24, 52, 80, 56, M.STONE, 11, { damp: true, ragged: true });
-    // rows of windows, lit
-    for (const x of [32, 46, 76, 90]) casement(c, x, 62, 5, 7, true);
-    for (const x of [32, 90]) casement(c, x, 80, 5, 7, true);
-    // great gate: arch, portcullis
-    for (let y = 0; y < 30; y++) {
-      const arch = y < 8 ? Math.round(Math.sqrt(64 - (8 - y) * (8 - y)) + 3) : 11;
-      px(c, cx - arch, 76 + y, arch * 2, 1, VOID);
-    }
-    const gx = cx - 11;
-    for (let x = gx + 2; x < gx + 22; x += 3) px(c, x, 78, 1, 28, M.IRON[SHADE]);
-    for (let y = 82; y < 106; y += 4) px(c, gx + 1, y, 20, 1, M.IRON[MID]);
-    // arch voussoirs: sunlit on the left of the crown, shaded on the right
-    for (let a = 0; a < 12; a++) {
-      const ang = Math.PI + (a / 11) * Math.PI;
-      px(c, Math.round(cx + Math.cos(ang) * 13), Math.round(84 + Math.sin(ang) * 10), 2, 1, a < 6 ? M.STONE[LIT] : M.STONE[SHADE]);
-    }
-    banner(c, gx - 12, 78, bannerColor);
-    banner(c, gx + 28, 78, bannerColor);
-    // steps, their treads lit
-    for (let s = 0; s < 3; s++) {
-      px(c, cx - 14 - s * 2, 106 + s * 2, 28 + s * 4, 2, M.STONE[MID]);
-      px(c, cx - 14 - s * 2, 106 + s * 2, 28 + s * 4, 1, M.STONE[LIT]);
-    }
-
-    // back roof over the keep, then the clock gable on it
-    roofBlock(c, 24, 26, 80, 26, m, 7);
-    eaveLine(c, m, 24, 52, 80, 7, 4);
-    gableEnd(c, cx - 20, 14, 40, 22, m, 8);
-    px(c, cx - 7, 22, 14, 12, M.STONE[MID]);
-    px(c, cx - 7, 22, 14, 1, M.STONE[LIT]);
-    for (let y = -5; y <= 5; y++) for (let x = -5; x <= 5; x++) {
-      const d = x * x + y * y;
-      if (d <= 25) px(c, cx + x, 28 + y, 1, 1, d > 16 ? (x < 0 ? M.BRASS[LIT] : M.BRASS[SHADE]) : d > 13 ? M.BRASS[DEEP] : M.LINEN[LIT]);
-    }
-    px(c, cx, 24, 1, 5, M.IRON[DEEP]);
-    px(c, cx, 28, 3, 1, M.IRON[DEEP]);
-    for (const [x, y] of [[0, -4], [4, 0], [0, 4], [-4, 0]]) px(c, cx + x, 28 + y, 1, 1, M.IRON[DEEP]);
-
-    // flanking round towers
-    for (const tx of [4, W - 4 - towerW]) {
-      const ty = 108 - towerH;
-      masonry(c, tx, ty, towerW, towerH, M.STONE, tx + tier, { bw: 6, tone: drum(towerW), damp: true, ragged: true });
-      slit(c, tx + towerW / 2 - 1, ty + 12, 7);
-      casement(c, tx + towerW / 2 - 2, ty + 30, 4, 6, true);
-      if (tier >= 2) slit(c, tx + towerW / 2 - 1, ty + 46, 6);
-      const capH = tier === 3 ? 26 : 20;
-      cone(c, tx + towerW / 2, ty, towerW + 6, capH, m, tx);
-      px(c, tx + towerW / 2, ty - capH - 5, 1, 5, M.BRASS[LIT]); // finial
-    }
-
-    // Citadel tier: a central spire rising behind the clock.
-    if (tier === 3) {
-      cone(c, cx, 14, 16, 14, m, 3);
-      px(c, cx, 0, 1, 4, M.BRASS[LIT]);
-    }
-    outline(cv);
-    return cv;
-  });
-}
 
 // ── Market stall ──────────────────────────────────────────
 

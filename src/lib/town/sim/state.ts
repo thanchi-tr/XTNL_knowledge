@@ -1,6 +1,6 @@
 import { CATALOG, censusKey, baseBeds } from "./catalog";
 import {
-  checkPlacement, clearArea, generateMap, idx, isGuardPost, occupancy, riverCenter, ringOf, rng, unlitBuildings, MILITARY_TYPES,
+  checkPlacement, clearArea, generateMap, paintCountry, idx, isGuardPost, occupancy, riverCenter, ringOf, rng, unlitBuildings, MILITARY_TYPES,
 } from "./world";
 import {
   DAY_MIN, MAP_H, MAP_W, MILITARY, Overlay, RESOURCE_KEYS, SEASON_LENGTH, SEASONS, Terrain, YEAR_DAYS,
@@ -46,6 +46,15 @@ export function makeStructure(s: GameState, type: StructureType, x: number, y: n
     workers: [],
     buildUntil: built ? undefined : s.time + def.buildHours * 60,
   };
+  // The ground it stands on: meadow and hills change what a building yields.
+  const tally = new Map<number, number>();
+  for (let yy = y; yy < y + def.h; yy++) for (let xx = x; xx < x + def.w; xx++) {
+    if (xx < 0 || yy < 0 || xx >= MAP_W || yy >= MAP_H) continue;
+    const t = s.map.terrain[yy * MAP_W + xx];
+    tally.set(t, (tally.get(t) ?? 0) + 1);
+  }
+  const most = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (most && (most[0] === Terrain.Meadow || most[0] === Terrain.Hill) && most[1] * 2 >= def.w * def.h) st.ground = most[0];
   if (type === "house" || type === "apartment") {
     st.bedUpgrades = 0;
     st.utilities = [];
@@ -61,10 +70,20 @@ export function makeStructure(s: GameState, type: StructureType, x: number, y: n
   return st;
 }
 
+/** A name no living villager has, so the log never speaks of two of anyone. */
+function freshName(s: GameState): string {
+  // Seeded as before (the id about to be given, plus one), so a town's first names do not change.
+  const seed = s.nextId + 1 + s.seed;
+  let name = villagerName(seed);
+  for (let k = 1; k < 40 && s.villagers.some((v) => v.name === name); k++) name = villagerName(seed + k * 104729);
+  return name;
+}
+
 export function makeVillager(s: GameState, house: number | null, role: Role = "idle"): Villager {
+  const name = freshName(s);
   const v: Villager = {
     id: s.nextId++,
-    name: villagerName(s.nextId + s.seed),
+    name,
     house,
     role,
     rank: 0,
@@ -117,6 +136,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
     deaths: 0,
     woodsV: 1,
     ranksV: 1,
+    terrainV: 1,
   };
   const m = s.map;
   clearArea(m, 12, 18, 56, 34);
@@ -124,7 +144,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   const pave = (x0: number, y0: number, x1: number, y1: number) => {
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const i = idx(x, y);
-      if (m.terrain[i] === Terrain.Grass || m.terrain[i] === Terrain.Bank) m.terrain[i] = Terrain.Pavement;
+      if (m.terrain[i] === Terrain.Grass || m.terrain[i] === Terrain.Bank || m.terrain[i] === Terrain.Meadow || m.terrain[i] === Terrain.Hill) m.terrain[i] = Terrain.Pavement;
     }
   };
 
@@ -303,6 +323,16 @@ export function migrate(s: GameState): GameState {
     s.hauntDay = c.hour < 12 ? c.day - 1 : c.day;
     log(s, "A new danger: from tomorrow night, something comes for every building no fire, brazier or lamp reaches.", "bad");
   }
+  // Meadows, hills and marsh came later: they are surveyed into the country
+  // the town has not yet seen, well clear of anything it has built.
+  if (s.terrainV !== 1) {
+    const hall = s.structures.find((st) => st.type === "townhall");
+    const home: [number, number] = hall ? [hall.x + hall.w / 2, hall.y + hall.h / 2] : [37, 26];
+    const occ = new Uint8Array(MAP_W * MAP_H);
+    for (const st of s.structures) for (let yy = st.y - 2; yy < st.y + st.h + 2; yy++) for (let xx = st.x - 2; xx < st.x + st.w + 2; xx++) if (xx >= 0 && yy >= 0 && xx < MAP_W && yy < MAP_H) occ[yy * MAP_W + xx] = 1;
+    paintCountry(s.map.terrain, s.map.overlay, s.map.meta, s.seed, home, 26, (i) => !s.map.seen?.[i] && !occ[i]);
+    s.terrainV = 1;
+  }
   return s;
 }
 
@@ -470,8 +500,8 @@ export function unrle(r: number[]): number[] {
 
 /** The save as text: the whole state, with its map layers packed. */
 export function packSave(s: GameState): string {
-  const { terrain, overlay, meta, seen, ...rest } = s.map;
-  return JSON.stringify({ ...s, map: { ...rest, packed: 1, terrain: rle(terrain), overlay: rle(overlay), meta: rle(meta), seen: seen ? rle(seen) : undefined } });
+  const { terrain, overlay, meta, seen, paving, ...rest } = s.map;
+  return JSON.stringify({ ...s, map: { ...rest, packed: 1, terrain: rle(terrain), overlay: rle(overlay), meta: rle(meta), seen: seen ? rle(seen) : undefined, paving: paving ? rle(paving) : undefined } });
 }
 
 /** Reads a save written by `packSave` — or an older, unpacked one. */
@@ -482,6 +512,7 @@ export function unpackSave(raw: string): GameState {
     s.map.overlay = unrle(s.map.overlay);
     s.map.meta = unrle(s.map.meta);
     if (s.map.seen) s.map.seen = unrle(s.map.seen);
+    if (s.map.paving) s.map.paving = unrle(s.map.paving);
     delete s.map.packed;
   }
   return s;

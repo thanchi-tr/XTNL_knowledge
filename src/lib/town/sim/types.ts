@@ -26,7 +26,14 @@ export const MAP_H = 240;
 
 /* Plain constant objects rather than `const enum`: Next compiles each file
    in isolation, and a const enum imported across files is not inlined. */
-export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4 } as const;
+/**
+ * Ground. Meadow is rich grass (fields there yield more); hills are stony
+ * high ground (no ploughing, but richer mines and a longer view, and raiders
+ * climb them slowly); marsh is soft wet ground (nothing can stand on it, but
+ * it gives peat and bog iron, and raiders flounder in it).
+ */
+export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4, Meadow: 5, Hill: 6, Marsh: 7 } as const;
+export const TERRAIN_NAME: Record<number, string> = { 0: "Grass", 1: "Water", 2: "Road", 3: "Forest", 4: "Riverbank", 5: "Meadow", 6: "Hills", 7: "Marsh" };
 export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5, Lair: 6, Crop: 7 } as const;
 
 export interface MapState {
@@ -36,6 +43,8 @@ export interface MapState {
   overlay: number[];
   /** Per-tile extra: tree variant, rock kind, wall hp, forest pool, wild crop kind. */
   meta: number[];
+  /** 1 where a road has been relaid in stone flags (see actions.paint). */
+  paving?: number[];
   /** 1 where the town has ever seen: the fog lifts to a thin mist there, not the full cloud. */
   seen?: number[];
 }
@@ -72,7 +81,7 @@ export type StructureType =
   | "refinery" | "kitchen" | "market" | "barracks" | "archery" | "armoury" | "wizardhut"
   | "nobleyard" | "watchtower" | "icefactory" | "mine" | "lumbercamp" | "forge"
   | "lamppost" | "brazier" | "laboratory" | "fishery"
-  | "storehouse" | "armyschool" | "armypoint"
+  | "storehouse" | "armyschool" | "armypoint" | "museum"
   /** Two duplexes knocked together: not built, made. */
   | "apartment";
 
@@ -94,6 +103,20 @@ export interface Structure {
   condition: number;
   /** Villager ids working here. */
   workers: number[];
+  /**
+   * The work just ordered on it — a new build or an upgrade — with what was
+   * paid and when (wall-clock ms). For ten real seconds it can be called off
+   * and everything is given back.
+   */
+  undo?: { kind: "build" | "upgrade"; at: number; cost: Partial<Record<ResourceKey, number>>; jewels: number };
+  /** Being taken down and carried to a new plot; it stands there once `buildUntil` passes. */
+  moveTo?: { x: number; y: number };
+  /** Monster parts set into a tower or spire past level 10 (see ./augment). */
+  aug?: { feet?: Record<string, number>; heart?: number; jewel?: number; eye?: number };
+  /** Its workers are ordered on past their day's strength (see ./work). */
+  overtime?: boolean;
+  /** The ground most of its footprint stands on (a Terrain value), read when it was placed. */
+  ground?: number;
   /** Game minute the current build or upgrade completes. */
   buildUntil?: number;
   /** Farm crop / waterfarm crop / refinery recipe / school course. */
@@ -109,7 +132,11 @@ export interface Structure {
    * game minutes at full pace; the pace itself moves with the player's
    * reviews, so there is no fixed finish time. `until` is from older saves.
    */
-  training?: { villagerId: number; role: Role; left?: number; until?: number; rank?: number } | null;
+  training?: {
+    villagerId: number; role: Role; left?: number; until?: number; rank?: number;
+    /** A recruit being taken on: a flat four hours, not slowed by the study pace. */
+    recruit?: boolean;
+  } | null;
   /** Pit fire: fuel units in the grate. Brazier: coal in the bowl. */
   fuel?: number;
   /** Forge: the piece on the anvil. */
@@ -134,7 +161,7 @@ export interface Structure {
 }
 
 // ── Survival (design doc: docs/town-survival-systems.md) ──
-export type HearthKind = "open" | "chimney" | "stove" | "brazier";
+export type HearthKind = "open" | "chimney" | "stove" | "brazier" | "tiled" | "hypocaust" | "boiler" | "rune";
 export type Footing = "pad" | "trench" | "deep";
 
 export interface Zone {
@@ -307,6 +334,8 @@ export interface Society {
   strikeHours: number;
   /** Hours Hope has lain at nothing. Three days of it and the town is abandoned. */
   despairHours?: number;
+  /** Hours a town that once grew has lain at two people or fewer. Three days of it and it has dwindled away. */
+  fewHours?: number;
 }
 
 export type NodeKind = "bogiron" | "salt" | "coal" | "peat" | "flint" | "silver";
@@ -332,11 +361,13 @@ export interface Policy {
   coalFirst: boolean;
   /** Workday length in hours (the extended-shift decree raises it). */
   shift: number;
+  /** Idle hands clearing and digging are driven past their day's strength (see ./work). */
+  overtime?: boolean;
 }
 
 // ── People ────────────────────────────────────────────────
 export type Role =
-  | "idle" | "farmhand" | "icer" | "chef" | "scientist" | "geologist" | "commander" | "biologist"
+  | "idle" | "farmhand" | "icer" | "chef" | "scientist" | "geologist" | "commander" | "biologist" | "artist"
   | "miner" | "lumberjack" | "refiner" | "trader" | "fisher"
   /** Trained at the army school from a veteran; leads an army point. */
   | "captain"
@@ -347,6 +378,16 @@ export const MILITARY: Role[] = ["infantry", "archer", "heavy", "wizard", "knigh
 export interface Villager {
   id: number;
   name: string;
+  /** Leads the night shift: building goes on through the dark while they do (see ./work). */
+  nightShift?: boolean;
+  /** Away at the museum or travelling until this game time, and which (see ./leisure). */
+  awayUntil?: number;
+  awayFor?: "museum" | "travel";
+  /** Effort points spent today, and whether last night was slept cold (see ./work). */
+  effort?: number;
+  coldNight?: boolean;
+  /** A legendary calling this villager has risen to (see ./legends). */
+  legend?: "steward" | "earthshaper" | "sage";
   house: number | null;
   role: Role;
   /** Promotion rank on the role's ladder, or combat level for the military. */
@@ -419,6 +460,8 @@ export interface Combatant {
   swingAt?: number;
   /** Static defender: the watchtower it stands for. */
   structId?: number;
+  /** The tower or spire whose monster parts this fighter strikes with (./augment). */
+  augFrom?: number;
   /** A night haunt: sent for one building, and gone once it falls. */
   haunt?: boolean;
   /** A defender who has struck a blow this fight: in line for a field promotion. */
@@ -467,6 +510,8 @@ export interface Raid {
   archetype?: Channel;
   /** Set when the raiders took their objective and withdrew: what they brought down. */
   retreated?: string;
+  /** The nemesis's tactic for this wave (./nemesis). */
+  tactic?: string;
   phase: "incoming" | "fighting" | "repelled";
   combatants: Combatant[];
   projectiles: Projectile[];
@@ -476,6 +521,8 @@ export interface Raid {
   started?: boolean;
   /** Pieces of the fight worth telling, for the floating combat text. */
   pops?: { x: number; y: number; text: string; at: number; tone: "hit" | "crit" | "heal" }[];
+  /** Night prowlers: a haunt that wandered in out of the dark for any building, lit or not. */
+  prowl?: boolean;
   /** A night haunt rather than a raid: one dark thing per unlit building. */
   haunt?: { structId: number; kind: MonsterKind; level: number }[];
   /** Spoils taken this fight, and what was left for want of a forge or room in it. */
@@ -544,7 +591,7 @@ export interface Scout {
   worked?: number;
 }
 
-export type LairKind = "tomb" | "dragonpit" | "shadowgate";
+export type LairKind = "tomb" | "dragonpit" | "shadowgate" | "goblinwarren" | "webhollow" | "frostrift" | "titangate";
 
 /** Something old and bad, deep in the fog. It breeds monsters that roam the map. */
 export interface Lair {
@@ -555,6 +602,8 @@ export interface Lair {
   w: number;
   h: number;
   level: number;
+  /** Levels this gate stands above others of its kind: the deeper in the country, the higher. */
+  bonus?: number;
   discovered: boolean;
   nextSpawnAt: number;
 }
@@ -618,6 +667,21 @@ export interface GameState {
   nextCaravanAt?: number;
   /** Day the town last heard its stores were overflowing. */
   storeWarnDay?: number;
+  /** The steward's last hint, and when the next may be asked for (game time). See ./advisor. */
+  hint?: import("./advisor").Hint;
+  hintReadyAt?: number;
+  /** 2 once the newer monster gates have been set into an older map. */
+  lairsV?: number;
+  /** 1 once meadows, hills and marsh have been surveyed into an older map. */
+  terrainV?: number;
+  /** The run's tallies (./stats), achievements earned (id → game time), and a won game. */
+  stats?: import("./stats").Stats;
+  achievements?: Record<string, number>;
+  victory?: { day: number; how: string; seen?: boolean };
+  /** A newcomer on the road to town, and when they arrive (game time). */
+  incoming?: number;
+  /** What is going to waste for want of room, per good: a tally fading by a tenth an hour. */
+  wasted?: Partial<Record<ResourceKey, number>>;
   /** 1 once troops are on the soldier and knight trees (no archers, heavies or captains apart). */
   ranksV?: number;
   /** 1 once trees carry growth stages and forests hold a wood stock. */
@@ -644,4 +708,8 @@ export interface GameState {
   zoneAcc?: number;
   /** Cause of the run's end, if not a sack. */
   fallCause?: string;
+  /** Today's study in town: buffs, drops paid, what the adversary reads (./knowledge). */
+  knowledge?: import("./knowledge").Knowledge;
+  /** The adversary: its model of the player, its tactics' weights, its stalking (./nemesis). */
+  nemesis?: import("./nemesis").Nemesis;
 }

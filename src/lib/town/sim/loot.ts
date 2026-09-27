@@ -62,6 +62,12 @@ export function dropsFor(kind: MonsterKind, level: number, legendary: boolean, r
   }
   const jewel = legendary ? 1 : level >= 5 ? Math.min(0.5, level * 0.015) : 0;
   if (jewel >= 1 || r() < jewel) out.jewel = (out.jewel ?? 0) + Math.max(1, Math.floor(jewel));
+  // High-tier monsters (level 10 and up) can leave a foot, a heart or an eye: parts for the towers (./augment).
+  if (level >= 10) {
+    if (r() < 0.25) out[`foot:${kind}`] = (out[`foot:${kind}`] ?? 0) + 1;
+    if (r() < 0.12) out.heart = (out.heart ?? 0) + 1;
+    if (r() < 0.12) out.eye = (out.eye ?? 0) + 1;
+  }
   return out;
 }
 

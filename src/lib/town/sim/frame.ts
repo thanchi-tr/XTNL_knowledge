@@ -5,6 +5,7 @@ import { TILE_M, envelope, isZone, materials, snowShape } from "./zones";
 import { idx, inBounds, structureMaxHp } from "./world";
 import { destroyStructure } from "./combat";
 import { bodyOf, killBody } from "./body";
+import { kmod } from "./knowledge";
 import { Terrain, type Footing, type GameState, type Structure } from "./types";
 
 /**
@@ -98,7 +99,7 @@ function soilUnder(s: GameState, st: Structure): { susc: number; q: number } {
     if (!inBounds(x, y)) continue;
     n++;
     const t = s.map.terrain[idx(x, y)];
-    if (t === Terrain.Water || t === Terrain.Bank) wet++;
+    if (t === Terrain.Water || t === Terrain.Bank || t === Terrain.Marsh) wet++;
   }
   const f = n ? wet / n : 0;
   return { susc: f > 0.1 ? 1.0 : 0.7, q: f > 0.1 ? 60 : 100 };
@@ -140,7 +141,7 @@ export function frameLoads(s: GameState, st: Structure, a: Air = air(s)): FrameL
   nodes.forEach((p, k) => {
     const L = q * plan * p.share + (p.perimeter ? (eave * plan) / perimCount : 0);
     const bearing = soil.q * foot.area * thaw;
-    const C = Math.min(bearing, joint, post) * f[k] * (1 - 0.8 * (st.rot ?? 0)) * cond;
+    const C = Math.min(bearing, joint, post) * f[k] * (1 - 0.8 * (st.rot ?? 0)) * cond * (1 + kmod(s, "STUBBORNNESS"));
     load.push(L);
     cap.push(C);
     u.push(C > 0 ? L / C : Infinity);

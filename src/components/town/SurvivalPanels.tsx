@@ -2,7 +2,7 @@
 
 import { CATALOG } from "@/lib/town/sim/catalog";
 import { clock } from "@/lib/town/sim/state";
-import { costText } from "@/lib/town/sim/world";
+import { airBoost, center, costText, fireAir, warmthRange } from "@/lib/town/sim/world";
 import { air, REGIME_LABEL, weatherOf } from "@/lib/town/sim/weather";
 import { FUEL_UNIT_KG, HEARTHS, envelope, isHeated, isZone, materials, ppm, woodFuel, lhv } from "@/lib/town/sim/zones";
 import { FOOTING, footingOf, frameLoads, frameUtil, hasFrame } from "@/lib/town/sim/frame";
@@ -16,6 +16,9 @@ import { TOOL_MATS, kitSummary } from "@/lib/town/sim/tools";
 import { NODE_DEFS, wakeState } from "@/lib/town/sim/wilds";
 import { fitHearth, reroof, setFooting, setPolicy, sweepChimney } from "@/lib/town/sim/actions";
 import { CHANNELS, STIMULI, type Footing, type GameState, type HearthKind, type Structure, type Villager } from "@/lib/town/sim/types";
+import { ATTR_BUFFS, TIERS, tierOf } from "@/lib/town/sim/knowledge";
+import { TACTICS, TACTIC_LABEL, neglect, nemesisOf, tacticOdds, vulnerability, type Tactic } from "@/lib/town/sim/nemesis";
+import type { TownInput } from "@/lib/town/rules";
 
 /**
  * The survival systems' readouts and controls (docs/town-survival-systems.md).
@@ -59,27 +62,52 @@ export function ZonePanel({ s, st, run }: { s: GameState; st: Structure; run: Ru
   const env = envelope(st);
   const { wall, roof } = materials(st);
   const a = air(s);
+  const [bx, by] = center(st);
+  const boost = airBoost(fireAir(s), bx, by);
+  // A pit fire in reach that has burned out warms nothing: say so, or the player wonders why.
+  const coldFire = !boost && s.structures.some((f) => f.type === "pitfire" && !f.buildUntil && (f.fuel ?? 0) <= 0 && Math.hypot(f.x + f.w / 2 - bx, f.y + f.h / 2 - by) <= warmthRange(f.level));
   const co = ppm(z.co);
   const H = env.UAwalls + env.UAroof + env.UAfloor;
   return (
     <div className="tg-zone">
       <p className="town-kicker" style={{ marginTop: 10 }}>Inside</p>
       <p className={`town-sub ${z.T < 5 ? "warn-text" : ""}`}>
-        <b>{r1(z.T)} °C</b> inside, {r1(a.T)} °C out · {wall.name.toLowerCase()} walls, {roof.name.toLowerCase()} roof · loses {Math.round(H)} W/K through its shell
+        <b>{r1(z.T)} °C</b> inside, {r1(a.T + boost)} °C out{boost > 0 ? ` (${r1(a.T)} °C air + ${r1(boost)} °C from the pit fire)` : coldFire ? " (the pit fire in reach is out — load its grate)" : ""} · {wall.name.toLowerCase()} walls, {roof.name.toLowerCase()} roof · loses {Math.round(H)} W/K through its shell
         {st.hearth ? ` · ${HEARTHS[st.hearth].name.toLowerCase()}` : ""}
         {z.burn > 0 ? `, burning ${r1(z.burn)} kg/h of ${z.fuel ?? "fuel"}` : st.hearth ? ", unlit" : ""}
       </p>
       {co > 50 && <p className="town-sub warn-text">Carbon monoxide {Math.round(co)} ppm{co > 400 ? " — deadly to sleep in" : co > 200 ? " — headaches, then worse" : ""}.</p>}
       {isHeated(st) && (
         <>
-          <div className="town-row wrap">
-            {(Object.keys(HEARTHS) as HearthKind[]).filter((k) => k !== st.hearth).map((k) => (
-              <button key={k} className="town-btn ghost sm" onClick={() => run(() => fitHearth(s, st.id, k))} title={`Heat to the room ${pct(HEARTHS[k].eta)} · flue catches ${pct(HEARTHS[k].flue)} of the fumes`}>
-                Fit {HEARTHS[k].name.toLowerCase()}{Object.keys(HEARTHS[k].cost).length ? ` (${costText(HEARTHS[k].cost)})` : ""}
-              </button>
-            ))}
-          </div>
-          {(st.hearth === "chimney" || st.hearth === "stove") && (
+          {(() => {
+            // The heating ladder: where this room stands, and the next rung up.
+            const cur = HEARTHS[st.hearth ?? "open"];
+            const top = Math.max(...Object.values(HEARTHS).map((h) => h.tier));
+            const next = Object.values(HEARTHS).find((h) => h.tier === cur.tier + 1 && h.kind !== "brazier");
+            const others = (Object.keys(HEARTHS) as HearthKind[]).filter((k) => k !== st.hearth && k !== next?.kind && (HEARTHS[k].tier <= cur.tier || k === "brazier"));
+            return (
+              <>
+                <p className="town-dim">
+                  Heating level {cur.tier} of {top} — {cur.name.toLowerCase()}: {pct(cur.eta)} of the fire into the room{cur.floor ? `, floor warmed (${pct(cur.floor)} less lost to the ground)` : ""}. {cur.blurb}
+                </p>
+                {next && (
+                  <button className="town-btn sm" onClick={() => run(() => fitHearth(s, st.id, next.kind))} title={next.blurb}>
+                    Heating level {next.tier}: fit a {next.name.toLowerCase()} ({costText(next.cost)}) — {pct(next.eta)} of the fire into the room
+                  </button>
+                )}
+                {others.length > 0 && (
+                  <div className="town-row wrap">
+                    {others.map((k) => (
+                      <button key={k} className="town-btn ghost sm" onClick={() => run(() => fitHearth(s, st.id, k))} title={`${HEARTHS[k].blurb} Heat to the room ${pct(HEARTHS[k].eta)} · flue catches ${pct(HEARTHS[k].flue)} of the fumes`}>
+                        {HEARTHS[k].tier < cur.tier ? "Back to" : "Fit"} {HEARTHS[k].name.toLowerCase()}{Object.keys(HEARTHS[k].cost).length ? ` (${costText(HEARTHS[k].cost)})` : ""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+          {st.hearth && HEARTHS[st.hearth].flued && (
             <p className={`town-dim ${z.creo > 3 ? "warn-text" : ""}`}>
               Creosote in the flue: {r1(z.creo)} kg{z.creo > 3 ? " — a chimney fire waiting to happen" : ""}.{" "}
               <button className="town-btn ghost sm" onClick={() => run(() => sweepChimney(s, st.id))}>Sweep (2 coin)</button>
@@ -270,3 +298,95 @@ export function NodeList({ s, onSend }: { s: GameState; onSend?: (x: number, y: 
 
 void CATALOG;
 void clock;
+
+// ── Study and the nemesis (design §12–13) ─────────────────
+
+/** Today's study, Field by Field: the buffs it gives, the drop it pays, what neglect costs. */
+export function StudyPanel({ s, input }: { s: GameState; input: TownInput }) {
+  const fields = input.fields ?? [];
+  const k = s.knowledge;
+  const paid = new Set(k?.claimed[input.day ?? ""] ?? []);
+  const mods = Object.entries(k?.mods ?? {}).filter(([, m]) => Math.abs(m ?? 0) > 0.005).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+  const ng = neglect(s);
+  return (
+    <div className="tg-study">
+      <p className="town-kicker" style={{ marginTop: 12 }}>Study</p>
+      {!fields.length ? (
+        <p className="town-dim">No study reaches this town. Add ideas and finish your reviews: every idea is a buff here, every finished Field a supply cart.</p>
+      ) : (
+        <>
+          <p className="town-sub">
+            Each idea you add today strengthens the town along its Field&apos;s attributes. Finish a Field&apos;s reviews for today and a supply cart comes in —
+            the longer its streak, the rarer the load, and each one finished calms the land a little. Leave cards overdue and the land grows hungrier
+            {ng.budget > 1.01 ? ` (right now ×${r1(ng.budget)} its budget, +${r1(ng.rho * 100)}% its aim)` : ng.budget < 0.99 ? ` — today it is calmed to ×${r1(ng.budget)} its budget` : ""}.
+          </p>
+          <table className="tg-table">
+            <thead><tr><th>Field</th><th>Ideas</th><th>Due</th><th>Streak</th><th>Today</th></tr></thead>
+            <tbody>
+              {fields.map((f) => {
+                const tier = tierOf(f.streak);
+                const next = TIERS[tier + 1];
+                return (
+                  <tr key={f.id} title={`Trains ${f.attrs.map((a) => ATTR_BUFFS[a].name.toLowerCase()).join(" and ") || "nothing yet"}`}>
+                    <td>{f.name}<br /><span className="town-dim">{f.attrs.map((a) => ATTR_BUFFS[a].name).join(" · ")}</span></td>
+                    <td>{f.ideasToday}</td>
+                    <td className={f.overdue ? "warn-text" : ""}>{f.dueRemaining}{f.overdue ? ` (${f.overdue} overdue)` : ""}</td>
+                    <td>{f.streak}d · {TIERS[tier].name}{next ? <><br /><span className="town-dim">{next.name} at {next.from}d</span></> : null}</td>
+                    <td>{f.complete ? (paid.has(f.id) ? "✓ cart in" : "✓ cart coming") : f.reviewedToday ? `${f.reviewedToday} done, ${f.dueRemaining} to go` : f.dueRemaining ? "not started" : "nothing due"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {mods.length > 0 && (
+            <ul className="tg-people">
+              {mods.map(([a, m]) => (
+                <li key={a} className={(m ?? 0) < 0 ? "warn-text" : ""}>
+                  <b>{ATTR_BUFFS[a as keyof typeof ATTR_BUFFS].name} {(m ?? 0) > 0 ? "+" : ""}{Math.round((m ?? 0) * 100)}%</b>{" "}
+                  <span className="town-dim">{ATTR_BUFFS[a as keyof typeof ATTR_BUFFS].blurb}{(m ?? 0) < 0 ? " — turned against you by overdue cards" : ""}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(k?.drops.length ?? 0) > 0 && (
+            <p className="town-dim">Last carts: {k!.drops.slice(0, 3).map((d) => `${d.field} (${TIERS[d.tier].name.toLowerCase()}): ${d.got}`).join(" · ")}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** What the land has learnt about you, and what it means to do (§13). */
+export function NemesisPanel({ s }: { s: GameState }) {
+  const n = nemesisOf(s);
+  const odds = tacticOdds(s);
+  const top = TACTICS.map((t, i) => ({ t, p: odds[i] })).filter((x) => x.p > 0).sort((a, b) => b.p - a.p).slice(0, 4);
+  const m = n.model;
+  const reads: string[] = [];
+  if (m.ranged < 0.35) reads.push("your defence is mostly swords — fliers will come over");
+  if (m.ranged > 0.7) reads.push("you trust your archers — expect armour");
+  if (m.walls > 30) reads.push(`${m.walls} wall tiles — it will fly, burrow or break the thinnest`);
+  if (m.coverage < 0.5) reads.push(`only ${pct(m.coverage)} of the town lies inside a tower's circle`);
+  if (m.elite > 0.5) reads.push("a few champions hold the line — a swarm answers that");
+  if (m.unlit > 0.15) reads.push(`${pct(m.unlit)} of your buildings stand dark`);
+  if (m.foodDays > 5) reads.push(`${Math.round(m.foodDays)} days of food in store — burrowers smell it`);
+  if (m.leverage > 0.7) reads.push(`a roof is at ${pct(Math.min(1, m.leverage))} of what its posts can bear`);
+  if (m.hallWeak > 0.4 && s.time / 1440 >= 7) reads.push("the hall stands unguarded");
+  return (
+    <div className="tg-nemesis">
+      <p className="town-kicker" style={{ marginTop: 12 }}>What the land has learnt about you</p>
+      <p className="town-sub">
+        It studies how you defend and learns what hurts you. Beat it cleanly and it presses harder (aim +{pct(n.pressure)}{n.winStreak ? `, ${n.winStreak} clean defence${n.winStreak > 1 ? "s" : ""} in a row` : ""});
+        a ready wave waits for your worst hour — dark, whiteout, guards hurt, fuel short, Hope low.
+        {n.stalk ? ` One is waiting now (${TACTIC_LABEL[n.stalk.tactic as Tactic]}), watching for its moment: the town's weakness is ${r1(vulnerability(s))} against the worst it has seen, ${r1(n.stalk.best)}.` : ""}
+      </p>
+      {reads.length > 0 && <ul className="tg-people">{reads.map((x) => <li key={x} className="town-dim">• {x}</li>)}</ul>}
+      <table className="tg-table">
+        <thead><tr><th>Its likely answer</th><th>Odds</th></tr></thead>
+        <tbody>{top.map((x) => <tr key={x.t}><td>{TACTIC_LABEL[x.t]}</td><td>{pct(x.p)}</td></tr>)}</tbody>
+      </table>
+      {n.history.length > 0 && <p className="town-dim">Its record: {n.history.slice(0, 6).map((h) => `${h.tactic} ${pct(h.reward)}`).join(" · ")} (share of the damage it hoped to do).</p>}
+    </div>
+  );
+}

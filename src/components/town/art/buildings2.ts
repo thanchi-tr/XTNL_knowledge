@@ -1,8 +1,8 @@
 import { makeCanvas, outline, cached, hash, px, type Ctx } from "./core";
-import { M, E, GLOW, VOID, LIT, MID, SHADE, DEEP, sag, recess, type Ramp4 } from "./materials";
-import { masonry, halfTimber, casement, doorway, boards, chimney, flowerBox, cobbles, cone } from "./textures";
+import { M, E, GLOW, VOID, LIT, MID, SHADE, DEEP, sag, type Ramp4 } from "./materials";
+import { masonry, halfTimber, casement, doorway, boards, cobbles } from "./textures";
 import { obliqueHouse } from "./oblique";
-import { stall, drum, ROOF, type RoofStyle } from "./buildings";
+import { stall, ROOF, type RoofStyle } from "./buildings";
 import { oak, pine, sprout, seedling, youngTree, snag, hemisphere, ORE_COLORS } from "./nature";
 
 /**
@@ -162,169 +162,6 @@ export function brazier(): HTMLCanvasElement {
   });
 }
 
-// ── School ────────────────────────────────────────────────
-
-export function school(level: number, roof: RoofStyle): HTMLCanvasElement {
-  return obliqueHouse({
-    key: `school:${Math.min(3, Math.floor(level / 3))}:${roof}`,
-    fw: 50, depth: 12, wallH: 26, rise: 14, roof: ROOF[roof], ridge: "across", stone: M.STONEWM,
-    front: (c, x, y, w, h) => {
-      masonry(c, x, y, w, h, M.STONEWM, 61, { bh: 3, damp: true, ragged: true });
-      for (const wx of [4, 14, 32, 42]) casement(c, x + wx, y + 7, 5, 7, true);
-      doorway(c, x + w / 2 - 4, y + h - 13, 8, 13);
-      // chalkboard sign
-      px(c, x + w / 2 - 7, y + 5, 14, 6, M.OAK[MID]);
-      px(c, x + w / 2 - 6, y + 6, 12, 4, M.CLOTHGRN[DEEP]);
-      px(c, x + w / 2 - 4, y + 7, 3, 1, M.LINEN[LIT]);
-      px(c, x + w / 2, y + 8, 4, 1, M.LINEN[LIT]);
-    },
-    extras: (c, g) => {
-      // bell cupola on the ridge
-      const bx = g.x0 + g.fw / 2 + Math.round(g.dx / 2) - 5;
-      const by = g.top - g.rise + Math.round(g.dy / 2) - 12;
-      px(c, bx, by + 4, 10, 8, M.DAUB[MID]);
-      px(c, bx + 8, by + 4, 2, 8, M.DAUB[SHADE]);
-      px(c, bx + 3, by + 6, 4, 5, VOID);
-      px(c, bx + 4, by + 8, 2, 3, M.BRASS[MID]); // the bell
-      px(c, bx + 4, by + 8, 1, 1, M.BRASS[LIT]);
-      cone(c, bx + 5, by + 4, 12, 7, ROOF[roof], 61);
-    },
-  });
-}
-
-// ── Laboratory ────────────────────────────────────────────
-
-/** A tall lab window: green glass, and a flask on the sill glowing through it. */
-function labWindow(c: Ctx, x: number, y: number, w: number, h: number) {
-  px(c, x - 1, y - 2, w + 2, h + 3, M.OAK[SHADE]);
-  px(c, x - 2, y - 3, w + 4, 1, M.OAK[MID]);
-  px(c, x, y - 1, w, h, M.GLASS[MID]);
-  px(c, x, y - 1, w, 1, M.GLASS[DEEP]);
-  px(c, x, y - 1, 1, h, M.GLASS[DEEP]);
-  // the flask: a round glowing belly, a narrow neck
-  const fx = x + Math.floor(w / 2) - 1;
-  px(c, fx, y + h - 4, 2, 3, E.BILE[2]);
-  px(c, fx, y + h - 4, 1, 1, E.BILE[0]);
-  px(c, fx + 1, y + h - 3, 1, 1, E.BILE[1]);
-  px(c, fx, y + h - 6, 1, 2, M.GLASS[LIT]);
-  px(c, x - 1, y + h - 1, w + 2, 1, M.STONE[LIT]); // sill
-}
-
-/**
- * The laboratory: a stone hall with tall green-lit windows and a copper
- * still by the door. From level 4 an observatory dome sits on the roof.
- */
-export function laboratory(level: number): HTMLCanvasElement {
-  const tier = level >= 4 ? 1 : 0;
-  return obliqueHouse({
-    key: `lab:${tier}`,
-    fw: 40, depth: 12, wallH: 24, rise: 12, roof: ROOF.slate, ridge: "across", stone: M.STONE,
-    front: (c, x, y, w, h) => {
-      masonry(c, x, y, w, h, M.STONE, 141, { bw: 6, bh: 3, damp: true, ragged: true });
-      for (const wx of [4, 12, 30]) labWindow(c, x + wx, y + 8, 5, 9);
-      doorway(c, x + 21, y + h - 12, 6, 12);
-      // the still: a copper tank, its coil, a drip into a bottle
-      const sx = x + 29;
-      const sy = y + h - 9;
-      px(c, sx, sy, 6, 7, M.COPPER[MID]);
-      px(c, sx, sy, 2, 7, M.COPPER[LIT]);
-      px(c, sx + 4, sy, 2, 7, M.COPPER[SHADE]);
-      px(c, sx + 1, sy - 2, 4, 2, M.COPPER[MID]);
-      px(c, sx + 6, sy + 1, 2, 1, M.COPPER[SHADE]);
-      px(c, sx + 7, sy + 2, 1, 3, M.COPPER[SHADE]);
-      px(c, sx + 7, sy + 5, 2, 2, M.GLASS[LIT]);
-    },
-    extras: (c, g) => {
-      chimney(c, g.x0 + 5 + Math.round(g.dx / 2), g.top - g.rise - 8, 14);
-      if (tier) {
-        // the dome: glass ribs over a brass drum, a telescope out of the slot
-        const dx = g.x0 + g.fw - 14 + Math.round(g.dx / 2);
-        const dy = g.top - g.rise + Math.round(g.dy / 2) - 8;
-        px(c, dx, dy + 5, 10, 3, M.BRASS[MID]);
-        px(c, dx, dy + 5, 3, 3, M.BRASS[LIT]);
-        px(c, dx + 7, dy + 5, 3, 3, M.BRASS[SHADE]);
-        for (let r = 0; r < 5; r++) {
-          const half = Math.round(Math.sqrt(25 - (5 - r) * (5 - r)));
-          px(c, dx + 5 - half, dy + r, half * 2, 1, r < 2 ? M.GLASS[LIT] : M.GLASS[MID]);
-        }
-        px(c, dx + 5, dy, 1, 5, M.BRASS[SHADE]);
-        px(c, dx + 6, dy - 3, 4, 1, M.BRASS[MID]);
-        px(c, dx + 9, dy - 4, 1, 2, M.BRASS[LIT]);
-      }
-    },
-  });
-}
-
-// ── Fishing hut ───────────────────────────────────────────
-
-/** A fish hanging from a rack: silver back, pale belly, a dark eye. */
-function hangingFish(c: Ctx, x: number, y: number) {
-  px(c, x, y, 1, 1, M.OAK[DEEP]); // the cord
-  px(c, x - 1, y + 1, 3, 4, M.STEEL[MID]);
-  px(c, x - 1, y + 1, 1, 4, M.STEEL[LIT]);
-  px(c, x + 1, y + 2, 1, 3, M.STEEL[SHADE]);
-  px(c, x - 1, y + 5, 3, 1, M.STEEL[SHADE]); // tail
-  px(c, x, y + 2, 1, 1, CAVITY_PX);
-}
-const CAVITY_PX = "#16111D";
-
-/**
- * The fishing hut: a board hut on stilts under thatch, a jetty out toward
- * the water, a drying rack of the day's catch. More racks with level, and a
- * boat tied at the jetty from level 7.
- */
-export function fishery(level: number): HTMLCanvasElement {
-  const tier = level >= 7 ? 2 : level >= 4 ? 1 : 0;
-  return cached(`fishery:${tier}`, () => {
-    const hut = obliqueHouse({
-      key: "fishHut",
-      fw: 18, depth: 8, wallH: 13, rise: 9, roof: ROOF.thatch, ridge: "along",
-      front: (c, x, y, w, h) => {
-        boards(c, x, y, w, h - 3, M.PINE, 151);
-        // stilts under the floor
-        px(c, x, y + h - 3, w, 3, VOID);
-        for (const sx of [x + 1, x + w / 2 - 1, x + w - 3]) {
-          px(c, sx, y + h - 3, 2, 3, M.OAK[MID]);
-          px(c, sx + 1, y + h - 3, 1, 3, M.OAK[SHADE]);
-        }
-        doorway(c, x + 6, y + h - 12, 5, 9);
-        casement(c, x + 13, y + 4, 3, 3, true);
-      },
-    });
-    const pad = 14;
-    const { cv: yard, c } = makeCanvas(hut.width + pad * 2, hut.height + 2);
-    const gy = hut.height - 4;
-    // the jetty, out to the left over the water
-    boards(c, 0, gy, pad + 6, 3, M.OAK, 3, false);
-    for (const x of [1, 7]) {
-      px(c, x, gy + 3, 2, 3, M.OAK[MID]);
-      px(c, x + 1, gy + 3, 1, 3, M.OAK[SHADE]);
-    }
-    if (tier >= 2) {
-      // a rowing boat tied at the jetty's end
-      px(c, 0, gy - 4, 11, 3, M.OAK[MID]);
-      px(c, 0, gy - 4, 11, 1, M.OAK[LIT]);
-      px(c, 1, gy - 1, 9, 1, M.OAK[SHADE]);
-      px(c, 4, gy - 4, 1, 2, M.OAK[DEEP]);
-    }
-    // drying racks to the right, a fish per hook
-    const racks = 1 + tier;
-    for (let k = 0; k < racks; k++) {
-      const rx = hut.width + pad - 2 + k * 5 - racks * 2;
-      const ry = gy - 12 - k;
-      px(c, rx, ry, 1, 13, M.OAK[MID]);
-      px(c, rx + 9, ry, 1, 13, M.OAK[SHADE]);
-      px(c, rx, ry, 10, 1, M.OAK[LIT]);
-      for (const fx of [rx + 2, rx + 5, rx + 8]) if (fx < rx + 9) hangingFish(c, fx, ry + 1);
-    }
-    outline(yard);
-    const { cv, c: out } = makeCanvas(yard.width, yard.height);
-    out.drawImage(yard, 0, 0);
-    out.drawImage(hut, pad, 0);
-    return cv;
-  });
-}
-
 // ── Watermill ─────────────────────────────────────────────
 
 export function watermill(level: number, roof: RoofStyle): HTMLCanvasElement {
@@ -359,71 +196,6 @@ export function drawWheel(c: Ctx, cx: number, cy: number, r: number, phase: numb
   }
   px(c, cx - 1, cy - 1, 3, 3, M.IRON[MID]);
   px(c, cx - 1, cy - 1, 1, 1, M.IRON[LIT]);
-}
-
-// ── Kitchen ───────────────────────────────────────────────
-
-export function kitchen(level: number, roof: RoofStyle): HTMLCanvasElement {
-  return obliqueHouse({
-    key: `kitchen:${Math.min(3, Math.floor(level / 3))}:${roof}`,
-    fw: 30, depth: 10, wallH: 22, rise: 11, roof: ROOF[roof], ridge: "across",
-    front: (c, x, y, w, h) => {
-      halfTimber(c, x, y, w, 10, 81);
-      masonry(c, x, y + 10, w, h - 10, M.STONEWM, 82, { bw: 5, bh: 3, damp: true, ragged: true });
-      doorway(c, x + 4, y + h - 10, 6, 10);
-      casement(c, x + w - 11, y + 12, 7, 5, true);
-      // hanging sign: a pot
-      px(c, x + w - 9, y + 5, 1, 2, M.IRON[SHADE]);
-      px(c, x + w - 12, y + 7, 7, 3, M.PINE[MID]);
-      px(c, x + w - 12, y + 7, 7, 1, M.PINE[LIT]);
-      px(c, x + w - 10, y + 8, 3, 2, M.IRON[SHADE]);
-      flowerBox(c, x + w - 12, y + 18, 9);
-    },
-    extras: (c, g) => chimney(c, g.x0 + 6 + Math.round(g.dx / 2), g.top - g.rise - 6, 12),
-  });
-}
-
-// ── Refinery ──────────────────────────────────────────────
-
-export function refinery(level: number, roof: RoofStyle): HTMLCanvasElement {
-  return cached(`refinery:${Math.min(3, Math.floor(level / 3))}:${roof}`, () => {
-    const hall = obliqueHouse({
-      key: `refineryHall:${roof}`,
-      fw: 36, depth: 12, wallH: 24, rise: 10, roof: ROOF.slate, ridge: "across",
-      front: (c, x, y, w, h) => {
-        masonry(c, x, y, w, h, M.STONE, 91, { bw: 6, bh: 3, damp: true, ragged: true });
-        px(c, x + 4, y + 8, 12, h - 8, VOID);
-        recess(c, x + 4, y + 8, 12, h - 8);
-        px(c, x + 6, y + h - 6, 8, 6, GLOW[DEEP]); // furnace mouth
-        px(c, x + 8, y + h - 4, 4, 4, GLOW[SHADE]);
-        casement(c, x + 22, y + 7, 5, 5, true);
-        casement(c, x + 29, y + 7, 4, 5, true);
-      },
-      extras: (c, g) => chimney(c, g.x0 + g.fw - 8 + Math.round(g.dx / 2), g.top - g.rise - 14, 22),
-    });
-    const { cv, c } = makeCanvas(hall.width + 16, hall.height);
-    // vats, drawn first so the hall stands in front: iron drums, lit on the
-    // left, hooped every few rows
-    const vx = hall.width - 4;
-    for (let k = 0; k < 2; k++) {
-      const x = vx + k * 7;
-      const y = hall.height - 18 + k * 2;
-      for (let xx = 0; xx < 7; xx++) {
-        const t = xx < 2 ? LIT : xx < 4 ? MID : xx < 6 ? SHADE : DEEP;
-        px(c, x + xx, y, 1, 14, M.IRON[t]);
-        for (let yy = 4; yy < 14; yy += 5) px(c, x + xx, y + yy, 1, 1, M.IRON[Math.min(DEEP, t + 1)]);
-      }
-      px(c, x, y - 1, 7, 1, M.IRON[LIT]);
-      px(c, x + 2, y + 6, 2, 2, M.BRASS[MID]); // gauge
-      px(c, x + 2, y + 6, 1, 1, M.BRASS[LIT]);
-    }
-    // pipe from vat to hall
-    px(c, vx - 6, hall.height - 14, 10, 1, M.IRON[MID]);
-    px(c, vx - 6, hall.height - 13, 10, 1, M.IRON[SHADE]);
-    outline(cv);
-    c.drawImage(hall, 0, 0);
-    return cv;
-  });
 }
 
 // ── Military ──────────────────────────────────────────────
@@ -474,66 +246,6 @@ export function archery(level: number, roof: RoofStyle): HTMLCanvasElement {
     outline(tl);
     c.drawImage(tl, hut.width - 4, hut.height - 22);
     c.drawImage(hut, 0, 0);
-    return cv;
-  });
-}
-
-export function armoury(level: number, roof: RoofStyle): HTMLCanvasElement {
-  return cached(`armoury:${Math.min(3, Math.floor(level / 3))}:${roof}`, () => {
-    const hall = obliqueHouse({
-      key: `armouryHall:${roof}`,
-      fw: 44, depth: 12, wallH: 24, rise: 12, roof: ROOF.slate, ridge: "across",
-      front: (c, x, y, w, h) => {
-        masonry(c, x, y, w, h, M.STONE, 111, { damp: true, ragged: true });
-        doorway(c, x + w / 2 - 5, y + h - 14, 10, 14);
-        // crossed axes over the door
-        for (let t = 0; t < 7; t++) {
-          px(c, x + w / 2 - 4 + t, y + 3 + t, 1, 1, M.OAK[MID]);
-          px(c, x + w / 2 + 3 - t, y + 3 + t, 1, 1, M.OAK[SHADE]);
-        }
-        px(c, x + w / 2 - 6, y + 2, 3, 3, M.IRON[MID]);
-        px(c, x + w / 2 - 6, y + 2, 2, 1, M.IRON[LIT]);
-        px(c, x + w / 2 + 3, y + 2, 3, 3, M.IRON[SHADE]);
-        for (const wx of [4, w - 9]) casement(c, x + wx, y + 8, 5, 6, true);
-      },
-      extras: (c, g) => chimney(c, g.x0 + 4 + Math.round(g.dx / 2), g.top - g.rise - 8, 14),
-    });
-    const { cv, c } = makeCanvas(hall.width + 22, hall.height);
-    // armour stands in the yard
-    const st = makeCanvas(22, 20);
-    for (let k = 0; k < 3; k++) {
-      const x = 2 + k * 7;
-      px(st.c, x + 2, 4, 1, 14, M.OAK[MID]);
-      px(st.c, x, 5, 5, 6, M.IRON[MID]);
-      px(st.c, x + 3, 5, 2, 6, M.IRON[SHADE]);
-      px(st.c, x, 5, 3, 1, M.IRON[LIT]);
-      px(st.c, x + 1, 1, 3, 4, M.IRON[MID]);
-      px(st.c, x + 1, 1, 1, 1, M.IRON[LIT]);
-      px(st.c, x + 1, 2, 3, 1, M.IRON[DEEP]); // visor slit
-    }
-    outline(st.cv);
-    c.drawImage(st.cv, hall.width - 2, hall.height - 22);
-    c.drawImage(hall, 0, 0);
-    return cv;
-  });
-}
-
-export function wizardHut(level: number): HTMLCanvasElement {
-  return cached(`wizardhut:${Math.min(3, Math.floor(level / 3))}`, () => {
-    const W = 36;
-    const H = 52;
-    const { cv, c } = makeCanvas(W, H);
-    masonry(c, 7, 22, 22, 28, M.STONEWM, 29, { bw: 5, bh: 3, tone: drum(22), damp: true, ragged: true });
-    casement(c, 15, 30, 5, 6, true);
-    doorway(c, 15, 40, 6, 10);
-    cone(c, 18, 22, 30, 20, ROOF.purple, 29);
-    // stars painted on the cone
-    for (const [x, y] of [[13, 10], [21, 6], [18, 14], [24, 12]]) px(c, x, y, 1, 1, M.BRASS[LIT]);
-    // crescent finial
-    px(c, 17, 0, 3, 1, M.BRASS[LIT]);
-    px(c, 16, 1, 1, 2, M.BRASS[MID]);
-    px(c, 17, 3, 3, 1, M.BRASS[SHADE]);
-    outline(cv);
     return cv;
   });
 }
@@ -619,39 +331,6 @@ export function iceFactory(level: number): HTMLCanvasElement {
     }
     outline(cv);
     c.drawImage(hall, 0, 0);
-    return cv;
-  });
-}
-
-// ── Lumber camp ───────────────────────────────────────────
-
-export function lumberCamp(): HTMLCanvasElement {
-  return cached("lumber", () => {
-    const hut = obliqueHouse({
-      key: "lumberHut",
-      fw: 18, depth: 8, wallH: 14, rise: 8, roof: ROOF.thatch, ridge: "along",
-      front: (c, x, y, w, h) => {
-        boards(c, x, y, w, h, M.OAK, 131);
-        doorway(c, x + w / 2 - 3, y + h - 9, 6, 9);
-      },
-    });
-    const { cv, c } = makeCanvas(hut.width + 18, hut.height);
-    // log pile, ends toward the viewer: bark rim, pale heartwood, a dark pith
-    for (let row = 0; row < 3; row++) for (let k = 0; k < 4 - row; k++) {
-      const x = hut.width - 2 + k * 4 + row * 2;
-      const y = hut.height - 6 - row * 4;
-      px(c, x, y, 4, 4, M.OAK[SHADE]);
-      px(c, x + 1, y + 1, 2, 2, M.PINE[LIT]);
-      px(c, x + 2, y + 2, 1, 1, M.PINE[SHADE]);
-    }
-    // chopping block and axe
-    px(c, 2, hut.height - 5, 5, 4, M.OAK[MID]);
-    px(c, 2, hut.height - 5, 5, 1, M.PINE[LIT]);
-    px(c, 4, hut.height - 9, 1, 5, M.PINE[MID]);
-    px(c, 3, hut.height - 10, 3, 2, M.IRON[MID]);
-    px(c, 3, hut.height - 10, 1, 1, M.IRON[LIT]);
-    outline(cv);
-    c.drawImage(hut, 0, 0);
     return cv;
   });
 }

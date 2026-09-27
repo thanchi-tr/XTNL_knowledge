@@ -1,7 +1,8 @@
 import { CATALOG, grade, homeTier } from "./catalog";
 import { clock, log } from "./state";
-import { center, rng } from "./world";
+import { airBoost, center, fireAir, rng } from "./world";
 import { emit } from "./aggro";
+import { kmod } from "./knowledge";
 import type { Air } from "./weather";
 import type { GameState, HearthKind, ResourceKey, Structure, StructureType, Zone } from "./types";
 
@@ -46,12 +47,27 @@ export const snowShape = (pitch: number) => (pitch <= 30 ? 0.8 : pitch < 60 ? (0
 
 // ── Hearths ───────────────────────────────────────────────
 
-export interface HearthDef { kind: HearthKind; name: string; eta: number; flue: number; dAch: number; ignite: number; maxKgH: number; cost: Partial<Record<ResourceKey, number>> }
+export interface HearthDef {
+  kind: HearthKind; name: string; eta: number; flue: number; dAch: number; ignite: number; maxKgH: number; cost: Partial<Record<ResourceKey, number>>;
+  /** Its level on the heating ladder: each must be fitted over the one below it. */
+  tier: number;
+  /** A body of masonry that stores the fire's heat and gives it out slowly. */
+  mass?: boolean;
+  /** Has a flue: takes coal, gathers creosote, wants sweeping. */
+  flued?: boolean;
+  /** Share of the room's heat loss to the ground it cuts, by warming the floor. */
+  floor?: number;
+  blurb: string;
+}
 export const HEARTHS: Record<HearthKind, HearthDef> = {
-  open: { kind: "open", name: "Open hearth", eta: 0.15, flue: 0.6, dAch: 1.0, ignite: 1, maxKgH: 6, cost: {} },
-  chimney: { kind: "chimney", name: "Chimney fireplace", eta: 0.22, flue: 0.95, dAch: 0.5, ignite: 0.25, maxKgH: 6, cost: { stone: 40, bricks: 10 } },
-  stove: { kind: "stove", name: "Masonry stove", eta: 0.7, flue: 0.99, dAch: 0.1, ignite: 0.05, maxKgH: 5, cost: { stone: 80, bricks: 30, ingots: 2 } },
-  brazier: { kind: "brazier", name: "Charcoal brazier", eta: 0.95, flue: 0, dAch: 0, ignite: 0.25, maxKgH: 1.5, cost: { iron: 3 } },
+  open: { kind: "open", name: "Open hearth", tier: 1, eta: 0.15, flue: 0.6, dAch: 1.0, ignite: 1, maxKgH: 6, cost: {}, blurb: "A fire on the floor under a smoke hole: most of the heat goes up with the smoke." },
+  chimney: { kind: "chimney", name: "Chimney fireplace", tier: 2, flued: true, eta: 0.22, flue: 0.95, dAch: 0.5, ignite: 0.25, maxKgH: 6, cost: { stone: 40, bricks: 10 }, blurb: "A flue takes the smoke; the room keeps a little more of the fire." },
+  brazier: { kind: "brazier", name: "Charcoal brazier", tier: 2, eta: 0.95, flue: 0, dAch: 0, ignite: 0.25, maxKgH: 1.5, cost: { iron: 3 }, blurb: "All its heat stays in the room — and all its fumes. Small, and dangerous to sleep by." },
+  stove: { kind: "stove", name: "Masonry stove", tier: 3, mass: true, flued: true, eta: 0.7, flue: 0.99, dAch: 0.1, ignite: 0.05, maxKgH: 5, cost: { stone: 80, bricks: 30, ingots: 2 }, blurb: "A mass of brick that drinks a hot fire and gives it back all night." },
+  tiled: { kind: "tiled", name: "Tiled stove", tier: 4, mass: true, flued: true, eta: 0.82, flue: 0.995, dAch: 0.08, ignite: 0.02, maxKgH: 6, cost: { stone: 60, bricks: 60, ingots: 4, silver: 3 }, blurb: "A tall stove faced in glazed tile, its smoke winding through channels until nearly all its heat is in the brick." },
+  hypocaust: { kind: "hypocaust", name: "Hypocaust", tier: 5, flued: true, floor: 0.6, eta: 0.8, flue: 0.99, dAch: 0.05, ignite: 0.01, maxKgH: 10, cost: { stone: 150, bricks: 100, ingots: 6, gold: 1 }, blurb: "A furnace under a raised floor: hot air runs beneath the room, so the cold no longer comes up from the ground." },
+  boiler: { kind: "boiler", name: "Boiler & radiators", tier: 6, flued: true, floor: 0.3, eta: 0.9, flue: 0.999, dAch: 0.04, ignite: 0.005, maxKgH: 12, cost: { ingots: 16, bricks: 60, gold: 3 }, blurb: "A coal boiler and iron radiators: steady heat in every room, and a flue that takes everything." },
+  rune: { kind: "rune", name: "Rune hearthstone", tier: 7, mass: true, flued: true, floor: 0.5, eta: 1, flue: 1, dAch: 0, ignite: 0, maxKgH: 4, cost: { mithril: 2, diamond: 2, ingots: 10 }, blurb: "A carved stone that burns without smoke or fumes and holds its warmth like a sleeping animal." },
 };
 
 // ── Fuels (§1.9) ──────────────────────────────────────────
@@ -175,7 +191,8 @@ export interface Occ { awake: number; asleep: number }
 /** What the fire burns, in the order the town's policy allows. */
 function fuelChoice(s: GameState, kind: HearthKind): FuelKey[] {
   if (kind === "brazier") return ["charcoal", "coal"];
-  const coalOk = kind === "chimney" || kind === "stove";
+  if (kind === "boiler") return ["coal", "charcoal", "peat", "wood"];
+  const coalOk = !!HEARTHS[kind].flued;
   const pol = s.policy;
   if (coalOk && pol?.coalFirst) return ["coal", "peat", "wood", "charcoal"];
   return coalOk ? ["wood", "peat", "coal", "charcoal"] : ["wood", "peat"];
@@ -206,9 +223,13 @@ export function stepZones(s: GameState, dtMin: number, a: Air, occ: Map<number, 
   const target = s.policy?.heat ?? 12;
   let smokeKg = 0;
   let heatW = 0;
+  const fires = fireAir(s);
   for (const st of s.structures) {
     if (!isZone(st)) continue;
-    const z = zoneOf(st, a.T);
+    // The open air round this building: warmer inside a lit pit fire's radius.
+    const [bx, by] = center(st);
+    const To = a.T + airBoost(fires, bx, by);
+    const z = zoneOf(st, To);
     const env = envelope(st);
     const o = occ.get(st.id) ?? { awake: 0, asleep: 0 };
     const people = o.awake + o.asleep;
@@ -217,20 +238,24 @@ export function stepZones(s: GameState, dtMin: number, a: Air, occ: Map<number, 
     let Qproc = kitchenOn ? PROCESS_HEAT[st.type]! : 0;
     const Tg = a.Tg;
     const kind = st.hearth;
-    const def = kind ? HEARTHS[kind] : undefined;
+    const base = kind ? HEARTHS[kind] : undefined;
+    // Draught and flue (Abstract ideas): more of the fire into the room.
+    const def = base ? { ...base, eta: Math.min(0.95, base.eta * (1 + kmod(s, "ABSTRACT"))) } : undefined;
     const ach = achOf(st, env, a.v, o.awake * 2);
     const Hv = 0.333 * env.V * ach;
     const Hout = env.UAwalls + env.UAroof + Hv;
-    const H = Hout + env.UAfloor;
+    // A warmed floor (hypocaust, radiators, a hearthstone) cuts the loss to the cold ground.
+    const UAfloor = env.UAfloor * (1 - (def?.floor ?? 0));
+    const H = Hout + UAfloor;
     // The fire: burn to hold the target while people are in; bank it low when empty.
     let mdot = 0;
     let fuel: FuelDef | undefined;
     // Nobody in, no fire: the town does not burn wood on empty rooms.
     if (def && people > 0) {
       const want = target;
-      const need = H * want - Hout * a.T - env.UAfloor * Tg - Qocc - Qproc;
+      const need = H * want - Hout * To - UAfloor * Tg - Qocc - Qproc;
       // Burn at the rate that holds the target; a stove's mass smooths what it gives out.
-      if (kind === "stove") {
+      if (def?.mass) {
         // Bring the stove's mass to the temperature at which it gives out what the room needs, over an hour.
         const Tset = want + Math.max(0, need) / 250;
         mdot = Math.max(0, Math.max(0, need) + ((Tset - z.Ts) * 600000) / 3600) / def.eta;
@@ -267,32 +292,32 @@ export function stepZones(s: GameState, dtMin: number, a: Air, occ: Map<number, 
     z.fuel = fuel?.key;
     let Qfire = 0;
     if (def && P > 0) {
-      if (kind === "stove") {
+      if (def?.mass) {
         z.Ts += (dt * (def.eta * P - 250 * (z.Ts - z.T))) / 600000;
       } else Qfire = def.eta * P;
-    } else if (kind === "stove") {
+    } else if (def?.mass) {
       z.Ts += (dt * (-250 * (z.Ts - z.T))) / 600000;
     }
-    const Qstove = kind === "stove" ? 250 * (z.Ts - z.T) : 0;
+    const Qstove = def?.mass ? 250 * (z.Ts - z.T) : 0;
     // Exact update of the room.
-    const Teq = (Hout * a.T + env.UAfloor * Tg + Qocc + Qproc + Qfire + Qstove) / H;
+    const Teq = (Hout * To + UAfloor * Tg + Qocc + Qproc + Qfire + Qstove) / H;
     z.T = Teq + (z.T - Teq) * Math.exp((-H * dt) / env.C);
-    if (kind !== "stove") z.Ts = z.T;
+    if (!def?.mass) z.Ts = z.T;
     // Carbon monoxide: dc/dt = G/V − ACH·c, per hour, exact.
     if (fuel && def) {
       const G = mdot * fuel.co * (1 - def.flue) * 1000; // mg/h
       const ceq = G / (env.V * Math.max(0.05, ach));
       z.co = ceq + (z.co - ceq) * Math.exp((-ach * dtMin) / 60);
-      if (kind === "chimney" || kind === "stove") z.creo += ((mdot * dtMin) / 60) * fuel.creo;
+      if (def?.flued) z.creo += ((mdot * dtMin) / 60) * fuel.creo;
       smokeKg += ((mdot * dtMin) / 60) * fuel.pm / 1000 * (kind === "open" ? 1 : 1);
     } else {
       z.co = z.co * Math.exp((-ach * dtMin) / 60);
     }
-    heatW += Hout * Math.max(0, z.T - a.T);
+    heatW += Hout * Math.max(0, z.T - To);
     // Hazards, rolled as hazards over the step: a chimney fire, a thatch catching.
     if (def && mdot > 0) {
       const hours = dtMin / 60;
-      const lamCf = kind === "chimney" || kind === "stove" ? 4e-5 * Math.exp(z.creo) : 0;
+      const lamCf = def?.flued ? 4e-5 * Math.exp(z.creo) : 0;
       const lamIg = def.ignite * env.roof.ignite;
       if (r() < 1 - Math.exp(-(lamCf + lamIg) * hours)) houseFire(s, st, lamCf > lamIg ? "chimney" : "roof");
     }

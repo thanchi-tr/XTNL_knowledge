@@ -97,7 +97,8 @@ export function flowField(s: GameState, target: Structure, g: Group, ch: Channel
     if (g.flying) return 1;
     if (t === Terrain.Water) return Infinity;
     if (occ[i] && occ[i] !== target.id) return Infinity;
-    let c = t === Terrain.Pavement ? 0.8 : t === Terrain.Forest ? 2 : t === Terrain.Bank ? 1.2 : 1;
+    // Raiders take the road; they climb hills slowly and flounder in marsh.
+    let c = t === Terrain.Pavement ? 0.8 : t === Terrain.Forest ? 2 : t === Terrain.Bank ? 1.2 : t === Terrain.Hill ? 1.6 : t === Terrain.Marsh ? 2.4 : 1;
     // A wall must be broken; a gate stands open to anything that walks up to it.
     if (o === Overlay.Wall) c += wallHp(s.map.meta[i]) / g.dps;
     else if (o === Overlay.Tree || o === Overlay.Rock) c += 1.5;

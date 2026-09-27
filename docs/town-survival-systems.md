@@ -1592,11 +1592,158 @@ All eight phases of §9 shipped together and are always on: there are no feature
 ### Minds (§6)
 
 - **Grief.** A death costs housemates 15 sanity and everyone else 3. Houses hold unrelated people, and a full 30 to every housemate set off murder cascades.
+  - **Big towns.** Above 20 people, the town's share (the 3 sanity and the 4 Hope) is scaled by 20/population. A home with more than five others in it shares 5 × 15 of grief among them, rather than 15 each. Towns of 20 or fewer, and homes of six or fewer, are unchanged. Without this, a town of 130 in apartment blocks fell apart after any hard-won fight. Ten dead soldiers cost 40 Hope, and each death grieved dozens of housemates, which set off breakdowns and murders.
 - **Unburied bodies** cost sanity by proximity (§6.1), not on arrival.
 - **Abandonment.** Hope at 5 or below for 72 hours ends the run (fall cause "abandoned"). Refugees no longer come to a town with Hope under 10. Before this, dead towns lingered for weeks as refugees arrived to die.
+- **Dwindling.** A town that has held six or more people and then lies at two or fewer for 72 hours has fallen too (fall cause "dwindled"). This catches the other kind of dead town: two survivors whose Hope recovers because there are so few mouths to feed. Such a town used to count as standing to the end of a run.
 - **Strikes** end with hysteresis: the strike clock resets when the faction's discontent falls below 60.
 - **Emergency protein** brings an immediate Faith ultimatum if Faith is over 30% of the town.
 
 ### Known carry-over
 
 - The town hall does not repair between raids. This is existing behaviour, kept unchanged.
+
+---
+
+## 12. Study into the town (`knowledge.ts`)
+
+The player's real study today reaches the town through `loadTownInput` (`src/lib/town/input.ts`). The page load reads each Field's day:
+
+- ideas added today and this week;
+- existing cards reviewed today;
+- cards still due, and cards more than a day overdue;
+- the Field's streak, from `FieldStreak`, alive if its last active day is today or yesterday;
+- its two heaviest attributes, from `FieldAttribute`.
+
+### 12.1 Ideas are buffs
+
+Every idea added to a Field today stacks one on its first attribute and half on its second. Each attribute's effect is
+
+```
+m_a = cap_a · (1 − e^{−stacks_a / 3})  −  min(cap_a + 0.1, 0.02 · overdue in Fields led by a)
+```
+
+So the first few ideas in a Field matter most, spreading study covers more of the town, and a backlog of overdue cards turns a Field's own buff against the town.
+
+| Attribute | Town effect | Cap |
+|---|---|---|
+| Physical | heavy labour output (mine, lumber, ice, earthworks) ×(1+m); fatigue builds /(1+m) | 30% |
+| Stubbornness | every frame post's capacity ×(1+m) | 30% |
+| Faith | Hope +0.5·m an hour | 30% |
+| Compassion | illness mortality ×(1−m); grief ×(1−m) | 30% |
+| Logic | refinery and laboratory batches ×(1+m) | 30% |
+| Statistic | farm output ×(1+m) | 30% |
+| Critical Thinking | all aggro input ×(1−m) | 30% |
+| Reason | tool edge wear and fatigue damage ×(1−m) | 30% |
+| Abstract | hearth efficiency ×(1+m) | 20% |
+| Creativity | kitchen batches ×(1+m) | 30% |
+| Mind | mental-break hazard ×(1−m) | 40% |
+| Self Respect | discontent gain ×(1−m) | 40% |
+| Rebuttal | every defender's damage ×(1+m) | 25% |
+
+### 12.2 A finished daily is a supply cart
+
+A Field is complete for the day when something in it was reviewed and nothing in it is still due. Once per calendar day it pays a drop.
+
+- **Seeding.** The drop is seeded by the day and the Field, so reloading cannot reroll it.
+- **Rarity** is set by the Field's streak:
+
+  | Streak (days) | Tier | Typical contents |
+  |---|---|---|
+  | 0–2 | Common | wood, stone, meals, potatoes, coin |
+  | 3–6 | Uncommon | coal, iron, salt, torches, wrought tools, tonic |
+  | 7–13 | Rare | planks, bricks, ingots, silver, charcoal, steel tools, fertiliser |
+  | 14–29 | Epic | platinum, gold, formula, monster jewels, gunpowder |
+  | 30+ | Legendary | diamond, mithril, jewels, crucible-steel tools, gold |
+
+- **Rolls** = 1 + min(4, ⌊level/3⌋) + min(3, ⌊√reviewed⌋). Each roll comes from the Field's tier, or one time in four from the tier below, and leans 60% toward goods of the Field's school.
+
+### 12.3 What neglect costs
+
+- **Budget.** The land's daily budget is multiplied by 1 + min(1, overdue/40) + min(0.5, due/40) + 0.5 if nothing was reviewed today.
+- **Aim.** ρ rises by 0.1 on a day without reviews, plus min(0.15, overdue/200).
+- **Kept study.** It works the other way too. Each Field finished today takes 0.1 off that budget multiplier and 0.05 off ρ, counting up to three Fields (as low as ×0.7 and −0.15). The budget sets how often waves come. ρ sets how hard each one is aimed against the town's defence. Lowering the budget alone changed nothing measurable, because waves are sized to ρ.
+- **Banners.** A Field whose best streak reached a week, and whose streak is now dead, drops its banner once a day: Hope −4.
+
+## 13. The nemesis (`nemesis.ts`)
+
+The land plays against the player.
+
+### 13.1 It models you
+
+Every hour it reads the town:
+- the share of the defence's damage that is ranged;
+- wall tiles;
+- the share of buildings inside a guard post's circle;
+- whether the guard is a few elites;
+- the unlit share;
+- days of food and fuel;
+- the most loaded roof;
+- whether the hall is guarded;
+- how many people are outdoors;
+- the study picture (§12.3).
+
+### 13.2 It learns what works
+
+Ten tactics, drawn by EXP3, the bandit algorithm for an adaptive opponent:
+- **Tactics:** assault, fliers, armour, swarm, night, blizzard, siege, starve, flank, strike at the hall.
+- **Draw:** P(i) = (1 − γ)·w_i·fit_i / Σ + γ/K, with γ = 0.12.
+- **Update:** after each wave, w_i ← w_i·exp(η·min(10, r/p_i)) with η = 0.08, where r is its share of harm done: deaths, buildings, food, damage to the hall, or 1 for a sack.
+
+The fits are counter-picks:
+
+| Tactic | Fit |
+|---|---|
+| Fliers | 1 + 2·(1 − ranged share) + 1.5 if walls > 30 |
+| Armour | 1 + 2.5·ranged share |
+| Swarm | 1 + 2.5·elite |
+| Night | 1 + 3·unlit share |
+| Blizzard | winter only: 1 + 3·outdoors share (+1 during a blizzard) |
+| Siege | 1 + 3·worst frame utilisation |
+| Starve | 1 + min(2, food days/5) |
+| Flank | 1 + 2·(1 − coverage) |
+| Strike at the hall | 1 + 3·hall weakness, from day 7 only |
+
+**Calibration.** The director learns how far to trust its Lanchester estimate:
+- a wave that won though sent at under even odds: κ ×0.8;
+- a wave crushed though sent at better than 0.8: κ ×1.08;
+- κ is kept within [0.25, 1.5] and multiplies the defence the next wave is sized against.
+
+Against fliers the estimate also counts melee at half and ranged at double, as the combat rules do.
+
+### 13.3 It waits for your worst hour
+
+A wave whose purse is ready stalks for up to 18 hours. It scores the town's vulnerability each hour:
+
+```
+V = 0.3·dark + 0.3·whiteout + 0.3·guards hurt + 0.1·heroes away + 0.2·(Hope < 40)
+    + 0.2·(fuel < 1 day) + 0.2·(food < 1 day) + 0.3·hall damage + 0.3·strike
+```
+
+It strikes by the secretary rule: watch the first six hours, then take the first hour at least as bad as the worst seen. A night wave waits for dark; a blizzard wave waits for the whiteout, or becomes an assault. A punitive wave (§2.3) does not stalk.
+
+### 13.4 It presses a winning player
+
+- **Pressure.** Each clean defence (harm under 5%) adds 0.08 to ρ, capped at 0.6. Only harm above 30% takes 0.1 back.
+- **First week.** No wave is aimed above 0.8 of what it meets, and the hall is not a target.
+- **Lesser beasts.** If even one beast of the tactic at level 1 exceeds the aim, the strongest lesser beast that fits is sent instead.
+
+### 13.5 Contract (`npm run town:balance`)
+
+The same scripted town on eight maps, played four ways (as built):
+
+| Run | Median fall day | Requirement |
+|---|---|---|
+| G1 static player, no study data | 22 | falls on days 8–30 in ≥ 6 of 8 maps (8/8) |
+| G2 static player, active study | 23 | median later than G1 |
+| G3 static player, neglected study | 12 | median no later than G1 |
+| G4 scripted strategist, active study | 21.5 | reported only: a script is only as good as its heuristics |
+
+These numbers come from after two fixes to the simulation. First, building now stops for exactly the night minutes of each step, however long the step. Before, a job due inside an hour-long night step still finished, so the scripted runs got lamps and upgrades built in the dark. Second, a town that has dwindled to a couple of survivors now counts as fallen (§ Minds, "Dwindling"). Together these had been adding about eight days to G2 through ghost towns. Study's real edge for a static player is smaller: it comes from buffs, supply carts and a calmer land (§12.3, "Kept study").
+
+The golden checks add K1–K4 (buff curve and saturation, drop tiers, once a day, neglect) and N1–N5 to `town:survival`:
+- N1: EXP3 converges on what pays.
+- N2: counter-picks.
+- N3: the night wave waits.
+- N4: pressure rises after clean defences.
+- N5: the answers work. Bowmen hold a house against fliers where spearmen lose it; a guarded hall holds where a bare one falls.

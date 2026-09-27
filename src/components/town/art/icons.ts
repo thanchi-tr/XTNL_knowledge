@@ -43,6 +43,10 @@ const ICONS: Record<string, Icon> = {
   ectoplasm: { rows: [".eee.", "eEeee", "ekeke", "eeeee", "e.e.e"], mats: { e: M.ICE, k: [CAVITY] } },
   core: { rows: [".sss.", "sSscs", "ssCss", "scsss", ".sss."], mats: { s: M.STONE, c: E.CYAN } },
   jewel: { rows: [".jjj.", "jjJjj", "jjjjj", ".jjj.", "..j.."], mats: { j: E.VOID } },
+  // high-tier parts, for the towers
+  heart: { rows: [".h.h.", "hHhhh", "hhhhh", ".hhh.", "..h.."], mats: { h: E.BLOOD } },
+  eye: { rows: [".www.", "wwiww", "wiIiw", "wwiww", ".www."], mats: { w: M.BONE, i: E.AMBER } },
+  foot: { rows: ["..ff.", "..ff.", ".fff.", "fffff", "c.c.c"], mats: { f: M.FUR, c: M.BONE } },
 };
 
 // Gear: one shape per kind, its materials by tier.
@@ -75,7 +79,7 @@ export function icon(id: string): HTMLCanvasElement {
   return cached(`icon:${id}`, () => {
     const g = GEAR_KIND[id];
     if (g) return renderSprite(GEAR_SHAPES[g[0]], TIER_MATS[g[1]], `icon-gear:${id}`);
-    const def = ICONS[id] ?? ICONS.stone;
+    const def = ICONS[id.startsWith("foot:") ? "foot" : id] ?? ICONS.stone;
     return renderSprite(def.rows, def.mats, `icon:${id}`);
   });
 }

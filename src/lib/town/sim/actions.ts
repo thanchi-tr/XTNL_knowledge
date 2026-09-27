@@ -1,13 +1,11 @@
-import {
-  CATALOG, COMBINE_COST, COMBINE_FROM, COURSES, KNIGHT_RECRUIT, RECRUIT_RANK, jewelCost, levelHours, upgradePeople, GATE_COST, PAVEMENT_COST, TRAIN_SLOW, UTILITIES, WALL_COST, bedUpgradeCost, maxBedUpgrades, utilitySlots,
-  type Cost,
-} from "./catalog";
-import { assign, beds, byId, log, makeStructure, residents, unassign } from "./state";
+import { CATALOG, grade, hallMinDay, PEAT_CUT, PEAT_EFFORT, COMBINE_COST, COMBINE_FROM, COURSES, KNIGHT_RECRUIT, RECRUIT_RANK, jewelCost, upgradeHours, upgradePeople, GATE_COST, PAVEMENT_COST, TRAIN_SLOW, UTILITIES, WALL_COST, bedUpgradeCost, maxBedUpgrades, utilitySlots, type Cost } from "./catalog";
+import { assign, beds, byId, clock, log, makeStructure, residents, unassign } from "./state";
 import { buildMinutes, type SimContext } from "./tick";
 import {
-  WALL_MAX_LEVEL, isHome, canAfford, checkPlacement, checkTile, computeLinks, costText, fuelCap, wallLevel, wallMaxHp, wallMeta, wallUpgradeCost, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES,
+  WALL_MAX_LEVEL, isHome, canAfford, checkMove, checkPlacement, checkTile, computeLinks, costText, fuelCap, wallLevel, wallMaxHp, wallMeta, wallUpgradeCost, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES,
 } from "./world";
 import { forgeOf, stock, store, take } from "./loot";
+import { NIGHT_SHIFT_LEVEL, workLevel } from "./work";
 import { inSight } from "./vision";
 import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage } from "./woods";
 import { WILD_EFFORT, wildAmount, wildCrop } from "./forage";
@@ -15,7 +13,7 @@ import { HEARTHS, isHeated, isZone } from "./zones";
 import { FOOTING, footingOf, frameNodes, hasFrame } from "./frame";
 import { defaultPolicy } from "./psyche";
 import type { Footing, HearthKind, Policy } from "./types";
-import { MILITARY, Overlay, Terrain, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
+import { MILITARY, Overlay, Terrain, YEAR_DAYS, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
 
 /**
  * Everything the player can do, each as a checked mutation. A refusal returns
@@ -35,6 +33,7 @@ export function place(s: GameState, ctx: SimContext, type: StructureType, x: num
   pay(s.res, cost);
   const st = makeStructure(s, type, x, y, false);
   st.buildUntil = s.time + buildMinutes(s, ctx, CATALOG[type].buildHours);
+  st.undo = { kind: "build", at: Date.now(), cost: { ...cost }, jewels: 0 };
   // Wild crops on the plot are trampled under the footings.
   trample(s, x, y, st.w, st.h);
   log(s, `Work begins on a ${CATALOG[type].name.toLowerCase()}.`);
@@ -48,12 +47,26 @@ function trample(s: GameState, x: number, y: number, w: number, h: number) {
   }
 }
 
+/** What relaying one tile of road in stone flags costs. */
+export const STONE_PAVING_COST: Cost = { stone: 2 };
+
 export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: number[]): Result {
   const occ = occupancy(s);
   const unit: Cost = kind === "pavement" ? PAVEMENT_COST : kind === "wall" ? WALL_COST : GATE_COST;
   let laid = 0;
   let why: string | null = null;
   for (const i of tiles) {
+    // A road laid over a road is relaid in stone flags.
+    if (kind === "pavement" && s.map.terrain[i] === Terrain.Pavement && s.map.overlay[i] !== Overlay.Gate && !s.map.paving?.[i]) {
+      if (!canAfford(s.res, STONE_PAVING_COST)) {
+        why = `Out of stone (${costText(STONE_PAVING_COST)} a tile of flags).`;
+        break;
+      }
+      pay(s.res, STONE_PAVING_COST);
+      (s.map.paving ??= new Array(s.map.terrain.length).fill(0))[i] = 1;
+      laid++;
+      continue;
+    }
     const bad = checkTile(s, i, kind, occ);
     if (bad) {
       why ??= bad;
@@ -116,7 +129,10 @@ export function unpaint(s: GameState, tiles: number[]): Result {
       s.map.overlay[i] = Overlay.None;
       s.map.meta[i] = 0;
     }
-    if (s.map.terrain[i] === Terrain.Pavement) s.map.terrain[i] = Terrain.Grass;
+    if (s.map.terrain[i] === Terrain.Pavement) {
+      s.map.terrain[i] = Terrain.Grass;
+      if (s.map.paving) s.map.paving[i] = 0;
+    }
   }
   return null;
 }
@@ -125,7 +141,8 @@ export function clear(s: GameState, tiles: number[]): Result {
   let n = 0;
   for (const i of tiles) {
     const o = s.map.overlay[i];
-    if (o !== Overlay.Tree && o !== Overlay.Rock && o !== Overlay.Debris && o !== Overlay.Crop) continue;
+    const peat = o === Overlay.None && s.map.terrain[i] === Terrain.Marsh;
+    if (o !== Overlay.Tree && o !== Overlay.Rock && o !== Overlay.Debris && o !== Overlay.Crop && !peat) continue;
     if (!inSight(s, i % s.map.w, Math.floor(i / s.map.w))) continue;
     if (!s.clearing.some((j) => j.tile === i)) {
       s.clearing.push({ tile: i, progress: 0 });
@@ -155,6 +172,9 @@ export function harvestYield(s: GameState, tile: number): { label: string; verb:
     return { label, verb: "Break up", gives, effort: 4 };
   }
   if (o === Overlay.Debris) return { label: "Rubble", verb: "Clear", gives: "3 stone, 2 wood — and the plot is free to build on", effort: 3 };
+  if (o === Overlay.None && s.map.terrain[tile] === Terrain.Marsh) {
+    return { label: "Marsh", verb: "Cut peat", gives: `${PEAT_CUT} peat to burn, a chance of bog iron — and the cut-over ground drains to a bank`, effort: PEAT_EFFORT };
+  }
   if (o === Overlay.Crop) {
     const kind = s.map.meta[tile];
     return { label: `Wild ${wildCrop(kind)}`, verb: "Gather", gives: `${wildAmount(kind)} ${wildCrop(kind)}`, effort: WILD_EFFORT };
@@ -182,11 +202,22 @@ export function stokeFire(s: GameState, id: number, kind: "wood" | "coal", amoun
 
 // ── Survival: hearths, chimneys, footings, roofs, policy (design §1, §5) ──
 
-/** Fits a building with a hearth: open hearth, chimney fireplace, masonry stove or charcoal brazier. */
+/**
+ * Fits a building with a hearth. The heating ladder runs open hearth,
+ * chimney fireplace, masonry stove, tiled stove, hypocaust, boiler and
+ * radiators, rune hearthstone: each is fitted over the one below it (a
+ * charcoal brazier can go in any time, and a building can always go back
+ * down).
+ */
 export function fitHearth(s: GameState, id: number, kind: HearthKind): Result {
   const st = byId(s, id);
   if (!st || !isHeated(st)) return "Only homes, the hall, schools and barracks take a hearth.";
   if (st.hearth === kind) return `It already has a ${HEARTHS[kind].name.toLowerCase()}.`;
+  const tier = HEARTHS[st.hearth ?? "open"].tier;
+  if (kind !== "brazier" && HEARTHS[kind].tier > tier + 1) {
+    const below = Object.values(HEARTHS).find((h) => h.tier === HEARTHS[kind].tier - 1 && h.kind !== "brazier");
+    return `Fit a ${below?.name.toLowerCase() ?? "better hearth"} first — heating goes up a level at a time.`;
+  }
   const cost = HEARTHS[kind].cost as Cost;
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
   pay(s.res, cost);
@@ -200,7 +231,7 @@ export function fitHearth(s: GameState, id: number, kind: HearthKind): Result {
 export function sweepChimney(s: GameState, id: number): Result {
   const st = byId(s, id);
   if (!st?.zone) return "Nothing to sweep.";
-  if (st.hearth !== "chimney" && st.hearth !== "stove") return "Only a chimney or a stove's flue needs sweeping.";
+  if (!st.hearth || !HEARTHS[st.hearth].flued) return "Only a hearth with a flue needs sweeping.";
   if (s.res.coin < 2) return "Needs 2 coin.";
   s.res.coin -= 2;
   st.zone.creo = 0;
@@ -286,8 +317,8 @@ export function markEarthworks(s: GameState, kind: "dig" | "fill", tiles: number
           continue;
         }
       } else {
-        if (t !== Terrain.Water) continue;
-        if (!near(i).some((j) => s.map.terrain[j] !== Terrain.Water)) {
+        if (t !== Terrain.Water && t !== Terrain.Marsh) continue;
+        if (t === Terrain.Water && !near(i).some((j) => s.map.terrain[j] !== Terrain.Water)) {
           why ??= "Fill from the bank inward.";
           continue;
         }
@@ -363,6 +394,41 @@ export function demolish(s: GameState, id: number): Result {
   return null;
 }
 
+/** How long, in real milliseconds, a new build or an upgrade can be called off for a full refund. */
+export const CANCEL_MS = 10_000;
+
+/** Real milliseconds left to call off the work on a building, or 0. */
+export function cancelLeft(st: Structure, now = Date.now()): number {
+  if (!st.undo || !st.buildUntil) return 0;
+  return Math.max(0, CANCEL_MS - (now - st.undo.at));
+}
+
+/**
+ * Calls off a build or an upgrade just ordered: within ten real seconds
+ * everything paid is given back — the resources and any monster jewels —
+ * and the plot (or the old level) is as it was. After that the builders
+ * have started and the order stands.
+ */
+export function cancelWork(s: GameState, id: number, now = Date.now()): Result {
+  const st = byId(s, id);
+  if (!st || !st.undo || !st.buildUntil) return "Nothing to call off.";
+  if (cancelLeft(st, now) <= 0) return "Too late — the builders have started. An order can be called off only in its first ten seconds.";
+  const { kind, cost, jewels } = st.undo;
+  for (const [k, v] of Object.entries(cost)) s.res[k as keyof typeof s.res] += v as number;
+  if (jewels) store(s, "jewel", jewels);
+  const name = CATALOG[st.type].name.toLowerCase();
+  if (kind === "build") {
+    s.structures = s.structures.filter((x) => x.id !== st.id);
+    log(s, `The ${name} is called off before the first stone is laid; everything is returned.`);
+  } else {
+    st.level -= 1;
+    st.buildUntil = undefined;
+    st.undo = undefined;
+    log(s, `The ${name}'s upgrade is called off; everything is returned.`);
+  }
+  return null;
+}
+
 export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
   const st = byId(s, id);
   if (!st) return "No such building.";
@@ -377,15 +443,20 @@ export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
   }
   const people = upgradePeople(st.type, st.level);
   if (s.villagers.length < people) return `Level ${st.level + 1} needs a town of ${people} people (you have ${s.villagers.length}).`;
+  if (st.type === "townhall" && clock(s.time).day < hallMinDay(st.level + 1)) {
+    const d = hallMinDay(st.level + 1);
+    return `The hall cannot rise to level ${st.level + 1} before day ${d} (year ${Math.floor((d - 1) / YEAR_DAYS) + 1}) — some things take years.`;
+  }
   const cost = def.upgrade(st.level);
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
   // The highest levels are set with monster jewels from the forge's store.
-  const jewels = jewelCost(st.level + 1);
+  const jewels = jewelCost(st.level + 1, st.type);
   if (jewels && stock(s, "jewel") < jewels) return `Level ${st.level + 1} is set with ${jewels} monster jewel${jewels === 1 ? "" : "s"} — the forge's store has ${stock(s, "jewel")}.`;
   pay(s.res, cost);
   if (jewels) take(s, "jewel", jewels);
+  st.undo = { kind: "upgrade", at: Date.now(), cost: { ...cost }, jewels };
   st.level += 1;
-  st.buildUntil = s.time + buildMinutes(s, ctx, def.buildHours * levelHours(st.level));
+  st.buildUntil = s.time + buildMinutes(s, ctx, def.buildHours * upgradeHours(st.type, st.level));
   log(s, `Upgrading the ${def.name.toLowerCase()} to level ${st.level}.`);
   return null;
 }
@@ -427,6 +498,12 @@ export function hire(s: GameState, id: number, villagerId?: number): Result {
       .sort((a, b) => b.rank - a.rank)[0];
     if (!k) return "An army point is led by a knight. Recruit one at the army school.";
     assign(s, k, st);
+    return null;
+  }
+  if (st.type === "museum") {
+    const art = s.villagers.find((v) => (villagerId ? v.id === villagerId : true) && v.role === "artist" && !v.work && v.health > 20);
+    if (!art) return "A museum is kept by artists. Train one at the school.";
+    assign(s, art, st);
     return null;
   }
   if (st.type === "laboratory") {
@@ -555,6 +632,26 @@ const TROOP_FOR: Partial<Record<StructureType, Role>> = {
  * Recruits from a house the barracks reaches by pavement — the brief's rule
  * that houses must connect to a barracks for villagers to be trained.
  */
+/** Orders a building's workers on past their day's strength, or lets them stop when spent. */
+export function setOvertime(s: GameState, id: number, on: boolean): Result {
+  const st = byId(s, id);
+  if (!st) return "No such building.";
+  st.overtime = on;
+  log(s, on
+    ? `The ${CATALOG[st.type].name.toLowerCase()}'s workers are driven on past their strength. Some may not get up.`
+    : `The ${CATALOG[st.type].name.toLowerCase()}'s workers may stop when they are spent.`, on ? "bad" : "info");
+  return null;
+}
+
+/** The same for the idle hands clearing ground and digging. */
+export function setClearOvertime(s: GameState, on: boolean): Result {
+  s.policy = { heat: 12, ration: 1, freshSoil: false, coalFirst: false, shift: 14, ...s.policy, overtime: on };
+  return null;
+}
+
+/** How long taking on a recruit takes: four game hours. */
+export const RECRUIT_MINUTES = 4 * 60;
+
 export function recruit(s: GameState, id: number): Result {
   const st = byId(s, id);
   if (!st || !MILITARY_TYPES.includes(st.type)) return "Not a military building.";
@@ -574,7 +671,8 @@ export function recruit(s: GameState, id: number): Result {
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
   pay(s.res, cost);
   v.work = st.id;
-  st.training = { villagerId: v.id, role: TROOP_FOR[st.type]!, rank: RECRUIT_RANK[st.type] ?? 1, left: 4 * 60 * st.level * TRAIN_SLOW };
+  // Recruitment takes four hours, whatever the building.
+  st.training = { villagerId: v.id, role: TROOP_FOR[st.type]!, rank: RECRUIT_RANK[st.type] ?? 1, left: RECRUIT_MINUTES, recruit: true };
   return null;
 }
 
@@ -630,3 +728,48 @@ export function sell(s: GameState, ctx: SimContext, key: keyof GameState["res"],
 }
 
 void beds;
+
+// ── Night shift and moving buildings ──────────────────────
+
+/** Puts a worker of level 5 or more in charge of the night shift, or takes them off it. One leads it at a time. */
+export function setNightShift(s: GameState, villagerId: number, on: boolean): Result {
+  const v = s.villagers.find((x) => x.id === villagerId);
+  if (!v) return "No such villager.";
+  if (on && MILITARY.includes(v.role)) return "Troops keep their own watch.";
+  if (on && workLevel(v) < NIGHT_SHIFT_LEVEL) return `Only a worker of level ${NIGHT_SHIFT_LEVEL} or more can lead the night shift.`;
+  if (on) for (const o of s.villagers) o.nightShift = false;
+  v.nightShift = on;
+  log(s, on ? `${v.name} takes the night shift: building goes on through the dark. They sleep by day.` : `${v.name} comes off the night shift. Building stops at dusk again.`, "info");
+  return null;
+}
+
+/** The level a worker needs to take a building down and carry it elsewhere. */
+export const MOVER_LEVEL = 10;
+/** Who can move buildings: every worker of level 10 or more, in good health. */
+export const movers = (s: GameState) => s.villagers.filter((v) => !MILITARY.includes(v.role) && workLevel(v) >= MOVER_LEVEL && v.health > 20);
+
+/**
+ * Hours to move a building: longer the higher it stands — two hours a level
+ * on four, and half again for every tenth-level step — shared among up to
+ * five movers.
+ */
+export function moveHours(st: Structure, n: number): number {
+  return ((4 + 2 * st.level) * (1 + 0.5 * grade(st.level))) / Math.max(1, Math.min(5, n));
+}
+
+/** Orders a building moved: out of use until the movers have it up again on the new plot. */
+export function relocate(s: GameState, id: number, x: number, y: number): Result {
+  const st = byId(s, id);
+  if (!st) return "No such building.";
+  if (st.buildUntil) return "It is already being built or moved.";
+  const crew = movers(s);
+  if (!crew.length) return `Moving a building takes a worker of level ${MOVER_LEVEL}.`;
+  if (st.x === x && st.y === y) return "It already stands there.";
+  const check = checkMove(s, st, x, y);
+  if (!check.ok) return check.reason ?? "It cannot stand there.";
+  const h = moveHours(st, crew.length);
+  st.moveTo = { x, y };
+  st.buildUntil = s.time + Math.round(h * 60);
+  log(s, `${crew.length} mover${crew.length > 1 ? "s take" : " takes"} down the ${CATALOG[st.type].name.toLowerCase()} to carry it to ${x},${y}: ${Math.ceil(h)} hours.`);
+  return null;
+}

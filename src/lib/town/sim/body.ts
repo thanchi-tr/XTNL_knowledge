@@ -2,9 +2,10 @@ import { CATALOG } from "./catalog";
 import { byId, clock, log, residents } from "./state";
 import { air } from "./weather";
 import { FUEL_UNIT_KG, HEARTHS, isZone, ppm, stepZones, type Occ } from "./zones";
-import { center, idx, inBounds, rng, warmAt, warmFields, type Warmth } from "./world";
+import { airBoost, center, fireAir, idx, inBounds, rng, warmAt, warmFields, type Warmth } from "./world";
 import { emit, noteLoss } from "./aggro";
 import { addCorpse, witnessDeath } from "./psyche";
+import { kmod } from "./knowledge";
 import { RAW_FOODS, type Affliction, type Body, type GameState, type IllnessKind, type ResourceKey, type Structure, type Villager } from "./types";
 
 /**
@@ -93,6 +94,8 @@ export interface Place {
   working: boolean;
   /** Keep every layer on however hot the work (tests; the stubborn). */
   noStrip?: boolean;
+  /** Strong backs (Physical ideas): fatigue builds this much more slowly. */
+  strength?: number;
 }
 
 function homeOf(s: GameState, v: Villager): Structure | undefined {
@@ -300,7 +303,7 @@ export function stepBody(b: Body, v: Villager, env: Env, place: Place, cl: Cloth
   }
   // Fatigue.
   // Twelve hours of heavy work to exhaustion; a night's warm sleep clears it, rest by day slowly.
-  if (place.working && tier > 0) b.phi = clamp(b.phi + (Mlab / (400 * 720)) * dtMin, 0, 1);
+  if (place.working && tier > 0) b.phi = clamp(b.phi + ((Mlab / (400 * 720)) * dtMin) / (1 + (place.strength ?? 0)), 0, 1);
   else if (place.asleep) b.phi = clamp(b.phi - ((env.T >= 5 ? 1 : 0.5) / 480) * dtMin, 0, 1);
   else b.phi = clamp(b.phi - dtMin / 960, 0, 1);
 
@@ -417,6 +420,7 @@ function bodyMinute(s: GameState) {
   const a = air(s);
   // Pit-fire warmth is cast only if someone outdoors stands near a lit fire.
   const fires = s.structures.filter((f) => f.type === "pitfire" && !f.buildUntil && (f.fuel ?? 0) > 0);
+  const fireAirs = fireAir(s);
   let fields: Warmth[] | null = null;
   const fieldsNow = () => (fields ??= warmFields(s));
   const r = rng(Math.floor(s.time) * 7 + s.seed * 13 + 1);
@@ -456,7 +460,7 @@ function bodyMinute(s: GameState) {
     let env: Env;
     if (p.zone && z) {
       const hearth = p.zone.hearth ? HEARTHS[p.zone.hearth] : undefined;
-      const sitting = !p.asleep && hearth && z.burn > 0 && p.zone.hearth !== "stove" ? 40 : 0;
+      const sitting = !p.asleep && hearth && z.burn > 0 && !hearth.mass ? 40 : 0;
       env = { T: z.T, v: 0.2, RH: 0.6, P: 0, rad: sitting, co: z.co, snowCm: 0, outdoors: false };
     } else if (p.under) {
       env = { T: Math.max(6, a.Tg), v: 0.3, RH: 0.95, P: 0.2, rad: 0, co: 0, snowCm: 0, outdoors: true };
@@ -464,7 +468,7 @@ function bodyMinute(s: GameState) {
       const shelter = shelterAt(s, p.x, p.y);
       const nearFire = fires.some((f) => Math.hypot(f.x + 1 - p.x, f.y + 1 - p.y) <= 12);
       env = {
-        T: a.T, v: a.v * shelter, RH: a.RH, P: a.P, rad: nearFire ? radiantGain(s, p.x, p.y, fieldsNow()) : 0, co: 0,
+        T: a.T + (v.scout ? 0 : airBoost(fireAirs, p.x, p.y)), v: a.v * shelter, RH: a.RH, P: a.P, rad: nearFire ? radiantGain(s, p.x, p.y, fieldsNow()) : 0, co: 0,
         snowCm: a.snowDepth * 100, outdoors: true,
       };
       if (v.scout) {
@@ -474,6 +478,7 @@ function bodyMinute(s: GameState) {
     }
     const key = p.zone ? `z${p.zone.id}` : `${Math.round(p.x)},${Math.round(p.y)}`;
     const allies = (byPlace.get(key) ?? 1) - 1;
+    if (p.tier >= 400) p.strength = kmod(s, "PHYSICAL");
     const res = stepBody(b, v, env, p, cl, r, 60, allies, s.time);
     if (res.died) dead.push([v, res.died, p]);
     // Collapsed outdoors with someone there: carried in, with the rescue-collapse risk.
@@ -654,6 +659,7 @@ export function illnessHourly(s: GameState) {
       if ((ill.kind === "dysentery" || ill.kind === "poisoning") && b.h2o > 1.5) pDay *= 3;
       if (ill.kind === "pneumonia" && (byId(s, v.house)?.zone?.T ?? 0) < 10) pDay *= 2;
       if (s.res.tonic >= 1 && v.health < 70) pDay *= 0.5;
+      pDay *= 1 - kmod(s, "COMPASSION");
       const lam = -Math.log(1 - Math.min(0.99, pDay)) / 24;
       if (ill.kind === "dysentery") {
         b.h2o += 3 / 24;

@@ -1,4 +1,5 @@
 import { CATALOG, DISHES } from "./catalog";
+import { plural } from "./words";
 import { clock } from "./state";
 import { computeLinks, farmReachesMarket, fieldFrozen, growsInWinter, MILITARY_TYPES } from "./world";
 import { trainingPace, type SimContext } from "./tick";
@@ -72,7 +73,7 @@ export function buildingEffects(s: GameState, ctx: SimContext): Map<number, Effe
     if (st.type !== "townhall" && st.condition < 50) {
       add(st.id, {
         kind: "decay", tone: "debuff", label: "Deteriorating",
-        detail: `Condition ${Math.round(st.condition)}%. Mood below half wears ${CATALOG[st.type].name.toLowerCase()}s down until they lose a level.`,
+        detail: `Condition ${Math.round(st.condition)}%. Mood below half wears ${plural(CATALOG[st.type].name.toLowerCase())} down until they lose a level.`,
       });
     }
   }

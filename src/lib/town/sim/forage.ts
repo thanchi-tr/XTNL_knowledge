@@ -1,4 +1,4 @@
-import { LAND_CROPS } from "./catalog";
+import { LAND_CROPS, WATER_CROPS } from "./catalog";
 import { clock } from "./state";
 import { MAP_H, MAP_W, Overlay, Terrain, type GameState } from "./types";
 import { center, occupancy } from "./world";
@@ -20,11 +20,16 @@ export const WILD_CAP = 180;
 const WILD_DAILY = 16;
 /** Harvest effort, in villager-hours, and what a patch gives. */
 export const WILD_EFFORT = 2;
-export const wildAmount = (kind: number) => 5 + Math.floor(kind / 3);
+export const wildAmount = (kind: number) => (kind >= MARSH_KIND ? 6 : 5 + Math.floor(kind / 3));
+/** Wild kinds from here up are water plants of the marsh: WATER_CROPS[kind - MARSH_KIND]. */
+export const MARSH_KIND = 100;
+/** What comes up in a marsh: reeds mostly, watercress now and then. */
+export const marshKind = (roll: number) => MARSH_KIND + WATER_CROPS.indexOf(roll < 0.7 ? "reed" : "watercress");
 /** Tiles from the hall over which the crops run from the commonest to the rarest. */
 const WILD_SPAN = 150;
 
-export const wildCrop = (meta: number) => LAND_CROPS[Math.max(0, Math.min(LAND_CROPS.length - 1, meta))];
+export const wildCrop = (meta: number): (typeof LAND_CROPS)[number] | (typeof WATER_CROPS)[number] =>
+  meta >= MARSH_KIND ? WATER_CROPS[Math.min(WATER_CROPS.length - 1, meta - MARSH_KIND)] : LAND_CROPS[Math.max(0, Math.min(LAND_CROPS.length - 1, meta))];
 
 /**
  * Which crop comes up at a spot: mostly the one its distance calls for,
@@ -56,9 +61,12 @@ export function sowWild(s: GameState, r: () => number) {
     const x = Math.floor(r() * MAP_W);
     const y = Math.floor(r() * MAP_H);
     const i = y * MAP_W + x;
-    if (terrain[i] !== Terrain.Grass || overlay[i] !== Overlay.None || occ[i]) continue;
+    // Wild things come up on grass and meadow; reeds and cress in the marsh.
+    const t = terrain[i];
+    if ((t !== Terrain.Grass && t !== Terrain.Meadow && t !== Terrain.Marsh) || overlay[i] !== Overlay.None || occ[i]) continue;
+    if (t === Terrain.Marsh && winter) continue;
     overlay[i] = Overlay.Crop;
-    meta[i] = winter ? 0 : wildKindAt(s, x, y, r());
+    meta[i] = winter ? 0 : t === Terrain.Marsh ? marshKind(r()) : wildKindAt(s, x, y, r());
     count++;
   }
 }

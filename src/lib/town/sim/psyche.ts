@@ -4,6 +4,8 @@ import { air } from "./weather";
 import { center, rng } from "./world";
 import { emit, noteLoss } from "./aggro";
 import { bodyOf } from "./body";
+import { kmod } from "./knowledge";
+import { stats } from "./stats";
 import type { Corpse, GameState, Society, SocietyState, Villager } from "./types";
 
 /**
@@ -29,17 +31,28 @@ export function addCorpse(s: GameState, name: string, x: number, y: number) {
   list.push({ id, x, y, at: s.time, kg: 65, name, dug: 0 });
 }
 
+/** Up to this many people, everyone in town feels a death in full. */
+export const GRIEF_TOWN = 20;
+/** Up to this many housemates, each grieves in full. */
+export const GRIEF_HOUSE = 5;
+
 /**
  * A death seen (§6.1): the town is shaken, the household far more; Hope
- * takes its knock.
+ * takes its knock. A village of twenty knows everyone; in a bigger town a
+ * stranger's death is news more than grief, so the town's share (sanity and
+ * Hope alike) is spread over its people. A household's grief is one family's
+ * worth: in a block of thirty it is shared out, not multiplied thirtyfold.
  */
 export function witnessDeath(s: GameState, dead: Villager) {
+  const town = Math.min(1, GRIEF_TOWN / Math.max(1, s.villagers.length));
+  const mates = dead.house == null ? 0 : s.villagers.filter((v) => v !== dead && v.house === dead.house).length;
+  const house = Math.min(1, GRIEF_HOUSE / Math.max(1, mates));
   for (const v of s.villagers) {
     if (v === dead) continue;
     const kin = dead.house != null && v.house === dead.house;
-    v.happy = Math.max(0, v.happy - (kin ? 15 : 3) * (v.traits?.includes("pious") ? 0.8 : 1));
+    v.happy = Math.max(0, v.happy - (kin ? 15 * house : 3 * town) * (v.traits?.includes("pious") ? 0.8 : 1) * (1 - kmod(s, "COMPASSION")));
   }
-  s.hopeEvents = (s.hopeEvents ?? 0) - 4;
+  s.hopeEvents = (s.hopeEvents ?? 0) - 4 * town;
 }
 
 /** Labour-hours to bury one: two, or a fifth of that into a mass grave by decree. */
@@ -219,7 +232,7 @@ export function psycheHourly(s: GameState) {
     b.meals = 0;
     if (v.broken && v.broken.until <= s.time) v.broken = null;
     if (v.happy < 35 && !v.broken) {
-      const lam = 0.004 * Math.exp(0.12 * (35 - v.happy));
+      const lam = 0.004 * Math.exp(0.12 * (35 - v.happy)) * (1 - kmod(s, "MIND"));
       if (r() < 1 - Math.exp(-lam)) breakDown(s, v, r);
     }
   }
@@ -236,6 +249,8 @@ function hopeHourly(s: GameState) {
   dH += s.hopeEvents ?? 0;
   s.hopeEvents = 0;
   if (s.festivalUntil > s.time) dH += 6 / 12;
+  // Faith (ideas in Faith-heavy Fields) lifts Hope each hour; neglect of them drags it.
+  dH += 0.5 * kmod(s, "FAITH");
   for (const d of s.debuffs) dH += d.moodPerHour;
   s.mood = clamp(s.mood + dH, 0, 100);
 }
@@ -245,7 +260,7 @@ function discontentHourly(s: GameState) {
   const shift = s.policy?.shift ?? 14;
   for (const v of s.villagers) {
     factionOf(v);
-    let d = (10 * (1 - ration)) / 24 + (1.5 * Math.max(0, shift - 10)) / 24 - (0.03 * (v.disc ?? 0)) / 24;
+    let d = ((10 * (1 - ration)) / 24 + (1.5 * Math.max(0, shift - 10)) / 24) * (1 - kmod(s, "SELF_RESPECT")) - (0.03 * (v.disc ?? 0)) / 24;
     if (s.festivalUntil > s.time) d -= 3 / 12;
     if (v.happy < 30) d += 0.2;
     v.disc = clamp((v.disc ?? 0) + d, 0, 100);
@@ -300,6 +315,16 @@ function societyHourly(s: GameState, r: () => number) {
     s.fallCause = "abandoned";
     s.fallen = { at: s.time, day: clock(s.time).day };
     log(s, "Three days without hope. The survivors pack what they can carry and leave. The town is abandoned.", "bad");
+  }
+  // Dwindled: a town that grew past five and has lain at two people or fewer for three days is a
+  // camp of survivors, not a town. They can stay and rebuild; the tally stops here.
+  const t = stats(s);
+  t.peakPop = Math.max(t.peakPop ?? 0, s.villagers.length);
+  soc.fewHours = t.peakPop >= 6 && s.villagers.length <= 2 ? (soc.fewHours ?? 0) + 1 : 0;
+  if (soc.fewHours >= 72 && !s.fallen) {
+    s.fallCause = "dwindled";
+    s.fallen = { at: s.time, day: clock(s.time).day };
+    log(s, "Three days with two people or fewer left. What stands is a camp of survivors, not a town. The town has dwindled away.", "bad");
   }
   if (facs[worst].disc >= 75) soc.strikeHours += 1;
   else soc.strikeHours = Math.max(0, soc.strikeHours - 1);

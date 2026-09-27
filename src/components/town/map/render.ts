@@ -1,15 +1,18 @@
-import { makeCanvas, px, hash, type Ctx } from "../art/core";
+import { cached, makeCanvas, outline, px, hash, type Ctx } from "../art/core";
 import { M, E, EMISSIVE, LIT, MID, SHADE, DEEP, shift, shiftRgb, type Ramp4 } from "../art/materials";
-import { grass, cobbles, sandBank, iceField } from "../art/textures";
+import { grass, cobbles, sandBank, iceField, meadow, hillside, marsh, reedStand, flagstones } from "../art/textures";
 import { frosted, type FrostMode } from "../art/winter";
-import { storehouse, armySchool, armyPoint, lairArt, unitHome, rowHouse, duplexHome, apartmentBlock } from "../art/buildings3";
+import { storehouse, lairArt, unitHome, rowHouse, duplexHome, apartmentBlock } from "../art/buildings3";
 import { GRADES, then, mix, stampLight, applyEnvironmentLighting, type Grade } from "./lighting";
 import { pine, oak, crop, youngTree, seedling, type CropArt } from "../art/nature";
-import { wildCrop } from "@/lib/town/sim/forage";
-import { keep, townhouse, forge, barracks, tower, mine, type RoofStyle } from "../art/buildings";
+import { MARSH_KIND, wildCrop } from "@/lib/town/sim/forage";
+import { townhouse, tower, mine, type RoofStyle } from "../art/buildings";
 import {
-  pitfire, school, watermill, drawWheel, kitchen, refinery, archery, armoury, wizardHut, nobleYard,
-  iceFactory, lumberCamp, marketRow, wallTile, rockNode, debris, tileTree, lamppost, brazier, FIRE_MOUTH, BRAZIER_MOUTH, laboratory, fishery,
+  forge, barracks, armySchool, armyPoint, kitchen, school, refinery, laboratory, fishery, lumberCamp, armoury, wizardHut, anchorsOf, SPECIAL_TYPES, townHall, museum,
+} from "../art/special";
+import {
+  pitfire, watermill, drawWheel, archery, nobleYard,
+  iceFactory, marketRow, wallTile, rockNode, debris, tileTree, lamppost, brazier, FIRE_MOUTH, BRAZIER_MOUTH,
 } from "../art/buildings2";
 import { monsterAt, type MonsterArt } from "../art/sprites";
 import { figure, troopLook, type Look } from "../art/heroes";
@@ -22,7 +25,7 @@ import { alertRadius, fuelCap, growsInWinter, hallRadius, isGuardPost, passiveRa
 import { TILE_WOOD, TREE_EFFORT, treeStage } from "@/lib/town/sim/woods";
 import { text } from "../pixel";
 import { MAP_H, MAP_W, Overlay, TILE, Terrain, type Combatant, type GameState, type Structure } from "@/lib/town/sim/types";
-import { CATALOG, grade, homeTier, levelHours } from "@/lib/town/sim/catalog";
+import { CATALOG, grade, homeTier, upgradeHours } from "@/lib/town/sim/catalog";
 import { MONSTERS as BEASTS } from "@/lib/town/sim/bestiary";
 import { clock, type Clock } from "@/lib/town/sim/state";
 import type { TownProfile } from "@/lib/town/rules";
@@ -66,7 +69,8 @@ export function structureArt(st: Structure, arch: TownProfile["archetype"]): HTM
   const { roof, banner } = STYLE[arch];
   const L = st.level;
   switch (st.type) {
-    case "townhall": return keep(L, roof, banner);
+    case "townhall": return townHall(L, roof, banner);
+    case "museum": return museum(L, roof, banner);
     // A home by its tier: unit, house, townhouse, duplex.
     case "house": {
       const tier = homeTier(L);
@@ -75,24 +79,24 @@ export function structureArt(st: Structure, arch: TownProfile["archetype"]): HTM
     case "apartment": return apartmentBlock(L, roof, st.w >= st.h);
     case "pitfire": return pitfire(L);
     case "lamppost": return lamppost();
-    case "laboratory": return laboratory(L);
-    case "fishery": return fishery(L);
+    case "laboratory": return laboratory(L, roof, banner);
+    case "fishery": return fishery(L, roof, banner);
     case "brazier": return brazier();
-    case "school": return school(L, roof);
+    case "school": return school(L, roof, banner);
     case "watermill": return watermill(L, roof);
-    case "refinery": return refinery(L, roof);
-    case "kitchen": return kitchen(L, roof);
+    case "refinery": return refinery(L, roof, banner);
+    case "kitchen": return kitchen(L, roof, banner);
     case "market": return marketRow(L);
     case "barracks": return barracks(L, roof, banner);
     case "archery": return archery(L, roof);
-    case "armoury": return armoury(L, roof);
-    case "wizardhut": return wizardHut(L);
+    case "armoury": return armoury(L, roof, banner);
+    case "wizardhut": return wizardHut(L, banner);
     case "nobleyard": return nobleYard(L, banner);
     case "watchtower": return tower(L, false);
     case "icefactory": return iceFactory(L);
     case "mine": return mine(Math.min(5, L));
-    case "lumbercamp": return lumberCamp();
-    case "forge": return forge(L, roof);
+    case "lumbercamp": return lumberCamp(L, roof, banner);
+    case "forge": return forge(L, roof, banner);
     case "storehouse": return storehouse(L, roof);
     case "armyschool": return armySchool(L, roof, banner);
     case "armypoint": return armyPoint(L, banner);
@@ -103,6 +107,16 @@ export function structureArt(st: Structure, arch: TownProfile["archetype"]): HTM
 /** Where an art canvas sits: bottom-aligned to the footprint, centred across it. */
 export function artAnchor(st: Structure, art: HTMLCanvasElement): [number, number] {
   return [st.x * TILE + Math.round((st.w * TILE - art.width) / 2), (st.y + st.h) * TILE - art.height];
+}
+
+/** A stand of reeds for a marsh's wild plants, drawn once per look. */
+function reedTuft(meta: number): HTMLCanvasElement {
+  return cached(`reed:${meta % 3}`, () => {
+    const { cv, c } = makeCanvas(8, 10);
+    reedStand(c, 1, 1, meta);
+    outline(cv);
+    return cv;
+  });
 }
 
 // ── Static layer ──────────────────────────────────────────
@@ -124,7 +138,12 @@ function regionSheets(X0: number, Y0: number, W: number, H: number, winter: bool
     // Warm packed-earth cobbles: roads must read as ground you walk on,
     // clearly apart from the cool grey of walls.
     Rd: make((c) => cobbles(c, X0, Y0, W, H, 3, M.ROAD)),
+    // Stone flags: dressed slabs, swept clear even in winter.
+    Fl: make((c) => flagstones(c, X0, Y0, W, H, 11)),
     Sd: make((c) => sandBank(c, X0, Y0, W, H, 6)),
+    Md: make((c) => meadow(c, X0, Y0, W, H, 5)),
+    Hl: make((c) => hillside(c, X0, Y0, W, H, 5)),
+    Ms: make((c) => marsh(c, X0, Y0, W, H, 5)),
     // Winter: field ice, and the roads trodden into grey slush.
     Ic: winter ? make((c) => iceField(c, X0, Y0, W, H, 8)) : null,
     Sl: winter ? make((c) => cobbles(c, X0, Y0, W, H, 3, M.SLUSH)) : null,
@@ -194,8 +213,11 @@ const LAYER: Record<number, number> = {
   [Terrain.Water]: 0,
   [Terrain.Pavement]: 1,
   [Terrain.Bank]: 2,
-  [Terrain.Grass]: 3,
-  [Terrain.Forest]: 4,
+  [Terrain.Marsh]: 3,
+  [Terrain.Grass]: 4,
+  [Terrain.Meadow]: 5,
+  [Terrain.Hill]: 6,
+  [Terrain.Forest]: 7,
 };
 
 const fringe = (along: number, line: number, salt: number) => Math.floor(hash(along >> 1, line, 31 + salt) * 3);
@@ -232,7 +254,7 @@ function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][]
   };
   const img = c.createImageData(RW, RH);
   const out = new Uint32Array(img.data.buffer);
-  const { terrain } = s.map;
+  const { terrain, paving } = s.map;
   const T = (tx: number, ty: number) => (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H ? -1 : terrain[ty * MAP_W + tx]);
   const W = M.WATER.map(hexPixel);
 
@@ -288,7 +310,9 @@ function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][]
               else if (bank === shelf + 1) px = W[DEEP]; // and the water in its shadow
             }
           } else {
-            px = mat === Terrain.Pavement ? (frozen ? Sl : Rd)[i] : frozen ? Ic[i] : mat === Terrain.Bank ? Sd[i] : G[i];
+            const flags = mat === Terrain.Pavement && !!paving?.[Math.floor(Y / TILE) * MAP_W + Math.floor(X / TILE)];
+            px = mat === Terrain.Pavement ? (flags ? tex.Fl : frozen ? Sl : Rd)[i] : frozen ? Ic[i] : mat === Terrain.Bank ? Sd[i]
+              : mat === Terrain.Meadow ? tex.Md[i] : mat === Terrain.Hill ? tex.Hl[i] : mat === Terrain.Marsh ? tex.Ms[i] : G[i];
             if (mat === Terrain.Forest) px = toPixel(shiftRgb(fromPixel(px), 1, SHADE));
             if (mat === own && (lip === 0 || lip === 3)) px = toPixel(shiftRgb(fromPixel(px), 1, SHADE));
             if (frozen && edge < 1) px = toPixel(shiftRgb(fromPixel(px), -1)); // the ice's lip, catching the firelight
@@ -372,7 +396,7 @@ export const newWorld = (): World => ({ chunks: new Map() });
 
 /** Everything that decides how a chunk looks, hashed: the tiles in and around it, what stands on them, the season. */
 function chunkKey(s: GameState, arch: string, cx: number, cy: number, winterSig: string): string {
-  const { terrain, overlay, meta } = s.map;
+  const { terrain, overlay, meta, paving } = s.map;
   const tx0 = Math.max(0, cx * CHUNK - 4);
   const tx1 = Math.min(MAP_W, (cx + 1) * CHUNK + 4);
   const ty0 = Math.max(0, cy * CHUNK - 1);
@@ -384,7 +408,7 @@ function chunkKey(s: GameState, arch: string, cx: number, cy: number, winterSig:
       const o = overlay[i];
       const t = terrain[i];
       const m = o === Overlay.Wall || o === Overlay.Gate ? grade(wallLevel(meta[i])) : o === Overlay.Tree || o === Overlay.Rock || o === Overlay.Crop ? meta[i] : t === Terrain.Forest ? (meta[i] >= TILE_WOOD / 2 ? 3 : meta[i] >= TILE_WOOD / 5 ? 2 : meta[i] > TILE_WOOD / 20 ? 1 : 0) : 0;
-      h = (h * 31 + t * 7 + o * 13 + m) | 0;
+      h = (h * 31 + t * 7 + o * 13 + m + (paving?.[i] ? 101 : 0)) | 0;
     }
   }
   const near = (x: number, y: number, w: number, hh: number) =>
@@ -476,7 +500,7 @@ function composeRegion(s: GameState, arch: TownProfile["archetype"], X0: number,
         upright(dress(rockNode(meta[i], i % 3), "cap"), X - 2, Y - 2, Y + TILE, X + TILE / 2);
       } else if (o === Overlay.Crop) {
         // A wild patch: two plants of the crop, a little apart.
-        const plant = dress(crop(wildCrop(meta[i]) as CropArt, 2), "tree");
+        const plant = dress(meta[i] >= MARSH_KIND ? reedTuft(meta[i]) : crop(wildCrop(meta[i]) as CropArt, 2), "tree");
         if (X + TILE > X0 && X < X0 + RW && Y + TILE > Y0 && Y < Y0 + RH) {
           items.push({ base: Y + TILE - 1, draw: () => {
             c.drawImage(plant, X, Y);
@@ -497,7 +521,7 @@ function composeRegion(s: GameState, arch: TownProfile["archetype"], X0: number,
     if (st.x + st.w < tx0 - 12 || st.x > tx1 + 12 || st.y + st.h < ty0 || st.y > ty1 + 18) continue;
     const plain = structureArt(st, arch);
     if (!plain) continue;
-    const bare = graded(plain, grade(st.level), STYLE[arch].banner, st.level);
+    const bare = graded(plain, grade(st.level), STYLE[arch].banner, st.level, SPECIAL_TYPES.has(st.type));
     const art = dress(bare);
     const [ax, ay] = artAnchor(st, art);
     castRows(shadows, ax + 4, (st.y + st.h) * TILE - 3, art.width - 8, 6);
@@ -604,6 +628,19 @@ function smoke(c: Ctx, x: number, y: number, t: number, dark = false, ramp?: Ram
   }
 }
 
+/** A 3×5 pixel alphabet, enough for levels: the digits and an L. */
+const GLYPH: Record<string, string> = {
+  L: "100100100100111", 0: "111101101101111", 1: "010110010010111", 2: "111001111100111", 3: "111001111001111", 4: "101101111001001",
+  5: "111100111001111", 6: "111100111101111", 7: "111001001001001", 8: "111101111101111", 9: "111101111001111",
+};
+function glyphs(c: Ctx, text: string, x: number, y: number, color: string) {
+  [...text].forEach((ch, k) => {
+    const g = GLYPH[ch];
+    if (!g) return;
+    for (let i = 0; i < 15; i++) if (g[i] === "1") px(c, x + k * 4 + (i % 3), y + Math.floor(i / 3), 1, 1, color);
+  });
+}
+
 // HUD colours: bars and numbers must stay legible through night and raid.
 const HUD = { frame: "#0c0810", empty: "#3a1418", friend: "#5ad06a", foe: "#e0402a", build: "#e8c060", select: ["#ffe07a", "#c9a040"], level: "#ffe070", legend: "#ffb04a", crit: "#ffd84a", hit: "#ff7a6a" };
 /** How much colour the world keeps: a muted, weathered palette. Lights and the interface stay vivid. */
@@ -706,13 +743,17 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
       const [ax, ay] = artAnchor(st, brazier());
       flames(c, ax + BRAZIER_MOUTH.x, ay + BRAZIER_MOUTH.y, t, BRAZIER_MOUTH.n, st.id, BRAZIER_MOUTH.tall);
     }
-    if (st.type === "forge") {
-      flames(c, X + 18, Y + st.h * TILE - 1, t, 12, 5);
-      smoke(c, X + st.w * TILE - 12, Y - 20, t, true);
+    // the special buildings say where their own fires burn and flues smoke, level by level
+    if (SPECIAL_TYPES.has(st.type)) {
+      const art = structureArt(st, ov.arch);
+      const an = art && anchorsOf(art);
+      if (art && an) {
+        const [ax, ay] = artAnchor(st, art);
+        for (const f of an.fire ?? []) flames(c, ax + f.x, ay + f.y, t, f.n, st.id, f.tall ?? 1);
+        (an.smoke ?? []).forEach((p, k) => smoke(c, ax + p.x, ay + p.y, t + st.id * 0.3 + k * 0.5, !!p.dark, p.green ? M.CLOTHGRN : undefined));
+      }
     }
-    if (st.type === "kitchen" || st.type === "refinery" || st.type === "house" || st.type === "apartment") smoke(c, X + st.w * TILE - 8, Y - 16, t + st.id * 0.3, st.type === "refinery");
-    // the laboratory's flue runs green
-    if (st.type === "laboratory") smoke(c, X + 10, Y - 20, t + st.id * 0.3, false, M.CLOTHGRN);
+    if (st.type === "house" || st.type === "apartment") smoke(c, X + st.w * TILE - 8, Y - 16, t + st.id * 0.3);
     if (st.type === "watermill") drawWheel(c, X - 3, Y + st.h * TILE - 10, 9, t * 1.6);
   }
 
@@ -730,11 +771,24 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
     }
   }
 
+  // Every gate found in the fog wears its level over it, on a plaque that glows through the night.
+  for (const l of s.lairs ?? []) {
+    if (!l.discovered) continue;
+    const X = Math.round((l.x + l.w / 2) * TILE);
+    const Y = l.y * TILE - 30;
+    if (!inView(X, Y, 80)) continue;
+    const text = `L${l.level}`;
+    const w = text.length * 4 + 3;
+    px(c, X - Math.floor(w / 2), Y, w, 9, HUD.frame);
+    px(c, X - Math.floor(w / 2) + 1, Y + 1, w - 2, 7, "#2a1438");
+    glyphs(c, text, X - Math.floor(w / 2) + 2, Y + 2, E.VOID[1]);
+  }
+
   // construction progress
   for (const st of s.structures) {
     if (!st.buildUntil) continue;
     const def = CATALOG[st.type];
-    const total = def.buildHours * 60 * (st.level > 1 ? levelHours(st.level) : 1);
+    const total = def.buildHours * 60 * (st.level > 1 ? upgradeHours(st.type, st.level) : 1);
     const frac = 1 - Math.max(0, st.buildUntil - s.time) / Math.max(1, total);
     const X = st.x * TILE;
     const Y = st.y * TILE - 6;
@@ -1217,15 +1271,16 @@ function environment(c: Ctx, s: GameState, cam: Camera, clk: Clock, t: number, r
   if (raid) for (const p of s.raid!.projectiles) light((p.x + (p.tx - p.x) * p.t) * TILE, (p.y + (p.ty - p.y) * p.t) * TILE, 8);
   let lit = then(season, GRADES.FIRELIGHT);
   if (raid) lit = then(lit, GRADES.RAID);
-  applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base, mix(base, lit, 0.5), lit], lightBuf, PROTECT, MUTED);
+  // The dark drains colour as well as light: outside the rings the world is nearly grey.
+  applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base, mix(base, lit, 0.5), lit], lightBuf, PROTECT, MUTED * (1 - 0.45 * dark));
 }
 
 // ── Minimap ───────────────────────────────────────────────
 
-const MINI_COLORS: Record<number, string> = { 0: "#4f6e44", 1: "#3a6280", 2: "#9a8e80", 3: "#2c4634", 4: "#b8a88a" };
+const MINI_COLORS: Record<number, string> = { 0: "#4f6e44", 1: "#3a6280", 2: "#9a8e80", 3: "#2c4634", 4: "#b8a88a", 5: "#7a9448", 6: "#6e6c52", 7: "#3c5040" };
 
 /** The minimap in winter: ice for grass, bank and forest floor outside the fires' warmth. */
-const MINI_ICE: Record<number, string> = { 0: "#9cc4d6", 1: "#2c6aa6", 2: "#8a94a4", 3: "#6f93a8", 4: "#9cc4d6" };
+const MINI_ICE: Record<number, string> = { 0: "#9cc4d6", 1: "#2c6aa6", 2: "#8a94a4", 3: "#6f93a8", 4: "#9cc4d6", 5: "#a6ccdc", 6: "#b4c2cc", 7: "#86aac0" };
 
 /** The minimap's window onto the map, in tiles. It shows this much at a time, and can be dragged. */
 export const MINI_W = 120;

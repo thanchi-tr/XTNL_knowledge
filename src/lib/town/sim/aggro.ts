@@ -1,9 +1,14 @@
 import { MONSTERS, partyName, statsAt } from "./bestiary";
+import { landCalm } from "./endgame";
 import { clock, log } from "./state";
 import { center } from "./world";
 import { air } from "./weather";
 import { chooseTarget } from "./breach";
 import { defencePower } from "./combat";
+import { frameUtil } from "./frame";
+import { kmod } from "./knowledge";
+import { CATALOG } from "./catalog";
+import { TACTICS, TACTIC_CHANNEL, TACTIC_LABEL, neglect, nemesisOf, noteLaunch, pickTactic, stalkOrStrike, tacticKind, tacticOdds, type Tactic } from "./nemesis";
 import { CHANNELS, STIMULI, Terrain, type Aggro, type Channel, type GameState, type IncomingMonster, type MonsterKind, type Stimulus } from "./types";
 
 /**
@@ -106,7 +111,8 @@ export function dailyBudget(s: GameState): number {
   const A = channelAggro(s).reduce((a, b) => a + b, 0);
   const N = s.villagers.length;
   const season = clock(s.time).season;
-  return 3 * Math.pow(1 + A / A_REF, 1.35) * Math.pow(N, 0.8) * (Math.sqrt(footprint(s)) / 10) * SEASON_BUDGET[season];
+  // Every monster gate the town seals quiets the land: down to half its answer with all of them sealed.
+  return 3 * Math.pow(1 + A / A_REF, 1.35) * Math.pow(N, 0.8) * (Math.sqrt(footprint(s)) / 10) * SEASON_BUDGET[season] * neglect(s).budget * landCalm(s);
 }
 
 /** How hard the next wave is aimed, as a share of the town's defence (§2.3). */
@@ -116,7 +122,10 @@ export function rho(s: GameState): number {
   const A = channelAggro(s).reduce((a, b) => a + b, 0);
   const recent = ag.losses.filter((t) => s.time - t <= 3 * 1440).length;
   const relief = Math.min(1, recent / Math.max(4, 0.15 * s.villagers.length));
-  return 0.45 + 0.12 * Math.log(1 + days / 5) + 0.05 * Math.min(8, A / A_REF) - 0.25 * relief;
+  // The nemesis presses a winning player, and feeds on neglected study (§13.4).
+  const aim = 0.45 + 0.12 * Math.log(1 + days / 5) + 0.05 * Math.min(8, A / A_REF) - 0.25 * relief + nemesisOf(s).pressure + neglect(s).rho;
+  // The first week is for building: no wave is aimed above four fifths of what it meets.
+  return days < 7 ? Math.min(0.8, aim) : aim;
 }
 
 /**
@@ -130,7 +139,9 @@ export function aggroHourly(s: GameState, r: () => number) {
   const food = (["meals", "potato", "wheat", "barley", "corn", "bean", "rice", "fish", "meat"] as const).reduce((a, k) => a + s.res[k], 0);
   ag.ledger.food += food / 1000;
   ag.ledger.pop += s.villagers.length;
-  const I = CHANNELS.map((_, j) => STIMULI.reduce((a, k) => a + WEIGHTS[k][j] * ag.ledger[k], 0));
+  // Foresight (Critical Thinking ideas) dulls the land's notice; neglect sharpens it.
+  const notice = 1 - kmod(s, "CRITICAL_THINKING");
+  const I = CHANNELS.map((_, j) => notice * STIMULI.reduce((a, k) => a + WEIGHTS[k][j] * ag.ledger[k], 0));
   const decay = Math.exp(-Math.LN2 / HALF_LIFE_H);
   for (let j = 0; j < 4; j++) {
     ag.hot[j] = ag.hot[j] * decay + (1 - PHI) * I[j];
@@ -158,7 +169,12 @@ export function aggroHourly(s: GameState, r: () => number) {
   const spiked = ag.past.length >= 7 && A.some((a, j) => a - ag.past[0][j] >= 0.5 * A_REF);
   const due = ag.purse >= ag.trigger || spiked;
   if (!grace && due && !s.raid && s.time - ag.lastWaveAt >= 12 * 60) {
-    launchWave(s, r, spiked ? A.findIndex((a, j) => a - ag.past[0][j] >= 0.5 * A_REF) : undefined);
+    // A punitive wave goes at once; any other stalks the town for its worst hour (§13.3).
+    if (spiked) launchWave(s, r, A.findIndex((a, j) => a - ag.past[0][j] >= 0.5 * A_REF));
+    else {
+      const tactic = stalkOrStrike(s, r);
+      if (tactic) launchWave(s, r, undefined, tactic);
+    }
   }
   weatherStalkers(s, r);
 }
@@ -203,7 +219,7 @@ export function unitPi(kind: MonsterKind, level: number): number {
  * A wave: the archetype drawn, the roster filled greedily to ρ·Π_town or
  * until the purse runs out, a target chosen by value over time-to-reach.
  */
-export function launchWave(s: GameState, r: () => number, forced?: number) {
+export function launchWave(s: GameState, r: () => number, forced?: number, chosen?: Tactic) {
   const ag = aggroOf(s);
   const odds = archetypeOdds(s);
   let j = forced ?? 0;
@@ -213,6 +229,17 @@ export function launchWave(s: GameState, r: () => number, forced?: number) {
     if (j < 0) j = odds.findIndex((p) => p > 0);
     if (j < 0) j = 0;
   }
+  // Spores are the land's own; every other wave is the nemesis's tactic (§13.2).
+  let tactic: Tactic | undefined;
+  let tp = 1;
+  if (CHANNELS[j] !== "I") {
+    if (chosen) {
+      tactic = chosen;
+      tp = tacticOdds(s)[TACTICS.indexOf(chosen)] || 0.1;
+    } else ({ tactic, p: tp } = pickTactic(s, r));
+    if (tactic === "blizzard" && air(s).vis >= 50) tactic = "assault";
+    j = CHANNELS.indexOf(TACTIC_CHANNEL[tactic]);
+  }
   // A punitive wave on a channel the weather rules out goes to the siege beasts.
   if (j === 2 && air(s).vis >= 50) j = 0;
   const ch = CHANNELS[j];
@@ -220,12 +247,31 @@ export function launchWave(s: GameState, r: () => number, forced?: number) {
   const days = s.time / 1440;
   // The objective first, then the strength: sized against what defends that building (§2.3–2.4).
   let level = waveLevel(A[j], days);
-  const probe = ch === "I" ? undefined : chooseTarget(s, ch, [{ kind: pickKind(ch, level), level, count: 1 }], r);
+  if (tactic === "swarm") level = Math.max(1, level - 3);
+  let kindAt = (lv: number): MonsterKind => (tactic && tacticKind(tactic, lv)) || pickKind(ch, lv);
+  const hall = s.structures.find((x) => x.type === "townhall");
+  const loaded = [...s.structures].filter((x) => !x.buildUntil).sort((a, b) => frameUtil(s, b) - frameUtil(s, a))[0];
+  const forcedTarget = tactic === "decapitate" ? hall : tactic === "siege" ? loaded : undefined;
+  const probe = ch === "I" ? undefined : forcedTarget
+    ? { target: forcedTarget, side: (["east", "south", "north", "west"] as const)[Math.floor(r() * 4)], label: CATALOG[forcedTarget.type].name.toLowerCase() } as ReturnType<typeof chooseTarget>
+    : chooseTarget(s, ch, [{ kind: kindAt(level), level, count: 1 }], r);
   // What went unspent last time makes this wave larger: up to half again (§2.3).
   const surplus = Math.min(0.5, Math.max(0, ag.purse - ag.trigger) / (3 * Math.max(1, dailyBudget(s))));
-  const target = rho(s) * (1 + surplus) * Math.max(1, defencePower(s, probe?.target));
+  const flies = tactic === "flyers" || !!MONSTERS[kindAt(level)]?.flying;
+  const kappa = nemesisOf(s).kappa ?? 1;
+  const defence = Math.max(1, kappa * defencePower(s, probe?.target, flies));
+  const target = rho(s) * (1 + surplus) * defence;
   // The level the channel calls for — stepped down while one of them alone would outmatch the target.
-  while (level > 1 && unitPi(pickKind(ch, level), level) > target) level--;
+  while (level > 1 && unitPi(kindAt(level), level) > target) level--;
+  // Even one of them at level 1 would be more than the aim: send the strongest lesser thing that fits.
+  if (unitPi(kindAt(1), 1) > target) {
+    const lesser = (["troll", "harpy", "wolf", "ghoul", "goblin", "skeleton", "spider", "bat", "slime"] as MonsterKind[])
+      .filter((k) => unitPi(k, 1) <= target)
+      .sort((x, y) => unitPi(y, 1) - unitPi(x, 1));
+    const fallback: MonsterKind = lesser[0] ?? "slime";
+    kindAt = () => fallback;
+    level = 1;
+  }
   const cost = UNIT_COST[ch] * Math.pow(level, 1.5);
   if (ag.purse < cost) {
     ag.trigger = ag.purse + cost;
@@ -233,7 +279,7 @@ export function launchWave(s: GameState, r: () => number, forced?: number) {
   }
   // Spores are not fought: they settle.
   if (ch === "I") return sporeEvent(s, r, level);
-  const kind = pickKind(ch, level);
+  const kind = kindAt(level);
   const pi = unitPi(kind, level);
   let n = 0;
   let spent = 0;
@@ -248,11 +294,14 @@ export function launchWave(s: GameState, r: () => number, forced?: number) {
   const party: IncomingMonster[] = [{ kind, level, count: n }];
   const aim = probe && probe.target ? probe : chooseTarget(s, ch, party, r);
   const arrivesAt = s.time + (ch === "B" ? 60 + Math.floor(r() * 120) : 120 + Math.floor(r() * 240));
+  const others = (["east", "south", "north", "west"] as const).filter((x) => x !== aim.side);
   s.raid = {
     arrivesAt, party, side: aim.side, target: aim.target?.id, reach: 0, phase: "incoming",
     combatants: [], projectiles: [], clock: 0, nextId: 1, archetype: ch, origin: aim.origin,
+    flank: tactic === "flank" ? others[Math.floor(r() * others.length)] : undefined, tactic,
   };
-  const what = aim.target ? ` making for the ${aim.label}` : "";
+  if (tactic) noteLaunch(s, tactic, tp, (n * n * pi) / defence);
+  const what = (aim.target ? ` making for the ${aim.label}` : "") + (tactic && tactic !== "assault" ? ` — ${TACTIC_LABEL[tactic]}` : "");
   const heard = ch === "B" && aim.warned ? " The listening posts hear digging under the ground." : ch === "B" ? " Nobody hears them coming." : "";
   log(s, `The land answers — ${partyName(party)}${what}, in ${Math.round((arrivesAt - s.time) / 60)} hours.${heard}`, "bad");
   s.nextRaidAt = Math.max(s.nextRaidAt, s.time);

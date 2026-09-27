@@ -113,8 +113,8 @@ void r;
 void upgrade;
 // G1 (docs/town-survival-systems.md §10): the town must fall, and not too soon.
 const fell = s.fallen?.day ?? null;
-const inBand = fell !== null && fell >= 18 && fell <= 45;
-console.log(`\nG1: ${fell === null ? "still standing after 60 days" : `fell on day ${fell}${s.fallCause ? ` (${s.fallCause})` : ""}`} — ${inBand ? "inside" : "OUTSIDE"} the 18–45 day band.`);
+const inBand = fell !== null && fell >= 8 && fell <= 30;
+console.log(`\nG1: ${fell === null ? "still standing after 60 days" : `fell on day ${fell}${s.fallCause ? ` (${s.fallCause})` : ""}`} — ${inBand ? "inside" : "OUTSIDE"} the 8–30 day band (a static player, no study data; see town:balance).`);
 void scheduleRaid;
 console.log("\ncensus:", census(s).map((c) => `${c.label} ${c.count}`).join(", "));
 console.log("kills:", s.kills.map((k) => k.kind).join(", ") || "none");

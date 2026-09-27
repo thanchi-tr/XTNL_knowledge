@@ -59,6 +59,33 @@ export interface TownInput {
   dueRemaining: number;
   /** Ideas added today — each one speeds training once the reviews are done. */
   newIdeasToday: number;
+  /** Today's study, Field by Field: what feeds the town's buffs and its daily rewards. */
+  fields?: FieldDaily[];
+  /** The player's calendar day (YYYY-MM-DD): the key daily rewards are claimed against. */
+  day?: string;
+}
+
+/** One Field's day, as the town sees it. */
+export interface FieldDaily {
+  id: string;
+  name: string;
+  school: School | null;
+  level: number;
+  /** The Field's two heaviest attributes: what its ideas strengthen in town. */
+  attrs: Attribute[];
+  /** Ideas added to it today, and this week. */
+  ideasToday: number;
+  ideasWeek: number;
+  /** Its existing cards reviewed today. */
+  reviewedToday: number;
+  /** Cards still due today, and cards left more than a day past due. */
+  dueRemaining: number;
+  overdue: number;
+  /** Consecutive days with a review in it (alive through today), and its best. */
+  streak: number;
+  bestStreak: number;
+  /** Today's daily is done: it was reviewed, and nothing in it is still due. */
+  complete: boolean;
 }
 
 // ── The tree the town grows into ──────────────────────────

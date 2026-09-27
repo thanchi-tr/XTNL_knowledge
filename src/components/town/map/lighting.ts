@@ -23,7 +23,9 @@ export interface Grade {
 
 export const GRADES = {
   DAY: { mul: [1, 1, 1], add: [0, 0, 0] },
-  NIGHT: { mul: [0.45, 0.6, 1.1], add: [-15, -10, 12] },
+  // Night is the town's weakest hour: the land goes near black and cold blue, and
+  // only what a fire, a lamp or a lit window reaches can be made out.
+  NIGHT: { mul: [0.17, 0.22, 0.42], add: [-4, -3, 8] },
   FOG: { mul: [0.7, 0.75, 0.8], add: [35, 40, 45] },
   RAID: { mul: [1.35, 0.55, 0.5], add: [25, -10, -15] },
   SUMMER: { mul: [1.04, 1, 0.92], add: [4, 2, 0] },

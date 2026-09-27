@@ -6,8 +6,8 @@ import { profileFor, type TownInput } from "@/lib/town/rules";
 import {
   BUILDABLE, CATALOG, COURSES, CROP_YIELD, DISHES, FARM_LOSS, FISH_CATCH, FISH_SEASON, GATE_COST, LAB_RECIPES, LADDERS, LAND_CROPS,
   ARMY_PER_POINT, DIG_HOURS, FILL_HOURS, KNIGHT_RECRUIT, PAVEMENT_COST, RECIPES, RECRUIT_RANK, STORE_PER_LEVEL, TRAIN_CAP, UTILITIES,
-  COMBINE_COST, COMBINE_FROM, GRADE_NAMES, HOME_TIERS, grade, homeTier, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople,
-  WALL_COST, WATER_CROPS, bedUpgradeCost, maxBedUpgrades, roleLabel, utilitySlots,
+  COMBINE_COST, COMBINE_FROM, GRADE_NAMES, hallMinDay, HOME_TIERS, grade, homeTier, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople,
+  WALL_COST, WATER_CROPS, bedUpgradeCost, maxBedUpgrades, utilitySlots,
 } from "@/lib/town/sim/catalog";
 import {
   ASCEND_FROM, GEAR, PARTS, SORTIE_HOURS, STACK, advanceKnight, advanceRequirement, armorySlots, ascensionCap, ascensionOdds,
@@ -15,33 +15,39 @@ import {
   stock, unequip, xpToNext, knightCapFor, wizardCapFor, MAX_KNIGHT, MAX_WIZARD, type GearSlot,
 } from "@/lib/town/sim/loot";
 import {
-  addUtility, assignGuard, bindEmblem, buyBed, cancelClear, clear, demolish, fire, freeWorkers, harvestYield, hire, paint, place, recruit,
+  addUtility, assignGuard, relocate, movers, moveHours, MOVER_LEVEL, setNightShift, setOvertime, setClearOvertime, cancelWork, cancelLeft, CANCEL_MS, bindEmblem, buyBed, cancelClear, clear, demolish, fire, freeWorkers, harvestYield, hire, paint, place, recruit,
   cancelEarthworks, combineHomes, combinePartners, markEarthworks, upgradeWalls, schoolTrain, sell, sendOnBreak, setMode, stokeFire, trade, unpaint, upgrade,
 } from "@/lib/town/sim/actions";
 import { MONSTERS, partyName } from "@/lib/town/sim/bestiary";
+import { plural } from "@/lib/town/sim/words";
+import { hintState, revealHint, type Act } from "@/lib/town/sim/advisor";
+import { armyFor, assaultGate, assaultOdds, gateGuard } from "@/lib/town/sim/endgame";
+import { endgameTown } from "@/lib/town/sim/showcase";
+import { MUSEUM_HOURS, TRAVEL_COST, TRAVEL_HOURS, couldGo, isAway as isAwayLeisure, openMuseum, sendToMuseum, sendTravelling } from "@/lib/town/sim/leisure";
+import { EFFORT_LABEL, EFFORT_POINTS, NIGHT_SHIFT_LEVEL, capacity, hasNightShift, jobEffort, spent, weakness, workLevel } from "@/lib/town/sim/work";
+import { LEGENDS, ascendLegend, candidateFor, legendChecks, legendOf, titleOf, type Legend } from "@/lib/town/sim/legends";
 import { FIRE_BANISH, canRepel, performRite, repelRequirement, stepCombat } from "@/lib/town/sim/combat";
 import {
   beds, byId, census, clock, countedTroops, guardsAt, isMilitary, migrate, militaryCapacity, newTown, packSave, residents, totalBeds, unpackSave,
 } from "@/lib/town/sim/state";
-import { advance, FESTIVAL_COST, holdFestival, raidForecast, scheduleRaid, trainingPace, IDEA_BOOST, type SimContext } from "@/lib/town/sim/tick";
+import { advance, FESTIVAL_COST, holdFestival, raidForecast, scheduleRaid, trainingPace, type SimContext } from "@/lib/town/sim/tick";
 import { buildingEffects, type Effect } from "@/lib/town/sim/effects";
-import {
-  alertRadius, burnRate, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, warmFields,
-  idx, irrigation, isLit, lightRange, occupancy, rng, unlitBuildings, warmthRange, LIGHT_TYPES, MILITARY_TYPES,
-  BULK, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, passiveRadius, storageCap,
-  WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost, fitAt,
-} from "@/lib/town/sim/world";
+import { alertRadius, fireAirDT, burnRate, checkMove, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, warmFields, idx, irrigation, isLit, lightRange, occupancy, rng, warmthRange, LIGHT_TYPES, MILITARY_TYPES, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, passiveRadius, storeRoom, WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost, fitAt } from "@/lib/town/sim/world";
 import { FOREST_FLOOR, REGROW, TILE_WOOD, forestOf, regrows } from "@/lib/town/sim/woods";
-import { PACK_SLOTS, RATION_MEALS, adventureReach, canPack, packRation, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
-import { MAP_H, MAP_W, Overlay, Terrain, TILE, type GameState, type MonsterKind, type Structure, type StructureType, type Villager } from "@/lib/town/sim/types";
+import { PACK_SLOTS, RATION_MEALS, adventureReach, broodOf, canPack, packRation, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
+import { LAIR_NAMES } from "@/lib/town/sim/vision";
+import { MAP_H, MAP_W, Overlay, Terrain, TERRAIN_NAME, TILE, YEAR_DAYS, type GameState, type MonsterKind, type Structure, type StructureType, type Villager } from "@/lib/town/sim/types";
 import {
   drawFrame, drawMinimap, newWorld, structureArt, MINI_H, MINI_W, VIEW_H, VIEW_W, WORLD_H, WORLD_W,
   type Camera, type Walker, type Overlays, type World,
 } from "./map/render";
 import type { TroopArt } from "./art/sprites";
 import { troopLook, type Look } from "./art/heroes";
-import { NodeList, SocietyPanel, SoilPanel, StoresPanel, ThreatPanel, Vitals, WeatherBadge, ZonePanel } from "./SurvivalPanels";
-import { icon } from "./art/icons";
+import { NemesisPanel, NodeList, SocietyPanel, StudyPanel, SoilPanel, StoresPanel, ThreatPanel, Vitals, WeatherBadge, ZonePanel } from "./SurvivalPanels";
+import { IconCanvas, InventoryPanel, ResourceHud } from "./Inventory";
+import { TrophyPanel } from "./Trophies";
+import { HALL_AGES, hallAge } from "./art/special";
+import { AUG_CAP, AUG_LABEL, AUG_LEVEL, augBonus, augment, canAugment, dimReturn, isFoot, partLabel } from "@/lib/town/sim/augment";
 
 /**
  * The town, as a game.
@@ -62,7 +68,8 @@ type Tool =
   | { kind: "select" }
   | { kind: "build"; type: StructureType }
   | { kind: "pavement" | "wall" | "gate" | "clear" | "unpave" | "demolish" | "dig" | "fill" | "upwall" }
-  | { kind: "scout"; villagerId: number };
+  | { kind: "scout"; villagerId: number }
+  | { kind: "move"; id: number };
 
 const ALLOWED_EMBLEM: Record<"wizard" | "knight", Attribute[]> = {
   wizard: ["ABSTRACT", "CREATIVITY", "MIND", "LOGIC", "REASON"],
@@ -79,8 +86,12 @@ function loadOrFound(scenario: string, bonus: number): GameState {
   } catch {
     /* private mode, corrupt save: found a new town */
   }
-  return newTown(Math.floor(Math.random() * 1e9), bonus, foundingFor(scenario));
+  return found(scenario, bonus);
 }
+
+/** A new town for a profile: the end-game preview is built at the summit, with its dragon fight on the way. */
+const found = (scenario: string, bonus: number) =>
+  scenario === "endgame" ? endgameTown(Math.floor(Math.random() * 1e9), bonus) : newTown(Math.floor(Math.random() * 1e9), bonus, foundingFor(scenario));
 
 /** Your own town starts from nothing much; the preview towns show a fuller layout. */
 const foundingFor = (scenario: string) => (scenario === "yours" ? "starter" : "showcase");
@@ -128,7 +139,8 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   const [selected, setSelected] = useState<number | null>(null);
   /** A tree, rock or rubble tile picked for harvesting. */
   const [tileSel, setTileSel] = useState<number | null>(null);
-  const [tab, setTab] = useState<"build" | "info" | "hall" | "raid" | "trade" | "log">("build");
+  const [inv, setInv] = useState(false);
+  const [tab, setTab] = useState<"build" | "info" | "hall" | "raid" | "trade" | "log" | "trophy">("build");
   // Full screen, for phones and foldables: the map fills the screen in
   // landscape, and the side panel becomes a quest-log pop-up over it.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -250,7 +262,15 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
         };
         const tl = toolRef.current;
         const h = ui.current.hover;
-        if (h && tl.kind === "build") {
+        if (h && tl.kind === "move") {
+          const st = byId(s, tl.id);
+          if (st) {
+            const gx = h[0] - Math.floor(st.w / 2);
+            const gy = h[1] - Math.floor(st.h / 2);
+            const check = checkMove(s, st, gx, gy);
+            ov.ghost = { type: st.type, x: gx, y: gy, w: st.w, h: st.h, ok: check.ok, art: structureArt({ ...st, x: gx, y: gy, buildUntil: undefined }, profile.archetype) };
+          }
+        } else if (h && tl.kind === "build") {
           const def = CATALOG[tl.type];
           const gx = h[0] - Math.floor(def.w / 2);
           const gy = h[1] - Math.floor(def.h / 2);
@@ -448,6 +468,13 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       const err = sendScout(s, tl.villagerId, t[0], t[1]);
       say(err);
       if (!err) setTool({ kind: "select" });
+    } else if (tl.kind === "move") {
+      const st = byId(s, tl.id);
+      if (st) {
+        const err = relocate(s, st.id, t[0] - Math.floor(st.w / 2), t[1] - Math.floor(st.h / 2));
+        say(err);
+        if (!err) setTool({ kind: "select" });
+      }
     } else if (tl.kind === "build") {
       const def = CATALOG[tl.type];
       const err = place(s, ctx, tl.type, t[0] - Math.floor(def.w / 2), t[1] - Math.floor(def.h / 2));
@@ -457,7 +484,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       const id = occupancy(s)[idx(t[0], t[1])];
       if (tl.kind === "demolish") {
         const st = byId(s, id);
-        if (st && window.confirm(`Tear down the ${CATALOG[st.type].name.toLowerCase()}? Buildings cannot be moved — only broken down.`)) say(demolish(s, id));
+        if (st && window.confirm(`Tear down the ${CATALOG[st.type].name.toLowerCase()}? A level-10 worker could move it instead.`)) say(demolish(s, id));
         return;
       }
       setSelected(id || null);
@@ -518,7 +545,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   function resetGame() {
     const old = stateRef.current;
     if (old) recordDay(scenario, old.fallen?.day ?? clock(old.time).day);
-    const fresh = newTown(Math.floor(Math.random() * 1e9), bonus, foundingFor(scenario));
+    const fresh = found(scenario, bonus);
     stateRef.current = fresh;
     world.current = newWorld();
     miniFollow.current = true;
@@ -559,6 +586,45 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       /* orientation lock is not allowed everywhere; landscape is then up to the player */
     }
   }
+  /** Carries out one of the steward's suggestions: one tap, whatever it takes. */
+  function act(a: Act) {
+    const live = stateRef.current;
+    if (!live) return;
+    switch (a.kind) {
+      case "build":
+        setTool({ kind: "build", type: a.type });
+        say(`Placing a ${CATALOG[a.type].name.toLowerCase()} — tap open ground on the map.`);
+        if (full) setQuest(false);
+        return;
+      case "select": {
+        const st = byId(live, a.id);
+        if (!st) return;
+        setSelected(st.id);
+        setTab("info");
+        const z = cam.current.zoom;
+        cam.current.x = Math.max(0, Math.min(WORLD_W - VIEW_W / z, (st.x + st.w / 2) * TILE - VIEW_W / z / 2));
+        cam.current.y = Math.max(0, Math.min(WORLD_H - VIEW_H / z, (st.y + st.h / 2) * TILE - VIEW_H / z / 2));
+        return;
+      }
+      case "upgrade":
+        run(() => upgrade(live, ctx, a.id));
+        return;
+      case "festival":
+        run(() => holdFestival(live));
+        return;
+      case "tab":
+        setTab(a.tab);
+        return;
+      case "inventory":
+        setInv(true);
+        if (full) setQuest(false);
+        return;
+      case "review":
+        window.location.href = "/review";
+        return;
+    }
+  }
+
   async function exitFull() {
     setFull(false);
     setQuest(false);
@@ -633,7 +699,18 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               onContextMenu={(e) => e.preventDefault()}
               aria-label="Town map — drag to pan, Ctrl+scroll or pinch to zoom"
             />
-            <ResourceHud s={s} ctx={ctx} onSell={(k) => run(() => sell(s, ctx, k, 10))} />
+            <ResourceHud s={s} ctx={ctx} onSell={(k) => run(() => sell(s, ctx, k, 10))} onOpen={() => setInv(true)} />
+            {inv && (
+              <InventoryPanel
+                s={s}
+                onSell={(k) => run(() => sell(s, ctx, k, 10))}
+                onClose={() => setInv(false)}
+                onBuildStore={() => {
+                  setInv(false);
+                  setTool({ kind: "build", type: "storehouse" });
+                }}
+              />
+            )}
             <canvas
               ref={miniRef} width={MINI_W} height={MINI_H} className="tg-mini"
               onPointerDown={onMiniDown} onPointerMove={onMiniMove} onPointerUp={onMiniUp}
@@ -655,6 +732,20 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
                 </div>
               </div>
             )}
+            {s.victory && !s.victory.seen && (
+              <div className="tg-fallen tg-victory" role="dialog" aria-label="The end-game phase">
+                <p className="town-kicker">The end-game phase</p>
+                <h2 className="town-title">Day {s.victory.day}: the summit</h2>
+                <p className="town-sub">{s.victory.how}</p>
+                <div className="town-row">
+                  <button className="town-btn" onClick={() => {
+                    const live = stateRef.current;
+                    if (live?.victory) live.victory.seen = true;
+                    setTick((n) => n + 1);
+                  }}>Play on</button>
+                </div>
+              </div>
+            )}
             {s.raid && (
               <div className="town-alarm">
                 <span className="town-alarm-name">{partyName(s.raid.party)}</span>
@@ -666,6 +757,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               </div>
             )}
             {toast && <div className="tg-toast">{toast}</div>}
+            <UndoBar s={s} onCancel={(id) => run(() => cancelWork(s, id))} />
             {full && !quest && (
               <button className="tg-quest-btn" onClick={() => setQuest(true)} aria-label="Open the quest log">
                 <span aria-hidden>▤</span> Quest log{s.raid ? " !" : ""}
@@ -686,6 +778,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           </div>
           <p className="tg-hint">
             {tool.kind === "build" ? `Placing ${CATALOG[tool.type].name} — click to place, shift-click to place several.` :
+              tool.kind === "move" ? "Moving a building — tap its new plot. It is out of use while the movers carry it, and building stops at night without a night shift." :
               tool.kind === "pavement" || tool.kind === "wall" || tool.kind === "gate" ? "Drag to lay a line; it bends once at the corner." :
               tool.kind === "clear" ? "Drag a box over trees, rocks or rubble — idle villagers clear it for resources." :
               tool.kind === "dig" ? `Drag out from the river to dig a channel. Slow: ${DIG_HOURS} villager-hours a tile (half with tools). Remove road/wall over a marked tile cancels it.` :
@@ -705,18 +798,29 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             </div>
           )}
           <div className="tg-tabs" role="tablist">
-            {(["build", "info", "hall", "raid", "trade", "log"] as const).map((k) => (
+            {(["build", "info", "hall", "raid", "trade", "log", "trophy"] as const).map((k) => (
               <button key={k} role="tab" aria-selected={tab === k} className={`tg-tab ${tab === k ? "on" : ""} ${(k === "raid" && s.raid) || (k === "trade" && s.caravan) ? "alert" : ""}`} onClick={() => setTab(k)}>
-                {{ build: "Build", info: sel ? "Building" : tileSel !== null ? "Here" : "Building", hall: "Census", raid: "Raids", trade: "Trade", log: "Chronicle" }[k]}
+                {{ build: "Actions", info: sel ? "Building" : tileSel !== null ? "Here" : "Building", hall: "Census", raid: "Raids", trade: "Trade", log: "Chronicle", trophy: "Trophies" }[k]}
               </button>
             ))}
           </div>
           <div className="tg-panel">
-            {tab === "build" && <BuildPanel s={s} tool={tool} setTool={(t) => {
-              setTool(t);
-              if (full) setQuest(false); // back to the map to place it
-            }} />}
-            {tab === "info" && (sel ? <InfoPanel s={s} st={sel} ctx={ctx} run={run} input={input} onScout={(id) => {
+            {tab === "build" && (
+              <>
+                <NextActions s={s} ctx={ctx} onAct={act} onReveal={() => run(() => {
+                  const h = revealHint(s, ctx);
+                  return typeof h === "string" ? h : null;
+                })} />
+                <BuildPanel s={s} tool={tool} setTool={(t) => {
+                  setTool(t);
+                  if (full) setQuest(false); // back to the map to place it
+                }} />
+              </>
+            )}
+            {tab === "info" && (sel ? <InfoPanel s={s} st={sel} ctx={ctx} run={run} input={input} onMove={(id) => {
+              setTool({ kind: "move", id });
+              if (full) setQuest(false);
+            }} onScout={(id) => {
               setTool({ kind: "scout", villagerId: id });
               if (full) setQuest(false);
             }} />
@@ -736,13 +840,22 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             {tab === "hall" && (
               <>
                 <Goal s={s} scenario={scenario} />
+                <StudyPanel s={s} input={input} />
                 <SocietyPanel s={s} run={run} />
-                <CensusPanel s={s} />
+                <CensusPanel s={s} run={run} />
+                <LeisurePanel s={s} run={run} />
+                <LegendsPanel s={s} run={run} />
                 <StoresPanel s={s} />
               </>
             )}
-            {tab === "raid" && <RaidPanel s={s} ctx={ctx} run={run} />}
+            {tab === "raid" && (
+              <>
+                <RaidPanel s={s} ctx={ctx} run={run} />
+                <GatesList s={s} run={run} />
+              </>
+            )}
             {tab === "trade" && <TradePanel s={s} run={run} />}
+            {tab === "trophy" && <TrophyPanel s={s} />}
             {tab === "log" && (
               <ol className="tg-log">
                 {s.log.map((l, i) => (
@@ -839,73 +952,153 @@ function ToolBtn({ label, on, onClick, danger }: { label: string; on: boolean; o
   return <button className={`tg-tool ${on ? "on" : ""} ${danger ? "danger" : ""}`} onClick={onClick}>{label}</button>;
 }
 
-const RES_ORDER = [
-  "coin", "wood", "stone", "coal", "iron", "silver", "platinum", "diamond", "gold", "mithril", "tools", "torches", "meals",
-  "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
-  "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish",
-  "ice", "planks", "bricks", "ingots", "gunpowder", "poison", "formula", "tonic", "fertiliser",
-] as const;
 
 /** A pixel icon, drawn at an integer scale so it stays crisp. */
-function IconCanvas({ id, scale = 2 }: { id: string; scale?: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const art = icon(id);
-    cv.width = art.width;
-    cv.height = art.height;
-    const c = cv.getContext("2d")!;
-    c.clearRect(0, 0, cv.width, cv.height);
-    c.drawImage(art, 0, 0);
-    cv.style.width = `${art.width * scale}px`;
-    cv.style.height = `${art.height * scale}px`;
-  }, [id, scale]);
-  return <canvas ref={ref} className="tg-icon" aria-hidden />;
-}
 
 /**
  * The store, in the frame: every resource the town holds, with its icon, laid
  * over the top of the map. Click one to sell ten at the market. After dusk it
  * also counts the buildings no light reaches.
  */
-function ResourceHud({ s, ctx, onSell }: { s: GameState; ctx: SimContext; onSell: (k: keyof GameState["res"]) => void }) {
-  const clk = clock(s.time);
-  const dark = clk.darkness > 0.2 ? unlitBuildings(s).length : 0;
-  const pace = trainingPace(ctx.input);
-  const cap = storageCap(s);
+/**
+ * The steward's hint: one next best action a game day, sealed until asked
+ * for. Red is the town in danger now, amber is trouble coming, green is the
+ * way forward. Between hints the card only says when the next one comes —
+ * reading the town is the player's job.
+ */
+function NextActions({ s, ctx, onAct, onReveal }: { s: GameState; ctx: SimContext; onAct: (a: Act) => void; onReveal: () => void }) {
+  const { shown, ready, nextIn } = hintState(s);
+  const tag = { now: "Do this now", soon: "Next", grow: "To grow" } as const;
+  void ctx;
   return (
-    <div className="tg-hud" role="list" aria-label="Resources">
-      <span
-        className={`tg-hud-item ${pace.slowed ? "warn" : "good"}`}
-        title={pace.slowed
-          ? `Training in town runs at ${Math.round(pace.factor * 100)}% until today's ${pace.due} due review${pace.due === 1 ? " is" : "s are"} done.`
-          : `Reviews done. Each new idea added today adds ${Math.round(IDEA_BOOST * 100)}% to training speed.`}
-      >
-        {pace.slowed ? `⧗ Training ${Math.round(pace.factor * 100)}% · ${pace.due} due` : `✦ Training ${Math.round(pace.factor * 100)}%`}
-      </span>
-      {RES_ORDER.filter((k) => s.res[k] >= 1 || ["coin", "wood", "stone", "meals"].includes(k)).map((k) => (
-        <button
-          key={k} role="listitem"
-          className={`tg-hud-item ore-${k} ${BULK.includes(k) && s.res[k] >= cap ? "warn" : ""}`}
-          onClick={() => onSell(k)}
-          title={`${k}${BULK.includes(k) ? ` — ${Math.floor(s.res[k])} of ${cap} the stores hold` : ""} — click to sell 10 at the market`}
-        >
-          <IconCanvas id={k} />
-          <b>{Math.floor(s.res[k])}</b>
-        </button>
-      ))}
-      {dark > 0 && <span className="tg-hud-item warn" title="Buildings no light reaches — a haunt will come for each">☾ {dark} unlit</span>}
-      {!s.raid && (() => {
-        const f = raidForecast(s);
-        const top = f.monsters.slice(0, 3).map((m) => `${m.name} ${Math.round(m.pct * 100)}%`).join(", ");
-        return (
-          <span className={`tg-hud-item ${f.chance >= 0.5 ? "warn" : ""}`} title={`Chance of a raid at the next check, in ${Math.ceil(f.nextCheckIn / 60)}h. Most likely: ${top}. See the Raids tab.`}>
-            ⚔ {Math.round(f.chance * 100)}% in {Math.ceil(f.nextCheckIn / 60)}h
-          </span>
-        );
-      })()}
-      {s.caravan && <span className="tg-hud-item good" title="A trade caravan is in town — see the Trade tab">⚖ Caravan · {Math.ceil((s.caravan.until - s.time) / 60)}h</span>}
+    <div className="tg-next">
+      <p className="town-kicker">The steward&apos;s counsel</p>
+      {shown ? (
+        <div className={`tg-next-card ${shown.urgency}`}>
+          <span className="tg-next-tag">{tag[shown.urgency]} · given {Math.max(0, Math.floor((s.time - shown.at) / 60))}h ago</span>
+          <h3>{shown.title}</h3>
+          <p>{shown.why}</p>
+          <button className="town-btn" onClick={() => onAct(shown.act)}>{shown.cta} →</button>
+          <p className="town-dim">{ready ? "Another hint is ready." : `The next hint in ${Math.ceil(nextIn / 60)}h.`}</p>
+        </div>
+      ) : ready ? (
+        <div className="tg-next-card sealed">
+          <span className="tg-next-tag">One hint a day</span>
+          <h3>The steward has one piece of advice</h3>
+          <p>Open it for the single best thing to do now. After that the steward keeps counsel for a day — the rest is yours to read.</p>
+          <button className="town-btn" onClick={onReveal}>Reveal the next best action</button>
+        </div>
+      ) : (
+        <div className="tg-next-card sealed">
+          <span className="tg-next-tag">Sealed</span>
+          <h3>The steward keeps counsel</h3>
+          <p>The next hint in {Math.ceil(nextIn / 60)}h. Until then: the bar over the map, the warnings on the buildings and the Chronicle tell you what you need.</p>
+        </div>
+      )}
+      <p className="town-kicker tg-next-then">Build</p>
+    </div>
+  );
+}
+
+/**
+ * Anything just ordered — a new build or an upgrade — can be called off for
+ * ten real seconds with everything given back. This counts it down over the
+ * map; it keeps its own clock, so it counts even with the game paused.
+ */
+function UndoBar({ s, onCancel }: { s: GameState; onCancel: (id: number) => void }) {
+  const [, setNow] = useState(0);
+  const open = s.structures.filter((st) => cancelLeft(st) > 0).sort((a, b) => (b.undo?.at ?? 0) - (a.undo?.at ?? 0));
+  useEffect(() => {
+    if (!open.length) return;
+    const t = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, [open.length]);
+  const st = open[0];
+  if (!st?.undo) return null;
+  const left = cancelLeft(st);
+  return (
+    <div className="tg-undo" role="status">
+      <span>{st.undo.kind === "build" ? `${CATALOG[st.type].name} ordered` : `${CATALOG[st.type].name} → level ${st.level}`}</span>
+      <button className="town-btn sm" onClick={() => onCancel(st.id)}>Cancel · full refund</button>
+      <i className="tg-undo-clock" aria-label={`${Math.ceil(left / 1000)} seconds left`}>
+        <i style={{ width: `${(left / CANCEL_MS) * 100}%` }} />
+      </i>
+      <b>{Math.ceil(left / 1000)}s</b>
+    </div>
+  );
+}
+
+/**
+ * Monster parts set into a watchtower or a mage spire past level 10: what
+ * they give now, and what the forge's store holds to set. Every part gives
+ * less than the one before.
+ */
+function AugmentPanel({ s, st, run }: { s: GameState; st: Structure; run: (fn: () => string | null) => void }) {
+  const b = augBonus(st);
+  const feet = Object.entries(st.aug?.feet ?? {});
+  const held = [...new Set(stash(s).map((x) => x.item))].filter((i) => i === "heart" || i === "eye" || i === "jewel" || isFoot(i));
+  return (
+    <div className="tg-aug">
+      <p className="town-kicker" style={{ marginTop: 10 }}>Monster parts</p>
+      {st.level < AUG_LEVEL ? (
+        <p className="town-dim">At level {AUG_LEVEL} this can take parts from high-tier monsters: feet (faster strikes against their kind), hearts (passive reach), jewels (damage) and eyes (active reach).</p>
+      ) : (
+        <>
+          <p className="town-sub">
+            Damage +{Math.round(b.jewel * 100)}% · passive reach +{b.heart.toFixed(1)} · active reach +{b.eye.toFixed(1)}
+            {feet.length ? ` · faster against ${feet.map(([k, n]) => `${MONSTERS[k as MonsterKind]?.name ?? k} (+${Math.round(dimReturn(AUG_CAP.foot, n) * 100)}%)`).join(", ")}` : ""}
+            {st.type === "wizardhut" ? " — for every wizard the town sends to fight." : "."}
+          </p>
+          {canAugment(st) && held.length > 0 ? (
+            <div className="town-row wrap">
+              {held.map((item) => {
+                const kind = isFoot(item) ? "foot" : (item as "heart" | "eye" | "jewel");
+                return (
+                  <button key={item} className="town-btn ghost sm" onClick={() => run(() => augment(s, st.id, item))} title={`Each gives less than the last: ${AUG_LABEL[kind]}`}>
+                    <IconCanvas id={item} /> Set a {(partLabel(item) ?? PARTS[item as keyof typeof PARTS]?.name ?? item).toLowerCase()} ({stock(s, item)})
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="town-dim">No feet, hearts, jewels or eyes in the forge&apos;s store. Monsters of level 10 and up leave them.</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rest and wonder: send someone to the museum for three hours, or on a
+ * day's journey. Both mend sanity and lift the town's hope; neither works
+ * while away.
+ */
+function LeisurePanel({ s, run }: { s: GameState; run: (fn: () => string | null) => void }) {
+  const [who, setWho] = useState<number | null>(null);
+  const pool = couldGo(s).sort((a, b) => a.happy - b.happy);
+  const pick = who && pool.some((v) => v.id === who) ? who : pool[0]?.id;
+  const m = openMuseum(s);
+  const away = s.villagers.filter((v) => isAwayLeisure(s, v));
+  return (
+    <div className="tg-leisure">
+      <p className="town-kicker" style={{ marginTop: 10 }}>Rest and wonder</p>
+      <p className="town-dim">
+        The museum: {MUSEUM_HOURS} hours among the town&apos;s paintings — sanity back, and a little hope for everyone{m ? "" : " (build one, and put an artist to work in it)"}.
+        A journey: a day away on {costText(TRAVEL_COST)} — far more of both. Good dishes from the kitchens lift hope too.
+      </p>
+      {pool.length > 0 && (
+        <div className="town-row wrap">
+          <select className="town-select" value={pick ?? ""} onChange={(e) => setWho(Number(e.target.value))}>
+            {pool.map((v) => <option key={v.id} value={v.id}>{v.name} — sanity {Math.round(v.happy)}</option>)}
+          </select>
+          <button className="town-btn ghost sm" disabled={!m || !pick} onClick={() => pick && run(() => sendToMuseum(s, pick))}>To the museum ({MUSEUM_HOURS}h)</button>
+          <button className="town-btn ghost sm" disabled={!pick} onClick={() => pick && run(() => sendTravelling(s, pick))}>On a journey ({TRAVEL_HOURS}h)</button>
+        </div>
+      )}
+      {away.length > 0 && (
+        <p className="town-dim">Away: {away.map((v) => `${v.name} (${v.awayFor === "travel" ? "travelling" : "at the museum"}, ${Math.ceil(((v.awayUntil ?? 0) - s.time) / 60)}h)`).join(", ")}.</p>
+      )}
     </div>
   );
 }
@@ -935,7 +1128,7 @@ function BuildPanel({ s, tool, setTool }: { s: GameState; tool: Tool; setTool: (
   );
 }
 
-function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Structure; ctx: SimContext; run: (fn: () => string | null) => void; input: TownInput; onScout: (villagerId: number) => void }) {
+function InfoPanel({ s, st, ctx, run, input, onScout, onMove }: { s: GameState; st: Structure; ctx: SimContext; run: (fn: () => string | null) => void; input: TownInput; onScout: (villagerId: number) => void; onMove: (id: number) => void }) {
   const def = CATALOG[st.type];
   const links = computeLinks(s);
   const workers = st.workers.map((id) => s.villagers.find((v) => v.id === id)).filter(Boolean) as GameState["villagers"];
@@ -946,7 +1139,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
   return (
     <div className="tg-info">
       <p className="town-kicker">Level {st.level}{st.buildUntil ? ` · building (${Math.ceil((st.buildUntil - s.time) / 60)}h)` : ""}</p>
-      <h2 className="town-title">{st.type === "house" || st.type === "apartment" ? homeTitle(st.type, st.level) : def.name}{grade(st.level) ? ` · ${GRADE_NAMES[grade(st.level)]}` : ""}</h2>
+      <h2 className="town-title">{st.type === "house" || st.type === "apartment" ? homeTitle(st.type, st.level) : def.name}{st.type === "townhall" ? ` · ${HALL_AGES[hallAge(st.level)]}` : grade(st.level) ? ` · ${GRADE_NAMES[grade(st.level)]}` : ""}</h2>
       <p className="town-sub">{def.blurb}</p>
       <div className="tg-stats">
         <Meter label="HP" value={(st.hp / maxHp) * 100} warn={st.hp < maxHp * 0.5} />
@@ -1001,7 +1194,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
           </div>
           <ul className="tg-people">
             {residents(s, st).map((v) => (
-              <li key={v.id}><b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span> <Vitals s={s} v={v} /></li>
+              <li key={v.id}><b>{v.name}</b> <span>{titleOf(v)}</span> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span> <Vitals s={s} v={v} /></li>
             ))}
           </ul>
         </>
@@ -1023,7 +1216,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
             <ul className="town-checks">
               <li data-ok={irr >= 1 ? "1" : undefined}>{irr >= 1 ? "✓" : "✗"} Irrigation {Math.round(irr * 100)}%{irr < 1 ? " — needs a watermill in range at this level" : ""}</li>
               <li data-ok={reach ? "1" : undefined}>{reach ? "✓ Paved route to the market" : "✗ No paved route to a market — the harvest is lost"}</li>
-              <li data-ok={w ? "1" : undefined}>{w ? `✓ ${w.name}, ${roleLabel(w.role, w.rank)} — ${Math.round(FARM_LOSS[rank] * 100)}% of the crop lost` : "✗ No worker — every block needs one"}</li>
+              <li data-ok={w ? "1" : undefined}>{w ? `✓ ${w.name}, ${titleOf(w)} — ${Math.round(FARM_LOSS[rank] * 100)}% of the crop lost` : "✗ No worker — every block needs one"}</li>
             </ul>
             <p className="town-dim">Blocks touching others of the same crop grow 12% faster each.</p>
             <SoilPanel st={st} />
@@ -1071,8 +1264,9 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
       {(st.type === "watchtower" || st.type === "armypoint") && <TowerGuards s={s} st={st} run={run} />}
       {st.type === "storehouse" && (
         <p className="town-sub">
-          The town holds up to {storageCap(s)} of each bulk good — {STORE_PER_LEVEL * st.level} of that is this storehouse&apos;s.
-          Anything a day brings in past that is wasted. Coin, precious metals and laboratory goods keep anywhere.
+          This storehouse keeps {STORE_PER_LEVEL * st.level} of every bulk good — coal, iron, every crop and catch, planks, bricks, ice, peat, salt —
+          and adds the same to the hall&apos;s wood, stone, potatoes and meals. All the storehouses together hold {storeRoom(s)} of each. Anything an
+          hour brings in past that is wasted.
         </p>
       )}
       {st.type === "laboratory" && (() => {
@@ -1169,10 +1363,10 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
                   </p>
                   {knights && <KnightPay s={s} />}
                   {st.training ? (
-                    <p className="town-sub">Training a recruit — {trainingLeft(st, ctx)}.</p>
+                    <p className="town-sub">{st.training.recruit ? "Taking on a recruit" : "Training a recruit"} — {trainingLeft(st, ctx)}.</p>
                   ) : (
                     <button className="town-btn sm" onClick={() => run(() => recruit(s, st.id))}>
-                      Recruit {knights ? `a ${knightTitle(start).name} (${costText(KNIGHT_RECRUIT)})` : st.type === "wizardhut" ? `(${15 * st.level} coin)` : `a ${soldierTitle(start).name} (${15 * st.level} coin)`}
+                      Recruit {knights ? `a ${knightTitle(start).name} (${costText(KNIGHT_RECRUIT)})` : st.type === "wizardhut" ? `(${15 * st.level} coin)` : `a ${soldierTitle(start).name} (${15 * st.level} coin)`} · 4h
                     </button>
                   )}
                 </>
@@ -1185,7 +1379,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
                 const options = input.emblems.filter((em) => em.attributes.some((a) => allowed.includes(a)));
                 return (
                   <li key={v.id} className="tg-troop">
-                    <b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span>
+                    <b>{v.name}</b> <span>{titleOf(v)}</span>
                     {v.role === "knight" && <span className={`town-dim ${v.unpaidSince != null ? "warn-text" : ""}`}> · {knightPay(v.rank)} silver a day{v.unpaidSince != null ? " — UNPAID" : ""}</span>}
                     {isAway(s, v) && <span className="town-dim">— on a sortie, back in {Math.ceil((v.deployedUntil! - s.time) / 60)}h</span>}
                     <GuardPost s={s} v={v} run={run} />
@@ -1219,17 +1413,61 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
       {slots > 0 && (
         <>
           <p className="town-kicker" style={{ marginTop: 12 }}>Workers {workers.length}/{slots}</p>
+          {jobEffort(st.type) !== "none" && (
+            <p className="town-dim">
+              {EFFORT_LABEL[jobEffort(st.type)]} work: a full shift here costs {EFFORT_POINTS[jobEffort(st.type)]} effort. A level-1 worker has 2 a day, one more a level — halved after a cold night or on an empty belly.
+            </p>
+          )}
           <ul className="tg-people">
-            {workers.map((v) => (
-              <li key={v.id}><b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span> <button className="town-btn ghost sm" onClick={() => run(() => fire(s, v.id))}>release</button></li>
-            ))}
+            {workers.map((v) => {
+              const cap = capacity(v);
+              const used = spent(v);
+              const w = weakness(v);
+              return (
+                <li key={v.id}>
+                  <b>{v.name}</b> <span>{titleOf(v)}</span>
+                  <span className={used > cap ? "warn-text" : "town-dim"} title="Effort spent today, of what they have">
+                    {" "}· effort {used.toFixed(1)}/{cap}{used >= cap ? (used > cap ? " — past their strength" : " — spent") : ""}{w.cold || w.hungry ? ` · half strength (${[w.cold && "slept cold", w.hungry && "hungry"].filter(Boolean).join(", ")})` : ""}
+                  </span>{" "}
+                  {v.nightShift ? (
+                    <button className="town-btn ghost sm" onClick={() => run(() => setNightShift(s, v.id, false))} title="Leads the night shift: sleeps by day">☾ night shift · take off</button>
+                  ) : workLevel(v) >= NIGHT_SHIFT_LEVEL && (
+                    <button className="town-btn ghost sm" onClick={() => run(() => setNightShift(s, v.id, true))} title="Building goes on through the night; they sleep by day">☾ lead the night shift</button>
+                  )}{" "}
+                  <button className="town-btn ghost sm" onClick={() => run(() => fire(s, v.id))}>release</button>
+                </li>
+              );
+            })}
           </ul>
+          {jobEffort(st.type) !== "none" && (
+            <label className="tg-overtime" title="Past their strength, workers lose health the next dawn, and may die">
+              <input type="checkbox" checked={!!st.overtime} onChange={(e) => run(() => setOvertime(s, st.id, e.target.checked))} />
+              {" "}Overtime: drive them on past their strength — each dawn they pay in health, and some do not get up
+            </label>
+          )}
           {workers.length < slots && (
             <button className="town-btn sm" onClick={() => run(() => hire(s, st.id))} disabled={!!st.buildUntil}>
               Hire ({freeWorkers(s, st.type).length} available)
             </button>
           )}
         </>
+      )}
+
+      {(st.type === "watchtower" || st.type === "wizardhut") && <AugmentPanel s={s} st={st} run={run} />}
+      {st.type === "museum" && <LeisurePanel s={s} run={run} />}
+      {!st.buildUntil && (() => {
+        const crew = movers(s);
+        return crew.length ? (
+          <p className="town-sub">
+            <button className="town-btn ghost sm" onClick={() => onMove(st.id)}>Move it</button>{" "}
+            {crew.length} mover{crew.length > 1 ? "s" : ""} of level {MOVER_LEVEL}+ · about {Math.ceil(moveHours(st, crew.length))}h (more movers, less time; the higher it stands, the longer)
+          </p>
+        ) : (
+          <p className="town-dim">A worker of level {MOVER_LEVEL} could take this down and carry it to a new plot.</p>
+        );
+      })()}
+      {st.buildUntil && clock(s.time).night && !hasNightShift(s) && (
+        <p className="town-sub warn-text">Work stands still for the night. A worker of level {NIGHT_SHIFT_LEVEL} on the night shift would carry it on by torchlight.</p>
       )}
 
       <div className="town-upgrade">
@@ -1245,12 +1483,20 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
               const ok = s.villagers.length >= need;
               return <p className={`town-dim ${ok ? "" : "warn-text"}`}>{ok ? "✓" : "✗"} Needs a town of {need} people — you have {s.villagers.length}.</p>;
             })()}
-            {jewelCost(st.level + 1) > 0 && (
-              <p className={`town-dim ${stock(s, "jewel") >= jewelCost(st.level + 1) ? "" : "warn-text"}`}>
-                {stock(s, "jewel") >= jewelCost(st.level + 1) ? "✓" : "✗"} Set with {jewelCost(st.level + 1)} monster jewel{jewelCost(st.level + 1) === 1 ? "" : "s"} from the forge&apos;s store — it has {stock(s, "jewel")}.
+            {st.type === "townhall" && hallMinDay(st.level + 1) > 0 && (() => {
+              const d = hallMinDay(st.level + 1);
+              const ok = clock(s.time).day >= d;
+              return <p className={`town-dim ${ok ? "" : "warn-text"}`}>{ok ? "✓" : "✗"} The town must have stood until day {d} (year {Math.floor((d - 1) / YEAR_DAYS) + 1}) — it is day {clock(s.time).day}. Level 100 is a twenty-year road.</p>;
+            })()}
+            {jewelCost(st.level + 1, st.type) > 0 && (
+              <p className={`town-dim ${stock(s, "jewel") >= jewelCost(st.level + 1, st.type) ? "" : "warn-text"}`}>
+                {stock(s, "jewel") >= jewelCost(st.level + 1, st.type) ? "✓" : "✗"} Set with {jewelCost(st.level + 1, st.type)} monster jewel{jewelCost(st.level + 1, st.type) === 1 ? "" : "s"} from the forge&apos;s store — it has {stock(s, "jewel")}.
               </p>
             )}
             <button className="town-btn" disabled={!!st.buildUntil} onClick={() => run(() => upgrade(s, ctx, st.id))}>Upgrade</button>
+            {cancelLeft(st) > 0 && (
+              <button className="town-btn ghost" onClick={() => run(() => cancelWork(s, st.id))}>Cancel · full refund ({Math.ceil(cancelLeft(st) / 1000)}s)</button>
+            )}
           </>
         ) : (
           <p className="town-dim">At its highest level.</p>
@@ -1303,6 +1549,7 @@ function FireFuel({ s, st, run }: { s: GameState; st: Structure; run: (fn: () =>
       <p className="town-sub">
         {fuel > 0 ? `Burning ${now}/h now — about ${days < 1 ? `${Math.round(days * 24)} hours` : `${days.toFixed(1)} days`} left at this season's rate.` : "Out. A cold fire gives no light and no warmth."}{" "}
         Warms and lights everything within {warmthRange(st.level)} tiles{st.level < 30 ? ` (${warmthRange(st.level + 1)} at level ${st.level + 1})` : ""}; in winter it keeps the ground around it from freezing.
+        {" "}While lit, the open air in that radius is {fireAirDT(st.level)} °C warmer{st.level < 30 ? ` (${fireAirDT(st.level + 1)} °C at level ${st.level + 1})` : ""}: the rooms there lose less heat, and anyone outdoors feels it.
         Things of the night that come into its light are scorched — slowed, weakened, burning — and any {FIRE_BANISH} or more levels below it
         {st.level > FIRE_BANISH ? ` (level ${st.level - FIRE_BANISH} and under, at this fire)` : ""} are destroyed outright.
       </p>
@@ -1384,7 +1631,7 @@ function ArmyPointCaptain({ s, st }: { s: GameState; st: Structure }) {
     <>
       <p className={`town-sub ${cap ? "" : "warn-text"}`}>
         {cap
-          ? `${cap.name}, ${roleLabel(cap.role, cap.rank)}, leads here: the guards fight at +${Math.round((k - 1) * 100)}% damage and health.`
+          ? `${cap.name}, ${titleOf(cap)}, leads here: the guards fight at +${Math.round((k - 1) * 100)}% damage and health.`
           : "No knight leads this camp. Hire one from the staff list — any knight from the army school."}
       </p>
       <p className="town-dim">
@@ -1434,14 +1681,14 @@ function TowerGuards({ s, st, run }: { s: GameState; st: Structure; run: (fn: ()
       <p className="town-kicker" style={{ marginTop: 8 }}>Guards {guards.length}/{cap}</p>
       <ul className="tg-people">
         {guards.map((v) => (
-          <li key={v.id}><b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span> <button className="town-btn ghost sm" onClick={() => run(() => assignGuard(s, v.id, null))}>stand down</button></li>
+          <li key={v.id}><b>{v.name}</b> <span>{titleOf(v)}</span> <button className="town-btn ghost sm" onClick={() => run(() => assignGuard(s, v.id, null))}>stand down</button></li>
         ))}
         {!guards.length && <li className="warn-text">Nobody is posted here. A raid can walk past this tower.</li>}
       </ul>
       {guards.length < cap && (
         <select className="town-select" value="" onChange={(e) => e.target.value && run(() => assignGuard(s, Number(e.target.value), st.id))}>
           <option value="">{free.length ? `Post a troop… (${free.length} unposted)` : "No unposted troops — recruit at a barracks"}</option>
-          {free.map((v) => <option key={v.id} value={v.id}>{v.name} — {roleLabel(v.role, v.rank)}</option>)}
+          {free.map((v) => <option key={v.id} value={v.id}>{v.name} — {titleOf(v)}</option>)}
         </select>
       )}
     </>
@@ -1520,7 +1767,7 @@ function ForgePanel({ s, st, ctx, run }: { s: GameState; st: Structure; ctx: Sim
       <div className="tg-store">
         {Array.from({ length: slots }, (_, i) => {
           const it = items[i];
-          const name = it ? GEAR[it.item]?.name ?? PARTS[it.item as keyof typeof PARTS]?.name ?? it.item : "";
+          const name = it ? GEAR[it.item]?.name ?? PARTS[it.item as keyof typeof PARTS]?.name ?? partLabel(it.item) ?? it.item : "";
           return (
             <div key={i} className={`tg-slot ${it ? "" : "empty"}`} title={it ? `${name} ×${it.qty}` : "Empty slot"}>
               {it && <IconCanvas id={it.item} />}
@@ -1586,6 +1833,13 @@ function WallPanel({ s, tile, run }: { s: GameState; tile: number; run: (fn: () 
 }
 
 /** Open ground: what could be built here, placed so it covers the tapped tile. */
+/** What each kind of ground is good for, shown when it is tapped. */
+const GROUND_NOTE: Record<number, string> = {
+  [Terrain.Meadow]: "Meadow — rich ground: a farm standing mostly on meadow yields 30% more, and wild crops come up thickest here.",
+  [Terrain.Hill]: "Hills — stony high ground: no farms, but a mine here digs 50% more, a watchtower sees 2 tiles further, and raiders climb it slowly.",
+  [Terrain.Marsh]: "Marsh — nothing can stand on it. Mark it with Clear to cut peat (and now and then bog iron), or fill it in to firm grass. Raiders flounder in it.",
+};
+
 function BuildHere({ s, tile, preview, build }: {
   s: GameState; tile: number;
   preview: (p: { type: StructureType; x: number; y: number } | null) => void;
@@ -1599,8 +1853,9 @@ function BuildHere({ s, tile, preview, build }: {
   const not = opts.filter((o) => "reason" in o.fit) as { t: StructureType; fit: { reason: string } }[];
   return (
     <div className="tg-info">
-      <p className="town-kicker">Tile {tx}, {ty}</p>
+      <p className="town-kicker">{TERRAIN_NAME[s.map.terrain[tile]] ?? "Ground"} · tile {tx}, {ty}</p>
       <h2 className="town-title">Build here</h2>
+      {GROUND_NOTE[s.map.terrain[tile]] && <p className="tg-ground">{GROUND_NOTE[s.map.terrain[tile]]}</p>}
       {fits.length ? (
         <div className="tg-here">
           {fits.map(({ t, fit }) => {
@@ -1806,12 +2061,67 @@ function Goal({ s, scenario }: { s: GameState; scenario: string }) {
   );
 }
 
-function CensusPanel({ s, compact }: { s: GameState; compact?: boolean }) {
+/**
+ * The three legendary callings: what each does, who stands nearest it, and
+ * every requirement, met or not. The way in is long on purpose.
+ */
+function LegendsPanel({ s, run }: { s: GameState; run: (fn: () => string | null) => void }) {
+  return (
+    <div className="tg-legends">
+      <p className="town-kicker">Legendary callings</p>
+      <p className="town-sub">One of each in a town, raised from the very top of a trade — and only when the town itself is great.</p>
+      {(Object.keys(LEGENDS) as Legend[]).map((l) => {
+        const def = LEGENDS[l];
+        const holder = legendOf(s, l);
+        const v = holder ?? candidateFor(s, l);
+        const checks = holder ? [] : legendChecks(s, l, v);
+        const ready = !holder && checks.every((c) => c.ok);
+        return (
+          <section key={l} className={`tg-legend ${holder ? "held" : ready ? "ready" : ""}`}>
+            <h3>{def.name}</h3>
+            <p className="town-dim">{def.blurb}</p>
+            <p>{def.effect}</p>
+            {holder ? (
+              <p className="tg-legend-held">✦ {holder.name} holds the calling.</p>
+            ) : (
+              <>
+                <ul className="town-checks tight">
+                  {checks.map((c) => <li key={c.label} data-ok={c.ok ? "1" : undefined}>{c.ok ? "✓" : "·"} {c.label}</li>)}
+                </ul>
+                {ready && v && <button className="town-btn sm" onClick={() => run(() => ascendLegend(s, l, v.id))}>Raise {v.name} to {def.name}</button>}
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function CensusPanel({ s, compact, run }: { s: GameState; compact?: boolean; run?: (fn: () => string | null) => void }) {
   const idle = s.villagers.filter((v) => v.role === "idle" && !v.work);
+  const spentOut = s.villagers.filter((v) => spent(v) >= capacity(v)).length;
+  const weak = s.villagers.filter((v) => weakness(v).cold || weakness(v).hungry).length;
   return (
     <div className="tg-census">
       {!compact && <h2 className="town-title">Census</h2>}
       <p className="town-sub">{s.villagers.length} villagers · {totalBeds(s)} beds · {countedTroops(s).length} troops posted as guards · {s.deaths} lost</p>
+      <p className={`town-sub ${weak ? "warn-text" : ""}`}>
+        Today: {spentOut} spent their strength{weak ? ` · ${weak} at half strength from a cold night or hunger` : ""}.
+      </p>
+      <p className="town-sub">
+        {(() => {
+          const lead = s.villagers.find((v) => v.nightShift);
+          return lead ? `☾ ${lead.name} leads the night shift: building goes on through the dark.` : `No night shift: building stops at dusk. A worker of level ${NIGHT_SHIFT_LEVEL} can lead one.`;
+        })()}
+        {s.incoming !== undefined ? ` A newcomer is on the road, ${Math.max(0, Math.ceil((s.incoming - s.time) / 60))}h off.` : ""}
+      </p>
+      {run && (
+        <label className="tg-overtime" title="Clearing, gathering and digging past their strength costs health each dawn, and sometimes a life">
+          <input type="checkbox" checked={!!s.policy?.overtime} onChange={(e) => run(() => setClearOvertime(s, e.target.checked))} />
+          {" "}Drive the idle hands on past their strength when clearing and digging
+        </label>
+      )}
       <ul className="tg-census-list">
         {census(s).map((c) => <li key={c.label}><span>{c.label}</span><b>{c.count}</b></li>)}
       </ul>
@@ -1824,6 +2134,49 @@ function CensusPanel({ s, compact }: { s: GameState; compact?: boolean }) {
   );
 }
 
+/**
+ * The monster gates the town has found: each with its level, what it looses
+ * now, and what it will loose when it climbs. Gates rise a level every three
+ * days, and the ones deepest in the country stand highest.
+ */
+function GatesList({ s, run }: { s: GameState; run: (fn: () => string | null) => void }) {
+  const found = (s.lairs ?? []).filter((l) => l.discovered).sort((a, b) => b.level - a.level);
+  const hidden = (s.lairs ?? []).length - found.length;
+  return (
+    <div className="tg-gates">
+      <p className="town-kicker">Monster gates</p>
+      {found.length ? (
+        <ul className="tg-gate-list">
+          {found.map((l) => {
+            const b = broodOf(l);
+            return (
+              <li key={l.id}>
+                <b className="tg-gate-lv">L{l.level}</b>
+                <div>
+                  <b>{LAIR_NAMES[l.kind]}</b> <span className="town-dim">at {l.x},{l.y}</span>
+                  <span>Looses {plural(MONSTERS[b.now].name)}{b.next ? ` · ${plural(MONSTERS[b.next.kind].name)} from L${b.next.at}` : ""}</span>
+                  <span>
+                    Guarded by {gateGuard(l).count} {plural(MONSTERS[b.now].name)} · your army of {armyFor(s).length} has a {Math.round(assaultOdds(s, l) * 100)}% chance{" "}
+                    <button className="town-btn ghost sm" disabled={!armyFor(s).length} onClick={() => {
+                      if (window.confirm(`Storm the ${LAIR_NAMES[l.kind]} with every troop, knight and wizard? ${Math.round(assaultOdds(s, l) * 100)}% to seal it; some will not come back either way.`)) run(() => {
+                        assaultGate(s, l.id, rng(Math.floor(s.time) + l.id * 17));
+                        return null;
+                      });
+                    }}>Storm it</button>
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="town-sub">No gate found yet.</p>
+      )}
+      {hidden > 0 && <p className="town-dim">{hidden} more lie unfound in the fog. Send a knight or wizard out with torches to find them.</p>}
+    </div>
+  );
+}
+
 function RaidPanel({ s, ctx, run }: { s: GameState; ctx: SimContext; run: (fn: () => string | null) => void }) {
   const raid = s.raid;
   const lead = raid?.party[0];
@@ -1831,7 +2184,7 @@ function RaidPanel({ s, ctx, run }: { s: GameState; ctx: SimContext; run: (fn: (
     <div>
       {raid && lead ? (
         <>
-          <p className="town-kicker">{raid.haunt ? "A night haunt — one for each unlit building" : raid.phase === "incoming" ? `Arriving from the ${raid.side}${raid.flank ? ` and the ${raid.flank}` : ""} in ${Math.max(0, Math.ceil((raid.arrivesAt - s.time) / 60))}h` : "The fight is on"}</p>
+          <p className="town-kicker">{raid.prowl ? "Night prowlers — wandered in for one building" : raid.haunt ? "A night haunt — one for each unlit building" : raid.phase === "incoming" ? `Arriving from the ${raid.side}${raid.flank ? ` and the ${raid.flank}` : ""} in ${Math.max(0, Math.ceil((raid.arrivesAt - s.time) / 60))}h` : "The fight is on"}</p>
           <h2 className="town-title">{partyName(raid.party)}</h2>
           <p className="town-sub">{MONSTERS[lead.kind].blurb}</p>
           {raid.phase === "incoming" && (() => {
@@ -1864,6 +2217,7 @@ function RaidPanel({ s, ctx, run }: { s: GameState; ctx: SimContext; run: (fn: (
         </>
       )}
       <ThreatPanel s={s} />
+      <NemesisPanel s={s} />
       <RaidOdds s={s} />
       <details className="tg-test">
         <summary>Test a raid</summary>
@@ -1957,13 +2311,14 @@ function TradePanel({ s, run }: { s: GameState; run: (fn: () => string | null) =
 
 // ── Profiles ──────────────────────────────────────────────
 
-type Scenario = "yours" | "merchant" | "alchemist" | "forge" | "citadel";
+type Scenario = "yours" | "merchant" | "alchemist" | "forge" | "citadel" | "endgame";
 
 const SCENARIOS: Record<Exclude<Scenario, "yours">, { label: string; schools: TownInput["schools"]; blurb: string }> = {
   merchant: { label: "Trader", schools: { commerce: 46, science: 3, mind: 6 }, blurb: "All trade, no science: sells dear, grows little." },
   alchemist: { label: "Scholar", schools: { commerce: 2, science: 30, mind: 24 }, blurb: "Science and mind, no business: huge harvests sold at a loss." },
   forge: { label: "Engineer", schools: { commerce: 8, science: 40, mind: 6 }, blurb: "Makes everything itself." },
   citadel: { label: "Polymath", schools: { commerce: 28, science: 30, mind: 26 }, blurb: "Every school high." },
+  endgame: { label: "End game", schools: { commerce: 40, science: 40, mind: 40 }, blurb: "A town at the summit: its hall at level 100, its towers set with monster parts, and two dragons coming for it. The end-game phase goes on — nothing ends here." },
 };
 
 export function TownWithScenarios({ input }: { input: TownInput }) {

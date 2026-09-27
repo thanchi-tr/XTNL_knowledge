@@ -103,7 +103,73 @@ function enlarge(art: HTMLCanvasElement, rows: number, cols: number): HTMLCanvas
 const GROW_ROWS = [0, 6, 12, 18];
 const GROW_COLS = [0, 0, 8, 14];
 
-export function graded(art: HTMLCanvasElement, grade: number, banner: Ramp4, level = grade * 10): HTMLCanvasElement {
+/**
+ * The monster jewels alone, set into art that draws its own eras (the
+ * special buildings): same canvas size, so their fire and smoke anchors hold.
+ */
+function jewelled(art: HTMLCanvasElement, level: number): HTMLCanvasElement {
+  const jewels = level >= 30 ? 16 : level >= 25 ? (level - 24) * 2 : 0;
+  if (!jewels) return art;
+  const key = `own:${jewels}`;
+  let per = cache.get(art);
+  if (!per) cache.set(art, (per = new Map()));
+  const hit = per.get(key);
+  if (hit) return hit;
+  const { cv, c } = makeCanvas(art.width, art.height);
+  c.drawImage(art, 0, 0);
+  setJewels(c, art.width, art.height, jewels);
+  per.set(key, cv);
+  return cv;
+}
+
+/** Monster jewels, set into the walls where the silhouette is deep enough to hold them. */
+function setJewels(c: CanvasRenderingContext2D, W: number, H: number, jewels: number) {
+  const d = c.getImageData(0, 0, W, H).data;
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && d[(y * W + x) * 4 + 3] > 40;
+  const rgb = (x: number, y: number) => {
+    const i = (y * W + x) * 4;
+    return (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+  };
+  const top: number[] = [];
+  const bottom: number[] = [];
+  for (let x = 0; x < W; x++) {
+    let t = -1;
+    let b = -1;
+    for (let y = 0; y < H; y++) {
+      if (!solid(x, y)) continue;
+      if (t < 0) t = y;
+      b = y;
+    }
+    top.push(t);
+    bottom.push(b);
+  }
+  const cols = top.map((t, x) => (t >= 0 ? x : -1)).filter((x) => x >= 0);
+  if (!cols.length) return;
+  const left = cols[0];
+  const right = cols[cols.length - 1];
+  const JEWELS = [E.VOID, E.BLOOD, E.CYAN];
+  for (let i = 0, set = 0; i < jewels * 6 && set < jewels; i++) {
+    const x = left + 3 + Math.floor(hash(i, 7, W) * (right - left - 6));
+    const t = top[x];
+    const b = bottom[x];
+    if (t < 0 || b - t < 10) continue;
+    const y = t + 5 + Math.floor(hash(i, 8, H) * (b - t - 9));
+    if (!solid(x, y) || !solid(x + 1, y + 1) || EMISSIVE.has(rgb(x, y))) continue;
+    const J = JEWELS[set % JEWELS.length];
+    px(c, x, y, 2, 2, J[2]);
+    px(c, x, y, 1, 1, J[0]);
+    px(c, x + 1, y + 1, 1, 1, J[3]);
+    set++;
+  }
+}
+
+/**
+ * `own`: the art already draws its eras (see ./special), so only the jewels
+ * are added — no re-materialling, no enlarging, no pennants over it.
+ */
+export function graded(art: HTMLCanvasElement, grade: number, banner: Ramp4, level = grade * 10, own = false): HTMLCanvasElement {
+  if (own) return jewelled(art, level);
+  grade = Math.min(3, grade);
   if (grade <= 0) return art;
   // Monster jewels are set into the walls from level 25; a Legendary building is studded with them.
   const jewels = grade >= 3 ? 16 : level >= 25 ? (level - 24) * 2 : 0;
@@ -215,20 +281,7 @@ export function graded(art: HTMLCanvasElement, grade: number, banner: Ramp4, lev
     for (let r = 0; r < 4; r++) px(c, peak + 1, py + r, 5 - r, 1, E.AMBER[r === 0 ? 1 : 2]);
   }
   // ── Monster jewels, set into the walls ──
-  const JEWELS = [E.VOID, E.BLOOD, E.CYAN];
-  for (let i = 0, set = 0; i < jewels * 6 && set < jewels; i++) {
-    const x = left + 3 + Math.floor(hash(i, 7, W) * (right - left - 6));
-    const t = top[x];
-    const b = bottom[x];
-    if (t < 0 || b - t < 10) continue;
-    const y = t + 5 + Math.floor(hash(i, 8, H) * (b - t - 9));
-    if (!solid(x, y) || !solid(x + 1, y + 1) || EMISSIVE.has(rgb(x, y))) continue;
-    const J = JEWELS[set % JEWELS.length];
-    px(c, x, y, 2, 2, J[2]);
-    px(c, x, y, 1, 1, J[0]);
-    px(c, x + 1, y + 1, 1, 1, J[3]);
-    set++;
-  }
+  setJewels(c, W, H, jewels);
   per.set(key, cv);
   return cv;
 }
@@ -238,6 +291,7 @@ export function graded(art: HTMLCanvasElement, grade: number, banner: Ramp4, lev
  * brass caps at 20, a glowing rune at 30.
  */
 export function gradedWall(art: HTMLCanvasElement, grade: number): HTMLCanvasElement {
+  grade = Math.min(3, grade);
   if (grade <= 0) return art;
   const key = `wall:${grade}`;
   let per = cache.get(art);

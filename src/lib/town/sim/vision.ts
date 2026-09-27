@@ -125,7 +125,10 @@ function discoverLairs(s: GameState) {
   }
 }
 
-export const LAIR_NAMES = { tomb: "tomb", dragonpit: "dragon pit", shadowgate: "shadow realm gate" } as const;
+export const LAIR_NAMES = {
+  tomb: "tomb", dragonpit: "dragon pit", shadowgate: "shadow realm gate",
+  goblinwarren: "goblin warren", webhollow: "web hollow", frostrift: "frost rift", titangate: "titan's gate",
+} as const;
 
 /** The fog's rules can be switched off — for headless checks that build wherever they like. */
 export const FOG = { rules: true };

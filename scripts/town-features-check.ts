@@ -7,12 +7,12 @@
  * Run with `npx tsx scripts/town-features-check.ts`.
  */
 import { newTown, clock, makeVillager, makeStructure, migrate, byId, packSave, unpackSave, beds } from "../src/lib/town/sim/state";
-import { advance, raidChance, raidForecast, trainingPace, scheduleRaid, type SimContext } from "../src/lib/town/sim/tick";
+import { advance, pastNight, raidChance, raidForecast, trainingPace, scheduleRaid, type SimContext } from "../src/lib/town/sim/tick";
 import { rng } from "../src/lib/town/sim/world";
 import { buildingEffects } from "../src/lib/town/sim/effects";
-import { stepCombat, hauntFor, summonHaunt } from "../src/lib/town/sim/combat";
-import { place, setMode, hire, clear, schoolTrain, assignGuard, stokeFire, markEarthworks, trade, upgrade, upgradeWalls, combineHomes, combinePartners } from "../src/lib/town/sim/actions";
-import { CATALOG, DISHES, LAND_CROPS, STORE_PER_LEVEL, WATER_CROPS, grade, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople } from "../src/lib/town/sim/catalog";
+import { stepCombat, hauntFor, summonHaunt, summonProwlers, prowlChance } from "../src/lib/town/sim/combat";
+import { cancelWork, fitHearth, recruit, place, setMode, hire, clear, schoolTrain, assignGuard, stokeFire, markEarthworks, trade, upgrade, upgradeWalls, combineHomes, combinePartners, setNightShift, relocate, moveHours, paint } from "../src/lib/town/sim/actions";
+import { CATALOG, DISHES, LAND_CROPS, STORE_PER_LEVEL, WATER_CROPS, grade, hallMinDay, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople } from "../src/lib/town/sim/catalog";
 import { MATURE, SNAG, SPROUT, TILE_WOOD, TREE_WOOD, YOUNG, forests, growWoods, treeMeta, treeStage, winterCull } from "../src/lib/town/sim/woods";
 import {
   GEAR, advanceKnight, armorySlots, ascensionOdds, attemptAscension, deploy, equip, forgeOf, gearCap, knightCapFor, startCraft, stock, store,
@@ -20,15 +20,30 @@ import {
 } from "../src/lib/town/sim/loot";
 import { profileFor, type TownInput } from "../src/lib/town/rules";
 import {
-  RARE_FINDS, fitAt, gapBetween, spacingProblem, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, passiveRadius, structureMaxHp, wallHp, wallLevel, wallMaxHp, wallMeta, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange,
+  RARE_FINDS, fitAt, gapBetween, spacingProblem, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, passiveRadius, structureMaxHp, wallHp, wallLevel, wallMaxHp, wallMeta, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange, capOf, groundYield, hallCap, airBoost, fireAir, fireAirDT, WALL_MAX_LEVEL,
 } from "../src/lib/town/sim/world";
-import { MAP_W, MAP_H, Overlay, RAW_FOODS, Terrain, type GameState, type StructureType } from "../src/lib/town/sim/types";
+import { MAP_W, MAP_H, Overlay, RAW_FOODS, Terrain, YEAR_DAYS, type GameState, type StructureType } from "../src/lib/town/sim/types";
 import { FOG, UNSEEN, VISIBLE, visionMap } from "../src/lib/town/sim/vision";
 import { MONSTERS } from "../src/lib/town/sim/bestiary";
-import { DROPS } from "../src/lib/town/sim/loot";
+import { DROPS, dropsFor } from "../src/lib/town/sim/loot";
 import { aggroOf } from "../src/lib/town/sim/aggro";
 import { PACK_SLOTS, RATION_MEALS, adventureReach, packRation, packTorch, sendScout, unpackSlot } from "../src/lib/town/sim/wilds";
 import { WILD_CAP, sowWild, wildCrop } from "../src/lib/town/sim/forage";
+import { advise, hintState, revealHint } from "../src/lib/town/sim/advisor";
+import { HEARTHS } from "../src/lib/town/sim/zones";
+import { EFFORT_POINTS, canWork, capacity, hasNightShift, jobEffort, workDawn } from "../src/lib/town/sim/work";
+import { LEGENDS, LEGEND_TOWN, ascendLegend, hasLegend, legendChecks, legendMods } from "../src/lib/town/sim/legends";
+import { LAIR_START } from "../src/lib/town/sim/wilds";
+import { AUG_CAP, augment, dimReturn } from "../src/lib/town/sim/augment";
+import { TRAVEL_COST, isAway as isAwayLeisure, sendToMuseum, sendTravelling } from "../src/lib/town/sim/leisure";
+import { stats } from "../src/lib/town/sim/stats";
+import { assaultGate, assaultOdds, landCalm } from "../src/lib/town/sim/endgame";
+import { achievementList } from "../src/lib/town/sim/achievements";
+import { endgameTown } from "../src/lib/town/sim/showcase";
+import { trophyParts } from "../src/components/town/art/trophies";
+import { knowledgeOf } from "../src/lib/town/sim/knowledge";
+import { neglect } from "../src/lib/town/sim/nemesis";
+import { plural } from "../src/lib/town/sim/words";
 // These checks build wherever they need to; the fog has checks of its own.
 FOG.rules = false;
 
@@ -301,8 +316,15 @@ console.log("laboratory and fishers");
     const err = hire(s, F.id, idle.id);
     check(!err && idle.role === "fisher", `an idle villager becomes a fisher (${err ?? idle.role})`);
     const fish = s.res.fish;
+    const hadStore = s.structures.some((x) => x.type === "storehouse");
+    if (!hadStore) {
+      advance(s, 60, ctx);
+      check(s.res.fish <= fish + 1e-9, `without a storehouse the catch cannot be kept (${fish.toFixed(1)} → ${s.res.fish.toFixed(1)})`);
+      build(s, "storehouse", 70, 50);
+    }
+    const fish2 = s.res.fish;
     advance(s, 60, ctx);
-    check(s.res.fish > fish, `fish come in (${fish.toFixed(1)} → ${s.res.fish.toFixed(1)})`);
+    check(s.res.fish > fish2, `fish come in once there is a storehouse (${fish2.toFixed(1)} → ${s.res.fish.toFixed(1)})`);
     const kitchen = s.structures.find((x) => x.type === "kitchen")!;
     setMode(s, kitchen.id, "grilled");
     s.res.fish = 30;
@@ -674,7 +696,11 @@ console.log("ranks, knights, reach and trade");
   squire.gear = { weapon: "sword1" }; // past level 8 a knight needs a real blade
   squire.rank = 9; // a serjeant near the top of what drill can give
   t.res.silver = 1e6;
-  for (let h = 0; h < 24 * 90; h++) advance(t, 60, ctx);
+  // The drill caps are what is under test, not the mind: keep the recruits steady.
+  for (let h = 0; h < 24 * 90; h++) {
+    soldier.happy = squire.happy = 100;
+    advance(t, 60, ctx);
+  }
   const fromBarracks = soldier.rank;
   const fromSchool = squire.rank;
   check(fromBarracks === 4, `a barracks drills a soldier no further than Spearman Militia (reached ${fromBarracks})`);
@@ -708,7 +734,10 @@ console.log("ranks, knights, reach and trade");
   advance(k, 24 * 60, ctx);
   check(k.res.silver < 10, `a Knight Bachelor draws ${knightPay(12)} silver a day`);
   k.res.silver = 0;
-  for (let h = 0; h < 24 * 4; h++) advance(k, 60, ctx);
+  for (let h = 0; h < 24 * 4; h++) {
+    knight.happy = 100; // pay is under test, not the mind: a broken knight would desert instead
+    advance(k, 60, ctx);
+  }
   check(knight.role !== "knight", "unpaid three days, the knight leaves");
 
   // Mines: precious finds far out, barely any close in.
@@ -933,7 +962,8 @@ console.log("fog, lairs and scouts");
 console.log("levels, walls, circles, firelight and the new bestiary");
 {
   // Tenth-level steps
-  check(CATALOG.house.maxLevel === 30 && CATALOG.townhall.maxLevel === 30 && CATALOG.pitfire.maxLevel === 30, "buildings rise to level 30");
+  check(CATALOG.house.maxLevel === 30 && CATALOG.pitfire.maxLevel === 30, "buildings rise to level 30");
+  check(CATALOG.townhall.maxLevel === 100 && CATALOG.forge.maxLevel === 40, "the hall rises to 100, the special buildings to 40");
   check(grade(9) === 0 && grade(10) === 1 && grade(20) === 2 && grade(30) === 3, "with major steps at 10, 20 and 30");
   check(structureMaxHp({ type: "house", level: 10 }) === Math.round(CATALOG.house.hpPerLevel * 10 * 1.5), "a step adds half the hit points again");
   check((CATALOG.house.upgrade(9).gold ?? 0) >= 3 && (CATALOG.house.upgrade(19).platinum ?? 0) >= 6 && (CATALOG.house.upgrade(29).diamond ?? 0) >= 4,
@@ -1087,6 +1117,7 @@ console.log("spacing, tap-to-build and wild crops");
   check(near.length > 0 && far.length > 0 && avg(near) < 3 && avg(far) > 8, `the common ones near the hall (${wildCrop(Math.round(avg(near)))}), the rare far out (${wildCrop(Math.round(avg(far)))})`);
   const patch = w.map.overlay.findIndex((o, i) => o === Overlay.Crop && Math.hypot((i % MAP_W) - hx, Math.floor(i / MAP_W) - hy) < 60);
   const kind = wildCrop(w.map.meta[patch]);
+  build(w, "storehouse", 40, 40); // a wild crop other than the potato needs somewhere to be kept
   const had = w.res[kind];
   check(!clear(w, [patch]) || true, "a wild patch can be marked to gather");
   for (let i = 0; i < 6; i++) advance(w, 60, ctx);
@@ -1098,6 +1129,381 @@ console.log("spacing, tap-to-build and wild crops");
   sowWild(w, rng(5));
   const left = w.map.overlay.map((o, i) => (o === Overlay.Crop ? w.map.meta[i] : -1)).filter((m) => m >= 0);
   check(left.length > 0 && left.every((m) => wildCrop(m) === "potato"), `in winter only wild potatoes are left (${left.length})`);
+}
+
+console.log("stores, the steward and the lie of the land");
+{
+  // The hall's cellar keeps only the base goods; everything else needs a storehouse.
+  const g = newTown(211, 20, "starter");
+  check(hallCap(1) === 120 && capOf(g, "wood") === 120 && capOf(g, "coal") === 0 && capOf(g, "silver") === Infinity,
+    "a level-1 hall keeps 120 of each base good, no coal without a storehouse, and silver anywhere");
+  // Break a coal rock with no storehouse: the coal has nowhere to go.
+  const hallG = g.structures.find((x) => x.type === "townhall")!;
+  const rock = (hallG.y + hallG.h + 2) * MAP_W + hallG.x + 2;
+  g.map.overlay[rock] = Overlay.Rock;
+  g.map.meta[rock] = 1;
+  (g.map.seen ??= new Array(MAP_W * MAP_H).fill(0))[rock] = 1;
+  g.res.coal = 0;
+  clear(g, [rock]);
+  for (let h = 0; h < 12 && g.map.overlay[rock] === Overlay.Rock; h++) advance(g, 60, ctx);
+  check(g.map.overlay[rock] !== Overlay.Rock && g.res.coal < 1 && (g.wasted?.coal ?? 0) > 1, `with no storehouse, the coal from a rock is lost (coal ${Math.round(g.res.coal)}, ~${Math.round(g.wasted?.coal ?? 0)} wasted)`);
+  build(g, "storehouse", 44, 40);
+  check(capOf(g, "coal") === STORE_PER_LEVEL && capOf(g, "wood") === 120 + STORE_PER_LEVEL, "a storehouse keeps coal and adds its room to the hall's goods");
+
+  // The steward: a new town's first job is a fire; a hall in danger outranks everything.
+  const a = advise(newTown(212, 0, "starter"), ctx);
+  check(a.length > 0 && a[0].id === "fire" && a[0].act.kind === "build", `a bare new town is told first: ${a[0]?.title}`);
+  const d = newTown(213, 20);
+  const dh = d.structures.find((x) => x.type === "townhall")!;
+  dh.hp = 10;
+  const top = advise(d, ctx)[0];
+  check(top.urgency === "now" && (top.id === "hall-hp" || top.id === "guard" || top.id === "tower"), `a failing hall comes first: ${top.title}`);
+
+  // The land: meadow, hills and marsh on every map, and each does something.
+  const m = newTown(214, 20);
+  const count = (t: number) => m.map.terrain.filter((x) => x === t).length;
+  check(count(Terrain.Meadow) > 200 && count(Terrain.Hill) > 200 && count(Terrain.Marsh) > 20, `the map has meadow (${count(Terrain.Meadow)}), hills (${count(Terrain.Hill)}) and marsh (${count(Terrain.Marsh)})`);
+  const marshTile = m.map.terrain.findIndex((t, i) => t === Terrain.Marsh && m.map.overlay[i] === Overlay.None);
+  const mx = marshTile % MAP_W;
+  const my = Math.floor(marshTile / MAP_W);
+  check(/soft/.test(checkPlacement(m, "lamppost", mx, my).reason ?? ""), "nothing can be built on marsh");
+  const hillTile = m.map.terrain.findIndex((t, i) => t === Terrain.Hill && m.map.overlay[i] === Overlay.None);
+  check(/stony/.test(checkPlacement(m, "farm", hillTile % MAP_W, Math.floor(hillTile / MAP_W)).reason ?? ""), "hills cannot be ploughed");
+  (m.map.seen ??= new Array(MAP_W * MAP_H).fill(0))[marshTile] = 1;
+  for (const v of m.villagers) {
+    v.role = "idle";
+    v.work = null;
+  }
+  build(m, "storehouse", 44, 40);
+  const peat = m.res.peat;
+  const cleared = clear(m, [marshTile]);
+  for (let h = 0; h < 12 && m.map.terrain[marshTile] === Terrain.Marsh; h++) advance(m, 60, ctx);
+  check(m.map.terrain[marshTile] === Terrain.Bank && m.res.peat >= peat + 8, `a cut of marsh gives peat and drains to a bank (${cleared ?? "marked"}; peat ${peat} → ${Math.round(m.res.peat)})`);
+  const farmOn = (t: number) => {
+    const f = makeStructure(m, "farm", 0, 0, true);
+    f.ground = t;
+    return groundYield(f);
+  };
+  const mine = makeStructure(m, "mine", 0, 0, true);
+  mine.ground = Terrain.Hill;
+  check(farmOn(Terrain.Meadow) > 1 && farmOn(Terrain.Grass) === 1 && groundYield(mine) > 1, "meadow feeds fields, hills feed mines");
+}
+
+console.log("undo, counsel, legends, gates and the fire's air");
+{
+  // A build or an upgrade can be called off for ten real seconds, with everything back.
+  const u = newTown(221, 20);
+  const spotU = spotNear(u, "lamppost", 44, 40)!;
+  const woodBefore = u.res.wood + u.res.stone + u.res.coin;
+  const nBefore = u.structures.length;
+  place(u, ctx, "lamppost", spotU[0], spotU[1]);
+  const lamp = u.structures[u.structures.length - 1];
+  const now = lamp.undo!.at;
+  check(!cancelWork(u, lamp.id, now + 5_000) && u.structures.length === nBefore && u.res.wood + u.res.stone + u.res.coin === woodBefore, "a build called off within ten seconds is gone, and every cost comes back");
+  place(u, ctx, "lamppost", spotU[0], spotU[1]);
+  const lamp2 = u.structures[u.structures.length - 1];
+  check(!!cancelWork(u, lamp2.id, lamp2.undo!.at + 11_000) && u.structures.includes(lamp2), "after ten seconds the order stands");
+  const hallU = u.structures.find((x) => x.type === "townhall")!;
+  u.res = { ...u.res, wood: 1e6, stone: 1e6, coin: 1e6, bricks: 1e6, ingots: 1e6 };
+  while (u.villagers.length < upgradePeople("townhall", hallU.level)) makeVillager(u, null);
+  const lv = hallU.level;
+  const stone = u.res.stone;
+  check(!upgrade(u, ctx, hallU.id) && hallU.level === lv + 1, "the hall goes up a level");
+  check(!cancelWork(u, hallU.id, hallU.undo!.at + 1_000) && hallU.level === lv && !hallU.buildUntil && u.res.stone === stone, "and an upgrade called off at once puts the level and the stone back");
+
+  // The steward gives one hint a day.
+  const h = newTown(222, 20);
+  const first = revealHint(h, ctx);
+  const second = revealHint(h, ctx);
+  check(typeof first !== "string" && typeof second === "string" && hintState(h).shown !== null && !hintState(h).ready, `one hint, then the steward keeps counsel ("${typeof second === "string" ? second : ""}")`);
+  h.time += 24 * 60;
+  check(hintState(h).ready && hintState(h).shown === null, "a day later another is ready");
+
+  // Legendary callings: shut to a young town, open to a great one.
+  const g = newTown(223, 20);
+  const chef = g.villagers.find((v) => v.role === "chef") ?? makeVillager(g, null, "chef");
+  check(!!ascendLegend(g, "steward", chef.id) && !hasLegend(g, "steward"), "a young town cannot raise a Grand Steward");
+  const kitchenG = g.structures.find((x) => x.type === "kitchen")!;
+  kitchenG.level = 25;
+  kitchenG.workers = [...new Set([...kitchenG.workers, chef.id])];
+  chef.work = kitchenG.id;
+  chef.rank = LEGENDS.steward.rank;
+  chef.health = 100;
+  chef.happy = 100;
+  g.structures.find((x) => x.type === "townhall")!.level = 30;
+  while (g.villagers.length < LEGEND_TOWN.pop) makeVillager(g, null);
+  g.time = LEGEND_TOWN.day * 24 * 60;
+  g.res.gold = 20;
+  g.res.diamond = 5;
+  const miss = legendChecks(g, "steward", chef).filter((c) => !c.ok).map((c) => c.label);
+  check(!ascendLegend(g, "steward", chef.id) && chef.legend === "steward" && legendMods(g).kitchen > 1 && legendMods(g).rot < 1, `every requirement met, the 5★ Chef becomes Grand Steward${miss.length ? ` (missing: ${miss.join("; ")})` : ""}`);
+  check(Object.keys(LEGENDS).length === 3 && !!ascendLegend(g, "steward", chef.id), "three callings, one holder each: a second Grand Steward is refused");
+
+  // Monster gates: seven kinds, each gate with its own level.
+  const m = newTown(224, 20);
+  const kinds = new Set((m.lairs ?? []).map((l) => l.kind));
+  check(kinds.size === 7 && (m.lairs ?? []).length >= 10, `a new map has ${m.lairs?.length} gates of ${kinds.size} kinds`);
+  check((m.lairs ?? []).every((l) => l.level >= LAIR_START[l.kind]) && (m.lairs ?? []).some((l) => (l.bonus ?? 0) > 0), "each gate has a level, the deep ones higher");
+
+  // A lit pit fire warms the open air round it by its level.
+  const f = newTown(225, 20);
+  const fire = f.structures.find((x) => x.type === "pitfire")!;
+  fire.fuel = 100;
+  const airs = fireAir(f);
+  const at = airBoost(airs, fire.x + 1, fire.y + 1);
+  const far = airBoost(airs, fire.x + 60, fire.y + 60);
+  check(at === fireAirDT(fire.level) && far === 0 && fireAirDT(5) > fireAirDT(1), `inside its radius the air is ${at} °C warmer (level ${fire.level}); far off, not at all`);
+}
+
+console.log("prowlers and the heating ladder");
+{
+  // Prowlers: one or two small things for a building at random, not scored as a wave.
+  const p = newTown(231, 20);
+  p.time = 5 * 24 * 60 + 22 * 60;
+  const came = summonProwlers(p, rng(3));
+  const pr = p.raid!;
+  check(came >= 1 && came <= 2 && !!pr.prowl && pr.haunt!.length === came && !!byId(p, pr.haunt![0].structId), `night prowlers: ${came} ${pr.party[0].kind} (L${pr.party[0].level}) for one building`);
+  check(prowlChance(3) < prowlChance(30) && prowlChance(300) <= 0.26, "they come more often as the days go on, never more than one night hour in four");
+  let guard = 0;
+  while (p.raid && guard++ < 40000) stepCombat(p, 0.05);
+  check(!p.raid, "and the prowl ends");
+
+  // Heating goes up a level at a time; the higher ones warm the floor.
+  const h = newTown(232, 20);
+  const house = h.structures.find((x) => x.type === "house")!;
+  h.res = { ...h.res, stone: 1e4, bricks: 1e4, ingots: 1e3, silver: 1e3, gold: 1e3, mithril: 100, diamond: 100, iron: 1e3 };
+  Object.assign(house, { hearth: "open" }); // assigned so, the check below reads the live value
+  check(/first/.test(fitHearth(h, house.id, "hypocaust") ?? ""), "a hypocaust cannot go in over an open hearth");
+  for (const k of ["chimney", "stove", "tiled", "hypocaust", "boiler", "rune"] as const) {
+    const err = fitHearth(h, house.id, k);
+    if (err) check(false, `fit ${k}: ${err}`);
+  }
+  check(house.hearth === "rune" && HEARTHS.rune.tier === 7 && (HEARTHS.hypocaust.floor ?? 0) > 0, "climbed rung by rung to a rune hearthstone, heating level 7");
+  check(!fitHearth(h, house.id, "brazier") && house.hearth === "brazier", "a brazier can go in any time");
+}
+
+console.log("a day's strength, and recruits");
+{
+  const w = newTown(241, 20);
+  const v = makeVillager(w, null);
+  v.rank = 1;
+  v.body = { ...(w.villagers[0].body ?? {}), Eg: 2000 } as typeof v.body;
+  v.coldNight = false;
+  check(capacity(v) === 2 && EFFORT_POINTS.easy === 1 && EFFORT_POINTS.hard === 4, "a level-1 worker has strength for two easy tasks a day");
+  v.coldNight = true;
+  check(capacity(v) === 1, "after a night slept cold, half");
+  v.coldNight = false;
+  v.rank = 3;
+  check(capacity(v) === 4, "a level-3 worker can do a day's hard work");
+  // Spent, they stop; ordered on, they go on — and pay at dawn.
+  const mine = makeStructure(w, "farm", 0, 0, true);
+  v.rank = 1;
+  v.effort = 2;
+  check(!canWork(v, mine), "a spent worker stops");
+  mine.overtime = true;
+  check(canWork(v, mine), "unless the building drives them on");
+  v.effort = 6;
+  v.health = 100;
+  workDawn(w, () => 0.99);
+  check(v.health < 100 && (v.effort ?? 0) === 0, `three times past their strength: at dawn health falls to ${Math.round(v.health)}, and the day starts fresh`);
+  let dead = 0;
+  for (let k = 0; k < 40; k++) {
+    const t = makeVillager(w, null);
+    t.rank = 1;
+    t.effort = 8;
+    workDawn(w, rng(k));
+    if (!w.villagers.includes(t)) dead++;
+    else t.effort = 0;
+  }
+  check(dead > 0 && dead < 40, `driven to four times their strength, some do not get up (${dead} of 40)`);
+  check(jobEffort("mine") === "hard" && jobEffort("kitchen") === "easy" && jobEffort("farm") === "medium" && jobEffort("storehouse") === "none", "jobs are rated: kitchens easy, fields medium, mines hard");
+
+  // Recruitment takes four hours.
+  const r = newTown(242, 20);
+  const bar = build(r, "barracks", 44, 38);
+  const home = r.structures.find((x) => x.type === "house")!;
+  makeVillager(r, home.id);
+  // A road from the barracks west until it meets the town's roads, so a house reaches it.
+  for (let x = bar.x - 1, y = bar.y + 1; x > 0; x--) {
+    const i = y * MAP_W + x;
+    if (r.map.terrain[i] === Terrain.Pavement) break;
+    r.map.terrain[i] = Terrain.Pavement;
+    r.map.overlay[i] = Overlay.None;
+  }
+  const err = recruit(r, bar.id);
+  check(!err && bar.training?.left === 4 * 60 && !!bar.training?.recruit, `a recruit is taken on in four hours${err ? ` (${err})` : ""}`);
+  const left0 = bar.training?.left ?? 0;
+  advance(r, 60, ctx);
+  check(Math.abs(left0 - (bar.training?.left ?? 0) - 60) < 1e-6, "and the four hours run at the clock, whatever the study pace");
+}
+
+console.log("night work, newcomers, movers, monster parts, leisure, the end game, trophies");
+{
+  // Building stands still at night without a night shift.
+  const n = newTown(251, 20);
+  n.res = { ...n.res, wood: 1e4, stone: 1e4, coin: 1e4 };
+  while (!clock(n.time).night) n.time += 60;
+  const lampAt = spotNear(n, "lamppost", 44, 40)!;
+  check(!place(n, ctx, "lamppost", lampAt[0], lampAt[1]), "a lamp ordered at night");
+  const lamp = n.structures[n.structures.length - 1];
+  const due = lamp.buildUntil!;
+  advance(n, 60, ctx);
+  check(lamp.buildUntil !== undefined && lamp.buildUntil >= due + 59, `at night the builders down tools (due ${due} → ${lamp.buildUntil})`);
+  const lead = makeVillager(n, n.structures.find((x) => x.type === "house")!.id, "farmhand");
+  lead.rank = 5;
+  check(!setNightShift(n, lead.id, true) && hasNightShift(n), "a level-5 worker takes the night shift");
+  const due2 = lamp.buildUntil!;
+  advance(n, 60, ctx);
+  check((lamp.buildUntil ?? 0) <= due2, "and the work goes on by torchlight");
+  const weak = makeVillager(n, null, "farmhand");
+  weak.rank = 2;
+  check(!!setNightShift(n, weak.id, true), "a level-2 worker cannot lead it");
+  // Two hours of work ordered at 19:00: one before dusk, one after dawn — done at 07:00, in one step or in many.
+  const at7 = pastNight(19 * 60, 19 * 60 + 24 * 60, 21 * 60);
+  let due3 = 21 * 60;
+  for (let t = 19 * 60; t < 19 * 60 + 24 * 60 && due3 > t; t += 7) due3 = pastNight(t, t + 7, due3);
+  check(at7 === 31 * 60 && Math.abs(due3 - at7) < 1e-6, `two hours ordered at 19:00 are done at 07:00 the next day (${at7 / 60 - 24}:00), in one step or many`);
+
+  // A newcomer takes three hours on the road.
+  const a = newTown(252, 20, "starter");
+  a.mood = 90;
+  a.hunger = 90;
+  const pop0 = a.villagers.length;
+  let hours = 0;
+  while (a.villagers.length === pop0 && hours < 12) {
+    advance(a, 60, ctx);
+    hours++;
+  }
+  check(a.villagers.length === pop0 + 1 && hours >= 3, `a newcomer walks in after ${hours} hours on the road`);
+
+  // A level-10 worker moves a building; more movers, less time; the higher it stands, the longer.
+  const m = newTown(253, 20);
+  const hut = build(m, "storehouse", 60, 44);
+  check(!!relocate(m, hut.id, 70, 44), "without a level-10 worker nothing moves");
+  const mover = makeVillager(m, m.structures.find((x) => x.type === "house")!.id, "farmhand");
+  mover.rank = 10;
+  const to = spotNear(m, "storehouse", 72, 48)!;
+  const oneMover = moveHours(hut, 1);
+  hut.level = 10;
+  check(moveHours(hut, 1) > oneMover && moveHours(hut, 3) < moveHours(hut, 1), `higher takes longer (${oneMover.toFixed(0)}h → ${moveHours(hut, 1).toFixed(0)}h), more movers less (${moveHours(hut, 3).toFixed(0)}h with three)`);
+  hut.level = 1;
+  const err = relocate(m, hut.id, to[0], to[1]);
+  for (let h = 0; h < 48 && hut.buildUntil; h++) advance(m, 60, ctx);
+  check(!err && hut.x === to[0] && hut.y === to[1] && !hut.moveTo, `a storehouse carried to ${to[0]},${to[1]}${err ? ` (${err})` : ""}`);
+
+  // High-tier monsters leave feet, hearts and eyes; set into a tower past level 10, each gives less than the last.
+  const drops = dropsFor("troll", 14, false, () => 0);
+  check((drops["foot:troll"] ?? 0) > 0 && (drops.heart ?? 0) > 0 && (drops.eye ?? 0) > 0, "a level-14 troll can leave a foot, a heart and an eye");
+  const low = dropsFor("troll", 8, false, () => 0);
+  check(!low.heart && !low.eye && !low["foot:troll"], "a level-8 one leaves none of them");
+  const g = newTown(254, 20);
+  build(g, "forge", 60, 44).level = 5;
+  const tw = build(g, "watchtower", 50, 38);
+  store(g, "heart", 3);
+  store(g, "eye", 3);
+  check(!!augment(g, tw.id, "heart"), "a level-1 tower takes no parts");
+  tw.level = 10;
+  const r0 = alertRadius(tw);
+  const p0 = passiveRadius(tw);
+  const e1 = !augment(g, tw.id, "eye") && alertRadius(tw);
+  augment(g, tw.id, "heart");
+  const gain1 = dimReturn(AUG_CAP.heart, 1);
+  const gain2 = dimReturn(AUG_CAP.heart, 2) - gain1;
+  check(!!e1 && e1 >= r0 && passiveRadius(tw) > p0 && gain2 < gain1, `an eye and a heart set in: active reach ${r0} → ${alertRadius(tw)}, passive ${p0} → ${passiveRadius(tw)}; the second heart gives less (${gain1.toFixed(2)} then ${gain2.toFixed(2)})`);
+
+  // The museum needs an artist; a visit and a journey both mend a mind and lift the town.
+  const u = newTown(255, 20);
+  check(/artist/.test(checkPlacement(u, "museum", 60, 44).reason ?? ""), "no museum before there is an artist");
+  const artist = makeVillager(u, u.structures.find((x) => x.type === "house")!.id, "artist");
+  const mu = build(u, "museum", 60, 44);
+  check(!hire(u, mu.id, artist.id), "an artist keeps it");
+  const visitor = u.villagers.find((v) => v.role !== "artist")!;
+  visitor.happy = 40;
+  check(!sendToMuseum(u, visitor.id) && isAwayLeisure(u, visitor), "a villager goes to the museum");
+  for (let h = 0; h < 4; h++) advance(u, 60, ctx);
+  check(!isAwayLeisure(u, visitor) && visitor.happy > 45 && stats(u).museum === 1, `and comes back steadier (sanity ${Math.round(visitor.happy)})`);
+  u.res.coin = 100;
+  u.res.meals = 100;
+  const traveller = u.villagers.find((v) => v !== visitor && v.role !== "artist")!;
+  check(!sendTravelling(u, traveller.id) && u.res.coin === 100 - (TRAVEL_COST.coin ?? 0), "a journey costs coin and meals");
+
+  // The end game: a strong army seals a weak gate, and the land grows quieter.
+  const e = newTown(256, 20);
+  const gate = e.lairs![0];
+  gate.discovered = true;
+  gate.level = 2;
+  gate.bonus = -99;
+  const post = build(e, "watchtower", 50, 38);
+  for (let k = 0; k < 10; k++) {
+    const v = makeVillager(e, null, "infantry");
+    v.rank = 17;
+    v.guard = post.id;
+  }
+  const calm0 = landCalm(e);
+  check(assaultOdds(e, gate) > 0.9, `a veteran army against a young gate: ${Math.round(assaultOdds(e, gate) * 100)}% to carry it`);
+  const out = assaultGate(e, gate.id, () => 0.01);
+  check(!e.lairs!.includes(gate) && stats(e).sealed === 1 && landCalm(e) < calm0, `stormed and sealed; the land grows quieter (${calm0.toFixed(2)} → ${landCalm(e).toFixed(2)}) — "${out.slice(0, 60)}…"`);
+
+  // The hall's twenty-year road, and the end-game phase that does not end the game.
+  check(hallMinDay(100) === 20 * YEAR_DAYS && hallMinDay(43) > 5 * YEAR_DAYS, `level 100 on day ${hallMinDay(100)} (year 20); by the end of year 5 no higher than 42`);
+  const h = newTown(257, 20);
+  const hh = h.structures.find((x) => x.type === "townhall")!;
+  hh.level = 42;
+  h.res = { ...h.res, wood: 1e9, stone: 1e9, coin: 1e9, bricks: 1e9, ingots: 1e9, mithril: 1e4, diamond: 1e4 };
+  while (h.villagers.length < upgradePeople("townhall", 42)) makeVillager(h, null);
+  check(/day \d+/.test(upgrade(h, ctx, hh.id) ?? ""), "a young town's hall cannot rush past its years");
+  hh.level = 100;
+  advance(h, 60, ctx);
+  check(!!h.victory && !h.fallen && h.villagers.length > 0, "at level 100 the end-game phase begins — and the game goes on");
+
+  // Stone flags: a road laid over a road.
+  const f = newTown(258, 20);
+  const road = f.map.terrain.findIndex((t, i) => t === Terrain.Pavement && f.map.overlay[i] === Overlay.None);
+  const st0 = f.res.stone;
+  check(!paint(f, "pavement", [road]) && f.map.paving?.[road] === 1 && f.res.stone === st0 - 2, "a road relaid in stone flags for 2 stone");
+
+  // Five hundred achievements, each with its own trophy.
+  const list = achievementList();
+  const parts = new Set(list.map((x) => { const p = trophyParts(x.n); return `${p.shape}:${p.metal}:${p.gem}:${p.plinth}`; }));
+  check(list.length === 500 && new Set(list.map((x) => x.id)).size === 500 && parts.size === 500, `${list.length} achievements, ${parts.size} different trophies`);
+  const w = newTown(259, 20);
+  advance(w, 60, ctx);
+  const got = Object.keys(w.achievements ?? {}).length;
+  check(got > 0 && got < 100, `a new town has earned ${got} already, and has the rest to go`);
+
+  // The end-game preview: walled, towered, districted, and a dragon fight on the way.
+  const pv = endgameTown(260, 120);
+  const pvWalls: number[] = [];
+  pv.map.overlay.forEach((o, i) => {
+    if (o === Overlay.Wall || o === Overlay.Gate) pvWalls.push(i);
+  });
+  const pvTowers = pv.structures.filter((x) => x.type === "watchtower");
+  const uncovered = pvWalls.filter((i) => !pvTowers.some((t) => Math.hypot(t.x + t.w / 2 - (i % MAP_W), t.y + t.h / 2 - Math.floor(i / MAP_W)) <= alertRadius(t)));
+  check(pvWalls.length > 300 && pvWalls.every((i) => wallLevel(pv.map.meta[i]) === WALL_MAX_LEVEL) && uncovered.length === 0 && pvTowers.every((t) => t.level === CATALOG.watchtower.maxLevel),
+    `the preview's ${pvWalls.length} wall tiles at level ${WALL_MAX_LEVEL}, every one in reach of ${pvTowers.length} towers at their highest level`);
+  const kinds = new Set(pv.structures.map((x) => x.type));
+  check(Object.keys(CATALOG).every((k) => kinds.has(k as StructureType)), "every kind of building stands in it");
+  check(pv.structures.filter((x) => x.type === "armypoint").length >= 3 && pv.villagers.filter((v) => v.role === "knight" && v.rank >= 23).length >= 3 && pv.villagers.filter((v) => v.role === "wizard" && v.rank >= 15).length >= 3,
+    "army points with Emblem Knights, and Grand Wizards on the towers");
+  check(!!pv.raid && pv.raid.party.some((p) => p.kind === "dragon") && clock(pv.time).year > 20, `year ${clock(pv.time).year}, and dragons on the way`);
+
+  // Kept study calms the land; a town down to two survivors has dwindled away; names read as English.
+  const k = newTown(261, 20);
+  Object.assign(knowledgeOf(k), { day: "2026-01-01", reviewsToday: 30, completes: 3, overdue: 0, dueRemaining: 0 });
+  check(Math.abs(neglect(k).budget - 0.7) < 1e-9 && Math.abs(neglect(k).rho + 0.15) < 1e-9, `three Fields finished: the land's budget ×${neglect(k).budget.toFixed(2)}, its aim ${neglect(k).rho.toFixed(2)}`);
+  const dw = newTown(262, 20);
+  while (dw.villagers.length < 8) makeVillager(dw, null);
+  advance(dw, 60, ctx);
+  dw.villagers = dw.villagers.slice(0, 2);
+  for (const st of dw.structures) st.workers = st.workers.filter((id) => dw.villagers.some((v) => v.id === id));
+  // Nobody on the road and no raid due: only the count of people is being tested.
+  dw.incoming = Infinity;
+  dw.nextRaidAt = dw.time + 30 * 24 * 60;
+  let fewH = 0;
+  for (; fewH < 80 && !dw.fallen; fewH++) advance(dw, 60, ctx);
+  check(!!dw.fallen && dw.fallCause === "dwindled" && fewH >= 72, `a town of eight brought down to two, with nobody coming, has dwindled away after ${fewH} hours (${dw.fallCause})`);
+  check(plural("Dire Wolf") === "Dire Wolves" && plural("Harpy") === "Harpies" && plural("Lich") === "Liches" && plural("Cyclops") === "Cyclopes" && plural("Oni") === "Oni" && plural("fishery") === "fisheries",
+    "two Dire Wolves, three Harpies, Liches, Cyclopes, Oni and fisheries");
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

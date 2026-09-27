@@ -1,5 +1,6 @@
 import { log, clock } from "./state";
 import { MONSTERS } from "./bestiary";
+import { plural } from "./words";
 import { MAP_H, MAP_W, Overlay, RAW_FOODS, Terrain, type GameState, type Lair, type LairKind, type MonsterKind, type NodeKind, type ResourceKey, type Roamer, type Scout, type Villager } from "./types";
 import { air } from "./weather";
 import { MEAL_KCAL, bodyOf, killBody } from "./body";
@@ -26,15 +27,31 @@ import { wildAmount, wildCrop, wildKindAt } from "./forage";
  * whatever guards them.
  */
 
-export const LAIR_SIZE: Record<LairKind, [number, number]> = { tomb: [4, 3], shadowgate: [4, 4], dragonpit: [6, 5] };
-const LAIR_FROM: Record<LairKind, number> = { tomb: 70, shadowgate: 110, dragonpit: 150 };
-const LAIR_START: Record<LairKind, number> = { tomb: 3, shadowgate: 7, dragonpit: 14 };
+export const LAIR_SIZE: Record<LairKind, [number, number]> = {
+  tomb: [4, 3], shadowgate: [4, 4], dragonpit: [6, 5], goblinwarren: [5, 3], webhollow: [4, 4], frostrift: [5, 4], titangate: [6, 5],
+};
+/** How far from where the town is founded each kind of gate lies, at the nearest. */
+const LAIR_FROM: Record<LairKind, number> = { goblinwarren: 50, webhollow: 60, tomb: 70, frostrift: 90, shadowgate: 110, titangate: 130, dragonpit: 150 };
+/** The level each kind of gate opens at; each gate adds its own depth bonus. */
+export const LAIR_START: Record<LairKind, number> = { goblinwarren: 2, webhollow: 3, tomb: 3, frostrift: 5, shadowgate: 7, titangate: 9, dragonpit: 14 };
 /** What each lair breeds, by the level it has reached. */
 const BROOD: Record<LairKind, { kind: MonsterKind; min: number }[]> = {
   tomb: [{ kind: "skeleton", min: 1 }, { kind: "ghoul", min: 4 }, { kind: "jiangshi", min: 7 }, { kind: "wraith", min: 10 }, { kind: "lich", min: 14 }, { kind: "gashadokuro", min: 30 }],
   shadowgate: [{ kind: "werewolf", min: 1 }, { kind: "yurei", min: 8 }, { kind: "banshee", min: 11 }, { kind: "oni", min: 15 }, { kind: "vampire", min: 20 }, { kind: "kitsune", min: 26 }, { kind: "demon", min: 36 }],
   dragonpit: [{ kind: "salamander", min: 1 }, { kind: "griffin", min: 18 }, { kind: "wyvern", min: 22 }, { kind: "hydra", min: 28 }, { kind: "dragon", min: 40 }],
+  goblinwarren: [{ kind: "goblin", min: 1 }, { kind: "wolf", min: 4 }, { kind: "ogre", min: 10 }, { kind: "troll", min: 14 }, { kind: "cyclops", min: 20 }],
+  webhollow: [{ kind: "spider", min: 1 }, { kind: "bat", min: 2 }, { kind: "kappa", min: 5 }, { kind: "jorogumo", min: 10 }, { kind: "basilisk", min: 16 }],
+  frostrift: [{ kind: "wolf", min: 1 }, { kind: "wisp", min: 4 }, { kind: "wendigo", min: 14 }, { kind: "frostgiant", min: 18 }, { kind: "nian", min: 25 }],
+  titangate: [{ kind: "gargoyle", min: 1 }, { kind: "golem", min: 10 }, { kind: "minotaur", min: 13 }, { kind: "cyclops", min: 18 }, { kind: "basilisk", min: 22 }, { kind: "gashadokuro", min: 32 }],
 };
+
+/** What a gate breeds at its level now, and at the next step up the brood. */
+export function broodOf(l: Lair): { now: MonsterKind; next?: { kind: MonsterKind; at: number } } {
+  const list = BROOD[l.kind];
+  const now = [...list].reverse().find((b) => l.level >= b.min) ?? list[0];
+  const next = list.find((b) => b.min > l.level);
+  return { now: now.kind, next: next ? { kind: next.kind, at: next.min } : undefined };
+}
 
 /** Tiles a band crosses in a game minute: a slow march, about 1.5 an hour. */
 const ROAM_PACE = 1.5 / 60;
@@ -43,20 +60,26 @@ export const STRIKE_RANGE = 8;
 
 /** Sets the lairs down for a new map, or an old save that has none. */
 export function placeLairs(s: GameState) {
-  if (s.lairs) return;
-  const r = rng(s.seed * 7 + 13);
+  const fresh = !s.lairs;
+  if (!fresh && s.lairsV === 2) return;
+  const r = rng(s.seed * 7 + 13 + (fresh ? 0 : 977));
   const hall = s.structures.find((st) => st.type === "townhall");
   const home: [number, number] = hall ? center(hall) : [37, 26];
-  const want: LairKind[] = ["tomb", "tomb", "tomb", "shadowgate", "shadowgate", "dragonpit"];
-  s.lairs = [];
-  let id = 1;
+  const older: LairKind[] = ["tomb", "tomb", "tomb", "shadowgate", "shadowgate", "dragonpit"];
+  const newer: LairKind[] = ["goblinwarren", "goblinwarren", "webhollow", "webhollow", "frostrift", "frostrift", "titangate"];
+  // An older save keeps the gates it has; only the newer kinds are set into it, in the fog.
+  const want = fresh ? [...older, ...newer] : newer;
+  s.lairs ??= [];
+  s.lairsV = 2;
+  let id = s.lairs.reduce((a, l) => Math.max(a, l.id), 0) + 1;
   for (const kind of want) {
     const [w, h] = LAIR_SIZE[kind];
     for (let tries = 0; tries < 400; tries++) {
       const x = 2 + Math.floor(r() * (MAP_W - w - 4));
       const y = 2 + Math.floor(r() * (MAP_H - h - 4));
       if (dist(home, [x, y]) < LAIR_FROM[kind]) continue;
-      if (s.lairs.some((l) => Math.abs(l.x - x) < 24 && Math.abs(l.y - y) < 24)) continue;
+      if (s.lairs.some((l) => Math.abs(l.x - x) < 22 && Math.abs(l.y - y) < 22)) continue;
+      if (!fresh && s.map.seen?.[idx(x, y)]) continue;
       let ok = true;
       for (let yy = y; yy < y + h && ok; yy++) for (let xx = x; xx < x + w; xx++) if (s.map.terrain[idx(xx, yy)] === Terrain.Water) ok = false;
       if (!ok) continue;
@@ -68,7 +91,9 @@ export function placeLairs(s: GameState) {
           s.map.meta[i] = 0;
         }
       }
-      s.lairs.push({ id: id++, kind, x, y, w, h, level: LAIR_START[kind], discovered: false, nextSpawnAt: s.time + (2 + r() * 3) * 24 * 60 });
+      // The deeper in the country, the higher the gate stands above others of its kind.
+      const bonus = Math.max(0, Math.floor((dist(home, [x, y]) - LAIR_FROM[kind]) / 25));
+      s.lairs.push({ id: id++, kind, x, y, w, h, level: LAIR_START[kind] + bonus, bonus, discovered: false, nextSpawnAt: s.time + (2 + r() * 3) * 24 * 60 });
       break;
     }
   }
@@ -78,7 +103,15 @@ export function placeLairs(s: GameState) {
 const breed = (l: Lair) => [...BROOD[l.kind]].reverse().find((b) => l.level >= b.min) ?? BROOD[l.kind][0];
 
 /** Lairs grow with the days: a level every three. */
-export const lairLevel = (s: GameState, l: Lair) => LAIR_START[l.kind] + Math.floor(clock(s.time).day / 3);
+export const lairLevel = (s: GameState, l: Lair) => LAIR_START[l.kind] + (l.bonus ?? 0) + lairGrowth(clock(s.time).day);
+
+/**
+ * How much a gate has grown with the days: a level every three days for the
+ * first sixty, then one every eight — the land does not outgrow every town
+ * for ever, so a town that holds on can still catch up and carry the fight to
+ * the gates.
+ */
+export const lairGrowth = (day: number) => (day <= 60 ? Math.floor(day / 3) : 20 + Math.floor((day - 60) / 8));
 
 /** The chance, when a band picks where to go next, that it turns toward the town. */
 export const turnChance = (s: GameState) => Math.min(0.7, 0.25 + clock(s.time).day * 0.01);
@@ -149,7 +182,7 @@ export function wildsHourly(s: GameState, r: () => number) {
         target: near.st.id, reach: 0, origin: [b.x, b.y], combatants: [], projectiles: [], clock: 0, nextId: 1,
       };
       const lair = s.lairs!.find((l) => l.id === b.lair);
-      log(s, `A band from the fog — ${b.count > 1 ? `${b.count} ` : ""}${MONSTERS[b.kind].name}${b.count > 1 ? "s" : ""} (L${b.level})${lair ? ` out of a ${LAIR_NAMES[lair.kind]}` : ""} — is at the edge of town!`, "bad");
+      log(s, `A band from the fog — ${b.count > 1 ? `${b.count} ${plural(MONSTERS[b.kind].name)}` : MONSTERS[b.kind].name} (L${b.level})${lair ? ` out of a ${LAIR_NAMES[lair.kind]}` : ""} — is at the edge of town!`, "bad");
       break;
     }
   }
@@ -296,7 +329,7 @@ function terrainEta(s: GameState, x: number, y: number): number {
   const ty = Math.floor(y);
   if (!inBounds(tx, ty)) return 1.2;
   const t = s.map.terrain[idx(tx, ty)];
-  let eta = t === Terrain.Pavement ? 1.0 : t === Terrain.Forest ? 1.5 : t === Terrain.Water ? 1.8 : t === Terrain.Bank ? 1.1 : 1.2;
+  let eta = t === Terrain.Pavement ? 1.0 : t === Terrain.Forest ? 1.5 : t === Terrain.Water ? 1.8 : t === Terrain.Bank ? 1.1 : t === Terrain.Hill ? 1.5 : t === Terrain.Marsh ? 1.9 : 1.2;
   const snowCm = air(s).snowDepth * 100;
   if (snowCm > 1) eta = Math.max(eta, 1.3 + 0.082 * snowCm);
   return eta;
@@ -534,10 +567,10 @@ function stepScout(s: GameState, v: Villager, minutes: number) {
     b.bleed = Math.max(b.bleed, 0.03);
     v.health = Math.max(0, v.health - 5 * minutes);
     emit(s, "bio", 0.03 * 60, sc.x, sc.y);
-    if (v.health <= 0) return lose(s, v, `fell to ${MONSTERS[q.kind].name.toLowerCase()}s out in the fog`);
+    if (v.health <= 0) return lose(s, v, `fell to ${plural(MONSTERS[q.kind].name).toLowerCase()} out in the fog`);
     if (sc.phase === "out") {
       sc.phase = "back";
-      log(s, `${v.name} runs into ${MONSTERS[q.kind].name.toLowerCase()}s in the fog and turns for home, wounded.`, "bad");
+      log(s, `${v.name} runs into ${plural(MONSTERS[q.kind].name).toLowerCase()} in the fog and turns for home, wounded.`, "bad");
     }
   }
   // Hunted: drop cargo, lightest value first, until the pace outruns the hunter (§4.5).

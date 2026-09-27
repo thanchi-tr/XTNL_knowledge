@@ -1,5 +1,6 @@
 import { log } from "./state";
 import { rng } from "./world";
+import { kmod } from "./knowledge";
 import type { GameState, Tool, ToolMat } from "./types";
 
 /**
@@ -74,9 +75,11 @@ export function workTool(s: GameState, target: Target, T: number, intensity: num
   const fr = T < -5 ? FROZEN[target] ?? [1, 1] : [1, 1];
   const H = tg.H * fr[0];
   const rho = tg.rho * fr[1];
-  tool.s = Math.max(0, tool.s - K_W * Math.pow(H / mat.H, 2.2) * intensity);
+  // Craftsmanship (Reason ideas): edges hold, metal lasts.
+  const care = 1 - kmod(s, "REASON");
+  tool.s = Math.max(0, tool.s - K_W * Math.pow(H / mat.H, 2.2) * intensity * care);
   const cold = mat.dbt === null ? 3 : 1 + 4 * Math.max(0, Math.min(1, (mat.dbt - T) / 15));
-  const dD = D0 * Math.pow(rho / 450, 1.5) * (1 / mat.K) * cold * intensity;
+  const dD = D0 * Math.pow(rho / 450, 1.5) * (1 / mat.K) * cold * intensity * care;
   const pFail = 1 - Math.exp(-(Math.pow(tool.D + dD, BETA) - Math.pow(tool.D, BETA)));
   tool.D += dD;
   const r = rng(Math.floor(s.time) * 41 + tool.id * 7);

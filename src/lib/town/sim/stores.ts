@@ -1,4 +1,5 @@
 import { clock, log } from "./state";
+import { legendMods } from "./legends";
 import { air } from "./weather";
 import { envelope, isZone } from "./zones";
 import { center } from "./world";
@@ -101,7 +102,7 @@ export function storesHourly(s: GameState, forcedT?: number) {
       st.spoiled[k] = 0;
       continue;
     }
-    const k1 = kAt(k, T, RH, st.miasma, st.kMul) / 24;
+    const k1 = (kAt(k, T, RH, st.miasma, st.kMul) / 24) * legendMods(s).rot;
     if (!k1) continue;
     const next = spoilStep(total, Math.min(total, st.spoiled[k] ?? 0), k1);
     s.res[k] = next.total;

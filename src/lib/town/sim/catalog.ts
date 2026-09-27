@@ -1,4 +1,4 @@
-import type { Resources, Role, StructureType } from "./types";
+import { YEAR_DAYS, type Resources, type Role, type StructureType } from "./types";
 
 /**
  * Every building the town can raise, in one table.
@@ -51,15 +51,17 @@ const scale = (base: Cost, k: number): Cost => {
 
 /** Upgrades grow ~1.6× per level, and ask for refined materials from level 3. */
 /**
- * Buildings rise to level 30, and every tenth level is a major step: a new
- * look, half as many hit points again, a quarter more output. Crossing one
- * costs something rare on top — gold for level 10, platinum for 20,
- * diamond for 30.
+ * Buildings rise to level 30 — the twelve special buildings (forge, school,
+ * kitchen, refinery, laboratory, fishing hut, lumber camp, heavy armoury,
+ * army school, barracks, mage spire, army point) to 40 — and every tenth
+ * level is a major step: a new look, half as many hit points again, a
+ * quarter more output. Crossing one costs something rare on top — gold for
+ * level 10, platinum for 20, diamond for 30, mithril for 40.
  */
-export const MAX_GRADE_LEVEL = 30;
-export const grade = (level: number) => (level >= 30 ? 3 : level >= 20 ? 2 : level >= 10 ? 1 : 0);
-export const GRADE_NAMES = ["", "Fortified", "Grand", "Legendary"] as const;
-const GRADE_GATE: Record<number, Cost> = { 10: { gold: 3 }, 20: { platinum: 6 }, 30: { diamond: 4 } };
+export const MAX_GRADE_LEVEL = 40;
+export const grade = (level: number) => (level >= 40 ? 4 : level >= 30 ? 3 : level >= 20 ? 2 : level >= 10 ? 1 : 0);
+export const GRADE_NAMES = ["", "Fortified", "Grand", "Legendary", "Mythic"] as const;
+const GRADE_GATE: Record<number, Cost> = { 10: { gold: 3 }, 20: { platinum: 6 }, 30: { diamond: 4 }, 40: { mithril: 4 } };
 
 /** Upgrades grow ~1.6× a level to 10, then 1.18× a level; refined materials from level 3. */
 const growth = (base: Cost, refined: Cost = {}) => (level: number): Cost => {
@@ -68,6 +70,24 @@ const growth = (base: Cost, refined: Cost = {}) => (level: number): Cost => {
   for (const [k, v] of Object.entries(GRADE_GATE[level + 1] ?? {})) c[k as keyof Resources] = ((c[k as keyof Resources] as number) ?? 0) + (v as number);
   return c;
 };
+
+/**
+ * The hall's upgrade cost. To 30 it grows like every building's; past it the
+ * price climbs by a power of the levels gained rather than compounding — a
+ * compounding 1.18 a level would ask for millions of stone by 100 — and each
+ * tenth level (an age of the hall) asks for mithril, then diamond as well.
+ */
+const hallBase = growth({ wood: 120, stone: 160, coin: 60 }, { bricks: 20, ingots: 8 });
+function hallGrowth(level: number): Cost {
+  if (level < 30) return hallBase(level);
+  const c = scale(hallBase(29), Math.pow(1 + 0.08 * (level - 29), 1.5));
+  const next = level + 1;
+  if (next % 10 === 0 && next >= 40) {
+    c.mithril = (c.mithril ?? 0) + next / 5 - 4;
+    if (next >= 60) c.diamond = (c.diamond ?? 0) + next / 10 - 2;
+  }
+  return c;
+}
 
 /** How build time grows with level: steeply to 10, gently after. */
 export const levelHours = (level: number) => Math.pow(Math.min(level, 10), 1.3) * (1 + 0.12 * Math.max(0, level - 10));
@@ -142,12 +162,41 @@ export const COMBINE_FROM = 20;
  * Monster jewels a building needs, from the forge's store, to rise to a
  * level: one a level from 25, and three for the thirtieth.
  */
-export const jewelCost = (target: number) => (target >= 30 ? 3 : target >= 25 ? 1 : 0);
+export const jewelCost = (target: number, type?: StructureType) =>
+  type === "townhall" && target > 30 ? (target % 10 === 0 ? 4 : 0) : target >= 30 ? 3 : target >= 25 ? 1 : 0;
+
+/** The town hall rises to level 100: the seat of everything, the last thing to stop growing. */
+export const HALL_MAX_LEVEL = 100;
+
+/** Years the town must stand before its hall can reach level 100: the end game is a twenty-year road. */
+export const HALL_YEARS = 20;
+
+/**
+ * The day a town must have reached before its hall may rise to `level`.
+ * Nothing holds the first few levels back; after that the road lengthens —
+ * level 20 around the end of the second year, 43 by the fifth, 70 by the
+ * twelfth — and level 100 only after twenty years (day 560). Coin and stone
+ * can hurry many things, but not this.
+ */
+export const hallMinDay = (level: number) =>
+  level <= 2 ? 0 : Math.round(HALL_YEARS * YEAR_DAYS * Math.pow((level - 1) / (HALL_MAX_LEVEL - 1), 1.6));
+
+/**
+ * Build time of an upgrade to `level`, in multiples of the building's base
+ * hours. The hall's stops growing at level 30: the ages past it are paid for
+ * in rare metals and people, not in months of scaffolding.
+ */
+export const upgradeHours = (type: StructureType, level: number) => levelHours(type === "townhall" ? Math.min(level, 30) : level);
 
 /** People a town must hold before a building can rise to the next level. */
 export function upgradePeople(type: StructureType, level: number): number {
-  return type === "townhall" ? 4 + 5 * level : 2 + 3 * level;
+  if (type === "townhall") return 4 + 5 * Math.min(level, 30) + 2 * Math.max(0, level - 30);
+  return 2 + 3 * level;
 }
+
+/** Peat a cut of marsh gives, and the villager-hours it takes. */
+export const PEAT_CUT = 8;
+export const PEAT_EFFORT = 5;
 
 /** Work, in villager-hours, to dig one tile of channel or fill one in. Tools halve it. */
 export const DIG_HOURS = 60;
@@ -167,11 +216,13 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
   townhall: {
     type: "townhall", name: "Town Hall", category: "civic",
     blurb: "The seat of the town. Keeps the census and caps how far every other building can grow.",
-    w: 14, h: 7, cost: {}, upgrade: growth({ wood: 120, stone: 160, coin: 60 }, { bricks: 20, ingots: 8 }),
-    buildHours: 24, maxLevel: 30, slots: () => 0, unique: true, hpPerLevel: 400,
+    w: 14, h: 7, cost: {}, upgrade: hallGrowth,
+    buildHours: 24, maxLevel: HALL_MAX_LEVEL, slots: () => 0, unique: true, hpPerLevel: 400,
     rules: [
       "One per town. If it falls, the town is sacked.",
       "Homes and schools must stand within its reach: 20 tiles at level 1, and 4 more each level.",
+      "Its cellar keeps the base goods — wood, stone, potatoes, meals: 120 of each, and 30 more a level. Everything else bulky needs a storehouse.",
+      "Rises to level 100. Past 30, every tenth level is a new age of the hall, set with mithril, diamond and monster jewels.",
       "Buildings far from it are raided more often, and by stronger things.",
     ],
   },
@@ -198,7 +249,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "school", name: "School", category: "civic",
     blurb: "Trains specialists: scientists, kitchen hands, geologists, commanders and biologists.",
     w: 8, h: 4, cost: { wood: 80, stone: 60, coin: 20 }, upgrade: growth({ wood: 60, stone: 60, coin: 30 }, { planks: 12, bricks: 12 }),
-    buildHours: 10, maxLevel: 30, slots: () => 0, hpPerLevel: 120,
+    buildHours: 10, maxLevel: 40, slots: () => 0, hpPerLevel: 120,
     rules: ["Takes an idle villager and returns a specialist."],
   },
   farm: {
@@ -230,14 +281,14 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "refinery", name: "Refinery", category: "industry",
     blurb: "Turns raw material into refined: planks, bricks, ingots — and, with scientists, gunpowder and poison.",
     w: 7, h: 4, cost: { stone: 60, wood: 40, iron: 10 }, upgrade: growth({ stone: 50, wood: 30, iron: 10 }, { bricks: 10 }),
-    buildHours: 8, maxLevel: 30, slots: (l) => 1 + l, workRole: "refiner", hpPerLevel: 110,
+    buildHours: 8, maxLevel: 40, slots: (l) => 1 + l, workRole: "refiner", hpPerLevel: 110,
     rules: [],
   },
   kitchen: {
     type: "kitchen", name: "Kitchen", category: "food",
     blurb: "Chefs cook raw crops into meals. Nobody eats a raw potato for long.",
     w: 5, h: 3, cost: { wood: 40, stone: 30 }, upgrade: growth({ wood: 30, stone: 30 }, { bricks: 6 }),
-    buildHours: 5, maxLevel: 30, slots: (l) => 1 + l, workRole: "chef", hpPerLevel: 80,
+    buildHours: 5, maxLevel: 40, slots: (l) => 1 + l, workRole: "chef", hpPerLevel: 80,
     rules: ["Within 1 tile of a home — cooks feed the houses they stand by.", "Staffed by chefs trained at the school."],
   },
   market: {
@@ -251,7 +302,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "barracks", name: "Barracks", category: "military",
     blurb: "Recruits Peasant Levies and drills them up to Spearman Militia (level 4). Every rank past that is earned in battle.",
     w: 11, h: 4, cost: { wood: 60, stone: 50 }, upgrade: growth({ wood: 50, stone: 50, iron: 6 }, { ingots: 6 }),
-    buildHours: 8, maxLevel: 30, slots: () => 0, hpPerLevel: 150,
+    buildHours: 8, maxLevel: 40, slots: () => 0, hpPerLevel: 150,
     rules: ["At least 3 clear tiles from any home: nobody sleeps beside a drill yard.", "Connect to a house to recruit, and to a watchtower so its troops are counted."],
   },
   archery: {
@@ -265,14 +316,14 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "armoury", name: "Heavy Armoury", category: "military",
     blurb: "No longer built. An old armoury still houses soldiers and drills them to level 6.",
     w: 9, h: 4, cost: { wood: 40, stone: 60, iron: 20 }, upgrade: growth({ stone: 50, iron: 16 }, { ingots: 8 }),
-    buildHours: 10, maxLevel: 30, slots: () => 0, hpPerLevel: 180,
+    buildHours: 10, maxLevel: 40, slots: () => 0, hpPerLevel: 180,
     rules: ["Same connection rules as a barracks."],
   },
   wizardhut: {
     type: "wizardhut", name: "Wizard Hut", category: "military",
     blurb: "Wizards study here and grow in power on their own. At 15 they become grand wizards.",
     w: 4, h: 4, cost: { wood: 50, stone: 40, silver: 10 }, upgrade: growth({ stone: 40, silver: 8 }, { ingots: 4 }),
-    buildHours: 12, maxLevel: 30, slots: () => 0, hpPerLevel: 100,
+    buildHours: 12, maxLevel: 40, slots: () => 0, hpPerLevel: 100,
     rules: ["Grand wizards defend only against legendary foes, and cost nothing to keep."],
   },
   nobleyard: {
@@ -310,24 +361,32 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "lumbercamp", name: "Lumber Camp", category: "industry",
     blurb: "Fells timber from the neighbouring forest, drawing down its stock of wood. A forest grows back while it holds more than 15% of its wood.",
     w: 4, h: 3, cost: { wood: 20, stone: 5 }, upgrade: growth({ wood: 20, stone: 10 }),
-    buildHours: 3, maxLevel: 30, slots: (l) => 1 + l, workRole: "lumberjack", needsForest: true, hpPerLevel: 70,
+    buildHours: 3, maxLevel: 40, slots: (l) => 1 + l, workRole: "lumberjack", needsForest: true, hpPerLevel: 70,
     rules: ["Must be placed next to forest.", "Cuts within 4 tiles. Below 15% the forest stops growing back, and every tile cut bare becomes open ground."],
   },
   forge: {
     type: "forge", name: "Forge", category: "industry",
     blurb: "Arms the garrison: every level adds to every troop's damage. Stores what monsters leave, and makes gear from it.",
     w: 7, h: 4, cost: { stone: 50, wood: 30 }, upgrade: growth({ stone: 40, iron: 12 }, { ingots: 6 }),
-    buildHours: 8, maxLevel: 30, slots: () => 0, hpPerLevel: 120,
+    buildHours: 8, maxLevel: 40, slots: () => 0, hpPerLevel: 120,
     rules: [
       "Without a forge, spoils from raids are left on the field.",
       "Its store holds 4 stacks, plus 2 per level.",
     ],
   },
+  museum: {
+    type: "museum", name: "Museum", category: "civic",
+    blurb: "Paintings, carvings and the town's own story, kept by its artists. Villagers sent to it come back steadier, and the town takes heart.",
+    w: 7, h: 4, cost: { stone: 80, wood: 40, coin: 50 }, upgrade: growth({ stone: 60, wood: 30, coin: 40 }, { bricks: 8 }),
+    buildHours: 10, maxLevel: 30, slots: (l) => 1 + Math.floor(l / 3), workRole: "artist", hpPerLevel: 90,
+    requires: { role: "artist", reason: "A museum needs an artist in town — train one at the school." },
+    rules: ["Only once an artist lives in town (the school trains them).", "Needs an artist at work in it before anyone can visit."],
+  },
   laboratory: {
     type: "laboratory", name: "Laboratory", category: "industry",
     blurb: "Scientists at the bench: arcane formulas for the wizards, healing tonic for the sick, fertiliser for the fields.",
     w: 6, h: 4, cost: { stone: 50, wood: 40, coin: 40, silver: 4 }, upgrade: growth({ stone: 40, wood: 20, silver: 4 }, { bricks: 8, ingots: 2 }),
-    buildHours: 10, maxLevel: 30, slots: (l) => 1 + l, workRole: "scientist", hpPerLevel: 100,
+    buildHours: 10, maxLevel: 40, slots: (l) => 1 + l, workRole: "scientist", hpPerLevel: 100,
     requires: { role: "scientist", reason: "A laboratory needs a scientist to set it up — train one at the school first." },
     rules: ["Needs at least one scientist in town before it can be placed.", "Staffed by scientists only."],
   },
@@ -335,7 +394,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "fishery", name: "Fishing Hut", category: "food",
     blurb: "A hut on stilts, a jetty and a drying rack. Fishers bring in the river's catch — a raw food the kitchen cooks.",
     w: 4, h: 3, cost: { wood: 30, stone: 5 }, upgrade: growth({ wood: 24, stone: 8 }, { planks: 6 }),
-    buildHours: 3, maxLevel: 30, slots: (l) => 1 + l, workRole: "fisher", needsRiver: true, hpPerLevel: 60,
+    buildHours: 3, maxLevel: 40, slots: (l) => 1 + l, workRole: "fisher", needsRiver: true, hpPerLevel: 60,
     rules: ["Must be placed next to the river.", "The catch is poor in winter and best in autumn."],
   },
   lamppost: {
@@ -351,15 +410,15 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     w: 6, h: 4, cost: { wood: 60, stone: 20 }, upgrade: growth({ wood: 40, stone: 30 }, { planks: 8 }),
     buildHours: 5, maxLevel: 30, slots: () => 0, hpPerLevel: 90,
     rules: [
-      `Raises how much of each bulk good the town can hold by ${STORE_PER_LEVEL} a level.`,
-      "Bulk goods: timber, stone, coal, iron, every crop and catch, meals, ice, planks and bricks. Coin, precious metals and laboratory goods keep anywhere.",
+      "Without one, the hall's cellar keeps only wood, stone, potatoes and meals — anything else bulky that comes in is lost.",
+      `Keeps ${STORE_PER_LEVEL} a level of every bulk good: coal, iron, every crop and catch, planks, bricks, ice, peat, salt. Coin, precious metals and laboratory goods keep anywhere.`,
     ],
   },
   armyschool: {
     type: "armyschool", name: "Army School", category: "military",
     blurb: "The only place knights are made. Recruits Noble Squires and drills them up to Mounted Serjeant.",
     w: 8, h: 4, cost: { stone: 80, wood: 50, coin: 60, iron: 10 }, upgrade: growth({ stone: 60, wood: 30, coin: 40 }, { ingots: 6 }),
-    buildHours: 12, maxLevel: 30, slots: () => 0, hpPerLevel: 140,
+    buildHours: 12, maxLevel: 40, slots: () => 0, hpPerLevel: 140,
     rules: [
       `Recruits cost ${KNIGHT_RECRUIT.coin} coin and ${KNIGHT_RECRUIT.silver} silver. Training carries a knight to level 10 (Mounted Serjeant); Knight Bachelor and above are won in battle.`,
       "Knights are paid in silver every day — 1 for a squire up to 5 for an emblem knight. Three days unpaid and they leave.",
@@ -370,7 +429,7 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     type: "armypoint", name: "Army Point", category: "military",
     blurb: "A fortified camp: a watchtower on a larger scale, led by a knight and held by a company of guards.",
     w: 6, h: 5, cost: { stone: 120, wood: 60, iron: 30, coin: 100 }, upgrade: growth({ stone: 80, iron: 20, coin: 60 }, { ingots: 10 }),
-    buildHours: 16, maxLevel: 30, slots: () => 1, workRole: "knight", hpPerLevel: 260,
+    buildHours: 16, maxLevel: 40, slots: () => 1, workRole: "knight", hpPerLevel: 260,
     rules: [
       `One army point for every ${ARMY_PER_POINT} troops in town, and each needs a knight of its own to lead it.`,
       "Works like a watchtower: troops posted here wait inside and come out when a monster crosses its circle.",
@@ -398,7 +457,7 @@ export const BUILDABLE: StructureType[] = [
   "house", "pitfire", "farm", "waterfarm", "watermill", "fishery", "kitchen", "market", "school",
   "lumbercamp", "mine", "refinery", "laboratory", "icefactory", "forge",
   "barracks", "archery", "wizardhut", "watchtower",
-  "lamppost", "brazier", "storehouse", "armyschool", "armypoint",
+  "lamppost", "brazier", "storehouse", "armyschool", "armypoint", "museum",
 ];
 
 /** Tile-painted infrastructure, priced per tile. */
@@ -532,6 +591,7 @@ export const COURSES: { role: Role; name: string; hours: number; cost: Cost; blu
   { role: "geologist", name: "Geologist", hours: 18, cost: { coin: 40 }, blurb: "Levels 1–10. Raises the odds of rare ore at the mine." },
   { role: "commander", name: "Commander", hours: 24, cost: { coin: 60 }, blurb: "Raises the raw power of every troop." },
   { role: "biologist", name: "Biologist", hours: 20, cost: { coin: 50 }, blurb: "Raises the yield of every farm in town." },
+  { role: "artist", name: "Artist", hours: 16, cost: { coin: 40 }, blurb: "Paints, carves and keeps the museum. The museum can only be built once an artist lives in town." },
 ];
 
 // ── Ladders ───────────────────────────────────────────────
@@ -555,7 +615,7 @@ export function roleLabel(role: Role, rank: number): string {
   if (role === "knight") return `${knightTitle(rank).name} ${rank}`;
   if (role === "infantry" || role === "archer" || role === "heavy") return `${soldierTitle(rank).name} ${rank}`;
   const names: Partial<Record<Role, string>> = {
-    idle: "Idle", scientist: "Scientist", commander: "Commander", biologist: "Biologist",
+    idle: "Idle", scientist: "Scientist", commander: "Commander", biologist: "Biologist", artist: "Artist",
     miner: "Miner", lumberjack: "Lumberjack", refiner: "Refiner", trader: "Trader", fisher: "Fisher",
     infantry: "Infantry", archer: "Archer", heavy: "Heavy Infantry",
   };

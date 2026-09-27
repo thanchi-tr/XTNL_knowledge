@@ -106,6 +106,8 @@ export function generateMap(seed: number): MapState {
     }
   }
 
+  paintCountry(terrain, overlay, meta, seed, home, 12);
+
   // Scattered trees and rocks on open grass.
   for (let i = 0; i < n; i++) {
     if (terrain[i] !== Terrain.Grass) continue;
@@ -123,12 +125,76 @@ export function generateMap(seed: number): MapState {
   return { w: MAP_W, h: MAP_H, terrain, overlay, meta };
 }
 
+/**
+ * Lays meadows, hills and marshes over open grass. Meadows are broad soft
+ * blobs, common near the founding ground, where the first fields go; hills
+ * are ridges out in the country, strewn with rock (stone, coal, iron); marsh
+ * pools in low wet ground beside ponds and the river, grown with reeds.
+ * Nothing is painted within `keepOut` tiles of `home`, so a new town always
+ * has plain grass to begin on.
+ */
+export function paintCountry(terrain: number[], overlay: number[], meta: number[], seed: number, home: [number, number], keepOut: number, only?: (i: number) => boolean) {
+  const r = rng(seed * 7 + 13);
+  const n = MAP_W * MAP_H;
+  const ok = (x: number, y: number) => {
+    if (!inBounds(x, y)) return false;
+    const i = idx(x, y);
+    return terrain[i] === Terrain.Grass && dist(home, [x, y]) >= keepOut && (!only || only(i));
+  };
+  const blob = (bx: number, by: number, rx: number, ry: number, t: number, salt: number) => {
+    for (let y = Math.floor(by - ry - 2); y <= Math.ceil(by + ry + 2); y++) {
+      for (let x = Math.floor(bx - rx - 2); x <= Math.ceil(bx + rx + 2); x++) {
+        if (!ok(x, y)) continue;
+        const d = ((x - bx) / rx) ** 2 + ((y - by) / ry) ** 2;
+        if (d <= 1 + (tileHash(x, y, salt) - 0.5) * 0.6) terrain[idx(x, y)] = t;
+      }
+    }
+  };
+  // Meadows: broad, and nearer home than anything else.
+  for (let k = 0; k < Math.round(n / 1400); k++) {
+    const near = r() < 0.35;
+    const bx = near ? home[0] + (r() - 0.5) * 70 : 20 + r() * (MAP_W - 20);
+    const by = near ? home[1] + (r() - 0.5) * 50 : r() * MAP_H;
+    blob(bx, by, 4 + r() * 6, 3 + r() * 4, Terrain.Meadow, 101);
+  }
+  // Hills: chains of overlapping blobs along a heading, out in the country.
+  for (let k = 0; k < Math.round(n / 3200); k++) {
+    let bx = 30 + r() * (MAP_W - 30);
+    let by = r() * MAP_H;
+    if (dist(home, [bx, by]) < 28) continue;
+    const head = r() * Math.PI * 2;
+    const steps = 3 + Math.floor(r() * 5);
+    for (let j = 0; j < steps; j++) {
+      blob(bx, by, 3 + r() * 4, 2.5 + r() * 3, Terrain.Hill, 103);
+      bx += Math.cos(head) * (4 + r() * 3);
+      by += Math.sin(head) * (3 + r() * 2);
+    }
+  }
+  // Marsh: beside standing water, spreading into the low grass.
+  const wet: number[] = [];
+  for (let i = 0; i < n; i++) if (terrain[i] === Terrain.Bank && tileHash(i % MAP_W, Math.floor(i / MAP_W), 107) < 0.03) wet.push(i);
+  for (const i of wet) {
+    if (r() > 0.45) continue;
+    blob(i % MAP_W + (r() - 0.5) * 6, Math.floor(i / MAP_W) + (r() - 0.5) * 6, 2.5 + r() * 4, 2 + r() * 3, Terrain.Marsh, 109);
+  }
+  // Rock on the hills, and a lighter scatter of it on the meadow's edge.
+  for (let i = 0; i < n; i++) {
+    if (overlay[i] !== Overlay.None || (only && !only(i))) continue;
+    if (terrain[i] === Terrain.Hill && r() < 0.16) {
+      overlay[i] = Overlay.Rock;
+      const k = r();
+      meta[i] = k < 0.45 ? 0 : k < 0.75 ? 1 : k < 0.94 ? 2 : 3;
+    } else if (terrain[i] === Terrain.Marsh && overlay[i] === Overlay.Tree) overlay[i] = Overlay.None;
+  }
+}
+
 /** Clears trees and rocks in a rectangle — for the starting settlement only. */
 export function clearArea(map: MapState, x0: number, y0: number, w: number, h: number) {
   for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
     if (!inBounds(x, y)) continue;
     const i = idx(x, y);
-    if (map.terrain[i] === Terrain.Forest) map.terrain[i] = Terrain.Grass;
+    // The founding ground is open and firm: meadow may stay, hills and marsh give way to grass.
+    if (map.terrain[i] === Terrain.Forest || map.terrain[i] === Terrain.Hill || map.terrain[i] === Terrain.Marsh) map.terrain[i] = Terrain.Grass;
     if (map.overlay[i] === Overlay.Tree || map.overlay[i] === Overlay.Rock) map.overlay[i] = Overlay.None;
   }
 }
@@ -192,6 +258,12 @@ export interface PlacementCheck {
  * demolition, no water, no forest, no pavement, nothing already built — and
  * river or forest buildings must actually touch the river or the forest.
  */
+/** Where a building could stand if it were moved: the usual rules, as if it were not already there. */
+export function checkMove(s: GameState, st: Structure, x: number, y: number): PlacementCheck {
+  const without = { ...s, structures: s.structures.filter((o) => o !== st) };
+  return checkPlacement(without, st.type, x, y);
+}
+
 export function checkPlacement(s: GameState, type: StructureType, x: number, y: number, occ = occupancy(s)): PlacementCheck {
   const def = CATALOG[type];
   const bad: number[] = [];
@@ -208,6 +280,8 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
       let why: string | undefined;
       if (occ[i]) why = "Something is already built here.";
       else if (t === Terrain.Water) why = "Cannot build on water.";
+      else if (t === Terrain.Marsh) why = "Marsh is too soft to build on — cut its peat, or fill it in.";
+      else if (t === Terrain.Hill && (type === "farm" || type === "waterfarm")) why = "Hills are too stony to plough — farm the grass or meadow below.";
       else if (t === Terrain.Forest) why = "Forest must be left standing — build a lumber camp beside it.";
       else if (t === Terrain.Pavement) why = "Buildings go on grass, not pavement.";
       else if (o === Overlay.Tree) why = "A tree is in the way — clear it first.";
@@ -257,7 +331,7 @@ export function checkTile(s: GameState, i: number, kind: "pavement" | "wall" | "
   const t = s.map.terrain[i];
   const o = s.map.overlay[i];
   if (occ[i]) return "A building stands here.";
-  if (t === Terrain.Water || t === Terrain.Forest) return "Only on open ground.";
+  if (t === Terrain.Water || t === Terrain.Forest || t === Terrain.Marsh) return t === Terrain.Marsh ? "Marsh swallows a road — fill it in first." : "Only on open ground.";
   if (o === Overlay.Lair) return "Something old stands here.";
   if (!inSight(s, i % MAP_W, Math.floor(i / MAP_W))) return "Nobody can see there — light it first.";
   if (o === Overlay.Tree || o === Overlay.Rock || o === Overlay.Debris) return "Clear this tile first.";
@@ -334,7 +408,18 @@ export const guardSlots = (level: number, type: StructureType = "watchtower") =>
  */
 export function alertRadius(st: Structure): number {
   if (st.type === "townhall") return 10;
-  return Math.floor((st.type === "armypoint" ? 10 : 8) + 2 * reachLevel(st.level));
+  // A post on the hills sees raiders coming two tiles sooner; monster eyes set into it, further still.
+  return Math.floor((st.type === "armypoint" ? 10 : 8) + 2 * reachLevel(st.level)) + (st.ground === Terrain.Hill ? 2 : 0) + Math.round(augR(st.aug?.eye, 3));
+}
+
+/** Diminishing returns on monster parts set into a tower (see ./augment). */
+const augR = (n: number | undefined, cap: number) => cap * (1 - Math.exp(-(n ?? 0) / 3));
+
+/** What the ground under a building does to its yield: meadow feeds fields, hills feed mines. */
+export function groundYield(st: Structure): number {
+  if (st.ground === Terrain.Meadow && (st.type === "farm")) return 1.3;
+  if (st.ground === Terrain.Hill && st.type === "mine") return 1.5;
+  return 1;
 }
 
 /**
@@ -343,7 +428,7 @@ export function alertRadius(st: Structure): number {
  * only when it attacks something — a building, or the wall.
  */
 export function passiveRadius(st: Structure): number {
-  return st.type === "townhall" ? 10 : Math.round(alertRadius(st) * 1.8);
+  return st.type === "townhall" ? 10 : Math.round(alertRadius(st) * 1.8 + augR(st.aug?.heart, 6));
 }
 
 /** A farm's harvest reaches the granary only if it shares pavement with a market. */
@@ -590,6 +675,28 @@ export function warmAt(fields: Warmth[], p: [number, number]): boolean {
 }
 
 /** Whether a point, in tiles, lies inside any pit fire's warmth. */
+/**
+ * How many degrees a lit pit fire adds to the open air around it: 4 °C at
+ * level 1, 1.5 more a level, up to 30 °C. Within its warmth radius the air
+ * itself is warmer — the rooms there lose less heat through their walls, and
+ * anyone outdoors feels it — not only the radiant glow on skin close by.
+ */
+export const fireAirDT = (level: number) => Math.min(30, 2.5 + 1.5 * level);
+
+/** The lit fires, as (centre, radius, degrees): read once and reused for every point. */
+export function fireAir(s: GameState): { x: number; y: number; r: number; dT: number }[] {
+  return s.structures
+    .filter((f) => f.type === "pitfire" && !f.buildUntil && (f.fuel ?? 0) > 0)
+    .map((f) => ({ x: f.x + f.w / 2, y: f.y + f.h / 2, r: warmthRange(f.level), dT: fireAirDT(f.level) }));
+}
+
+/** The warming of the open air at a point, in °C: the strongest fire whose radius reaches it. */
+export function airBoost(fires: { x: number; y: number; r: number; dT: number }[], x: number, y: number): number {
+  let best = 0;
+  for (const f of fires) if (f.dT > best && Math.hypot(f.x - x, f.y - y) <= f.r) best = f.dT;
+  return best;
+}
+
 export function isWarm(s: GameState, p: [number, number]): boolean {
   return warmAt(warmFields(s), p);
 }
@@ -615,14 +722,49 @@ export function burnRate(season: Season, night: boolean) {
 
 // ── Storage ───────────────────────────────────────────────
 
-/** Goods that take room to keep. Coin, precious metals and laboratory goods keep anywhere. */
-export const BULK: ResourceKey[] = ["wood", "stone", "coal", "iron", ...RAW_FOODS, "meals", "ice", "planks", "bricks"];
+/**
+ * Where the town keeps its goods (design §3.6).
+ *
+ *   Hall        the base goods a settlement cannot do without — timber,
+ *               stone, potatoes and cooked meals — in the hall's cellar, and
+ *               not much of them: 120 at level 1, 30 more a level.
+ *   Storehouse  everything else that takes room — coal and iron, every other
+ *               crop and catch, planks and bricks, ice, peat, salt… Without
+ *               a storehouse none of it can be kept: what comes in is lost.
+ *               A storehouse also adds its room to the hall's goods.
+ *   Treasury    coin, precious metals, tools, torches and laboratory goods,
+ *               small enough to keep anywhere.
+ */
+export const HALL_GOODS: ResourceKey[] = ["wood", "stone", "potato", "meals"];
+/** Goods that take room to keep: the hall's own, and everything only a storehouse can hold. */
+export const BULK: ResourceKey[] = [
+  "wood", "stone", "coal", "iron", ...RAW_FOODS, "meals", "ice", "planks", "bricks", "peat", "charcoal", "salt", "bogiron", "compost",
+];
+export const STORE_GOODS: ResourceKey[] = BULK.filter((k) => !HALL_GOODS.includes(k));
+export type Keep = "hall" | "store" | "treasury";
+export const keepOf = (k: ResourceKey): Keep => (HALL_GOODS.includes(k) ? "hall" : BULK.includes(k) ? "store" : "treasury");
 
-/** How much of each bulk good the town can hold: the hall's cellars, and every storehouse. */
-export function storageCap(s: GameState): number {
+/** The hall cellar's room for each base good. */
+export const hallCap = (level: number) => 120 + 30 * (Math.max(1, level) - 1);
+
+/** Room every finished storehouse adds, for each good it keeps. */
+export function storeRoom(s: GameState): number {
+  return s.structures.filter((st) => st.type === "storehouse" && !st.buildUntil).reduce((a, st) => a + STORE_PER_LEVEL * st.level, 0);
+}
+
+/** How much of one good the town can hold. Treasury goods have no limit. */
+export function capOf(s: GameState, k: ResourceKey): number {
+  const where = keepOf(k);
+  if (where === "treasury") return Infinity;
+  const room = storeRoom(s);
+  if (where === "store") return room;
   const hall = s.structures.find((st) => st.type === "townhall");
-  const stores = s.structures.filter((st) => st.type === "storehouse" && !st.buildUntil);
-  return 300 + 150 * ((hall?.level ?? 1) - 1) + stores.reduce((a, st) => a + STORE_PER_LEVEL * st.level, 0);
+  return hallCap(hall?.level ?? 1) + room;
+}
+
+/** The room for the hall's base goods, hall and storehouses together. Kept for older call sites. */
+export function storageCap(s: GameState): number {
+  return capOf(s, "wood");
 }
 
 // ── Army points ───────────────────────────────────────────
@@ -742,7 +884,7 @@ export function findPath(s: GameState, from: Structure, to: Structure, grassOk: 
     const o = s.map.overlay[i];
     if (o === Overlay.Wall || occ[i]) return false;
     if (t === Terrain.Pavement) return true;
-    return grassOk && (t === Terrain.Grass || t === Terrain.Bank) && o === Overlay.None;
+    return grassOk && (t === Terrain.Grass || t === Terrain.Bank || t === Terrain.Meadow || t === Terrain.Hill) && o === Overlay.None;
   };
   const starts = ringOf(from.x, from.y, from.w, from.h).filter(walk);
   const goals = new Set(ringOf(to.x, to.y, to.w, to.h).filter(walk));

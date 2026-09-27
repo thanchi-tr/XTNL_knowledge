@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { makeCanvas } from "./art/core";
-import { grass, cobbles, dirtPath, sandBank, masonry, halfTimber, boards, roofBlock, iceField } from "./art/textures";
+import { grass, cobbles, dirtPath, sandBank, meadow, hillside, marsh, masonry, halfTimber, boards, roofBlock, iceField } from "./art/textures";
 import { frosted } from "./art/winter";
 import { graded, gradedWall } from "./art/grades";
 import { grade } from "@/lib/town/sim/catalog";
-import { storehouse, armySchool, armyPoint, tomb, dragonPit, shadowGate, unitHome, rowHouse, duplexHome, apartmentBlock } from "./art/buildings3";
+import { goblinWarren, webHollow, frostRift, titanGate } from "./art/gates";
+import { trophy } from "./art/trophies";
+import { achievementList } from "@/lib/town/sim/achievements";
+import { storehouse, tomb, dragonPit, shadowGate, unitHome, rowHouse, duplexHome, apartmentBlock } from "./art/buildings3";
 import { M } from "./art/materials";
 import { oak, pine, bush, rockFace, crop, oreChunk, sprout, seedling, youngTree, snag, type CropArt } from "./art/nature";
-import { keep, townhouse, forge, stall, barracks, tower, mine, windmillBody, fountain, ruins, ROOF, type RoofStyle } from "./art/buildings";
+import { townhouse, stall, tower, mine, windmillBody, fountain, ruins, ROOF, type RoofStyle } from "./art/buildings";
 import { person, monster, monsterAt, PROPS, type TroopArt, type MonsterArt } from "./art/sprites";
 import { heroEffect, hasAura, buildingAura, effectBadges, type AuraKind } from "./art/effects";
 import { figure, type Look } from "./art/heroes";
@@ -18,9 +21,11 @@ import { GEAR, PARTS } from "@/lib/town/sim/loot";
 import { STYLE } from "./map/render";
 import { GRADES, then, mix, stampLight, applyEnvironmentLighting, type Grade } from "./map/lighting";
 import {
-  pitfire, lamppost, brazier, laboratory, fishery, school, watermill, kitchen, refinery, archery, armoury, wizardHut, nobleYard, iceFactory, lumberCamp,
-  marketRow, wallTile, rockNode,
+  pitfire, lamppost, brazier, watermill, archery, nobleYard, iceFactory, marketRow, wallTile, rockNode,
 } from "./art/buildings2";
+import { forge, barracks, armySchool, armyPoint, laboratory, fishery, school, kitchen, refinery, armoury, wizardHut, lumberCamp, townHall, museum, HALL_AGES } from "./art/special";
+import type { RoofStyle as Roof } from "./art/buildings";
+import type { Ramp4 } from "./art/materials";
 import { MONSTERS as BESTIARY } from "@/lib/town/sim/bestiary";
 
 /**
@@ -133,13 +138,13 @@ function auraTile(kind: AuraKind): () => HTMLCanvasElement {
 const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[] = [
   {
     title: "Town hall",
-    blurb: "The keep grows with its level: a timbered hall at first, then flanking towers, then taller ones, then a central spire. Roof and banner follow the town's archetype.",
+    blurb: "The seat of the town, and the first thing the eye should find: a hundred levels in ages of ten, from a timbered longhall to a gilded citadel with the sun set on its spire. A beacon burns on the spire from the Mythic age. Roof and banner follow the town's archetype.",
     zoom: 2,
     assets: [
-      { label: "Hall · L1–2", note: "Hamlet", render: () => keep(1, "thatch", M.WOOL) },
-      { label: "Keep · L3–5", note: "Merchant Port", render: () => keep(4, "teal", M.CLOTHBLU) },
-      { label: "Keep · L6–9", note: "Forge-Hold", render: () => keep(7, "slate", M.CLOTHRED) },
-      { label: "Citadel · L10+", note: "Arcane Citadel", render: () => keep(12, "red", M.ARCANE) },
+      ...[1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((lv, i) => ({
+        label: `${HALL_AGES[Math.min(10, Math.floor(lv / 10))]} · L${lv}`,
+        render: () => townHall(lv, (["thatch", "teal", "moss", "slate", "red"] as const)[i % 5], [M.WOOL, M.CLOTHBLU, M.CLOTHGRN, M.CLOTHRED, M.ARCANE][i % 5]),
+      })),
     ],
   },
   {
@@ -248,12 +253,22 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
     ],
   },
   {
-    title: "Lairs in the fog",
-    blurb: "Deep in the land, far from where a town is founded: tombs nearest, shadow realm gates further, a dragon pit furthest. Each looses a band every few days that roams the map — skeletons, wraiths and liches from a tomb; werewolves, banshees and demons from a gate; salamanders, wyverns and dragons from the pit — and a band that comes near the town attacks it. They grow stronger with the days. Scouts with torches find them.",
+    title: "Trophies · 500",
+    blurb: "One for every achievement, no two alike: eight shapes, eight metals, six gems and two plinths, read off the achievement's number. Unearned, each waits in the cabinet as a silhouette.",
+    zoom: 2,
+    assets: achievementList().map((a) => ({ label: `${a.n + 1}`, note: a.name, render: () => trophy(a.n), bg: "dark" as const })),
+  },
+  {
+    title: "Monster gates",
+    blurb: "Seven kinds of gate lie deep in the land, from nearest to furthest: goblin warrens, web hollows, tombs, frost rifts, shadow realm gates, titans' gates and a dragon pit. Each looses a band every few days — goblins, then ogres and trolls from a warren; spiders, then jorōgumo and basilisks from a hollow; skeletons to liches from a tomb; wolves, wendigos and frost giants from a rift; werewolves to demons from a shadow gate; gargoyles, golems and cyclopes from a titan's gate; salamanders to dragons from the pit. Every gate has a level: it opens at its kind's start, stands higher the deeper it lies, and rises one every three days. A found gate wears its level over it on the map. Scouts with torches find them.",
     zoom: 3,
     assets: [
+      { label: "Goblin warren", render: () => goblinWarren() },
+      { label: "Web hollow", render: () => webHollow() },
       { label: "Tomb", render: () => tomb() },
+      { label: "Frost rift", render: () => frostRift() },
       { label: "Shadow realm gate", render: () => shadowGate() },
+      { label: "Titan's gate", render: () => titanGate() },
       { label: "Dragon pit", render: () => dragonPit() },
     ],
   },
@@ -405,7 +420,7 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
     blurb: "Winter runs ten days, the longest season. All ground ices over except inside a lit pit fire's warmth; lamps and braziers give light but thaw nothing. Snow lies on every roof, warm or not: roof ramps re-index into snow shade for shade, silhouettes take a lit cap, and icicles hang from the eaves.",
     zoom: 2,
     assets: [
-      { label: "Hall", render: () => frosted(keep(2, "slate", M.CLOTHRED)) },
+      { label: "Hall", render: () => frosted(townHall(12, "slate", M.CLOTHRED)) },
       ...ROOFS.map((roof, i) => ({ label: `House · ${roof}`, render: () => frosted(townhouse(i * 3, roof, true)) })),
       { label: "Barracks", render: () => frosted(barracks(2, "red", M.CLOTHRED)) },
       { label: "Watchtower", render: () => frosted(tower(2, false)) },
@@ -427,6 +442,9 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
       { label: "Warm cobbles", render: tile((c) => cobbles(c, 0, 0, 48, 32, 4, M.STONEWM)) },
       { label: "Dirt road", render: tile((c) => dirtPath(c, 0, 0, 48, 32)) },
       { label: "River bank", render: tile((c) => sandBank(c, 0, 0, 48, 32)) },
+      { label: "Meadow", note: "fields +30%", render: tile((c) => meadow(c, 0, 0, 48, 32, 5)) },
+      { label: "Hills", note: "no farms · mines +50%", render: tile((c) => hillside(c, 0, 0, 48, 32, 5)) },
+      { label: "Marsh", note: "cut peat · fill it in", render: tile((c) => marsh(c, 0, 0, 48, 32, 5)) },
       { label: "Fieldstone", render: tile((c) => masonry(c, 0, 0, 48, 32, M.STONE, 5, { damp: true })) },
       { label: "Dressed stone", render: tile((c) => masonry(c, 0, 0, 48, 32, M.STONEWM, 6, { bh: 3, damp: true })) },
       { label: "Half-timber", render: tile((c) => halfTimber(c, 0, 0, 48, 32, 6)) },
@@ -472,9 +490,70 @@ function AssetTile({ asset, zoom }: { asset: Asset; zoom: number }) {
   );
 }
 
+/** The twelve special buildings, each drawn at every level from 1 to 40. */
+const LADDERS: { name: string; zoom: number; max?: number; draw: (lv: number, roof: Roof, banner: Ramp4) => HTMLCanvasElement }[] = [
+  { name: "Town hall", zoom: 1, max: 100, draw: (lv, r, b) => townHall(lv, r, b) },
+  { name: "Kitchen", zoom: 2, draw: (lv, r, b) => kitchen(lv, r, b) },
+  { name: "Fishing hut", zoom: 2, draw: (lv, r, b) => fishery(lv, r, b) },
+  { name: "Forge", zoom: 2, draw: (lv, r, b) => forge(lv, r, b) },
+  { name: "School", zoom: 2, draw: (lv, r, b) => school(lv, r, b) },
+  { name: "Refinery", zoom: 2, draw: (lv, r, b) => refinery(lv, r, b) },
+  { name: "Laboratory", zoom: 2, draw: (lv, r, b) => laboratory(lv, r, b) },
+  { name: "Lumber camp", zoom: 2, draw: (lv, r, b) => lumberCamp(lv, r, b) },
+  { name: "Heavy armoury", zoom: 2, draw: (lv, r, b) => armoury(lv, r, b) },
+  { name: "Army school", zoom: 2, draw: (lv, r, b) => armySchool(lv, r, b) },
+  { name: "Barracks", zoom: 2, draw: (lv, r, b) => barracks(lv, r, b) },
+  { name: "Mage spire", zoom: 2, draw: (lv, _r, b) => wizardHut(lv, b) },
+  { name: "Army point", zoom: 2, draw: (lv, _r, b) => armyPoint(lv, b) },
+  { name: "Museum", zoom: 2, max: 30, draw: (lv, r, b) => museum(lv, r, b) },
+];
+const ERA_AT: Record<number, string> = { 1: "Founding", 10: "Fortified", 20: "Grand", 30: "Legendary", 40: "Mythic" };
+const HALL_AT: Record<number, string> = Object.fromEntries(HALL_AGES.map((n, i) => [Math.max(1, i * 10), n]));
+
+function LevelLadder() {
+  const [pick, setPick] = useState(0);
+  const [arch, setArch] = useState<keyof typeof STYLE>("forge-hold");
+  const l = LADDERS[pick];
+  const { roof, banner } = STYLE[arch];
+  return (
+    <section className="asset-section">
+      <header>
+        <h2>Level by level</h2>
+        <p>
+          The town hall rises to level 100, in ages of ten — longhall, keep, citadel, marble, dome, rose window, gold, runes, halo and, at 100,
+          the sun on its spire — and every level between adds one thing to its face. Each special building rises to level 40. Every tenth level rebuilds it in a new era — rough boards and thatch, then half-timber on stone
+          (Fortified, 10), dressed stone a storey taller (Grand, 20), marble under copper with a corner tower (Legendary, 30), marble and gold (Mythic,
+          40). Between the steps each building has nine signature pieces of equipment: piece n is set up at level n and replaced by a better one at 10+n,
+          20+n and 30+n, so every level changes one thing you can point at.
+        </p>
+      </header>
+      <div className="asset-picks">
+        {LADDERS.map((x, i) => (
+          <button key={x.name} className={i === pick ? "on" : ""} onClick={() => setPick(i)}>{x.name}</button>
+        ))}
+      </div>
+      <div className="asset-picks">
+        {(Object.keys(STYLE) as (keyof typeof STYLE)[]).map((k) => (
+          <button key={k} className={k === arch ? "on" : ""} onClick={() => setArch(k)}>{k}</button>
+        ))}
+      </div>
+      <div className="asset-grid">
+        {range(1, l.max ?? 40).map((lv) => (
+          <AssetTile
+            key={`${l.name}:${arch}:${lv}`}
+            asset={{ label: `L${lv}`, note: (l.max === 100 ? HALL_AT : ERA_AT)[lv], render: () => l.draw(lv, roof, banner) }}
+            zoom={l.zoom}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function TownAssets() {
   return (
     <div className="asset-sheet">
+      <LevelLadder />
       {SECTIONS.map((s) => (
         <section key={s.title} className="asset-section">
           <header>
