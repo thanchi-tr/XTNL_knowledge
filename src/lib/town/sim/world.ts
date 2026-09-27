@@ -1,5 +1,6 @@
-import { ARMY_PER_POINT, CATALOG, KNIGHT_TITLES, STORE_PER_LEVEL, knightTitle, type Cost } from "./catalog";
+import { ARMY_PER_POINT, CATALOG, KNIGHT_TITLES, STORE_PER_LEVEL, grade, knightTitle, type Cost } from "./catalog";
 import { MATURE, SEEDLING, SPROUT, TILE_WOOD, YOUNG, treeMeta } from "./woods";
+import { inSight } from "./vision";
 import {
   MAP_H, MAP_W, MILITARY, Overlay, RAW_FOODS, Terrain,
   type GameState, type MapState, type ResourceKey, type Resources, type Season, type Structure, type StructureType,
@@ -11,6 +12,13 @@ import {
  */
 
 // ── Seeded randomness ─────────────────────────────────────
+
+/** Deterministic noise in [0, 1) for a tile. */
+export function tileHash(x: number, y: number, seed = 0): number {
+  let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
 
 export function rng(seed: number) {
   let a = seed >>> 0;
@@ -50,25 +58,49 @@ export function generateMap(seed: number): MapState {
     }
   }
 
-  // Forest: noisy blobs hugging the north, east and south-east edges.
-  const blobs: [number, number, number][] = [];
-  for (let i = 0; i < 16; i++) {
-    const edge = i % 3;
-    const x = edge === 1 ? MAP_W - 4 - r() * 14 : 22 + r() * (MAP_W - 26);
-    const y = edge === 0 ? r() * 8 : edge === 1 ? 10 + r() * (MAP_H - 20) : MAP_H - 2 - r() * 10;
-    blobs.push([x, y, 4 + r() * 6]);
-  }
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
-      const i = idx(x, y);
-      if (terrain[i] !== Terrain.Grass) continue;
-      for (const [bx, by, br] of blobs) {
-        const d = Math.hypot(x - bx, (y - by) * 1.2);
-        if (d < br + (r() - 0.5) * 2) {
-          terrain[i] = Terrain.Forest;
-          meta[i] = TILE_WOOD; // a full stand
-          break;
+  // Forest: noisy blobs across the land, bigger the further from where the
+  // town is founded — the deep country is wooded and dark. Each blob only
+  // visits its own box, so a map many times larger still generates quickly.
+  const home: [number, number] = [37, 26];
+  const nBlobs = Math.round((MAP_W * MAP_H) / 600);
+  for (let i = 0; i < nBlobs; i++) {
+    const bx = 18 + r() * (MAP_W - 18);
+    const by = r() * MAP_H;
+    const far = Math.min(1, dist(home, [bx, by]) / 160);
+    if (dist(home, [bx, by]) < 22) continue; // leave the founding ground open
+    const br = 4 + r() * 5 + far * 7;
+    for (let y = Math.floor(by - br - 2); y <= Math.ceil(by + br + 2); y++) {
+      for (let x = Math.floor(bx - br - 2); x <= Math.ceil(bx + br + 2); x++) {
+        if (!inBounds(x, y)) continue;
+        const i2 = idx(x, y);
+        if (terrain[i2] !== Terrain.Grass) continue;
+        if (Math.hypot(x - bx, (y - by) * 1.2) < br + (tileHash(x, y, seed % 997) - 0.5) * 2) {
+          terrain[i2] = Terrain.Forest;
+          meta[i2] = TILE_WOOD; // a full stand
         }
+      }
+    }
+  }
+
+  // Ponds: still water on open ground, ringed with a sandy bank.
+  const nPonds = Math.round((MAP_W * MAP_H) / 2000);
+  for (let i = 0; i < nPonds; i++) {
+    const px0 = 24 + r() * (MAP_W - 30);
+    const py0 = 4 + r() * (MAP_H - 8);
+    const rx = 1.8 + r() * 3;
+    const ry = 1.4 + r() * 2.4;
+    if (dist(home, [px0, py0]) < 16) continue;
+    for (let y = Math.floor(py0 - ry - 2); y <= Math.ceil(py0 + ry + 2); y++) {
+      for (let x = Math.floor(px0 - rx - 2); x <= Math.ceil(px0 + rx + 2); x++) {
+        if (!inBounds(x, y)) continue;
+        const i2 = idx(x, y);
+        if (terrain[i2] === Terrain.Water) continue;
+        const d = ((x - px0) / rx) ** 2 + ((y - py0) / ry) ** 2;
+        const rag = (tileHash(x, y, 71) - 0.5) * 0.5;
+        if (d <= 1 + rag) terrain[i2] = Terrain.Water;
+        else if (d <= 1.9 + rag) terrain[i2] = Terrain.Bank;
+        else continue;
+        meta[i2] = 0;
       }
     }
   }
@@ -181,6 +213,7 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
       else if (o === Overlay.Rock) why = "A rock is in the way — clear it first.";
       else if (o === Overlay.Debris) why = "Rubble must be cleared before anything is built here.";
       else if (o === Overlay.Wall || o === Overlay.Gate) why = "A wall stands here.";
+      else if (o === Overlay.Lair) why = "Something old stands here. Nothing is built on it.";
       if (why) {
         bad.push(i);
         reason ??= why;
@@ -209,6 +242,8 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
       reason = `Each army point needs ${ARMY_PER_POINT} troops and a knight to lead it: the town has ${troops} troops and ${captains} knight${captains === 1 ? "" : "s"}, enough for ${allowed}${have ? `, and has ${have}` : ""}.`;
     }
   }
+  // Last, so every other reason is given first: nobody builds blind.
+  if (!reason && !inSight(s, x, y, def.w, def.h)) reason = "Nobody can see there — push the fog back with a fire, a lamp or the hall's reach first.";
   return { ok: !reason, reason, bad };
 }
 
@@ -218,6 +253,8 @@ export function checkTile(s: GameState, i: number, kind: "pavement" | "wall" | "
   const o = s.map.overlay[i];
   if (occ[i]) return "A building stands here.";
   if (t === Terrain.Water || t === Terrain.Forest) return "Only on open ground.";
+  if (o === Overlay.Lair) return "Something old stands here.";
+  if (!inSight(s, i % MAP_W, Math.floor(i / MAP_W))) return "Nobody can see there — light it first.";
   if (o === Overlay.Tree || o === Overlay.Rock || o === Overlay.Debris) return "Clear this tile first.";
   if (kind === "pavement" && t === Terrain.Pavement) return "Already paved.";
   if (kind === "wall" && (o === Overlay.Wall || t === Terrain.Pavement)) return o === Overlay.Wall ? "Already walled." : "Put a gate across a road, not a wall.";
@@ -292,7 +329,16 @@ export const guardSlots = (level: number, type: StructureType = "watchtower") =>
  */
 export function alertRadius(st: Structure): number {
   if (st.type === "townhall") return 10;
-  return st.type === "armypoint" ? 10 + 2 * st.level : 8 + 2 * st.level;
+  return Math.floor((st.type === "armypoint" ? 10 : 8) + 2 * reachLevel(st.level));
+}
+
+/**
+ * The outer circle of a watchtower or army point: its guards come out for a
+ * monster in the inner circle whatever it is doing, and for one out here
+ * only when it attacks something — a building, or the wall.
+ */
+export function passiveRadius(st: Structure): number {
+  return st.type === "townhall" ? 10 : Math.round(alertRadius(st) * 1.8);
 }
 
 /** A farm's harvest reaches the granary only if it shares pavement with a market. */
@@ -335,8 +381,42 @@ export function irrigation(s: GameState, farm: Structure): number {
   return 0.25;
 }
 
+/** Past level 10 a level counts for half, so a level-30 building is great, not absurd. */
+export const reachLevel = (level: number) => Math.min(level, 10) + Math.max(0, level - 10) / 2;
+
 export function warmthRange(level: number) {
-  return 6 + level * 2;
+  return Math.floor(6 + reachLevel(level) * 2);
+}
+
+/** A building's full hit points: by level, and half again at each tenth. */
+export function structureMaxHp(st: { type: StructureType; level: number }): number {
+  return Math.round(CATALOG[st.type].hpPerLevel * st.level * (1 + 0.5 * grade(st.level)));
+}
+
+/** A home: a house (at any of its tiers) or an apartment. */
+export const isHome = (st: { type: StructureType }) => st.type === "house" || st.type === "apartment";
+
+// ── Walls ─────────────────────────────────────────────────
+
+/*
+ * A wall or gate tile keeps its level and its hit points together in the
+ * tile's meta: level × 10000 + hit points. Walls from before levels read as
+ * level 1.
+ */
+export const WALL_MAX_LEVEL = 30;
+export const wallLevel = (meta: number) => Math.max(1, Math.floor(meta / 10000));
+export const wallHp = (meta: number) => (meta >= 10000 ? meta % 10000 : meta);
+export const wallMaxHp = (level: number, gate = false) => (gate ? 80 : 60) + (gate ? 60 : 50) * (level - 1) + (gate ? 120 : 100) * grade(level);
+export const wallMeta = (level: number, hp: number) => level * 10000 + Math.max(0, Math.min(9999, Math.round(hp)));
+/** Stone and more to raise one tile of wall a level. */
+export function wallUpgradeCost(level: number): Cost {
+  const c: Cost = { stone: 4 + 2 * level };
+  if (level >= 5) c.bricks = Math.ceil(level / 3);
+  if (level >= 15) c.ingots = Math.ceil((level - 10) / 5);
+  if (level + 1 === 10) c.gold = 1;
+  if (level + 1 === 20) c.platinum = 1;
+  if (level + 1 === 30) c.diamond = 1;
+  return c;
 }
 
 // ── Warmth ────────────────────────────────────────────────
@@ -516,7 +596,7 @@ export function captainBonus(s: GameState, post: Structure | undefined): number 
 // ── Distance from the hall ────────────────────────────────
 
 /** How far the town hall's writ runs, in tiles from its centre. Homes and schools stand inside it. */
-export const hallRadius = (level: number) => 16 + 4 * level;
+export const hallRadius = (level: number) => Math.floor(16 + 4 * Math.min(level, 10) + 1.5 * Math.max(0, level - 10));
 
 /** Tiles from the town hall's centre to a building's. */
 export function hallDistance(s: GameState, st: { x: number; y: number; w: number; h: number }): number {

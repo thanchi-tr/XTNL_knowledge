@@ -1,17 +1,18 @@
 import {
   CATALOG, CROP_YIELD, DIG_HOURS, DISHES, FARM_LOSS, FILL_HOURS, FISH_CATCH, FISH_SEASON, FOOD_PACE, LAB_RECIPES, LADDERS, RECIPES, TRAIN_CAP, UTILITIES,
-  knightPay, promotionHours, roleLabel,
+  grade, knightPay, promotionHours, roleLabel,
 } from "./catalog";
 import { MONSTERS, expectedLevel, partyName, raidTable, rollRaid } from "./bestiary";
 import {
   byId, clock, countedTroops, isMilitary, log, makeVillager, residents, totalBeds, townPower, beds,
 } from "./state";
 import {
-  BULK, LIGHT_TYPES, RARE_FINDS, burnRate, computeLinks, exposure, hallDistance, mineRareRate, farmReachesMarket, fieldFrozen, fuelCap, growsInWinter, houseWarm, idx, inBounds, irrigation, ringOf, rng, occupancy, unlitBuildings, storageCap,
+  BULK, LIGHT_TYPES, RARE_FINDS, isHome, structureMaxHp, burnRate, computeLinks, exposure, hallDistance, mineRareRate, farmReachesMarket, fieldFrozen, fuelCap, growsInWinter, houseWarm, idx, inBounds, irrigation, ringOf, rng, occupancy, unlitBuildings, storageCap,
 } from "./world";
 import { TREE_EFFORT, TREE_WOOD, growWoods, treeStage, winterCull } from "./woods";
 import { ASCEND_FROM, domainBonus, finishCrafts, gearCap, isAway, isSpecial, returnFromSortie, xpToNext } from "./loot";
 import { summonHaunt } from "./combat";
+import { stepWilds, wildsHourly } from "./wilds";
 import {
   MAP_H, MILITARY, Overlay, RAW_FOODS, Terrain, type Caravan, type CaravanOffer, type GameState, type ResourceKey, type Structure, type Villager,
 } from "./types";
@@ -77,6 +78,8 @@ export function trainingPace(input: SimContext["input"]): Pace {
 export function advance(s: GameState, minutes: number, ctx: SimContext) {
   s.time += minutes;
   s.hourAcc += minutes;
+  // Bands in the fog and scouts with torches move on the minute.
+  stepWilds(s, minutes);
 
   // Lessons and drills wear down at the current pace.
   const pace = trainingPace(ctx.input).factor;
@@ -95,7 +98,7 @@ export function advance(s: GameState, minutes: number, ctx: SimContext) {
   for (const st of s.structures) {
     if (st.buildUntil && st.buildUntil <= s.time) {
       st.buildUntil = undefined;
-      st.hp = CATALOG[st.type].hpPerLevel * st.level;
+      st.hp = structureMaxHp(st);
       log(s, `${CATALOG[st.type].name} ${st.level > 1 ? `reaches level ${st.level}` : "is built"}.`, "good");
     }
   }
@@ -140,7 +143,7 @@ function hourly(s: GameState, ctx: SimContext) {
   }
   const coldHouses = new Set<number>();
   if (c.season === "winter") {
-    for (const h of s.structures.filter((st) => st.type === "house")) if (!houseWarm(s, h)) coldHouses.add(h.id);
+    for (const h of s.structures.filter(isHome)) if (!houseWarm(s, h)) coldHouses.add(h.id);
   }
 
   // ── Production ─────────────────────────────────────────
@@ -150,7 +153,8 @@ function hourly(s: GameState, ctx: SimContext) {
     return !!h?.breakUntil && h.breakUntil > s.time;
   };
   const working = (st: Structure) => workersOf(st).filter((v) => !onBreak(v) && v.health > 20);
-  const cond = (st: Structure) => 0.5 + st.condition / 200;
+  // Condition, and the tenth-level steps: a quarter more from each.
+  const cond = (st: Structure) => (0.5 + st.condition / 200) * (1 + 0.25 * grade(st.level));
   const biologists = s.villagers.filter((v) => v.role === "biologist" || (v.role === "farmhand" && v.rank >= 4)).length;
   const bioBonus = 1 + Math.min(0.3, biologists * 0.03);
   const seasonYield = { spring: 1, summer: 1.1, autumn: 1.2, winter: 0.3 }[c.season];
@@ -362,7 +366,7 @@ function hourly(s: GameState, ctx: SimContext) {
   const avgHappy = s.villagers.length ? s.villagers.reduce((a, v) => a + v.happy, 0) / s.villagers.length : 60;
   if (avgHappy > 60) dm += 0.4;
   else if (avgHappy < 35) dm -= 0.4;
-  if (coldHouses.size) dm -= 1.5 * (coldHouses.size / Math.max(1, s.structures.filter((st) => st.type === "house").length));
+  if (coldHouses.size) dm -= 1.5 * (coldHouses.size / Math.max(1, s.structures.filter(isHome).length));
   if (noIce) dm -= 0.5;
   if (s.festivalUntil > s.time) dm += 3;
   const stars = s.villagers.filter((v) => v.role === "chef" && v.rank >= 3).reduce((a, v) => a + (v.rank - 2), 0);
@@ -385,7 +389,7 @@ function hourly(s: GameState, ctx: SimContext) {
       }
     } else st.condition = Math.min(100, st.condition + 0.5);
     // repairs after a raid
-    const maxHp = CATALOG[st.type].hpPerLevel * st.level;
+    const maxHp = structureMaxHp(st);
     if (!st.buildUntil) st.hp = Math.min(maxHp, st.hp + maxHp * 0.08);
   }
 
@@ -424,7 +428,7 @@ function hourly(s: GameState, ctx: SimContext) {
   // sacked town, whose grief holds mood down, could never be repopulated.
   const welcoming = (s.mood > 40 && s.hunger > 40) || s.villagers.length < 4;
   if (free > 0 && welcoming && s.time - s.lastVillagerAt >= 180) {
-    const house = [...s.structures.filter((h) => h.type === "house"), ...s.structures.filter((h) => h.type === "townhall")]
+    const house = [...s.structures.filter(isHome), ...s.structures.filter((h) => h.type === "townhall")]
       .find((h) => !h.buildUntil && residents(s, h).length < beds(s, h));
     if (house) {
       const v = makeVillager(s, house.id);
@@ -434,7 +438,7 @@ function hourly(s: GameState, ctx: SimContext) {
   }
   // Rehouse the homeless.
   for (const v of s.villagers.filter((x) => !byId(s, x.house))) {
-    const house = [...s.structures.filter((h) => h.type === "house"), ...s.structures.filter((h) => h.type === "townhall")]
+    const house = [...s.structures.filter(isHome), ...s.structures.filter((h) => h.type === "townhall")]
       .find((h) => !h.buildUntil && residents(s, h).length < beds(s, h));
     if (house) v.house = house.id;
   }
@@ -550,7 +554,7 @@ function hourly(s: GameState, ctx: SimContext) {
   // Three nights' grace, like the raids. A warning at dusk; at nine, one
   // dark thing for every building no light reaches.
   const nightOf = c.hour < 12 ? c.day - 1 : c.day;
-  if (s.time >= 2.5 * 24 * 60) {
+  if (s.time >= 1.5 * 24 * 60) {
     const dark = c.hour === 19 || c.hour >= 21 || c.hour < 3 ? unlitBuildings(s).length : 0;
     if (c.hour === 19 && dark && s.hauntDay !== nightOf) log(s, `Dusk. ${dark} building${dark === 1 ? " stands" : "s stand"} beyond any light — something will come for ${dark === 1 ? "it" : "them"} at nine.`, "bad");
     if ((c.hour >= 21 || c.hour < 3) && s.hauntDay !== nightOf && !s.raid) {
@@ -558,6 +562,9 @@ function hourly(s: GameState, ctx: SimContext) {
       if (dark) summonHaunt(s);
     }
   }
+
+  // ── The wilds: lairs breed, bands roam, and strike ─────
+  wildsHourly(s, r);
 
   // ── Raids ──────────────────────────────────────────────
   // Every few hours the wilds take notice — more likely the more people the
@@ -596,6 +603,7 @@ const CARAVAN_GOODS: { get: CaravanOffer["get"]; give: Partial<Record<ResourceKe
   { get: { res: "tools", qty: 12 }, give: { ingots: 5 }, left: 2, weight: 3 },
   { get: { res: "iron", qty: 25 }, give: { wood: 70 }, left: 2, weight: 3 },
   { get: { res: "coal", qty: 30 }, give: { wood: 45 }, left: 3, weight: 3 },
+  { get: { res: "torches", qty: 10 }, give: { wood: 30, meals: 10 }, left: 3, weight: 5 },
   { get: { item: "sword1", qty: 1 }, give: { ingots: 6, silver: 2 }, left: 1, weight: 2 },
   { get: { item: "bow1", qty: 1 }, give: { planks: 10, silver: 2 }, left: 1, weight: 2 },
   { get: { item: "halberd1", qty: 1 }, give: { ingots: 7, silver: 2 }, left: 1, weight: 2 },
@@ -670,11 +678,11 @@ export function raidForecast(s: GameState): {
 export const EARTH_PER_TILE = 1.5;
 
 /** Hours between the wilds' chances to send a raid. */
-export const RAID_PERIOD = 8;
+export const RAID_PERIOD = 6;
 
 /** The chance, each period, that a town of this many draws a raid. */
 export function raidChance(people: number): number {
-  return Math.min(0.95, 0.2 + people * 0.015);
+  return Math.min(0.95, 0.3 + people * 0.02);
 }
 
 function ringsTouch(o: Structure, ring: Set<number>) {

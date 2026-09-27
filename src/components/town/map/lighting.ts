@@ -84,6 +84,8 @@ export function applyEnvironmentLighting(
   grades: Grade[],
   light?: Uint8Array,
   protect: Set<number> = EMISSIVE,
+  /** Colour kept after the grade: 1 as is, less for a muted world. */
+  sat = 1,
 ) {
   const img = ctx.getImageData(0, 0, width, height);
   const u32 = new Uint32Array(img.data.buffer);
@@ -104,7 +106,17 @@ export function applyEnvironmentLighting(
       if (protect.has((r << 16) | (g << 8) | b)) out = v;
       else {
         const gr = grades[level];
-        out = (v & 0xff000000) | (clamp(b * gr.mul[2] + gr.add[2]) << 16) | (clamp(g * gr.mul[1] + gr.add[1]) << 8) | clamp(r * gr.mul[0] + gr.add[0]);
+        let R = r * gr.mul[0] + gr.add[0];
+        let G = g * gr.mul[1] + gr.add[1];
+        let B = b * gr.mul[2] + gr.add[2];
+        if (sat !== 1) {
+          // toward the colour's own lightness, never toward grey paint laid over it
+          const l = 0.299 * R + 0.587 * G + 0.114 * B;
+          R = l + (R - l) * sat;
+          G = l + (G - l) * sat;
+          B = l + (B - l) * sat;
+        }
+        out = (v & 0xff000000) | (clamp(B) << 16) | (clamp(G) << 8) | clamp(R);
         out >>>= 0;
       }
       m.set(v, out);

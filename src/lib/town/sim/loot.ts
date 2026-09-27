@@ -45,6 +45,10 @@ export const DROPS: Record<MonsterKind, PartKey[]> = {
   elderdragon: ["scale", "core"], harpy: ["hide"], ogre: ["hide", "bone"], mimic: ["core", "ichor"],
   treant: ["ichor", "core"], salamander: ["scale", "hide"], frostgiant: ["bone", "core"], banshee: ["ectoplasm"],
   basilisk: ["scale", "fang"],
+  ghoul: ["bone", "hide"], gargoyle: ["core"], cyclops: ["bone", "hide"], vampire: ["fang", "ectoplasm"], hydra: ["scale", "fang"],
+  griffin: ["hide", "fang"], wisp: ["ectoplasm"], wendigo: ["bone", "hide"], oni: ["bone", "core"], kappa: ["scale", "ichor"],
+  tengu: ["hide"], jiangshi: ["bone", "ectoplasm"], kitsune: ["hide", "ectoplasm"], yurei: ["ectoplasm"], gashadokuro: ["bone", "core"],
+  jorogumo: ["ichor", "fang"], nian: ["hide", "core"],
 };
 
 /** What one fallen monster leaves. */
@@ -246,7 +250,8 @@ export function unequip(s: GameState, villagerId: number, slot: GearSlot): Resul
 
 // ── Heroes ────────────────────────────────────────────────
 
-export const isAway = (s: GameState, v: Villager) => !!v.deployedUntil && v.deployedUntil > s.time;
+/** Away from town: on an emblem knight's sortie, or out scouting the fog. */
+export const isAway = (s: GameState, v: Villager) => (!!v.deployedUntil && v.deployedUntil > s.time) || !!v.scout;
 
 /** Real Domain levels steady every special troop's training: up to +25% on each roll. */
 export const domainBonus = (ctx: SimContext) => Math.min(0.25, (ctx.input.domainPeak ?? 0) * 0.02 + (ctx.input.domainSum ?? 0) * 0.002);

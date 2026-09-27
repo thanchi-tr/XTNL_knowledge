@@ -1252,10 +1252,329 @@ function elderDragon(): string[] {
   return drake(1.3, true);
 }
 
+
+// ── From the west ─────────────────────────────────────────
+
+function ghoul(): string[] {
+  const g = new Grid(22, 22);
+  g.ellipse(11, 12, 6, 5, "s"); // hunched back
+  g.ellipse(15, 8, 3.2, 3, "s"); // head thrust forward
+  g.set(16, 7.5, "y");
+  g.set(17.5, 7.5, "y");
+  g.line(15, 10, 18, 10, "k");
+  g.path([[15, 13], [18, 17], [19, 21]], "s", 1.6, 1.2); // arms to the ground
+  g.path([[8, 13], [6, 17], [5, 21]], "s", 1.6, 1.2);
+  g.path([[10, 16], [9, 21]], "s", 2, 1.6);
+  g.path([[13, 16], [14, 21]], "s", 2, 1.6);
+  g.ellipse(11, 16, 4, 1.6, "r"); // rags
+  for (const x of [18, 19, 20, 4, 5]) g.set(x, 21, "c");
+  return g.rows();
+}
+
+function gargoyle(): string[] {
+  const g = new Grid(28, 24);
+  g.poly([[12, 9], [2, 3], [1, 9], [5, 13], [10, 13]], "w");
+  g.poly([[16, 9], [26, 3], [27, 9], [23, 13], [18, 13]], "w");
+  g.ellipse(14, 14, 5, 5, "s"); // crouched body
+  g.ellipse(14, 7.5, 3.4, 3, "s");
+  g.poly([[11.5, 5.5], [10, 2], [12.5, 4.6]], "h"); // horns
+  g.poly([[16.5, 5.5], [18, 2], [15.5, 4.6]], "h");
+  g.set(13, 7.5, "y");
+  g.set(15, 7.5, "y");
+  g.path([[11, 18], [10, 22]], "s", 2.4, 2);
+  g.path([[17, 18], [18, 22]], "s", 2.4, 2);
+  g.path([[10, 15], [8, 19]], "s", 1.6, 1.2);
+  g.path([[18, 15], [20, 19]], "s", 1.6, 1.2);
+  for (const x of [9, 10, 11, 17, 18, 19]) g.set(x, 23, "k");
+  return g.rows();
+}
+
+function cyclops(): string[] {
+  const g = new Grid(30, 34);
+  g.ellipse(14, 7, 5, 5, "s");
+  g.ellipse(14, 6.5, 2.2, 1.8, "e"); // the one eye
+  g.set(14, 6.5, "y");
+  g.line(12, 10, 16, 10, "k");
+  g.ellipse(14, 19, 9, 8, "s");
+  g.ellipse(14, 21, 6, 5, "S");
+  g.path([[5, 14], [3, 21], [4, 25]], "s", 4, 3.4);
+  g.path([[23, 14], [26, 19], [27, 21]], "s", 4, 3.4);
+  g.ellipse(14, 26.5, 7, 2.2, "l");
+  g.path([[10, 27], [9.5, 33]], "s", 4, 4);
+  g.path([[18, 27], [18.5, 33]], "s", 4, 4);
+  g.path([[27, 21], [28.5, 8]], "w", 2.4, 4); // the club
+  return g.rows();
+}
+
+function vampire(): string[] {
+  const g = new Grid(20, 26);
+  g.poly([[4, 9], [16, 9], [19, 25], [10, 23], [1, 25]], "c"); // cloak
+  g.poly([[5, 9], [3, 3], [8, 7]], "r"); // high collar
+  g.poly([[15, 9], [17, 3], [12, 7]], "r");
+  g.ellipse(10, 6, 3, 3.4, "f");
+  g.ellipse(10, 3.2, 3.2, 1.6, "h");
+  g.set(9, 6, "y");
+  g.set(11, 6, "y");
+  g.set(9.5, 8.4, "t");
+  g.set(10.5, 8.4, "t");
+  g.poly([[7, 10], [13, 10], [12, 18], [8, 18]], "v");
+  g.path([[6, 12], [3, 17]], "f", 1.2);
+  g.path([[14, 12], [17, 16]], "f", 1.2);
+  return g.rows();
+}
+
+function hydra(): string[] {
+  const g = new Grid(40, 32);
+  g.ellipse(18, 25, 12, 6, "s");
+  g.ellipse(18, 27, 8, 3, "b");
+  g.path([[6, 26], [2, 29], [1, 31]], "s", 3, 1);
+  const heads = [[6, 6], [12, 2], [20, 1], [28, 3], [34, 8]];
+  const bases = [[12, 21], [15, 20], [18, 20], [21, 20], [24, 21]];
+  heads.forEach(([hx, hy], i) => {
+    const [bx, by] = bases[i];
+    g.path([[bx, by], [(bx + hx) / 2 + (i - 2) * 1.5, (by + hy) / 2 + 2], [hx, hy + 2]], "s", 2.8, 2);
+    g.ellipse(hx, hy + 1.5, 2.6, 1.8, "h");
+    g.set(hx + 1, hy + 1, "y");
+    g.set(hx + 2.5, hy + 2, "t");
+  });
+  g.path([[12, 29], [11, 31]], "s", 2.6);
+  g.path([[24, 29], [25, 31]], "s", 2.6);
+  return g.rows();
+}
+
+function griffin(): string[] {
+  const g = new Grid(34, 26);
+  g.poly([[14, 12], [3, 1], [1, 7], [6, 12], [10, 14]], "w"); // wing raised
+  g.ellipse(16, 16, 9, 5, "l"); // lion's body
+  g.path([[7, 16], [3, 13], [2, 10]], "l", 1.6, 1.2);
+  g.set(2, 9.5, "n");
+  g.ellipse(25, 11, 4, 4, "f"); // feathered breast
+  g.ellipse(27, 8, 3, 3, "f");
+  g.poly([[29, 7.5], [33, 9], [29.5, 10]], "b"); // beak
+  g.set(27.5, 7.4, "y");
+  g.path([[11, 20], [10, 25]], "l", 2, 1.6);
+  g.path([[14, 20], [15, 25]], "l", 2, 1.6);
+  g.path([[22, 18], [23, 25]], "b", 1.6, 1.2); // talons
+  g.path([[25, 17], [27, 25]], "b", 1.6, 1.2);
+  return g.rows();
+}
+
+/** A marsh light: a pale flame with a burning core, trailing a wisp. */
+function wisp(): string[] {
+  const g = new Grid(12, 15);
+  g.ellipse(6, 8, 3.6, 3.6, "o");
+  g.poly([[3, 7], [6, 0.5], [9, 7]], "o");
+  g.ellipse(6, 8.5, 1.6, 1.6, "O");
+  g.set(6, 8.5, "c");
+  g.path([[5, 11], [4, 14]], "o", 1.2, 0.6);
+  return g.rows();
+}
+
+function wendigo(): string[] {
+  const g = new Grid(22, 34);
+  g.path([[8, 6], [5, 2], [3, 0.5]], "a", 1.2); // antlers
+  g.path([[5, 3], [2, 4]], "a", 1);
+  g.path([[14, 6], [17, 2], [19, 0.5]], "a", 1.2);
+  g.path([[17, 3], [20, 4]], "a", 1);
+  g.ellipse(11, 8, 3.4, 3.6, "b"); // a deer's skull for a face
+  g.set(10, 8, "y");
+  g.set(12, 8, "y");
+  g.poly([[9.5, 10], [12.5, 10], [11, 13]], "b");
+  g.ellipse(11, 18, 3.4, 6, "f"); // starved torso
+  for (const y of [15, 17, 19]) g.line(8.5, y, 13.5, y, "r", 1);
+  g.path([[8, 14], [5, 22], [5, 27]], "f", 1.2, 1); // long arms
+  g.path([[14, 14], [17, 22], [17, 27]], "f", 1.2, 1);
+  for (const x of [4, 5, 6, 16, 17, 18]) g.set(x, 28, "c");
+  g.path([[10, 23], [9, 33]], "f", 1.6, 1.2);
+  g.path([[12, 23], [13, 33]], "f", 1.6, 1.2);
+  return g.rows();
+}
+
+// ── From the east ─────────────────────────────────────────
+
+function oni(): string[] {
+  const g = new Grid(28, 32);
+  g.ellipse(13, 7, 4.6, 4.6, "s");
+  g.poly([[10, 4], [9, 0], [11.5, 3]], "h"); // horns
+  g.poly([[16, 4], [17, 0], [14.5, 3]], "h");
+  g.ellipse(13, 3.4, 3.6, 1.4, "w"); // wild hair
+  g.set(11.5, 7, "y");
+  g.set(14.5, 7, "y");
+  g.line(11, 9.8, 15, 9.8, "k");
+  g.set(11, 10.8, "t");
+  g.set(15, 10.8, "t");
+  g.ellipse(13, 18, 8, 7, "s");
+  g.ellipse(13, 24, 6.5, 2.6, "l"); // tiger-skin loincloth
+  for (const x of [9, 12, 15]) g.line(x, 23, x + 1, 25.5, "k");
+  g.path([[5, 14], [3, 21]], "s", 3.6, 3);
+  g.path([[21, 14], [24, 19]], "s", 3.6, 3);
+  g.path([[9, 26], [8.5, 31]], "s", 3.4, 3.4);
+  g.path([[17, 26], [17.5, 31]], "s", 3.4, 3.4);
+  g.path([[24, 20], [26, 4]], "m", 2.2, 3.6); // the kanabo
+  for (const y of [6, 9, 12]) {
+    g.set(24.6, y, "M");
+    g.set(27.4, y + 1, "M");
+  }
+  return g.rows();
+}
+
+function kappa(): string[] {
+  const g = new Grid(18, 20);
+  g.ellipse(9, 12, 5.2, 5, "c"); // shell
+  g.ellipse(9, 12.5, 3.4, 3.6, "s");
+  g.ellipse(9, 5, 3.6, 3.4, "s");
+  g.ellipse(9, 2.4, 2.4, 1, "w"); // the water dish on its crown
+  g.set(8, 5, "y");
+  g.set(10, 5, "y");
+  g.poly([[8, 6.6], [10, 6.6], [9, 8.2]], "b"); // beak
+  g.path([[5, 11], [2, 14]], "s", 1.4);
+  g.path([[13, 11], [16, 14]], "s", 1.4);
+  g.path([[7, 16], [6, 19]], "s", 1.6);
+  g.path([[11, 16], [12, 19]], "s", 1.6);
+  return g.rows();
+}
+
+function tengu(): string[] {
+  const g = new Grid(28, 26);
+  g.poly([[12, 10], [2, 3], [1, 11], [7, 15]], "w");
+  g.poly([[16, 10], [26, 3], [27, 11], [21, 15]], "w");
+  g.poly([[9, 11], [19, 11], [21, 24], [7, 24]], "r"); // robe
+  g.line(9, 16, 19, 16, "b", 1);
+  g.ellipse(14, 6.5, 3.2, 3.4, "f"); // red face
+  g.path([[15, 6.5], [19, 7.5]], "f", 1.4, 0.8); // the long nose
+  g.ellipse(14, 3, 2.6, 1.2, "h"); // tokin cap
+  g.ellipse(14, 2, 1, 1, "h");
+  g.set(13, 6, "y");
+  g.set(15, 6, "y");
+  g.line(20, 18, 26, 12, "m", 1); // sword
+  return g.rows();
+}
+
+function jiangshi(): string[] {
+  const g = new Grid(18, 26);
+  g.poly([[4, 9], [13, 9], [14, 24], [3, 24]], "r"); // court robe
+  g.line(3, 16, 14, 16, "g", 1);
+  g.line(3, 22, 14, 22, "g", 1);
+  g.ellipse(8.5, 5.5, 3, 3.4, "f");
+  g.poly([[5, 3], [12, 3], [11.5, 0.5], [5.5, 0.5]], "h"); // official's hat
+  g.line(8.5, 3.5, 8.5, 8, "p", 1.2); // paper talisman
+  g.set(8.5, 5, "q");
+  g.set(7, 5.5, "y");
+  g.set(10, 5.5, "y");
+  g.path([[12, 10.5], [17, 10.5]], "r", 1.8); // arms held straight out
+  g.path([[12, 12.5], [17, 12.5]], "r", 1.8);
+  g.set(17.2, 10.5, "f");
+  g.set(17.2, 12.5, "f");
+  g.path([[6, 24], [6, 25.5]], "b", 1.6);
+  g.path([[11, 24], [11, 25.5]], "b", 1.6);
+  return g.rows();
+}
+
+function kitsune(): string[] {
+  const g = new Grid(38, 30);
+  // nine full tails fanned from straight up round to straight back, each tipped white
+  for (let i = 0; i < 9; i++) {
+    const a = Math.PI * (0.45 + i * 0.07);
+    const ex = 12 + Math.cos(a) * 12;
+    const ey = 19 - Math.sin(a) * 15;
+    g.path([[12, 19], [12 + Math.cos(a) * 7, 19 - Math.sin(a) * 9], [ex, ey]], i % 2 ? "t" : "T", 3.4, 2.2);
+    g.ellipse(ex, ey, 1.4, 1.4, "w");
+  }
+  g.ellipse(20, 20, 8, 4.4, "f");
+  g.ellipse(20, 22, 5, 2, "w");
+  g.ellipse(28, 15, 3.6, 3.2, "f");
+  g.poly([[26, 13], [26.5, 9], [28.5, 12]], "f"); // ears
+  g.poly([[29, 12.5], [30.5, 9], [31, 13.5]], "f");
+  g.poly([[30.5, 15], [35, 16.6], [30.5, 17.6]], "f"); // snout
+  g.set(29.5, 14.5, "y");
+  g.path([[15, 23], [14, 28]], "f", 1.6, 1.2);
+  g.path([[18, 23], [18.5, 28]], "f", 1.6, 1.2);
+  g.path([[23, 23], [23.5, 28]], "f", 1.6, 1.2);
+  g.path([[26, 22], [27, 28]], "f", 1.6, 1.2);
+  g.set(35, 7, "o"); // foxfire
+  g.set(33, 4, "o");
+  return g.rows();
+}
+
+function yurei(): string[] {
+  const g = new Grid(18, 28);
+  g.poly([[5, 9], [13, 9], [15, 20], [12, 27], [9, 22], [6, 26], [3, 20]], "r"); // burial robe, trailing where feet should be
+  g.path([[6, 3], [4, 12], [4, 17]], "h", 2.6, 1.4); // long black hair
+  g.path([[12, 3], [14, 12], [14, 17]], "h", 2.6, 1.4);
+  g.ellipse(9, 4.5, 3.6, 3.6, "h");
+  g.ellipse(9, 6.5, 2.4, 3, "f");
+  g.poly([[7.5, 2.6], [10.5, 2.6], [9, 1]], "r"); // the triangle headband
+  g.set(8, 6.5, "k");
+  g.set(10, 6.5, "k");
+  g.path([[6, 11], [3, 13], [3, 14.5]], "f", 1.2, 0.8); // limp hands
+  g.path([[12, 11], [15, 13], [15, 14.5]], "f", 1.2, 0.8);
+  return g.rows();
+}
+
+function gashadokuro(): string[] {
+  const g = new Grid(42, 38);
+  g.ellipse(21, 10, 8, 7.4, "b"); // the skull
+  g.poly([[15, 14], [27, 14], [26, 19], [16, 19]], "b");
+  g.ellipse(18, 10, 2.2, 2.4, "k");
+  g.ellipse(24, 10, 2.2, 2.4, "k");
+  g.set(18, 10, "y");
+  g.set(24, 10, "y");
+  g.ellipse(21, 13.5, 1, 1.2, "k");
+  for (let x = 17; x <= 25; x += 2) g.set(x, 17, "k");
+  g.line(21, 19, 21, 33, "b", 2.6); // spine
+  for (const [y, w] of [[22, 7], [25, 7.5], [28, 7], [31, 6]]) g.line(21 - w, y, 21 + w, y, "b", 1.4);
+  g.path([[13, 21], [6, 27], [3, 35]], "b", 2.4, 1.8); // arms reaching down
+  g.path([[29, 21], [36, 27], [39, 35]], "b", 2.4, 1.8);
+  for (const x of [1, 3, 5, 37, 39, 41]) g.set(x, 36, "b");
+  g.poly([[8, 34], [34, 34], [36, 38], [6, 38]], "d"); // the ground it rises out of
+  return g.rows();
+}
+
+function jorogumo(): string[] {
+  const g = new Grid(32, 26);
+  for (let i = 0; i < 4; i++) {
+    const x = 9 + i * 4;
+    g.path([[x, 18], [x - 4 - i, 12], [x - 7 - i, 25]], "l", 1.4, 1);
+    g.path([[x + 2, 18], [x + 6 + i, 12], [x + 9 + i, 25]], "l", 1.4, 1);
+  }
+  g.ellipse(16, 18, 7, 4.4, "a"); // the spider
+  g.ellipse(16, 17, 3, 1.4, "m");
+  g.ellipse(16, 11, 3, 4, "r"); // the woman: a kimono
+  g.ellipse(16, 5, 2.6, 3, "f");
+  g.ellipse(16, 2.6, 3.2, 1.8, "h");
+  g.path([[13.5, 3], [13, 8]], "h", 1.4);
+  g.path([[18.5, 3], [19, 8]], "h", 1.4);
+  g.set(15, 5, "y");
+  g.set(17, 5, "y");
+  return g.rows();
+}
+
+function nian(): string[] {
+  const g = new Grid(35, 26);
+  g.ellipse(15, 15, 10, 5.6, "s");
+  g.path([[5, 14], [2, 10], [3, 7]], "s", 2, 1.4);
+  g.ellipse(3, 6.5, 1.6, 1.6, "m");
+  g.ellipse(25, 11, 6, 6, "m"); // mane
+  g.ellipse(27, 11, 4, 3.6, "s");
+  g.poly([[27, 6], [28.5, 0.5], [29.5, 6]], "h"); // the single horn
+  g.poly([[30, 11], [34, 12.5], [30.5, 14.5]], "s");
+  g.set(28.5, 10, "y");
+  g.set(31.5, 14, "t");
+  g.path([[9, 19], [8, 25]], "s", 2.4, 2);
+  g.path([[13, 20], [13.5, 25]], "s", 2.4, 2);
+  g.path([[19, 20], [19.5, 25]], "s", 2.4, 2);
+  g.path([[23, 19], [24.5, 25]], "s", 2.4, 2);
+  for (const x of [8, 13.5, 19.5, 24.5]) g.set(x, 25, "k");
+  for (let x = 8; x <= 21; x += 3) g.set(x, 10.5, "g");
+  return g.rows();
+}
+
 export type MonsterArt =
   | "slime" | "bat" | "goblin" | "skeleton" | "wolf" | "spider" | "werewolf" | "wraith"
   | "minotaur" | "troll" | "lich" | "golem" | "wyvern" | "serpent" | "demon" | "dragon"
-  | "elderdragon" | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk";
+  | "elderdragon" | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk"
+  | "ghoul" | "gargoyle" | "cyclops" | "vampire" | "hydra" | "griffin" | "wisp" | "wendigo"
+  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian";
 
 const MONSTER_DEFS: Record<MonsterArt, () => { rows: string[]; mats: Materials }> = {
   slime: () => ({ rows: slime(), mats: { g: M.SLIME, c: M.WATER, k: [CAVITY], w: M.BONE, b: M.BONE } }),
@@ -1283,6 +1602,23 @@ const MONSTER_DEFS: Record<MonsterArt, () => { rows: string[]; mats: Materials }
   frostgiant: () => ({ rows: frostGiant(), mats: { s: M.CLOTHBLU, h: M.ICE, y: E.CYAN, c: M.ICE, a: M.FURGREY } }),
   banshee: () => ({ rows: banshee(), mats: { r: M.SLATE, h: M.LINEN, f: M.BONE, k: [CAVITY] } }),
   basilisk: () => ({ rows: basilisk(), mats: { s: M.SCALEGRN, y: E.AMBER, h: M.BONE, b: M.SAND } }),
+  ghoul: () => ({ rows: ghoul(), mats: { s: M.TROLL, y: E.BILE, k: [CAVITY], r: M.WOOL, c: M.BONE } }),
+  gargoyle: () => ({ rows: gargoyle(), mats: { w: M.SLATE, s: M.STONE, h: M.BONE, y: E.AMBER, k: [CAVITY] } }),
+  cyclops: () => ({ rows: cyclops(), mats: { s: M.SKIN, e: M.BONE, y: E.BLOOD, k: [CAVITY], l: M.FUR, w: M.OAK } }),
+  vampire: () => ({ rows: vampire(), mats: { c: M.CHITIN, r: M.CLOTHRED, f: M.BONE, h: M.IRON, y: E.BLOOD, t: M.LINEN, v: M.CLOTHRED } }),
+  hydra: () => ({ rows: hydra(), mats: { s: M.SCALEGRN, b: M.SAND, h: M.MOSS, y: E.AMBER, t: M.BONE } }),
+  griffin: () => ({ rows: griffin(), mats: { w: M.FUR, l: M.SAND, n: M.FUR, f: M.LINEN, b: M.BRASS, y: E.AMBER } }),
+  wisp: () => ({ rows: wisp(), mats: { o: M.ICE, c: E.CYAN } }),
+  wendigo: () => ({ rows: wendigo(), mats: { a: M.BONE, b: M.BONE, y: E.CYAN, f: M.FURGREY, r: M.CHITIN, c: [CAVITY] } }),
+  oni: () => ({ rows: oni(), mats: { s: M.SCALERED, h: M.BONE, w: M.CHITIN, y: E.AMBER, k: [CAVITY], t: M.BONE, l: M.OCHRE, m: M.IRON } }),
+  kappa: () => ({ rows: kappa(), mats: { c: M.OAK, s: M.SCALEGRN, w: M.WATER, y: E.AMBER, b: M.OCHRE } }),
+  tengu: () => ({ rows: tengu(), mats: { w: M.CHITIN, r: M.LINEN, b: M.CLOTHBLU, f: M.SCALERED, h: M.IRON, y: E.AMBER, m: M.STEEL } }),
+  jiangshi: () => ({ rows: jiangshi(), mats: { r: M.CLOTHBLU, g: M.BRASS, f: M.TROLL, h: M.CHITIN, p: M.OCHRE, q: M.CLOTHRED, y: E.BILE, b: M.CHITIN } }),
+  kitsune: () => ({ rows: kitsune(), mats: { t: M.OCHRE, f: M.OCHRE, w: M.LINEN, y: E.VOID, o: E.CYAN } }),
+  yurei: () => ({ rows: yurei(), mats: { r: M.LINEN, h: M.CHITIN, f: M.BONE, k: [CAVITY] } }),
+  gashadokuro: () => ({ rows: gashadokuro(), mats: { b: M.BONE, k: [CAVITY], y: E.BLOOD, d: M.DIRT } }),
+  jorogumo: () => ({ rows: jorogumo(), mats: { l: M.CHITIN, a: M.ARCANE, m: M.OCHRE, r: M.CLOTHRED, f: M.BONE, h: M.IRON, y: E.BLOOD } }),
+  nian: () => ({ rows: nian(), mats: { s: M.SCALERED, m: M.OCHRE, h: M.BONE, y: E.AMBER, t: M.BONE, k: [CAVITY], g: M.BRASS } }),
 };
 
 /**

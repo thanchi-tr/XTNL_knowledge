@@ -1,13 +1,14 @@
 import {
-  CATALOG, COURSES, KNIGHT_RECRUIT, RECRUIT_RANK, upgradePeople, GATE_COST, PAVEMENT_COST, TRAIN_SLOW, UTILITIES, WALL_COST, bedUpgradeCost, maxBedUpgrades, utilitySlots,
+  CATALOG, COMBINE_COST, COMBINE_FROM, COURSES, KNIGHT_RECRUIT, RECRUIT_RANK, jewelCost, levelHours, upgradePeople, GATE_COST, PAVEMENT_COST, TRAIN_SLOW, UTILITIES, WALL_COST, bedUpgradeCost, maxBedUpgrades, utilitySlots,
   type Cost,
 } from "./catalog";
 import { assign, beds, byId, log, makeStructure, residents, unassign } from "./state";
 import { buildMinutes, type SimContext } from "./tick";
 import {
-  canAfford, checkPlacement, checkTile, computeLinks, costText, fuelCap, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES,
+  WALL_MAX_LEVEL, isHome, canAfford, checkPlacement, checkTile, computeLinks, costText, fuelCap, wallLevel, wallMaxHp, wallMeta, wallUpgradeCost, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES,
 } from "./world";
-import { forgeOf, store, take } from "./loot";
+import { forgeOf, stock, store, take } from "./loot";
+import { inSight } from "./vision";
 import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage } from "./woods";
 import { MILITARY, Overlay, Terrain, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
 
@@ -52,16 +53,45 @@ export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: n
     if (kind === "pavement") s.map.terrain[i] = Terrain.Pavement;
     else if (kind === "wall") {
       s.map.overlay[i] = Overlay.Wall;
-      s.map.meta[i] = 60;
+      s.map.meta[i] = wallMeta(1, wallMaxHp(1));
     } else {
       // A gate is paved underneath, so roads run through it.
       s.map.terrain[i] = Terrain.Pavement;
       s.map.overlay[i] = Overlay.Gate;
-      s.map.meta[i] = 80;
+      s.map.meta[i] = wallMeta(1, wallMaxHp(1, true));
     }
     laid++;
   }
   return laid ? null : why;
+}
+
+/**
+ * Raises every wall and gate tile given by a level, as far as the stores
+ * go: each takes more hits, and every tenth level it is rebuilt grander.
+ */
+export function upgradeWalls(s: GameState, tiles: number[]): Result {
+  let n = 0;
+  let why: string | null = null;
+  for (const i of tiles) {
+    const o = s.map.overlay[i];
+    if (o !== Overlay.Wall && o !== Overlay.Gate) continue;
+    const lvl = wallLevel(s.map.meta[i]);
+    if (lvl >= WALL_MAX_LEVEL) {
+      why ??= "At its highest level.";
+      continue;
+    }
+    const cost = wallUpgradeCost(lvl);
+    if (!canAfford(s.res, cost)) {
+      why = `Out of materials — the next level of that wall takes ${costText(cost)} a tile.`;
+      break;
+    }
+    pay(s.res, cost);
+    s.map.meta[i] = wallMeta(lvl + 1, wallMaxHp(lvl + 1, o === Overlay.Gate));
+    n++;
+  }
+  if (!n) return why ?? "Drag over wall or gate to raise it.";
+  log(s, `${n} tile${n === 1 ? "" : "s"} of wall raised a level.`, "info");
+  return null;
 }
 
 /** Removes pavement or a wall piece — the only undo painting has. */
@@ -81,6 +111,7 @@ export function clear(s: GameState, tiles: number[]): Result {
   for (const i of tiles) {
     const o = s.map.overlay[i];
     if (o !== Overlay.Tree && o !== Overlay.Rock && o !== Overlay.Debris) continue;
+    if (!inSight(s, i % s.map.w, Math.floor(i / s.map.w))) continue;
     if (!s.clearing.some((j) => j.tile === i)) {
       s.clearing.push({ tile: i, progress: 0 });
       n++;
@@ -157,6 +188,10 @@ export function markEarthworks(s: GameState, kind: "dig" | "fill", tiles: number
     for (const i of order) {
       if (queued.has(i)) continue;
       const t = s.map.terrain[i];
+      if (!inSight(s, i % s.map.w, Math.floor(i / s.map.w))) {
+        why ??= "Nobody can see there — light it first.";
+        continue;
+      }
       if (kind === "dig") {
         if (t === Terrain.Water) continue;
         if (occ[i] || s.map.overlay[i] !== Overlay.None || t === Terrain.Forest) {
@@ -261,9 +296,13 @@ export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
   if (s.villagers.length < people) return `Level ${st.level + 1} needs a town of ${people} people (you have ${s.villagers.length}).`;
   const cost = def.upgrade(st.level);
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
+  // The highest levels are set with monster jewels from the forge's store.
+  const jewels = jewelCost(st.level + 1);
+  if (jewels && stock(s, "jewel") < jewels) return `Level ${st.level + 1} is set with ${jewels} monster jewel${jewels === 1 ? "" : "s"} — the forge's store has ${stock(s, "jewel")}.`;
   pay(s.res, cost);
+  if (jewels) take(s, "jewel", jewels);
   st.level += 1;
-  st.buildUntil = s.time + buildMinutes(s, ctx, def.buildHours * Math.pow(st.level, 1.3));
+  st.buildUntil = s.time + buildMinutes(s, ctx, def.buildHours * levelHours(st.level));
   log(s, `Upgrading the ${def.name.toLowerCase()} to level ${st.level}.`);
   return null;
 }
@@ -331,7 +370,7 @@ export function fire(s: GameState, villagerId: number): Result {
 
 export function buyBed(s: GameState, id: number): Result {
   const st = byId(s, id);
-  if (!st || st.type !== "house") return "Not a house.";
+  if (!st || !isHome(st)) return "Not a home.";
   const bought = st.bedUpgrades ?? 0;
   if (bought >= maxBedUpgrades(st.level)) return "No room for another bed — upgrade the house.";
   const cost = bedUpgradeCost(bought);
@@ -343,7 +382,7 @@ export function buyBed(s: GameState, id: number): Result {
 
 export function addUtility(s: GameState, id: number, utility: string): Result {
   const st = byId(s, id);
-  if (!st || st.type !== "house") return "Not a house.";
+  if (!st || !isHome(st)) return "Not a home.";
   const u = UTILITIES.find((x) => x.id === utility);
   if (!u) return "Unknown utility.";
   const have = st.utilities ?? [];
@@ -355,10 +394,51 @@ export function addUtility(s: GameState, id: number, utility: string): Result {
   return null;
 }
 
+/** Duplexes that stand flush beside this one, the same size and in line: what it can be joined with. */
+export function combinePartners(s: GameState, id: number): Structure[] {
+  const a = byId(s, id);
+  if (!a || a.type !== "house" || a.level < COMBINE_FROM || a.buildUntil) return [];
+  return s.structures.filter((b) => {
+    if (b.id === a.id || b.type !== "house" || b.level < COMBINE_FROM || b.buildUntil) return false;
+    const sideBySide = b.y === a.y && b.h === a.h && (b.x === a.x + a.w || a.x === b.x + b.w);
+    const stacked = b.x === a.x && b.w === a.w && (b.y === a.y + a.h || a.y === b.y + b.h);
+    return sideBySide || stacked;
+  });
+}
+
+/**
+ * Joins two neighbouring duplexes into one apartment block. Everyone moves
+ * in together; beds bought and utilities fitted carry over. It takes a day
+ * of building, and the lower of the two levels.
+ */
+export function combineHomes(s: GameState, aId: number, bId: number): Result {
+  const a = byId(s, aId);
+  const b = byId(s, bId);
+  if (!a || !b || !combinePartners(s, aId).includes(b)) return "Only two duplexes standing flush side by side can be joined.";
+  if (!canAfford(s.res, COMBINE_COST)) return `Needs ${costText(COMBINE_COST)}.`;
+  pay(s.res, COMBINE_COST);
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const w = Math.max(a.x + a.w, b.x + b.w) - x;
+  const h = Math.max(a.y + a.h, b.y + b.h) - y;
+  s.structures = s.structures.filter((st) => st !== a && st !== b);
+  const flat = makeStructure(s, "apartment", x, y, true);
+  flat.w = w;
+  flat.h = h;
+  flat.level = Math.min(a.level, b.level);
+  flat.bedUpgrades = (a.bedUpgrades ?? 0) + (b.bedUpgrades ?? 0);
+  flat.utilities = [...new Set([...(a.utilities ?? []), ...(b.utilities ?? [])])];
+  flat.buildUntil = s.time + 24 * 60;
+  flat.hp = 1;
+  for (const v of s.villagers) if (v.house === a.id || v.house === b.id) v.house = flat.id;
+  log(s, `Two duplexes are joined into an apartment block (level ${flat.level}).`, "good");
+  return null;
+}
+
 /** Sends a household on break: eight hours off work, happiness recharging. */
 export function sendOnBreak(s: GameState, id: number): Result {
   const st = byId(s, id);
-  if (!st || st.type !== "house") return "Not a house.";
+  if (!st || !isHome(st)) return "Not a home.";
   if (st.breakUntil && st.breakUntil > s.time) return "They are already resting.";
   st.breakUntil = s.time + 8 * 60;
   log(s, `A household takes the day off (${residents(s, st).length} villagers).`);

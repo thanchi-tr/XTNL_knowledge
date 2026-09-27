@@ -6,13 +6,13 @@
  *
  * Run with `npx tsx scripts/town-features-check.ts`.
  */
-import { newTown, clock, makeVillager, makeStructure, migrate, byId } from "../src/lib/town/sim/state";
+import { newTown, clock, makeVillager, makeStructure, migrate, byId, packSave, unpackSave, beds } from "../src/lib/town/sim/state";
 import { advance, raidChance, raidForecast, trainingPace, scheduleRaid, type SimContext } from "../src/lib/town/sim/tick";
 import { rng } from "../src/lib/town/sim/world";
 import { buildingEffects } from "../src/lib/town/sim/effects";
 import { stepCombat, hauntFor, summonHaunt } from "../src/lib/town/sim/combat";
-import { place, setMode, hire, clear, schoolTrain, assignGuard, stokeFire, markEarthworks, trade, upgrade } from "../src/lib/town/sim/actions";
-import { DISHES, LAND_CROPS, STORE_PER_LEVEL, WATER_CROPS, knightPay, knightTitle, soldierTitle, upgradePeople } from "../src/lib/town/sim/catalog";
+import { place, setMode, hire, clear, schoolTrain, assignGuard, stokeFire, markEarthworks, trade, upgrade, upgradeWalls, combineHomes, combinePartners } from "../src/lib/town/sim/actions";
+import { CATALOG, DISHES, LAND_CROPS, STORE_PER_LEVEL, WATER_CROPS, grade, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople } from "../src/lib/town/sim/catalog";
 import { MATURE, SNAG, SPROUT, TILE_WOOD, TREE_WOOD, YOUNG, forests, growWoods, treeMeta, treeStage, winterCull } from "../src/lib/town/sim/woods";
 import {
   GEAR, advanceKnight, armorySlots, ascensionOdds, attemptAscension, deploy, equip, forgeOf, gearCap, knightCapFor, startCraft, stock, store,
@@ -20,9 +20,15 @@ import {
 } from "../src/lib/town/sim/loot";
 import { profileFor, type TownInput } from "../src/lib/town/rules";
 import {
-  RARE_FINDS, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange,
+  RARE_FINDS, alertRadius, burnRate, captainBonus, center, hallRadius, mineRareRate, passiveRadius, structureMaxHp, wallHp, wallLevel, wallMaxHp, wallMeta, checkPlacement, fieldFrozen, fuelCap, growsInWinter, guardSlots, isLit, isWarm, storageCap, unlitBuildings, warmFields, warmthRange,
 } from "../src/lib/town/sim/world";
 import { MAP_W, MAP_H, Overlay, RAW_FOODS, Terrain, type GameState, type StructureType } from "../src/lib/town/sim/types";
+import { FOG, UNSEEN, VISIBLE, visionMap } from "../src/lib/town/sim/vision";
+import { MONSTERS } from "../src/lib/town/sim/bestiary";
+import { DROPS } from "../src/lib/town/sim/loot";
+import { PACK_SLOTS, packTorch, sendScout } from "../src/lib/town/sim/wilds";
+// These checks build wherever they need to; the fog has checks of its own.
+FOG.rules = false;
 
 const input: TownInput = {
   schools: { commerce: 14, science: 16, mind: 12 },
@@ -50,8 +56,18 @@ function spot(s: GameState, type: StructureType, x0: number, y0: number) {
   for (let y = y0; y < y0 + 14; y++) for (let x = x0; x < x0 + 20; x++) if (checkPlacement(s, type, x, y).ok) return [x, y] as const;
   return null;
 }
+/** The nearest legal spot to (x0, y0), searching outward over the whole map. */
+function spotNear(s: GameState, type: StructureType, x0: number, y0: number) {
+  for (let r = 0; r < Math.max(MAP_W, MAP_H); r += 2) {
+    for (let y = y0 - r; y <= y0 + r; y++) for (let x = x0 - r; x <= x0 + r; x++) {
+      if (Math.max(Math.abs(x - x0), Math.abs(y - y0)) < r - 1) continue;
+      if (checkPlacement(s, type, x, y).ok) return [x, y] as const;
+    }
+  }
+  return null;
+}
 function build(s: GameState, type: StructureType, x0: number, y0: number) {
-  const p = spot(s, type, x0, y0);
+  const p = spot(s, type, x0, y0) ?? spotNear(s, type, x0, y0);
   if (!p) throw new Error(`no spot for ${type}`);
   const st = makeStructure(s, type, p[0], p[1], true);
   return st;
@@ -789,6 +805,187 @@ console.log("a new game");
   check(g.map.terrain.every((t) => t !== Terrain.Pavement), "and no roads laid yet");
   advance(g, 6 * 60, ctx);
   check(g.villagers.length >= 2, "and it runs");
+}
+
+// ── Fog, lairs, bands and scouts ──────────────────────────
+console.log("fog, lairs and scouts");
+{
+  FOG.rules = true;
+  const g = newTown(163, 0, "starter");
+  const hall = g.structures.find((x) => x.type === "townhall")!;
+  const [hx, hy] = center(hall);
+  const vis = visionMap(g);
+  check(vis[Math.floor(hy) * MAP_W + Math.floor(hx) + 5] === VISIBLE, "the hall's reach is in plain sight");
+  check(vis[Math.floor(hy) * MAP_W + Math.floor(hx) + 60] === UNSEEN, "beyond it, the fog");
+  const forestTile = g.map.terrain.findIndex((t) => t === Terrain.Forest);
+  check(forestTile >= 0 && visionMap(g)[forestTile] !== VISIBLE, "forest is never in plain sight");
+  FOG.rules = false;
+  const far = spotNear(g, "farm", Math.floor(hx) + 60, Math.floor(hy));
+  const farOk = far && checkPlacement(g, "farm", far[0], far[1]).ok;
+  FOG.rules = true;
+  check(!!farOk && /see/.test(checkPlacement(g, "farm", far![0], far![1]).reason ?? ""), "nothing can be built in the fog");
+  check(g.map.terrain.filter((t) => t === Terrain.Water).length > 1500 && MAP_W * MAP_H >= 360 * 240, `a map of ${MAP_W}×${MAP_H} with ponds as well as the river`);
+
+  // Lairs: deep in the fog, unfound.
+  const lairs = g.lairs ?? [];
+  check(lairs.length >= 5 && lairs.every((l) => !l.discovered && Math.hypot(l.x - hx, l.y - hy) >= 70), `${lairs.length} lairs, all deep in the fog: ${lairs.map((l) => l.kind).join(", ")}`);
+
+  // Bands: bred on schedule, roaming, and striking when near.
+  const tomb = lairs.find((l) => l.kind === "tomb")!;
+  tomb.nextSpawnAt = g.time;
+  advance(g, 60, ctx);
+  const band = (g.roamers ?? []).find((b) => b.lair === tomb.id);
+  check(!!band, `the tomb looses a band: ${band ? `${band.count} ${band.kind} (L${band.level})` : "none"}`);
+  const x0 = band!.x;
+  const y0 = band!.y;
+  advance(g, 120, ctx);
+  check(Math.hypot(band!.x - x0, band!.y - y0) > 0.5, "and it roams");
+  g.raid = null;
+  band!.x = hall.x - 5;
+  band!.y = hy;
+  band!.tx = band!.x;
+  band!.ty = band!.y;
+  g.hourAcc = 59.9;
+  advance(g, 0.2, ctx);
+  const struck = g.raid as GameState["raid"];
+  check(!!struck && !!struck.origin && !(g.roamers ?? []).includes(band!), "a band that comes near the town attacks it, from where it stood");
+  g.raid = null;
+
+  // Scouts: a knight with torches maps the fog, then comes home.
+  const k = makeVillager(g, null, "knight");
+  k.rank = 8;
+  g.res.torches = 10;
+  for (let i = 0; i < 6; i++) packTorch(g, k.id);
+  check(k.pack!.filter((p) => p === "torch").length === PACK_SLOTS && !!packTorch(g, k.id), "a knight's pack holds six things, no more");
+  const target = [Math.floor(hx) + 50, Math.floor(hy)] as const;
+  const before = (g.map.seen ?? []).reduce((a, v) => a + v, 0);
+  check(!sendScout(g, k.id, target[0], target[1]), "sent out into the fog with torches");
+  g.roamers = [];
+  let t = 0;
+  while (k.scout && t++ < 60 * 30) advance(g, 1, ctx);
+  visionMap(g);
+  const after = (g.map.seen ?? []).reduce((a, v) => a + v, 0);
+  check(!k.scout, `home again after ${Math.round(t / 60)} hours`);
+  check(after > before + 200, `the fog is mapped where they went (${after - before} tiles)`);
+  check(k.pack!.filter((p) => p === "torch").length < 6, `torches burnt on the way: ${6 - k.pack!.filter((p) => p === "torch").length}`);
+  const noTorch = makeVillager(g, null, "wizard");
+  check(!!sendScout(g, noTorch.id, target[0], target[1]), "nobody goes into the fog without a torch");
+  FOG.rules = false;
+
+  // Saves pack their map.
+  const raw = packSave(g);
+  const back = unpackSave(raw);
+  check(back.map.terrain.length === MAP_W * MAP_H && back.map.terrain.every((v, i) => v === g.map.terrain[i]) && back.map.meta.every((v, i) => v === g.map.meta[i]),
+    `a save round-trips; the packed map is ${Math.round(raw.length / 1024)} KB`);
+}
+
+// ── Levels to 30, walls, the outer circle, firelight, new monsters ──
+console.log("levels, walls, circles, firelight and the new bestiary");
+{
+  // Tenth-level steps
+  check(CATALOG.house.maxLevel === 30 && CATALOG.townhall.maxLevel === 30 && CATALOG.pitfire.maxLevel === 30, "buildings rise to level 30");
+  check(grade(9) === 0 && grade(10) === 1 && grade(20) === 2 && grade(30) === 3, "with major steps at 10, 20 and 30");
+  check(structureMaxHp({ type: "house", level: 10 }) === Math.round(CATALOG.house.hpPerLevel * 10 * 1.5), "a step adds half the hit points again");
+  check((CATALOG.house.upgrade(9).gold ?? 0) >= 3 && (CATALOG.house.upgrade(19).platinum ?? 0) >= 6 && (CATALOG.house.upgrade(29).diamond ?? 0) >= 4,
+    "crossing a step costs gold, then platinum, then diamond");
+
+  // Walls
+  const w = newTown(173, 20);
+  const wallAt = 45 * MAP_W + 60;
+  w.map.overlay[wallAt] = Overlay.Wall;
+  w.map.meta[wallAt] = wallMeta(1, wallMaxHp(1));
+  w.res.stone = w.res.bricks = w.res.ingots = w.res.gold = 1e5;
+  const hp1 = wallHp(w.map.meta[wallAt]);
+  for (let i = 0; i < 9; i++) upgradeWalls(w, [wallAt]);
+  check(wallLevel(w.map.meta[wallAt]) === 10 && wallHp(w.map.meta[wallAt]) > hp1 * 5, `a wall raised to level 10 takes ${wallHp(w.map.meta[wallAt])} hits, not ${hp1}`);
+
+  // The outer circle: guards come out for an attack on a building there, not for a passer-by.
+  const g = newTown(179, 20);
+  const tower = build(g, "watchtower", 44, 38);
+  const guard = makeVillager(g, null, "infantry");
+  guard.rank = 5;
+  assignGuard(g, guard.id, tower.id);
+  const [tx, ty] = center(tower);
+  const R = alertRadius(tower);
+  const P = passiveRadius(tower);
+  check(P > R, `a tower's outer circle (${P} tiles) lies beyond its inner one (${R})`);
+  g.raid = { arrivesAt: g.time, party: [{ kind: "slime", level: 1, count: 1 }], side: "west", phase: "fighting", combatants: [], projectiles: [], clock: 0, nextId: 1 };
+  stepCombat(g, 0.05);
+  const slime = g.raid!.combatants.find((c) => c.side === "monster")!;
+  const inGuard = g.raid!.combatants.find((c) => c.villagerId === guard.id)!;
+  slime.x = tx + (R + P) / 2;
+  slime.y = ty;
+  slime.targetStruct = null;
+  slime.speed = 0;
+  stepCombat(g, 0.05);
+  check(inGuard.inside === true, "a monster between the circles that attacks nothing: guards stay in");
+  slime.hitAt = [slime.x, slime.y, g.raid!.clock];
+  stepCombat(g, 0.05);
+  check(inGuard.inside === false, "once it attacks something out there, they come out");
+  g.raid = null;
+
+  // Firelight: a dark monster in a pit fire's light is scorched; far below the fire, banished.
+  const f = newTown(181, 20);
+  const fire = f.structures.find((x) => x.type === "pitfire")!;
+  fire.level = 25;
+  fire.fuel = 5000;
+  const [fx, fy] = center(fire);
+  f.raid = { arrivesAt: f.time, party: [{ kind: "wraith", level: 4, count: 1 }, { kind: "werewolf", level: 10, count: 1 }], side: "west", phase: "fighting", combatants: [], projectiles: [], clock: 0, nextId: 1 };
+  stepCombat(f, 0.05);
+  const wraith = f.raid!.combatants.find((c) => c.kind === "wraith")!;
+  const wolf = f.raid!.combatants.find((c) => c.kind === "werewolf")!;
+  for (const m of [wraith, wolf]) {
+    m.x = fx + 2;
+    m.y = fy;
+  }
+  stepCombat(f, 0.05);
+  check(wraith.hp <= 0, "a level-4 wraith in the light of a level-25 fire is banished");
+  check(wolf.hp > 0 && wolf.scorched === true, "a level-10 werewolf there is scorched instead");
+  const before = wolf.hp;
+  for (let i = 0; i < 20; i++) if (f.raid) stepCombat(f, 0.05);
+  check(wolf.hp < before, "and burns while it stays");
+  f.raid = null;
+
+  // The new bestiary
+  const added = ["ghoul", "gargoyle", "cyclops", "vampire", "hydra", "griffin", "wisp", "wendigo", "oni", "kappa", "tengu", "jiangshi", "kitsune", "yurei", "gashadokuro", "jorogumo", "nian"] as const;
+  check(added.every((k) => MONSTERS[k] && DROPS[k]?.length), `${added.length} new monsters from west and east, each with its spoils`);
+  check(added.filter((k) => MONSTERS[k].night).length >= 8, "among them the spirits and things of the night");
+}
+
+// ── Homes: unit to apartment; jewels at the top ───────────
+console.log("homes and jewels");
+{
+  check(homeTitle("house", 1) === "Unit" && homeTitle("house", 5) === "House" && homeTitle("house", 10) === "Townhouse" && homeTitle("house", 20) === "Duplex",
+    "a home grows: unit, house, townhouse, duplex");
+  const h = newTown(191, 20);
+  h.res.stone = h.res.planks = h.res.bricks = h.res.coin = 1e5;
+  const a = makeStructure(h, "house", 60, 50, true);
+  const b = makeStructure(h, "house", 65, 50, true);
+  const far = makeStructure(h, "house", 80, 50, true);
+  a.level = b.level = far.level = 20;
+  const va = makeVillager(h, a.id);
+  const vb = makeVillager(h, b.id);
+  check(combinePartners(h, a.id).map((x) => x.id).join() === `${b.id}`, "two duplexes flush side by side can be joined; one standing apart cannot");
+  const bedsBefore = beds(h, a) + beds(h, b);
+  check(!combineHomes(h, a.id, b.id), "they are joined");
+  const flat = h.structures.find((x) => x.type === "apartment")!;
+  check(!!flat && flat.w === 10 && flat.h === 3 && !byId(h, a.id) && !byId(h, b.id), "into one apartment block across both plots");
+  check(va.house === flat.id && vb.house === flat.id, "and everyone moves in together");
+  check(beds(h, flat) > bedsBefore, `with more beds than the two had (${beds(h, flat)} against ${bedsBefore})`);
+
+  // Jewels
+  check(jewelCost(24) === 0 && jewelCost(25) === 1 && jewelCost(30) === 3, "from level 25 each level is set with a monster jewel; 30 takes three");
+  const j = newTown(193, 20);
+  const hall = j.structures.find((x) => x.type === "townhall")!;
+  hall.level = 30;
+  const home = j.structures.find((x) => x.type === "house")!;
+  home.level = 24;
+  j.res.wood = j.res.stone = j.res.coin = j.res.planks = j.res.bricks = j.res.ingots = j.res.gold = j.res.platinum = j.res.diamond = 1e7;
+  while (j.villagers.length < 200) makeVillager(j, null, "idle");
+  check(/jewel/.test(upgrade(j, ctx, home.id) ?? ""), "without jewels in the forge's store, no level 25");
+  build(j, "forge", 50, 40);
+  store(j, "jewel", 2);
+  check(!upgrade(j, ctx, home.id) && stock(j, "jewel") === 1, "with them, it rises and the jewel is spent");
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

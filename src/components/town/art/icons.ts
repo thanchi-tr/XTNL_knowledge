@@ -25,6 +25,7 @@ const ICONS: Record<string, Icon> = {
   fish: { rows: ["..f....", ".fFff.f", "fkfffff", ".ffff.f", "..f...."], mats: { f: M.STEEL, k: [CAVITY] } },
   tonic: { rows: ["..c..", ".ggg.", "grrrg", "grRrg", ".ggg."], mats: { c: M.OAK, g: M.GLASS, r: M.CLOTHRED } },
   fertiliser: { rows: ["..t..", ".sss.", "sSsss", "sssss", ".sss."], mats: { t: M.WOOL, s: M.DIRT } },
+  torches: { rows: ["..f..", ".fFf.", "..f..", "..w..", "..w..", "..w..", ".www."], mats: { f: E.AMBER, w: M.OAK } },
   tools: { rows: ["ss.....", "sSs..ww", ".sw.www", "..wwww.", "..ww...", ".ww....", "ww....."], mats: { s: M.STEEL, w: M.OAK } },
   formula: { rows: ["lllllll", "lLLllll", "lllllll", "lllrlll", "llrrrll"], mats: { l: M.LINEN, r: E.VOID } },
   rice: { rows: [".s.s.s", "s.s.s.", ".s.s.s", "..g.g.", "..g.g."], mats: { s: M.SAND, g: M.FOLIAGE } },

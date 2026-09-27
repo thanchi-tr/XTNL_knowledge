@@ -4,7 +4,9 @@ import { useEffect, useRef } from "react";
 import { makeCanvas } from "./art/core";
 import { grass, cobbles, dirtPath, sandBank, masonry, halfTimber, boards, roofBlock, iceField } from "./art/textures";
 import { frosted } from "./art/winter";
-import { storehouse, armySchool, armyPoint } from "./art/buildings3";
+import { graded, gradedWall } from "./art/grades";
+import { grade } from "@/lib/town/sim/catalog";
+import { storehouse, armySchool, armyPoint, tomb, dragonPit, shadowGate, unitHome, rowHouse, duplexHome, apartmentBlock } from "./art/buildings3";
 import { M } from "./art/materials";
 import { oak, pine, bush, rockFace, crop, oreChunk, sprout, seedling, youngTree, snag, type CropArt } from "./art/nature";
 import { keep, townhouse, forge, stall, barracks, tower, mine, windmillBody, fountain, ruins, ROOF, type RoofStyle } from "./art/buildings";
@@ -218,6 +220,41 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
       ...[0, 1, 2, 3, 4].map((v) => ({ label: `Stall ${v + 1}`, render: () => stall(v), bg: "cobble" as const })),
       { label: "Fountain", render: () => fountain(), bg: "cobble" },
       { label: "Ruins", render: () => ruins(80, 46, 11) },
+    ],
+  },
+  {
+    title: "Homes",
+    blurb: "A home grows through its names: a one-room unit, a house, a two-storey townhouse, a double-fronted duplex — and two duplexes side by side join into an apartment block. Each tenth level also rebuilds it bigger and in finer stuff: a storey taller in dressed stone and slate at 10, taller and wider in marble under copper at 20, gilt at 30 — and from 25 it is set with monster jewels.",
+    zoom: 2,
+    assets: [
+      { label: "Unit · L1", render: () => unitHome(1, "thatch") },
+      { label: "House · L5", render: () => townhouse(2, "thatch", true) },
+      { label: "Townhouse · L10", render: () => graded(rowHouse(1, "thatch"), 1, M.CLOTHRED, 10) },
+      { label: "Duplex · L20", render: () => graded(duplexHome(1, "thatch"), 2, M.CLOTHRED, 20) },
+      { label: "Duplex · L27", render: () => graded(duplexHome(1, "thatch"), 2, M.CLOTHRED, 27) },
+      { label: "Duplex · L30", render: () => graded(duplexHome(1, "thatch"), 3, M.CLOTHRED, 30) },
+      { label: "Apartment · L20", render: () => graded(apartmentBlock(20, "slate", true), 2, M.CLOTHBLU, 20) },
+      { label: "Apartment · L30", render: () => graded(apartmentBlock(30, "slate", true), 3, M.CLOTHBLU, 30) },
+    ],
+  },
+  {
+    title: "The tenth-level steps",
+    blurb: "Buildings rise to level 30, and every tenth level is a major step. Fortified at 10: a dressed-stone plinth, gilt along the roofline, the town's pennants. Grand at 20: gilt finials on every peak and lanterns at the corners. Legendary at 30: runes in the walls and a golden standard. Each step also adds half the hit points again and a quarter more output. Walls step up too: merlons, then iron bands, then a rune.",
+    zoom: 2,
+    assets: [
+      ...[1, 10, 20, 30].map((lv) => ({ label: `House · L${lv}`, render: () => graded(townhouse(2, "slate", true), grade(lv), M.CLOTHRED, lv) })),
+      ...[1, 10, 20, 30].map((lv) => ({ label: `Watchtower · L${lv}`, render: () => graded(tower(lv, false), grade(lv), M.CLOTHBLU, lv) })),
+      ...[1, 10, 20, 30].map((lv) => ({ label: `Wall · L${lv}`, render: () => gradedWall(wallTile(false, false, false), grade(lv)) })),
+    ],
+  },
+  {
+    title: "Lairs in the fog",
+    blurb: "Deep in the land, far from where a town is founded: tombs nearest, shadow realm gates further, a dragon pit furthest. Each looses a band every few days that roams the map — skeletons, wraiths and liches from a tomb; werewolves, banshees and demons from a gate; salamanders, wyverns and dragons from the pit — and a band that comes near the town attacks it. They grow stronger with the days. Scouts with torches find them.",
+    zoom: 3,
+    assets: [
+      { label: "Tomb", render: () => tomb() },
+      { label: "Shadow realm gate", render: () => shadowGate() },
+      { label: "Dragon pit", render: () => dragonPit() },
     ],
   },
   {

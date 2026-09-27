@@ -51,7 +51,7 @@ export function buildingEffects(s: GameState, ctx: SimContext): Map<number, Effe
         add(st.id, { kind: "fertilised", tone: "buff", label: "Fertilised +25%", detail: "The laboratory's fertiliser is going on this field." });
       }
     }
-    if (st.type === "house" && winter && !houseWarm(s, st)) {
+    if ((st.type === "house" || st.type === "apartment") && winter && !houseWarm(s, st)) {
       add(st.id, { kind: "cold", tone: "debuff", label: "Cold", detail: "No lit pit fire reaches it. Its residents lose health every hour." });
     }
     if (st.type === "kitchen" && st.workers.length) {

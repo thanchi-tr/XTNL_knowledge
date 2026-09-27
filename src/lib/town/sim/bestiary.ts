@@ -67,6 +67,25 @@ export const MONSTERS: Record<MonsterKind, MonsterDef> = {
   salamander: { kind: "salamander", name: "Fire Salamander", min: 12, max: 28, hp: 360, dmg: 30, interval: 1.1, range: 2.5, speed: 1.3, seasons: ["summer"], weight: 4, blurb: "Summer's heat, spitting fire. Sets buildings burning." },
   frostgiant: { kind: "frostgiant", name: "Frost Giant", min: 18, max: 35, hp: 1100, dmg: 70, interval: 2, range: 1.6, speed: 0.8, seasons: ["winter"], weight: 3, blurb: "Walks out of the snow in the dead of winter." },
   banshee: { kind: "banshee", name: "Banshee", min: 8, max: 18, hp: 150, dmg: 20, interval: 1.3, range: 3, speed: 1.6, flying: true, night: true, seasons: ["autumn", "winter"], weight: 3, blurb: "Her wail lowers the whole town's mood." },
+  // ── From the west ──
+  ghoul: { kind: "ghoul", name: "Ghoul", min: 3, max: 12, hp: 90, dmg: 12, interval: 1, range: 1, speed: 1.5, night: true, pack: [2, 4], weight: 5, blurb: "Graveyard scavengers that come in hungry packs after dark." },
+  gargoyle: { kind: "gargoyle", name: "Gargoyle", min: 8, max: 20, hp: 300, dmg: 22, interval: 1.3, range: 1, speed: 1.6, flying: true, weight: 3, blurb: "A roof-spout come alive: stone wings, stone claws." },
+  cyclops: { kind: "cyclops", name: "Cyclops", min: 15, max: 32, hp: 1000, dmg: 60, interval: 2, range: 1.4, speed: 0.8, weight: 2, blurb: "One eye, one club, no mercy. Walls fold under it." },
+  vampire: { kind: "vampire", name: "Vampire", min: 12, max: 30, hp: 420, dmg: 34, interval: 1, range: 1.2, speed: 2, night: true, weight: 2, blurb: "Old blood in an old cloak. Firelight galls it." },
+  hydra: { kind: "hydra", name: "Hydra", min: 25, max: 50, hp: 2200, dmg: 70, interval: 1.2, range: 2, speed: 0.8, legendary: true, seasons: ["summer", "autumn"], weight: 1, blurb: "Five heads from the marsh; strikes with all of them." },
+  griffin: { kind: "griffin", name: "Griffin", min: 16, max: 30, hp: 600, dmg: 40, interval: 1.1, range: 1.2, speed: 2.4, flying: true, weight: 2, blurb: "Eagle before, lion behind, and it takes livestock." },
+  wisp: { kind: "wisp", name: "Will-o'-the-wisp", min: 2, max: 10, hp: 40, dmg: 8, interval: 1, range: 3, speed: 1.8, flying: true, night: true, pack: [3, 6], weight: 5, blurb: "A marsh-light spirit that leads the lost astray, and burns." },
+  wendigo: { kind: "wendigo", name: "Wendigo", min: 14, max: 30, hp: 700, dmg: 45, interval: 1.1, range: 1.2, speed: 2, night: true, seasons: ["winter"], weight: 3, blurb: "The hunger spirit of the frozen woods: antlers and bone." },
+  // ── From the east ──
+  oni: { kind: "oni", name: "Oni", min: 10, max: 28, hp: 650, dmg: 44, interval: 1.5, range: 1.4, speed: 1, weight: 3, blurb: "A horned ogre-demon with an iron club." },
+  kappa: { kind: "kappa", name: "Kappa", min: 4, max: 14, hp: 140, dmg: 14, interval: 1, range: 1, speed: 1.3, seasons: ["spring", "summer"], pack: [2, 3], weight: 4, blurb: "A river imp with a shell and a water-dish crown. Keep off the banks." },
+  tengu: { kind: "tengu", name: "Tengu", min: 9, max: 22, hp: 240, dmg: 24, interval: 0.9, range: 1.2, speed: 2.4, flying: true, weight: 3, blurb: "A long-nosed mountain spirit, a swordsman on wings." },
+  jiangshi: { kind: "jiangshi", name: "Jiangshi", min: 5, max: 16, hp: 200, dmg: 18, interval: 1.2, range: 1, speed: 1.1, night: true, pack: [2, 4], weight: 4, blurb: "A stiff, hopping corpse in court robes, a talisman on its brow." },
+  kitsune: { kind: "kitsune", name: "Nine-tailed Fox", min: 18, max: 40, hp: 800, dmg: 50, interval: 1, range: 3, speed: 2.2, night: true, legendary: true, weight: 2, blurb: "A fox spirit of nine tails, trailing foxfire." },
+  yurei: { kind: "yurei", name: "Yūrei", min: 6, max: 18, hp: 130, dmg: 20, interval: 1.3, range: 2.5, speed: 1.3, flying: true, night: true, weight: 4, blurb: "A grieving ghost in white burial robes. It has no feet." },
+  gashadokuro: { kind: "gashadokuro", name: "Gashadokuro", min: 30, max: 60, hp: 3000, dmg: 120, interval: 2.2, range: 2, speed: 0.7, night: true, legendary: true, weight: 1, blurb: "A giant skeleton made of the bones of the starved." },
+  jorogumo: { kind: "jorogumo", name: "Jorōgumo", min: 10, max: 24, hp: 380, dmg: 30, interval: 1.1, range: 1.2, speed: 1.6, night: true, weight: 3, blurb: "A spider that wears a woman's face." },
+  nian: { kind: "nian", name: "Nian", min: 20, max: 40, hp: 1400, dmg: 65, interval: 1.6, range: 1.4, speed: 1.4, legendary: true, seasons: ["winter", "spring"], weight: 2, blurb: "The year-beast of the new year. It fears red and fire." },
   basilisk: { kind: "basilisk", name: "Basilisk", min: 14, max: 26, hp: 700, dmg: 40, interval: 1.5, range: 1.5, speed: 1, weight: 2, blurb: "Its gaze turns troops to stone for a moment." },
 };
 
@@ -84,12 +103,13 @@ export interface SpawnContext {
 /** Stats at a level. Everything grows from its level-1 base. */
 export function statsAt(def: MonsterDef, level: number) {
   return {
-    hp: Math.round(def.hp * (1 + 0.35 * (level - 1))),
+    // Hard: everything out there is a fifth tougher than it used to be.
+    hp: Math.round(def.hp * 1.2 * (1 + 0.35 * (level - 1))),
     // Damage grows more gently than hit points: a strong monster should take
     // a long time to kill, not one-shot a garrison. Calibrated against the
     // headless run, where the steeper curve let one level-7 mimic sack a
     // town defended by four trained soldiers.
-    dmg: Math.round(def.dmg * 0.7 * (1 + 0.2 * (level - 1))),
+    dmg: Math.round(def.dmg * 0.8 * (1 + 0.2 * (level - 1))),
   };
 }
 

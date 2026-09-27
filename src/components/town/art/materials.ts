@@ -59,6 +59,8 @@ export const M = {
   WATER: ["#5F9AA3", "#2D758C", "#1B506B", "#182E43"],
   SAND: ["#D0B893", "#AD9175", "#86695A", "#5F4544"],
   ICE: ["#E5F4F4", "#ADD2DF", "#7DA6C2", "#5A799F"],
+  /** Polished marble: a Grand building's walls. */
+  MARBLE: ["#ECE7DC", "#CCC5B7", "#A39C90", "#747069"],
   /** Snow lying on roofs: warm white in the sun, indigo in the crevice. */
   SNOW: ["#F4F1E6", "#CCD8DE", "#9AABC4", "#6B7194"],
   /** Packed, trodden ice on a road: greyer and darker than the field ice either side. */

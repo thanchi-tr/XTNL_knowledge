@@ -21,13 +21,13 @@ export const YEAR_DAYS = SEASONS.reduce((a, k) => a + SEASON_LENGTH[k], 0);
 
 // ── Map ───────────────────────────────────────────────────
 export const TILE = 8; // world pixels per tile
-export const MAP_W = 180;
-export const MAP_H = 120;
+export const MAP_W = 360;
+export const MAP_H = 240;
 
 /* Plain constant objects rather than `const enum`: Next compiles each file
    in isolation, and a const enum imported across files is not inlined. */
 export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4 } as const;
-export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5 } as const;
+export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5, Lair: 6 } as const;
 
 export interface MapState {
   w: number;
@@ -36,6 +36,8 @@ export interface MapState {
   overlay: number[];
   /** Per-tile extra: tree variant, rock kind, wall hp, forest pool. */
   meta: number[];
+  /** 1 where the town has ever seen: the fog lifts to a thin mist there, not the full cloud. */
+  seen?: number[];
 }
 
 // ── Resources ─────────────────────────────────────────────
@@ -43,6 +45,8 @@ export const RESOURCE_KEYS = [
   "coin", "wood", "stone", "coal", "iron", "silver", "platinum", "diamond", "gold", "mithril",
   /** Tools: bought from caravans or made at the refinery; double the pace of digging. */
   "tools",
+  /** Torches: packed by knights and wizards to see through the fog. Each burns two hours. */
+  "torches",
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley",
   "onion", "bean", "turnip", "corn", "strawberry", "garlic",
   "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish",
@@ -66,7 +70,9 @@ export type StructureType =
   | "refinery" | "kitchen" | "market" | "barracks" | "archery" | "armoury" | "wizardhut"
   | "nobleyard" | "watchtower" | "icefactory" | "mine" | "lumbercamp" | "forge"
   | "lamppost" | "brazier" | "laboratory" | "fishery"
-  | "storehouse" | "armyschool" | "armypoint";
+  | "storehouse" | "armyschool" | "armypoint"
+  /** Two duplexes knocked together: not built, made. */
+  | "apartment";
 
 export type Crop =
   | "potato" | "wheat" | "grape" | "herb" | "cabbage" | "carrot" | "pumpkin" | "barley"
@@ -137,6 +143,10 @@ export interface Villager {
   battalion?: number;
   /** Emblem knights: away on a sortie until this minute. */
   deployedUntil?: number;
+  /** Knights and wizards: six pack slots. A torch is `torch`, or `torch:<minutes left>` once lit. */
+  pack?: (string | null)[];
+  /** Knights and wizards out scouting the fog. */
+  scout?: Scout | null;
   /** Knights: when their silver pay first went unpaid. They desert after three days. */
   unpaidSince?: number | null;
   /** The watchtower this troop is posted to. Only posted troops defend. */
@@ -147,7 +157,9 @@ export interface Villager {
 export type MonsterKind =
   | "slime" | "bat" | "spider" | "goblin" | "skeleton" | "wolf" | "werewolf" | "wraith"
   | "minotaur" | "troll" | "lich" | "golem" | "wyvern" | "serpent" | "demon" | "dragon" | "elderdragon"
-  | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk";
+  | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk"
+  | "ghoul" | "gargoyle" | "cyclops" | "vampire" | "hydra" | "griffin" | "wisp" | "wendigo"
+  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian";
 
 export interface Combatant {
   id: number;
@@ -182,6 +194,10 @@ export interface Combatant {
   haunt?: boolean;
   /** A defender who has struck a blow this fight: in line for a field promotion. */
   fought?: boolean;
+  /** A monster's last blow on a building or the wall: where, and when (raid clock). */
+  hitAt?: [number, number, number];
+  /** A dark monster in a pit fire's light: slowed, weakened and burning. */
+  scorched?: boolean;
   /** Guards: the tower (or, for the militia, the hall) they answer to. */
   post?: number;
   /** Guards waiting inside their post: unseen, untouchable, not yet called out. */
@@ -216,6 +232,8 @@ export interface Raid {
   target?: number;
   /** Levels the raid gained from how far out its target stands. */
   reach?: number;
+  /** Where a band out of the fog stood when it turned on the town: it attacks from there. */
+  origin?: [number, number];
   phase: "incoming" | "fighting" | "repelled";
   combatants: Combatant[];
   projectiles: Projectile[];
@@ -264,6 +282,46 @@ export interface Caravan {
   offers: CaravanOffer[];
 }
 
+/** A hero out in the fog with torches: out to a point, then home. */
+export interface Scout {
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  /** Where home is: the hall's centre when they set out. */
+  hx: number;
+  hy: number;
+  phase: "out" | "back";
+}
+
+export type LairKind = "tomb" | "dragonpit" | "shadowgate";
+
+/** Something old and bad, deep in the fog. It breeds monsters that roam the map. */
+export interface Lair {
+  id: number;
+  kind: LairKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  level: number;
+  discovered: boolean;
+  nextSpawnAt: number;
+}
+
+/** A band of monsters wandering the map from a lair. Near the town, it attacks. */
+export interface Roamer {
+  id: number;
+  lair: number;
+  kind: MonsterKind;
+  level: number;
+  count: number;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+}
+
 export interface GameState {
   version: 2;
   seed: number;
@@ -289,6 +347,12 @@ export interface GameState {
   hourAcc: number;
   lastVillagerAt: number;
   deaths: number;
+  /** Lairs hidden in the fog, and the bands they have loosed. */
+  lairs?: Lair[];
+  roamers?: Roamer[];
+  nextRoamerId?: number;
+  /** When the town fell, if it has: the end of the run. */
+  fallen?: { at: number; day: number; seen?: boolean } | null;
   /** The forge's store: monster parts, jewels and finished gear, one stack per slot. */
   armory?: { item: string; qty: number }[];
   /** Day of the last night haunt, so each night brings at most one. */

@@ -1,12 +1,50 @@
 import type { Attribute } from "@prisma/client";
 import { CATALOG } from "./catalog";
 import { MONSTERS, statsAt } from "./bestiary";
-import { byId, countedTroops, isMilitary, log } from "./state";
-import { alertRadius, captainBonus, center, exposure, idx, inBounds, isGuardPost, rng, unlitBuildings } from "./world";
+import { byId, clock, countedTroops, isMilitary, log } from "./state";
+import {
+  alertRadius, captainBonus, center, exposure, idx, inBounds, isGuardPost, lightRange, passiveRadius, rng, structureMaxHp, unlitBuildings,
+  wallHp, wallLevel, wallMeta,
+} from "./world";
 import { SOLDIER_MAX, knightTitle, roleLabel, soldierTitle } from "./catalog";
 
 /** Chance a troop who fought and lived is promoted after a won fight. */
 export const FIELD_PROMOTION = 0.3;
+
+/*
+ * Firelight against the dark. A monster of the night — or a haunt — that
+ * comes into a lit pit fire's light is scorched: it moves and strikes at
+ * reduced strength and burns away a little every second. One twenty levels
+ * or more below the fire is destroyed outright.
+ */
+const SCORCH_SLOW = 0.6;
+const SCORCH_WEAK = 0.6;
+const SCORCH_BURN = 0.03;
+export const FIRE_BANISH = 20;
+const scorchFactor = (c: Combatant) => (c.scorched ? SCORCH_WEAK : 1);
+
+/** Whether a monster is a thing of the night: firelight hurts it. */
+export const isDark = (c: Combatant) => c.side === "monster" && (!!c.haunt || !!MONSTERS[c.kind as MonsterKind]?.night);
+
+function firelight(s: GameState, monsters: Combatant[], dt: number) {
+  const fires = s.structures.filter((f) => f.type === "pitfire" && lightRange(f) > 0);
+  for (const m of monsters) {
+    if (!isDark(m)) continue;
+    const fire = fires.find((f) => Math.hypot(m.x - center(f)[0], m.y - center(f)[1]) <= lightRange(f));
+    if (!fire) {
+      m.scorched = false;
+      continue;
+    }
+    if (m.level <= fire.level - FIRE_BANISH) {
+      m.hp = 0;
+      pop(s, m.x, m.y - 1, "BANISHED", "crit");
+      continue;
+    }
+    if (!m.scorched) pop(s, m.x, m.y - 1, "SCORCHED", "crit");
+    m.scorched = true;
+    m.hp -= m.maxHp * SCORCH_BURN * dt;
+  }
+}
 import { kill } from "./tick";
 import { dropsFor, gearBonus, isAway, store, gearCap } from "./loot";
 import {
@@ -88,6 +126,9 @@ const REPEL_ATTR: Record<MonsterKind, Attribute> = {
   lich: "REBUTTAL", golem: "ABSTRACT", wyvern: "ABSTRACT", serpent: "COMPASSION", demon: "MIND",
   dragon: "CREATIVITY", elderdragon: "CREATIVITY", harpy: "REASON", ogre: "PHYSICAL", mimic: "CRITICAL_THINKING",
   treant: "COMPASSION", salamander: "LOGIC", frostgiant: "STUBBORNNESS", banshee: "SELF_RESPECT", basilisk: "REBUTTAL",
+  ghoul: "FAITH", gargoyle: "ABSTRACT", cyclops: "REASON", vampire: "FAITH", hydra: "CRITICAL_THINKING", griffin: "COMPASSION",
+  wisp: "LOGIC", wendigo: "SELF_RESPECT", oni: "STUBBORNNESS", kappa: "REASON", tengu: "CRITICAL_THINKING", jiangshi: "MIND",
+  kitsune: "CREATIVITY", yurei: "SELF_RESPECT", gashadokuro: "FAITH", jorogumo: "REASON", nian: "CREATIVITY",
 };
 const SCHOOLS = ["commerce", "science", "mind"] as const;
 
@@ -224,7 +265,7 @@ function start(s: GameState) {
   const aim = raid.target ? byId(s, raid.target) : undefined;
   for (const p of raid.haunt ? [] : raid.party) {
     const def = MONSTERS[p.kind];
-    const main = spawnPoint(raid.side, r, aim);
+    const main: [number, number] = raid.origin ? [raid.origin[0], raid.origin[1]] : spawnPoint(raid.side, r, aim);
     const flank = raid.flank ? spawnPoint(raid.flank, r, aim) : main;
     for (let i = 0; i < p.count; i++) {
       const { hp, dmg } = statsAt(def, p.level);
@@ -299,7 +340,7 @@ function start(s: GameState) {
     const [cx, cy] = center(hallSt);
     raid.combatants.push({
       id: raid.nextId++, side: "defender", kind: "hall", level: hallSt.level,
-      x: cx, y: cy, hp: hallSt.hp, maxHp: CATALOG.townhall.hpPerLevel * hallSt.level,
+      x: cx, y: cy, hp: hallSt.hp, maxHp: structureMaxHp(hallSt),
       dmg: Math.round(10 * hallSt.level * bonus), interval: 1.2, cooldown: 0, range: 6, speed: 0,
       flying: false, legendary: false, structId: hallSt.id,
     });
@@ -310,7 +351,7 @@ function start(s: GameState) {
     const camp = t.type === "armypoint";
     raid.combatants.push({
       id: raid.nextId++, side: "defender", kind: "tower", level: t.level,
-      x: cx, y: cy - 1, hp: t.hp, maxHp: CATALOG[t.type].hpPerLevel * t.level,
+      x: cx, y: cy - 1, hp: t.hp, maxHp: structureMaxHp(t),
       dmg: Math.round((camp ? 18 : 14) * t.level * bonus), interval: 1.1, cooldown: 0, range: camp ? 8 : 7, speed: 0,
       flying: false, legendary: false, structId: t.id,
     });
@@ -383,12 +424,14 @@ function sack(s: GameState) {
     st.training = null;
   }
   const hall = s.structures.find((st) => st.type === "townhall");
-  if (hall) hall.hp = Math.round(CATALOG.townhall.hpPerLevel * hall.level * 0.3);
+  if (hall) hall.hp = Math.round(structureMaxHp(hall) * 0.3);
   s.debuffs.push({ id: "sacked", label: "Sacked — grief and ruin", until: s.time + 3 * 24 * 60, moodPerHour: -0.4, production: 0.7 });
   s.mood = Math.min(s.mood, 30);
   // The next raid gives the survivors' successors time to arrive.
   s.nextRaidAt = s.time + 4 * 24 * 60;
   log(s, "The monsters broke through. The town is sacked; everyone is gone.", "bad");
+  // The run is over. The ruins can be rebuilt, but the tally stops here.
+  s.fallen ??= { at: s.time, day: clock(s.time).day };
   s.raid = null;
 }
 
@@ -403,6 +446,7 @@ export function stepCombat(s: GameState, dt: number) {
   const defenders = alive.filter((c) => c.side === "defender");
 
   wakeGuards(s, monsters, defenders);
+  firelight(s, monsters, dt);
 
   // A sack ends the raid mid-step; nobody may act on a raid that is over.
   for (const m of monsters) {
@@ -492,7 +536,11 @@ function wakeGuards(s: GameState, monsters: Combatant[], defenders: Combatant[])
     }
     const [cx, cy] = center(post);
     const R = alertRadius(post);
-    if (monsters.some((m) => Math.hypot(m.x - cx, m.y - cy) <= R)) {
+    const P = passiveRadius(post);
+    // Inner circle: anything that comes in. Outer circle: anything that
+    // attacks a building or the wall out there.
+    const clock = s.raid!.clock;
+    if (monsters.some((m) => Math.hypot(m.x - cx, m.y - cy) <= R || (!!m.hitAt && clock - m.hitAt[2] < 3 && Math.hypot(m.hitAt[0] - cx, m.hitAt[1] - cy) <= P))) {
       d.inside = false;
       if (!called.has(post.id)) {
         called.add(post.id);
@@ -548,7 +596,9 @@ function moveMonster(s: GameState, m: Combatant, defenders: Combatant[], dt: num
   } else if (m.cooldown <= 0) {
     m.cooldown = m.interval;
     m.swingAt = s.raid!.clock;
-    target.hp -= m.dmg;
+    const [hx, hy] = center(target);
+    m.hitAt = [hx, hy, s.raid!.clock];
+    target.hp -= Math.round(m.dmg * scorchFactor(m));
     // The dark takes buildings, not towns: a haunt cannot bring the hall down.
     if (m.haunt && target.type === "townhall" && target.hp <= 0) {
       target.hp = 1;
@@ -578,20 +628,23 @@ function step(s: GameState, c: Combatant, x: number, y: number, dt: number) {
   const dx = x - c.x;
   const dy = y - c.y;
   const len = Math.hypot(dx, dy) || 1;
-  const nx = c.x + (dx / len) * c.speed * dt;
-  const ny = c.y + (dy / len) * c.speed * dt;
+  const pace = c.speed * dt * (c.scorched ? SCORCH_SLOW : 1);
+  const nx = c.x + (dx / len) * pace;
+  const ny = c.y + (dy / len) * pace;
   if (!c.flying && c.side === "monster") {
     const tile = idx(Math.floor(nx), Math.floor(ny));
     if (inBounds(Math.floor(nx), Math.floor(ny)) && s.map.overlay[tile] === Overlay.Wall) {
       if (c.cooldown <= 0) {
         c.cooldown = c.interval;
         c.swingAt = s.raid!.clock;
-        s.map.meta[tile] -= c.dmg;
-        pop(s, nx, ny, `-${c.dmg}`);
-        if (s.map.meta[tile] <= 0) {
+        const dmg = Math.round(c.dmg * scorchFactor(c));
+        const left = wallHp(s.map.meta[tile]) - dmg;
+        c.hitAt = [nx, ny, s.raid!.clock];
+        pop(s, nx, ny, `-${dmg}`);
+        if (left <= 0) {
           s.map.overlay[tile] = Overlay.Debris;
           s.map.meta[tile] = 0;
-        }
+        } else s.map.meta[tile] = wallMeta(wallLevel(s.map.meta[tile]), left);
       }
       return;
     }
@@ -610,7 +663,13 @@ function moveDefender(s: GameState, d: Combatant, monsters: Combatant[], dt: num
     if (post) {
       const [cx, cy] = center(post);
       const reach = alertRadius(post) * 1.25;
-      const near = monsters.filter((m) => Math.hypot(m.x - cx, m.y - cy) <= reach);
+      const outer = passiveRadius(post) * 1.1;
+      const clock = s.raid!.clock;
+      // In the inner circle, anything; out to the outer one, whatever is still attacking there.
+      const near = monsters.filter((m) => {
+        const d = Math.hypot(m.x - cx, m.y - cy);
+        return d <= reach || (d <= outer && !!m.hitAt && clock - m.hitAt[2] < 6);
+      });
       if (!near.length) {
         if (Math.hypot(d.x - cx, d.y - cy) < 0.8) d.inside = true;
         else step(s, d, cx, cy, dt);
@@ -642,8 +701,12 @@ function moveDefender(s: GameState, d: Combatant, monsters: Combatant[], dt: num
 function strike(s: GameState, a: Combatant, b: Combatant) {
   a.cooldown = a.interval;
   if (a.side === "defender") a.fought = true;
+  if (a.side === "monster" && b.structId) {
+    const st = byId(s, b.structId);
+    if (st) a.hitAt = [center(st)[0], center(st)[1], s.raid!.clock];
+  }
   a.swingAt = s.raid!.clock;
-  let dmg = a.dmg;
+  let dmg = a.dmg * scorchFactor(a);
   let crit = false;
   if (a.kind === "archer" && b.flying) {
     dmg *= 2;

@@ -2,8 +2,8 @@ import { makeCanvas, px, hash, type Ctx } from "../art/core";
 import { M, E, EMISSIVE, LIT, MID, SHADE, DEEP, shift, shiftRgb, type Ramp4 } from "../art/materials";
 import { grass, cobbles, sandBank, iceField } from "../art/textures";
 import { frosted, type FrostMode } from "../art/winter";
-import { storehouse, armySchool, armyPoint } from "../art/buildings3";
-import { GRADES, then, mix, isIdentity, stampLight, applyEnvironmentLighting, type Grade } from "./lighting";
+import { storehouse, armySchool, armyPoint, lairArt, unitHome, rowHouse, duplexHome, apartmentBlock } from "../art/buildings3";
+import { GRADES, then, mix, stampLight, applyEnvironmentLighting, type Grade } from "./lighting";
 import { pine, oak, crop, youngTree, seedling } from "../art/nature";
 import { keep, townhouse, forge, barracks, tower, mine, type RoofStyle } from "../art/buildings";
 import {
@@ -15,11 +15,14 @@ import { figure, troopLook, type Look } from "../art/heroes";
 import { heroEffect, hasAura, buildingAura, effectBadges } from "../art/effects";
 import type { Effect } from "@/lib/town/sim/effects";
 import { DIG_HOURS, FILL_HOURS } from "@/lib/town/sim/catalog";
-import { alertRadius, fuelCap, growsInWinter, hallRadius, isGuardPost, lightRange, reachAt, unlitBuildings, warmAt, warmFields, type Warmth } from "@/lib/town/sim/world";
+import { MAPPED, UNSEEN, VISIBLE, seesPoint, torchLit, visionMap } from "@/lib/town/sim/vision";
+import { graded, gradedWall } from "../art/grades";
+import { alertRadius, fuelCap, growsInWinter, hallRadius, isGuardPost, passiveRadius, wallLevel, lightRange, reachAt, unlitBuildings, warmAt, warmFields, type Warmth } from "@/lib/town/sim/world";
 import { TILE_WOOD, TREE_EFFORT, treeStage } from "@/lib/town/sim/woods";
 import { text } from "../pixel";
 import { MAP_H, MAP_W, Overlay, TILE, Terrain, type Combatant, type GameState, type Structure } from "@/lib/town/sim/types";
-import { CATALOG } from "@/lib/town/sim/catalog";
+import { CATALOG, grade, homeTier, levelHours } from "@/lib/town/sim/catalog";
+import { MONSTERS as BEASTS } from "@/lib/town/sim/bestiary";
 import { clock, type Clock } from "@/lib/town/sim/state";
 import type { TownProfile } from "@/lib/town/rules";
 
@@ -63,7 +66,12 @@ export function structureArt(st: Structure, arch: TownProfile["archetype"]): HTM
   const L = st.level;
   switch (st.type) {
     case "townhall": return keep(L, roof, banner);
-    case "house": return townhouse(st.id % 6, roof, true);
+    // A home by its tier: unit, house, townhouse, duplex.
+    case "house": {
+      const tier = homeTier(L);
+      return tier === 0 ? unitHome(st.id, roof) : tier === 1 ? townhouse(st.id % 6, roof, true) : tier === 2 ? rowHouse(st.id, roof) : duplexHome(st.id, roof);
+    }
+    case "apartment": return apartmentBlock(L, roof, st.w >= st.h);
     case "pitfire": return pitfire(L);
     case "lamppost": return lamppost();
     case "laboratory": return laboratory(L);
@@ -98,29 +106,28 @@ export function artAnchor(st: Structure, art: HTMLCanvasElement): [number, numbe
 
 // ── Static layer ──────────────────────────────────────────
 
-let sheetCache: {
-  cobble: HTMLCanvasElement; grassC: HTMLCanvasElement; sandC: HTMLCanvasElement; iceC: HTMLCanvasElement; slushC: HTMLCanvasElement;
-} | null = null;
-
-function sheets() {
-  if (!sheetCache) {
-    const make = (draw: (c: Ctx) => void) => {
-      const { cv, c } = makeCanvas(WORLD_W, WORLD_H);
-      draw(c);
-      return cv;
-    };
-    sheetCache = {
-      // Warm packed-earth cobbles: roads must read as ground you walk on,
-      // clearly apart from the cool grey of walls.
-      cobble: make((c) => cobbles(c, 0, 0, WORLD_W, WORLD_H, 3, M.ROAD)),
-      grassC: make((c) => grass(c, 0, 0, WORLD_W, WORLD_H, 5)),
-      sandC: make((c) => sandBank(c, 0, 0, WORLD_W, WORLD_H, 6)),
-      // Winter: field ice, and the roads trodden into grey slush.
-      iceC: make((c) => iceField(c, 0, 0, WORLD_W, WORLD_H, 8)),
-      slushC: make((c) => cobbles(c, 0, 0, WORLD_W, WORLD_H, 3, M.SLUSH)),
-    };
-  }
-  return sheetCache;
+/**
+ * Ground textures for one region of the world. Every texture is anchored to
+ * world coordinates, so neighbouring regions meet without a seam, and none
+ * is ever made larger than the region being drawn.
+ */
+function regionSheets(X0: number, Y0: number, W: number, H: number, winter: boolean) {
+  const make = (draw: (c: Ctx) => void) => {
+    const { c } = makeCanvas(W, H);
+    c.translate(-X0, -Y0);
+    draw(c);
+    return new Uint32Array(c.getImageData(0, 0, W, H).data.buffer);
+  };
+  return {
+    G: make((c) => grass(c, X0, Y0, W, H, 5)),
+    // Warm packed-earth cobbles: roads must read as ground you walk on,
+    // clearly apart from the cool grey of walls.
+    Rd: make((c) => cobbles(c, X0, Y0, W, H, 3, M.ROAD)),
+    Sd: make((c) => sandBank(c, X0, Y0, W, H, 6)),
+    // Winter: field ice, and the roads trodden into grey slush.
+    Ic: winter ? make((c) => iceField(c, X0, Y0, W, H, 8)) : null,
+    Sl: winter ? make((c) => cobbles(c, X0, Y0, W, H, 3, M.SLUSH)) : null,
+  };
 }
 
 function drawField(c: Ctx, st: Structure, frozen: boolean, dormant = false) {
@@ -203,14 +210,13 @@ const hexPixel = (hex: string) => toPixel(parseInt(hex.slice(1), 16));
  * the heat the walls threw back. The ice ends in a ragged lit lip facing
  * the fire, and a ring of wet ground just inside it.
  */
-function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][], warm: Warmth[] | null) {
-  const { cobble, grassC, sandC, iceC, slushC } = sheets();
-  const pixels = (cv: HTMLCanvasElement) => new Uint32Array(cv.getContext("2d")!.getImageData(0, 0, WORLD_W, WORLD_H).data.buffer);
-  const G = pixels(grassC);
-  const Rd = pixels(cobble);
-  const Sd = pixels(sandC);
-  const Ic = warm ? pixels(iceC) : G;
-  const Sl = warm ? pixels(slushC) : Rd;
+function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][], warm: Warmth[] | null, X0: number, Y0: number, RW: number, RH: number) {
+  const tex = regionSheets(X0, Y0, RW, RH, !!warm);
+  const G = tex.G;
+  const Rd = tex.Rd;
+  const Sd = tex.Sd;
+  const Ic = tex.Ic ?? G;
+  const Sl = tex.Sl ?? Rd;
   const I = M.ICE.map(hexPixel);
   /** How far outside every fire's warmth a pixel lies, in pixels (negative inside), on a ragged edge. */
   const iceEdge = (X: number, Y: number) => {
@@ -223,14 +229,18 @@ function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][]
     }
     return e;
   };
-  const img = c.createImageData(WORLD_W, WORLD_H);
+  const img = c.createImageData(RW, RH);
   const out = new Uint32Array(img.data.buffer);
   const { terrain } = s.map;
   const T = (tx: number, ty: number) => (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H ? -1 : terrain[ty * MAP_W + tx]);
   const W = M.WATER.map(hexPixel);
 
-  for (let ty = 0; ty < MAP_H; ty++) {
-    for (let tx = 0; tx < MAP_W; tx++) {
+  const tx0 = Math.max(0, Math.floor(X0 / TILE));
+  const ty0 = Math.max(0, Math.floor(Y0 / TILE));
+  const tx1 = Math.min(MAP_W, Math.ceil((X0 + RW) / TILE));
+  const ty1 = Math.min(MAP_H, Math.ceil((Y0 + RH) / TILE));
+  for (let ty = ty0; ty < ty1; ty++) {
+    for (let tx = tx0; tx < tx1; tx++) {
       const own = T(tx, ty);
       const n = [T(tx, ty - 1), T(tx + 1, ty), T(tx, ty + 1), T(tx - 1, ty)]; // N E S W
       // For water: how many whole tiles of water lie between this one and each bank.
@@ -256,7 +266,7 @@ function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][]
               if (LAYER[n[k]] > LAYER[mat]) mat = n[k];
             } else if (dist[k] === f) lip = k;
           }
-          const i = Y * WORLD_W + X;
+          const i = (Y - Y0) * RW + (X - X0);
           const edge = warm ? iceEdge(X, Y) : -Infinity;
           const frozen = edge >= 0;
           let px: number;
@@ -290,9 +300,9 @@ function composeGround(c: Ctx, s: GameState, shadows: [number, number, number][]
   }
   // Cast shadows fall down-right of each footprint, one ramp step down.
   for (const [x, y, w] of shadows) {
-    if (y < 0 || y >= WORLD_H) continue;
-    for (let xx = Math.max(0, x); xx < Math.min(WORLD_W, x + w); xx++) {
-      const i = y * WORLD_W + xx;
+    if (y < Y0 || y >= Y0 + RH) continue;
+    for (let xx = Math.max(X0, x); xx < Math.min(X0 + RW, x + w); xx++) {
+      const i = (y - Y0) * RW + (xx - X0);
       out[i] = toPixel(shiftRgb(fromPixel(out[i]), 1, SHADE));
     }
   }
@@ -333,17 +343,91 @@ export interface Occluder {
   base: number;
 }
 
-export interface World {
+/**
+ * The static world, in chunks: 32×32 tiles each, painted only when first
+ * seen and repainted only when something inside it (or tall enough to reach
+ * into it) changes. A map many times the size of the screen costs no more
+ * to open than the corner of it you are looking at.
+ */
+export const CHUNK = 32;
+const CHUNK_PX = CHUNK * TILE;
+/** Chunks painted per frame at most, so opening the map never stalls. */
+const CHUNK_BUDGET = 2;
+/** Chunks kept in memory; the least recently seen go first. */
+const CHUNK_KEEP = 90;
+
+export interface Chunk {
+  key: string;
   cv: HTMLCanvasElement;
   occluders: Occluder[];
+  checkedAt: number;
+}
+
+export interface World {
+  chunks: Map<number, Chunk>;
+}
+
+export const newWorld = (): World => ({ chunks: new Map() });
+
+/** Everything that decides how a chunk looks, hashed: the tiles in and around it, what stands on them, the season. */
+function chunkKey(s: GameState, arch: string, cx: number, cy: number, winterSig: string): string {
+  const { terrain, overlay, meta } = s.map;
+  const tx0 = Math.max(0, cx * CHUNK - 4);
+  const tx1 = Math.min(MAP_W, (cx + 1) * CHUNK + 4);
+  const ty0 = Math.max(0, cy * CHUNK - 1);
+  const ty1 = Math.min(MAP_H, (cy + 1) * CHUNK + 7);
+  let h = 0;
+  for (let y = ty0; y < ty1; y++) {
+    for (let x = tx0; x < tx1; x++) {
+      const i = y * MAP_W + x;
+      const o = overlay[i];
+      const t = terrain[i];
+      const m = o === Overlay.Wall || o === Overlay.Gate ? grade(wallLevel(meta[i])) : o === Overlay.Tree || o === Overlay.Rock ? meta[i] : t === Terrain.Forest ? (meta[i] >= TILE_WOOD / 2 ? 3 : meta[i] >= TILE_WOOD / 5 ? 2 : meta[i] > TILE_WOOD / 20 ? 1 : 0) : 0;
+      h = (h * 31 + t * 7 + o * 13 + m) | 0;
+    }
+  }
+  const near = (x: number, y: number, w: number, hh: number) =>
+    x + w >= cx * CHUNK - 12 && x <= (cx + 1) * CHUNK + 12 && y + hh >= cy * CHUNK && y <= (cy + 1) * CHUNK + 18;
+  const sts = s.structures.filter((st) => near(st.x, st.y, st.w, st.h)).map((st) => `${st.id}:${st.type}:${st.level}:${st.mode ?? ""}:${st.buildUntil ? 1 : 0}`).join(",");
+  const lairs = (s.lairs ?? []).filter((l) => near(l.x, l.y, l.w, l.h)).map((l) => `${l.id}`).join(",");
+  return `${arch}|${h}|${sts}|${lairs}|${winterSig}`;
+}
+
+/** The season's part of every chunk's key: whether it is winter, and where the fires keep the ice off. */
+function winterSignature(s: GameState): string {
+  if (clock(s.time).season !== "winter") return "";
+  return "w:" + warmFields(s).map((w) => `${w.id}:${w.r}:${w.far.toFixed(1)}`).join(";");
+}
+
+/** A chunk, painted if it is missing or stale and the frame's budget allows. */
+function ensureChunk(world: World, s: GameState, arch: TownProfile["archetype"], cx: number, cy: number, budget: { left: number }, winterSig: string): Chunk | undefined {
+  const id = cy * 4096 + cx;
+  const now = performance.now();
+  let ch = world.chunks.get(id);
+  if (ch && now - ch.checkedAt < 250) return ch;
+  const key = chunkKey(s, arch, cx, cy, winterSig);
+  if (ch && ch.key === key) {
+    ch.checkedAt = now;
+    return ch;
+  }
+  if (budget.left <= 0) return ch; // stale, or not yet painted: next frame
+  budget.left -= 1;
+  const r = composeRegion(s, arch, cx * CHUNK_PX, cy * CHUNK_PX, CHUNK_PX, CHUNK_PX);
+  ch = { key, cv: r.cv, occluders: r.occluders, checkedAt: now };
+  world.chunks.delete(id);
+  world.chunks.set(id, ch);
+  while (world.chunks.size > CHUNK_KEEP) world.chunks.delete(world.chunks.keys().next().value!);
+  return ch;
 }
 
 /**
- * Paints the static world. Called only when `worldKey` changes: a build, an
- * upgrade, a cleared tile, a painted road, a wall knocked down.
+ * Paints one region of the static world: ground, fields, and every upright
+ * thing whose art reaches into it — trees, rocks, walls, buildings, lairs —
+ * back to front. Returns the uprights that stand (by their foot) inside the
+ * region, for the live layer's painter's pass.
  */
-export function composeWorld(s: GameState, arch: TownProfile["archetype"]): World {
-  const { cv, c } = makeCanvas(WORLD_W, WORLD_H);
+function composeRegion(s: GameState, arch: TownProfile["archetype"], X0: number, Y0: number, RW: number, RH: number): { cv: HTMLCanvasElement; occluders: Occluder[] } {
+  const { cv, c } = makeCanvas(RW, RH);
   const { terrain, overlay, meta } = s.map;
   // Winter: snow on every roof and cap, warm or not; ice on the ground
   // everywhere a pit fire does not reach.
@@ -351,17 +435,22 @@ export function composeWorld(s: GameState, arch: TownProfile["archetype"]): Worl
   const warm = winter ? warmFields(s) : null;
   const dress = (img: HTMLCanvasElement, mode: FrostMode = "roof") => (winter ? frosted(img, mode) : img);
 
-  // Everything upright, back to front; their shadows go into the ground pass.
   const shadows: [number, number, number][] = [];
   const items: { base: number; draw: () => void }[] = [];
   const occluders: Occluder[] = [];
-  const upright = (img: HTMLCanvasElement, x: number, y: number, base: number) => {
+  const owns = (fx: number, fy: number) => fx >= X0 && fx < X0 + RW && fy > Y0 && fy <= Y0 + RH;
+  const upright = (img: HTMLCanvasElement, x: number, y: number, base: number, footX: number) => {
     const o = { img, x: Math.round(x), y: Math.round(y), base };
-    occluders.push(o);
+    if (o.x > X0 + RW || o.x + img.width < X0 || o.y > Y0 + RH || o.y + img.height < Y0) return;
+    if (owns(footX, base)) occluders.push(o);
     items.push({ base, draw: () => c.drawImage(img, o.x, o.y) });
   };
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
+  const tx0 = Math.max(0, Math.floor(X0 / TILE) - 4);
+  const tx1 = Math.min(MAP_W, Math.ceil((X0 + RW) / TILE) + 4);
+  const ty0 = Math.max(0, Math.floor(Y0 / TILE) - 1);
+  const ty1 = Math.min(MAP_H, Math.ceil((Y0 + RH) / TILE) + 7);
+  for (let y = ty0; y < ty1; y++) {
+    for (let x = tx0; x < tx1; x++) {
       const i = y * MAP_W + x;
       const X = x * TILE;
       const Y = y * TILE;
@@ -374,41 +463,58 @@ export function composeWorld(s: GameState, arch: TownProfile["archetype"]): Worl
         if (left <= 0.05) continue;
         const bare = left >= 0.5 ? (v % 3 === 0 ? oak(v % 4) : pine(v % 3)) : left >= 0.2 ? youngTree(v) : seedling(v);
         const tree = dress(bare, "tree");
-        upright(tree, X + TILE / 2 - tree.width / 2 + Math.round((hash(x, y, 2) - 0.5) * 4), Y + TILE - tree.height + (left >= 0.5 ? 0 : 1), Y + TILE);
+        upright(tree, X + TILE / 2 - tree.width / 2 + Math.round((hash(x, y, 2) - 0.5) * 4), Y + TILE - tree.height + (left >= 0.5 ? 0 : 1), Y + TILE, X + TILE / 2);
         continue;
       }
       const o = overlay[i];
       if (o === Overlay.Tree) {
         const tree = dress(tileTree(meta[i]), "tree");
         if (treeStage(meta[i]) >= 2) castRows(shadows, X - 2, Y + TILE - 2, 10, 3);
-        upright(tree, X + TILE / 2 - tree.width / 2, Y + TILE - tree.height + 2, Y + TILE);
+        upright(tree, X + TILE / 2 - tree.width / 2, Y + TILE - tree.height + 2, Y + TILE, X + TILE / 2);
       } else if (o === Overlay.Rock) {
-        upright(dress(rockNode(meta[i], i % 3), "cap"), X - 2, Y - 2, Y + TILE);
+        upright(dress(rockNode(meta[i], i % 3), "cap"), X - 2, Y - 2, Y + TILE, X + TILE / 2);
       } else if (o === Overlay.Debris) {
-        items.push({ base: Y + 1, draw: () => c.drawImage(debris(i % 5), X, Y) });
+        if (X + TILE > X0 && X < X0 + RW && Y + TILE > Y0 && Y < Y0 + RH) items.push({ base: Y + 1, draw: () => c.drawImage(debris(i % 5), X, Y) });
       } else if (o === Overlay.Wall || o === Overlay.Gate) {
         const n = overlay[i - MAP_W] === Overlay.Wall || overlay[i - MAP_W] === Overlay.Gate;
         const sb = overlay[i + MAP_W] === Overlay.Wall || overlay[i + MAP_W] === Overlay.Gate;
-        const tileArt = dress(wallTile(n, sb, o === Overlay.Gate), "cap");
-        upright(tileArt, X, Y + TILE - tileArt.height, Y + TILE);
+        const tileArt = dress(gradedWall(wallTile(n, sb, o === Overlay.Gate), grade(wallLevel(meta[i]))), "cap");
+        upright(tileArt, X, Y + TILE - tileArt.height, Y + TILE, X + TILE / 2);
       }
     }
   }
   for (const st of s.structures) {
-    const bare = structureArt(st, arch);
-    if (!bare) continue;
+    if (st.x + st.w < tx0 - 12 || st.x > tx1 + 12 || st.y + st.h < ty0 || st.y > ty1 + 18) continue;
+    const plain = structureArt(st, arch);
+    if (!plain) continue;
+    const bare = graded(plain, grade(st.level), STYLE[arch].banner, st.level);
     const art = dress(bare);
     const [ax, ay] = artAnchor(st, art);
     castRows(shadows, ax + 4, (st.y + st.h) * TILE - 3, art.width - 8, 6);
-    upright(st.buildUntil ? unbuilt(art) : art, ax, ay, (st.y + st.h) * TILE);
+    upright(st.buildUntil ? unbuilt(art) : art, ax, ay, (st.y + st.h) * TILE, (st.x + st.w / 2) * TILE);
+  }
+  for (const l of s.lairs ?? []) {
+    if (l.x + l.w < tx0 - 12 || l.x > tx1 + 12 || l.y + l.h < ty0 || l.y > ty1 + 18) continue;
+    const art = dress(lairArt(l.kind), "cap");
+    const ax = l.x * TILE + Math.round((l.w * TILE - art.width) / 2);
+    const ay = (l.y + l.h) * TILE - art.height;
+    castRows(shadows, ax + 4, (l.y + l.h) * TILE - 3, art.width - 8, 5);
+    upright(art, ax, ay, (l.y + l.h) * TILE, (l.x + l.w / 2) * TILE);
   }
 
-  composeGround(c, s, shadows, warm);
+  composeGround(c, s, shadows, warm, X0, Y0, RW, RH);
+  c.save();
+  c.translate(-X0, -Y0);
   // Farm fields sit flat on the ground, under everything else.
   const frozenAt = (st: Structure) => !!warm && !warmAt(warm, [st.x + st.w / 2, st.y + st.h / 2]);
   // In winter a field the fire keeps open still stands bare unless it is potatoes.
-  for (const st of s.structures) if (st.type === "farm" || st.type === "waterfarm") drawField(c, st, frozenAt(st), winter && !growsInWinter(st));
+  for (const st of s.structures) {
+    if (st.type !== "farm" && st.type !== "waterfarm") continue;
+    if ((st.x + st.w) * TILE < X0 || st.x * TILE > X0 + RW || (st.y + st.h) * TILE < Y0 || st.y * TILE > Y0 + RH) continue;
+    drawField(c, st, frozenAt(st), winter && !growsInWinter(st));
+  }
   items.sort((a, b) => a.base - b.base).forEach((it) => it.draw());
+  c.restore();
   return { cv, occluders };
 }
 
@@ -490,7 +596,13 @@ function smoke(c: Ctx, x: number, y: number, t: number, dark = false, ramp?: Ram
 
 // HUD colours: bars and numbers must stay legible through night and raid.
 const HUD = { frame: "#0c0810", empty: "#3a1418", friend: "#5ad06a", foe: "#e0402a", build: "#e8c060", select: ["#ffe07a", "#c9a040"], level: "#ffe070", legend: "#ffb04a", crit: "#ffd84a", hit: "#ff7a6a" };
-const PROTECT = new Set<number>([...EMISSIVE, ...[HUD.frame, HUD.empty, HUD.friend, HUD.foe, HUD.build, ...HUD.select, HUD.level, HUD.legend, HUD.crit, HUD.hit].map((h) => parseInt(h.slice(1), 16))]);
+/** How much colour the world keeps: a muted, weathered palette. Lights and the interface stay vivid. */
+const MUTED = 0.74;
+/** Monsters that fly, lifted off the ground when they roam. */
+const MONSTER_FLIES = new Set(Object.values(BEASTS).filter((d) => d.flying).map((d) => d.kind as string));
+// The night fog's two greys are kept out of the grade too, so the dark
+// greys it out rather than tinting it blue (see FOG_NIGHT_NEAR/FAR below).
+const PROTECT = new Set<number>([0x4b4e53, 0x1d1f22, ...EMISSIVE, ...[HUD.frame, HUD.empty, HUD.friend, HUD.foe, HUD.build, ...HUD.select, HUD.level, HUD.legend, HUD.crit, HUD.hit].map((h) => parseInt(h.slice(1), 16))]);
 
 function hpBar(c: Ctx, x: number, y: number, w: number, frac: number, friend: boolean) {
   px(c, x - 1, y - 1, w + 2, 4, HUD.frame);
@@ -524,11 +636,37 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
   const vh = VIEW_H / cam.zoom;
   c.fillStyle = "#0c0a10";
   c.fillRect(0, 0, VIEW_W, VIEW_H);
-  c.drawImage(world.cv, cam.x, cam.y, vw, vh, 0, 0, VIEW_W, VIEW_H);
 
   c.save();
   c.scale(cam.zoom, cam.zoom);
   c.translate(-cam.x, -cam.y);
+  // The static world: the chunks in view, painted as they are needed. One
+  // row below and a column each side are kept ready too, for the uprights
+  // whose art reaches up or across into view.
+  const budget = { left: CHUNK_BUDGET };
+  const wsig = winterSignature(s);
+  const cx0 = Math.max(0, Math.floor(cam.x / CHUNK_PX));
+  const cy0 = Math.max(0, Math.floor(cam.y / CHUNK_PX));
+  const cx1 = Math.min(Math.ceil(MAP_W / CHUNK) - 1, Math.floor((cam.x + vw) / CHUNK_PX));
+  const cy1 = Math.min(Math.ceil(MAP_H / CHUNK) - 1, Math.floor((cam.y + vh) / CHUNK_PX));
+  const occluders: Occluder[] = [];
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const ch = ensureChunk(world, s, ov.arch, cx, cy, budget, wsig);
+      if (ch) c.drawImage(ch.cv, cx * CHUNK_PX, cy * CHUNK_PX);
+      else {
+        c.fillStyle = "#2a2d34";
+        c.fillRect(cx * CHUNK_PX, cy * CHUNK_PX, CHUNK_PX, CHUNK_PX);
+      }
+    }
+  }
+  for (let cy = cy0; cy <= Math.min(Math.ceil(MAP_H / CHUNK) - 1, cy1 + 1); cy++) {
+    for (let cx = Math.max(0, cx0 - 1); cx <= Math.min(Math.ceil(MAP_W / CHUNK) - 1, cx1 + 1); cx++) {
+      const inside = cy <= cy1 && cx >= cx0 && cx <= cx1;
+      const ch = inside ? world.chunks.get(cy * 4096 + cx) : ensureChunk(world, s, ov.arch, cx, cy, budget, wsig);
+      if (ch) occluders.push(...ch.occluders);
+    }
+  }
   const clk = clock(s.time);
   const inView = (x: number, y: number, m = 40) => x > cam.x - m && x < cam.x + vw + m && y > cam.y - m && y < cam.y + vh + m;
 
@@ -562,7 +700,7 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
       flames(c, X + 18, Y + st.h * TILE - 1, t, 12, 5);
       smoke(c, X + st.w * TILE - 12, Y - 20, t, true);
     }
-    if (st.type === "kitchen" || st.type === "refinery" || st.type === "house") smoke(c, X + st.w * TILE - 8, Y - 16, t + st.id * 0.3, st.type === "refinery");
+    if (st.type === "kitchen" || st.type === "refinery" || st.type === "house" || st.type === "apartment") smoke(c, X + st.w * TILE - 8, Y - 16, t + st.id * 0.3, st.type === "refinery");
     // the laboratory's flue runs green
     if (st.type === "laboratory") smoke(c, X + 10, Y - 20, t + st.id * 0.3, false, M.CLOTHGRN);
     if (st.type === "watermill") drawWheel(c, X - 3, Y + st.h * TILE - 10, 9, t * 1.6);
@@ -586,7 +724,7 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
   for (const st of s.structures) {
     if (!st.buildUntil) continue;
     const def = CATALOG[st.type];
-    const total = def.buildHours * 60 * Math.pow(st.level, st.level > 1 ? 1.3 : 0);
+    const total = def.buildHours * 60 * (st.level > 1 ? levelHours(st.level) : 1);
     const frac = 1 - Math.max(0, st.buildUntil - s.time) / Math.max(1, total);
     const X = st.x * TILE;
     const Y = st.y * TILE - 6;
@@ -657,6 +795,63 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
     }
   }
 
+  // Bands out of the fog — drawn only where the town can see them.
+  for (const b of s.roamers ?? []) {
+    if (!seesPoint(s, b.x, b.y)) continue;
+    const img = monsterAt(b.kind as MonsterArt, b.level);
+    const flip = b.tx < b.x;
+    for (let k = 0; k < Math.min(3, b.count); k++) {
+      const x = Math.round((b.x + (k - 1) * 1.3) * TILE);
+      const y = Math.round((b.y + (k % 2) * 0.7) * TILE);
+      if (!inView(x, y, 60)) continue;
+      const dx = Math.round(x - img.width / 2);
+      const dy = y - img.height - (MONSTER_FLIES.has(b.kind) ? 12 : 0);
+      sprites.push({
+        base: y, x0: dx - 10, y0: dy - 6, x1: dx + img.width + 10, y1: y + 2,
+        draw: () => {
+          footShadow(c, s, x, y, Math.round(img.width / 1.6));
+          if (flip) c.drawImage(img, dx, dy);
+          else {
+            c.save();
+            c.translate(dx + img.width, dy);
+            c.scale(-1, 1);
+            c.drawImage(img, 0, 0);
+            c.restore();
+          }
+        },
+      });
+    }
+  }
+  // Heroes out in the fog, torch in hand.
+  for (const v of s.villagers) {
+    if (!v.scout) continue;
+    const x = Math.round(v.scout.x * TILE);
+    const y = Math.round(v.scout.y * TILE);
+    if (!inView(x, y)) continue;
+    const look = troopLook(v.role, v.rank);
+    const frame = Math.floor(t * 6 + v.id) % 2 ? 1 : 0;
+    const img = figure(look, frame);
+    const [gx] = v.scout.phase === "out" ? [v.scout.tx] : [v.scout.hx];
+    const left = gx < v.scout.x;
+    const dx = Math.round(x - img.width / 2);
+    const dy = y - img.height;
+    const lit = torchLit(v);
+    sprites.push({
+      base: y, x0: dx - 10, y0: dy - 10, x1: dx + img.width + 10, y1: y + 2,
+      draw: () => {
+        footShadow(c, s, x, y, 10);
+        if (left) {
+          c.save();
+          c.translate(dx + img.width, dy);
+          c.scale(-1, 1);
+          c.drawImage(img, 0, 0);
+          c.restore();
+        } else c.drawImage(img, dx, dy);
+        if (lit) flames(c, x + (left ? -6 : 6), dy + 7, t, 2, v.id, 0.5);
+      },
+    });
+  }
+
   // combat
   const raid = s.raid;
   if (raid?.started) {
@@ -687,6 +882,16 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
           if (look && hasAura(look)) heroEffect(c, look, x, dy, y, t, u.id);
         },
       });
+      if (u.scorched) {
+        // firelight on a thing of the dark: embers rising off it
+        onTop.push(() => {
+          for (let k = 0; k < 4; k++) {
+            const ex = x - 6 + Math.floor(hash(k, u.id, 3) * 12);
+            const ey = y - 4 - ((Math.floor(t * 12) + k * 5) % 14);
+            px(c, ex, ey, 1, 1, k % 2 ? E.AMBER[1] : E.AMBER[2]);
+          }
+        });
+      }
       onTop.push(() => {
         hpBar(c, x - 8, dy - 5, 16, u.hp / u.maxHp, u.side === "defender");
         if (u.side === "monster" && u.level >= 5) text(c, `L${u.level}`, x - 6, dy - 11, u.legendary ? HUD.legend : HUD.level);
@@ -721,7 +926,7 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
   // The painter's pass: sprites, and whatever upright thing overlaps one.
   if (sprites.length) {
     const layer: { base: number; order: number; draw: () => void }[] = sprites.map((sp) => ({ base: sp.base, order: 1, draw: sp.draw }));
-    for (const o of world.occluders) {
+    for (const o of occluders) {
       const ox1 = o.x + o.img.width;
       const oy1 = o.y + o.img.height;
       if (!sprites.some((sp) => sp.x0 < ox1 && sp.x1 > o.x && sp.y0 < oy1 && sp.y1 > o.y)) continue;
@@ -745,6 +950,13 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
     px(c, X, yy, TILE, 3, HUD.frame);
     px(c, X + 1, yy + 1, Math.max(1, Math.round((TILE - 2) * Math.min(1, job.progress / need))), 1, HUD.build);
   }
+
+  // ── The fog ──
+  // Cloud over everything the town cannot see, a thin mist over ground it
+  // has seen before (and at the cloud's edge, so it thins rather than
+  // stops), drifting slowly. Drawn over the world and whatever walks in it,
+  // under the markers the player works with.
+  drawFog(c, s, cam, clk.darkness > 0.5);
 
   // selection, ghosts, painting
   if (ov.selected) {
@@ -831,14 +1043,14 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
   // Watchtower circles: where guards will come out. Always while a raid is
   // on, for the selected tower, and for a tower being placed. Gold if guards
   // are posted there, red if nobody is.
-  const rings: { cx: number; cy: number; r: number; manned: boolean; inside: number }[] = [];
+  const rings: { cx: number; cy: number; r: number; pr?: number; manned: boolean; inside: number }[] = [];
   const insideAt = new Map<number, number>();
   for (const u of s.raid?.combatants ?? []) if (u.inside && u.post !== undefined && u.hp > 0) insideAt.set(u.post, (insideAt.get(u.post) ?? 0) + 1);
   for (const st of s.structures) {
     if (!isGuardPost(st) || st.buildUntil) continue;
     if (!s.raid && ov.selected !== st.id) continue;
     const manned = s.villagers.some((v) => v.guard === st.id);
-    rings.push({ cx: (st.x + st.w / 2) * TILE, cy: (st.y + st.h / 2) * TILE, r: alertRadius(st) * TILE, manned, inside: insideAt.get(st.id) ?? 0 });
+    rings.push({ cx: (st.x + st.w / 2) * TILE, cy: (st.y + st.h / 2) * TILE, r: alertRadius(st) * TILE, pr: passiveRadius(st) * TILE, manned, inside: insideAt.get(st.id) ?? 0 });
   }
   if (ov.ghost?.type === "watchtower" || ov.ghost?.type === "armypoint") {
     const g = ov.ghost;
@@ -846,6 +1058,17 @@ export function drawFrame(ctx: Ctx, world: World, s: GameState, cam: Camera, ov:
   }
   for (const ring of rings) {
     const col = ring.manned ? E.AMBER : E.BLOOD;
+    // The outer circle: sparse dashes. Guards come out to it only for
+    // something attacking a building or the wall.
+    if (ring.pr) {
+      const np = Math.max(48, Math.round(ring.pr * 2 * Math.PI));
+      const crawlP = Math.floor(t * 3);
+      for (let i = 0; i < np; i++) {
+        if ((i + crawlP) % 12 >= 3) continue;
+        const a = (i / np) * Math.PI * 2;
+        px(c, Math.round(ring.cx + Math.cos(a) * ring.pr), Math.round(ring.cy + Math.sin(a) * ring.pr), 1, 1, col[2]);
+      }
+    }
     // A continuous dashed line (5 on, 3 off) with a dark edge outside it, so
     // it reads as a boundary rather than more flowers in the grass.
     const n = Math.max(48, Math.round(ring.r * 2 * Math.PI));
@@ -959,7 +1182,7 @@ function environment(c: Ctx, s: GameState, cam: Camera, clk: Clock, t: number, r
   const raid = !!s.raid?.started;
   if (raid) base = then(base, GRADES.RAID);
   if (dark === 0) {
-    if (!isIdentity(base)) applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base], undefined, PROTECT);
+    applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base], undefined, PROTECT, MUTED);
     return;
   }
   if (!lightBuf) lightBuf = new Uint8Array(VIEW_W * VIEW_H);
@@ -978,43 +1201,260 @@ function environment(c: Ctx, s: GameState, cam: Camera, clk: Clock, t: number, r
     if (reach > 0) light(cx, cy, reach * TILE);
     else if (st.type === "forge" || st.type === "refinery") light(cx, cy, 26);
     else if (st.type === "townhall") light(cx, cy + 10, 38);
-    else if (st.type === "house" || st.type === "kitchen" || st.type === "school" || st.type === "laboratory" || st.type === "fishery") light(cx, cy, 13);
+    else if (st.type === "house" || st.type === "apartment" || st.type === "kitchen" || st.type === "school" || st.type === "laboratory" || st.type === "fishery") light(cx, cy, 13);
     else if (st.type === "watchtower" || st.type === "wizardhut") light(cx, cy - 8, 15);
   }
   if (raid) for (const p of s.raid!.projectiles) light((p.x + (p.tx - p.x) * p.t) * TILE, (p.y + (p.ty - p.y) * p.t) * TILE, 8);
   let lit = then(season, GRADES.FIRELIGHT);
   if (raid) lit = then(lit, GRADES.RAID);
-  applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base, mix(base, lit, 0.5), lit], lightBuf, PROTECT);
+  applyEnvironmentLighting(c, VIEW_W, VIEW_H, [base, mix(base, lit, 0.5), lit], lightBuf, PROTECT, MUTED);
 }
 
 // ── Minimap ───────────────────────────────────────────────
 
-const MINI_COLORS: Record<number, string> = { 0: "#3f7a36", 1: "#2c6aa6", 2: "#a09080", 3: "#1f4e2c", 4: "#c8b086" };
+const MINI_COLORS: Record<number, string> = { 0: "#4f6e44", 1: "#3a6280", 2: "#9a8e80", 3: "#2c4634", 4: "#b8a88a" };
 
 /** The minimap in winter: ice for grass, bank and forest floor outside the fires' warmth. */
 const MINI_ICE: Record<number, string> = { 0: "#9cc4d6", 1: "#2c6aa6", 2: "#8a94a4", 3: "#6f93a8", 4: "#9cc4d6" };
 
-export function drawMinimap(c: Ctx, s: GameState, cam: Camera) {
+/** The minimap's window onto the map, in tiles. It shows this much at a time, and can be dragged. */
+export const MINI_W = 120;
+export const MINI_H = 80;
+
+/**
+ * The minimap: a window onto the map, one pixel a tile, starting at
+ * `origin`. Unseen ground is dark, ground seen before is dimmed, and only
+ * what the town can see now shows its monsters.
+ */
+export function drawMinimap(c: Ctx, s: GameState, cam: Camera, origin: [number, number]) {
   c.imageSmoothingEnabled = false;
+  const [ox, oy] = origin;
   const warm = clock(s.time).season === "winter" ? warmFields(s) : null;
-  for (let i = 0; i < s.map.terrain.length; i++) {
-    const o = s.map.overlay[i];
-    const tx = i % MAP_W;
-    const ty = Math.floor(i / MAP_W);
-    const iced = !!warm && !warmAt(warm, [tx + 0.5, ty + 0.5]);
-    c.fillStyle = o === Overlay.Wall || o === Overlay.Gate ? "#d0ccc4" : o === Overlay.Tree ? "#265e30" : o === Overlay.Rock ? "#7a7888" : o === Overlay.Debris ? "#5a3a24" : (iced ? MINI_ICE : MINI_COLORS)[s.map.terrain[i]];
-    c.fillRect(i % MAP_W, Math.floor(i / MAP_W), 1, 1);
+  const vis = visionMap(s);
+  const img = c.createImageData(MINI_W, MINI_H);
+  const out = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < MINI_H; y++) {
+    for (let x = 0; x < MINI_W; x++) {
+      const tx = ox + x;
+      const ty = oy + y;
+      if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) {
+        out[y * MINI_W + x] = 0xff100e14;
+        continue;
+      }
+      const i = ty * MAP_W + tx;
+      const v = vis[i];
+      if (v === UNSEEN) {
+        out[y * MINI_W + x] = 0xff2a2622;
+        continue;
+      }
+      const o = s.map.overlay[i];
+      const iced = !!warm && !warmAt(warm, [tx + 0.5, ty + 0.5]);
+      const hex = o === Overlay.Lair ? "#6a4a80" : o === Overlay.Wall || o === Overlay.Gate ? "#c4c0b8" : o === Overlay.Tree ? "#34583a" : o === Overlay.Rock ? "#747480" : o === Overlay.Debris ? "#5a4230" : (iced ? MINI_ICE : MINI_COLORS)[s.map.terrain[i]];
+      let rgb = parseInt(hex.slice(1), 16);
+      if (v === MAPPED) rgb = ((rgb >> 1) & 0x7f7f7f) + 0x141414; // dimmed: seen, not watched
+      out[y * MINI_W + x] = (0xff000000 | ((rgb & 255) << 16) | (rgb & 0xff00) | (rgb >>> 16)) >>> 0;
+    }
   }
+  c.putImageData(img, 0, 0);
   for (const st of s.structures) {
-    c.fillStyle = st.type === "townhall" ? "#ffd84a" : st.type === "farm" || st.type === "waterfarm" ? "#b89a3a" : "#e8e0d0";
-    c.fillRect(st.x, st.y, st.w, st.h);
+    c.fillStyle = st.type === "townhall" ? "#e8c860" : st.type === "farm" || st.type === "waterfarm" ? "#a88e48" : "#d8d2c4";
+    c.fillRect(st.x - ox, st.y - oy, st.w, st.h);
   }
-  if (s.raid?.started) {
-    c.fillStyle = "#ff3a2a";
-    for (const u of s.raid.combatants) if (u.side === "monster" && u.hp > 0) c.fillRect(Math.floor(u.x), Math.floor(u.y), 2, 2);
+  for (const l of s.lairs ?? []) {
+    if (!l.discovered) continue;
+    c.fillStyle = "#b060e0";
+    c.fillRect(l.x - ox, l.y - oy, l.w, l.h);
   }
+  c.fillStyle = "#e05040";
+  for (const b of s.roamers ?? []) if (vis[Math.floor(b.y) * MAP_W + Math.floor(b.x)] === VISIBLE) c.fillRect(Math.floor(b.x) - ox, Math.floor(b.y) - oy, 2, 2);
+  if (s.raid?.started) for (const u of s.raid.combatants) if (u.side === "monster" && u.hp > 0) c.fillRect(Math.floor(u.x) - ox, Math.floor(u.y) - oy, 2, 2);
+  c.fillStyle = "#ffe08a";
+  for (const v of s.villagers) if (v.scout) c.fillRect(Math.floor(v.scout.x) - ox, Math.floor(v.scout.y) - oy, 1, 1);
   c.strokeStyle = "#fff";
   c.lineWidth = 1;
-  c.strokeRect(cam.x / TILE + 0.5, cam.y / TILE + 0.5, VIEW_W / cam.zoom / TILE, VIEW_H / cam.zoom / TILE);
+  c.strokeRect(cam.x / TILE - ox + 0.5, cam.y / TILE - oy + 0.5, VIEW_W / cam.zoom / TILE, VIEW_H / cam.zoom / TILE);
+}
+
+// ── Fog ───────────────────────────────────────────────────
+
+/*
+ * Fog, not cloud: a pale, flat bank that thickens gradually away from what
+ * the town can see — clear, then a thin haze a tile or two deep, then fog
+ * too thick to see through by four tiles out. Ground seen before is never
+ * lost in the thick of it: it keeps a light haze. The thickness is a smooth
+ * field; each pixel is fog or clear by an ordered dither against it, so the
+ * edge reads as mist in the 16-bit way, not a stamped texture. A slow,
+ * wide swell in the field keeps the bank from looking ruled.
+ *
+ * It is painted in the same 32-tile chunks as the world and kept: a chunk is
+ * repainted only when what the town sees changes near it. A frame draws a
+ * handful of images, whatever the zoom.
+ */
+
+/** The fog's two shades: close in value, cool and grey — a bank, not smoke. */
+const FOG_LIGHT = "#878c93";
+const FOG_BODY = "#7e838a";
+/** Thickness of fog over ground seen before but not watched now. */
+const HAZE = 0.42;
+/** Tiles over which the fog thickens from clear to solid. */
+const FOG_DEPTH = 4;
+/** Ordered-dither thresholds, 4×4. */
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+
+/** Value noise with smooth steps between its lattice points: soft swells, no blocks. */
+function smoothNoise(x: number, y: number, cell: number, seed: number) {
+  const gx = Math.floor(x / cell);
+  const gy = Math.floor(y / cell);
+  const fx = x / cell - gx;
+  const fy = y / cell - gy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash(gx, gy, seed);
+  const b = hash(gx + 1, gy, seed);
+  const c = hash(gx, gy + 1, seed);
+  const d = hash(gx + 1, gy + 1, seed);
+  const top = a + (b - a) * sx;
+  return top + (c + (d - c) * sx - top) * sy;
+}
+
+interface FogChunk {
+  vis: Uint8Array;
+  night: boolean;
+  cv: HTMLCanvasElement;
+}
+
+/** At night the bank darkens with distance from the hall: grey by the town, near black out in the wilds. */
+const FOG_NIGHT_NEAR = "#4b4e53";
+const FOG_NIGHT_FAR = "#1d1f22";
+/** Tiles past the hall's reach over which the night fog darkens fully. */
+const NIGHT_FADE = 70;
+const fogChunks = new Map<number, FogChunk>();
+let fogField: { vis: Uint8Array; field: Float32Array } | null = null;
+
+/**
+ * Fog thickness per tile, 0 to 1: distance to the nearest tile in sight,
+ * run through a two-pass chamfer over the whole map, capped at FOG_DEPTH;
+ * ground seen before is held to the haze. Recomputed only when sight does.
+ */
+function fogThickness(vis: Uint8Array): Float32Array {
+  if (fogField?.vis === vis) return fogField.field;
+  const n = MAP_W * MAP_H;
+  const d = new Float32Array(n);
+  for (let i = 0; i < n; i++) d[i] = vis[i] === VISIBLE ? 0 : FOG_DEPTH;
+  const D = 1.41;
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const i = y * MAP_W + x;
+      let v = d[i];
+      if (x > 0) v = Math.min(v, d[i - 1] + 1);
+      if (y > 0) {
+        v = Math.min(v, d[i - MAP_W] + 1);
+        if (x > 0) v = Math.min(v, d[i - MAP_W - 1] + D);
+        if (x < MAP_W - 1) v = Math.min(v, d[i - MAP_W + 1] + D);
+      }
+      d[i] = v;
+    }
+  }
+  for (let y = MAP_H - 1; y >= 0; y--) {
+    for (let x = MAP_W - 1; x >= 0; x--) {
+      const i = y * MAP_W + x;
+      let v = d[i];
+      if (x < MAP_W - 1) v = Math.min(v, d[i + 1] + 1);
+      if (y < MAP_H - 1) {
+        v = Math.min(v, d[i + MAP_W] + 1);
+        if (x < MAP_W - 1) v = Math.min(v, d[i + MAP_W + 1] + D);
+        if (x > 0) v = Math.min(v, d[i + MAP_W - 1] + D);
+      }
+      d[i] = v;
+    }
+  }
+  const field = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let f = Math.min(1, d[i] / FOG_DEPTH);
+    if (vis[i] === MAPPED) f = Math.min(f, HAZE);
+    field[i] = f;
+  }
+  fogField = { vis, field };
+  return field;
+}
+
+/** Paints one chunk of fog: the thickness field, bilinear between tile centres, dithered. */
+function paintFogChunk(field: Float32Array, cx: number, cy: number, night: { x: number; y: number; r: number } | null): HTMLCanvasElement {
+  const { cv, c } = makeCanvas(CHUNK_PX, CHUNK_PX);
+  const img = c.createImageData(CHUNK_PX, CHUNK_PX);
+  const out = new Uint32Array(img.data.buffer);
+  const toPx = (hex: string) => {
+    const v = parseInt(hex.slice(1), 16);
+    return (0xff000000 | ((v & 255) << 16) | (v & 0xff00) | (v >>> 16)) >>> 0;
+  };
+  const light = toPx(FOG_LIGHT);
+  const body = toPx(FOG_BODY);
+  const nearN = toPx(FOG_NIGHT_NEAR);
+  const farN = toPx(FOG_NIGHT_FAR);
+  const F = (tx: number, ty: number) => field[Math.max(0, Math.min(MAP_H - 1, ty)) * MAP_W + Math.max(0, Math.min(MAP_W - 1, tx))];
+  const X0 = cx * CHUNK_PX;
+  const Y0 = cy * CHUNK_PX;
+  for (let y = 0; y < CHUNK_PX; y++) {
+    const wy = (Y0 + y) / TILE - 0.5;
+    const ty = Math.floor(wy);
+    const fy = wy - ty;
+    for (let x = 0; x < CHUNK_PX; x++) {
+      const wx = (X0 + x) / TILE - 0.5;
+      const tx = Math.floor(wx);
+      const fx = wx - tx;
+      const top = F(tx, ty) + (F(tx + 1, ty) - F(tx, ty)) * fx;
+      const bot = F(tx, ty + 1) + (F(tx + 1, ty + 1) - F(tx, ty + 1)) * fx;
+      let f = top + (bot - top) * fy;
+      if (f <= 0) continue;
+      // a wide, slow swell in the bank, so its edge is never a ruled circle
+      const wX = X0 + x;
+      const wY = Y0 + y;
+      const swell = smoothNoise(wX, wY, 48, 83) * 0.65 + smoothNoise(wX, wY, 20, 84) * 0.35;
+      if (f < 1) f = Math.max(0, Math.min(1, f + (swell - 0.5) * 0.28));
+      const b = BAYER[(y & 3) * 4 + (x & 3)];
+      if (f < b) continue;
+      if (night) {
+        // by night: the further from the hall, the darker, dithered between two shades
+        const far = Math.max(0, Math.min(1, (Math.hypot(wX / TILE - night.x, wY / TILE - night.y) - night.r) / NIGHT_FADE));
+        out[y * CHUNK_PX + x] = far > BAYER[((y + 2) & 3) * 4 + ((x + 1) & 3)] ? farN : nearN;
+        continue;
+      }
+      // the brighter shade only as a sparse, dithered sheen where the bank swells
+      out[y * CHUNK_PX + x] = (swell - 0.5) * 2.2 > b ? light : body;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return cv;
+}
+
+function drawFog(c: Ctx, s: GameState, cam: Camera, isNight: boolean) {
+  const vis = visionMap(s);
+  const hall = s.structures.find((x) => x.type === "townhall");
+  const night = isNight && hall ? { x: hall.x + hall.w / 2, y: hall.y + hall.h / 2, r: hallRadius(hall.level) } : null;
+  const vw = VIEW_W / cam.zoom;
+  const vh = VIEW_H / cam.zoom;
+  const cx0 = Math.max(0, Math.floor(cam.x / CHUNK_PX));
+  const cy0 = Math.max(0, Math.floor(cam.y / CHUNK_PX));
+  const cx1 = Math.min(Math.ceil(MAP_W / CHUNK) - 1, Math.floor((cam.x + vw) / CHUNK_PX));
+  const cy1 = Math.min(Math.ceil(MAP_H / CHUNK) - 1, Math.floor((cam.y + vh) / CHUNK_PX));
+  let budget = CHUNK_BUDGET + 1;
+  let field: Float32Array | null = null;
+  for (let cy = cy0; cy <= cy1; cy++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const id = cy * 4096 + cx;
+      let fc = fogChunks.get(id);
+      if (!fc || fc.vis !== vis || fc.night !== !!night) {
+        if (budget > 0 || !fc) {
+          budget -= 1;
+          field ??= fogThickness(vis);
+          fc = { vis, night: !!night, cv: paintFogChunk(field, cx, cy, night) };
+          fogChunks.delete(id);
+          fogChunks.set(id, fc);
+          while (fogChunks.size > CHUNK_KEEP) fogChunks.delete(fogChunks.keys().next().value!);
+        }
+      }
+      c.drawImage(fc.cv, cx * CHUNK_PX, cy * CHUNK_PX);
+    }
+  }
 }
 

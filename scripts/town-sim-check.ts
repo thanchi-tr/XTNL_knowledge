@@ -14,6 +14,9 @@ import { profileFor, type TownInput } from "../src/lib/town/rules";
 import { rng, idx, checkPlacement, fuelCap, ringOf, unlitBuildings } from "../src/lib/town/sim/world";
 import { MAP_W } from "../src/lib/town/sim/types";
 import type { StructureType } from "../src/lib/town/sim/types";
+import { FOG } from "../src/lib/town/sim/vision";
+// These checks build wherever they need to; the fog has checks of its own.
+FOG.rules = false;
 
 const input: TownInput = {
   schools: { commerce: 14, science: 16, mind: 12 },

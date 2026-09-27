@@ -6,7 +6,7 @@ import { profileFor, type TownInput } from "@/lib/town/rules";
 import {
   BUILDABLE, CATALOG, COURSES, CROP_YIELD, DISHES, FARM_LOSS, FISH_CATCH, FISH_SEASON, GATE_COST, LAB_RECIPES, LADDERS, LAND_CROPS,
   ARMY_PER_POINT, DIG_HOURS, FILL_HOURS, KNIGHT_RECRUIT, PAVEMENT_COST, RECIPES, RECRUIT_RANK, STORE_PER_LEVEL, TRAIN_CAP, UTILITIES,
-  knightPay, knightTitle, soldierTitle, upgradePeople,
+  COMBINE_COST, COMBINE_FROM, GRADE_NAMES, HOME_TIERS, grade, homeTier, homeTitle, jewelCost, knightPay, knightTitle, soldierTitle, upgradePeople,
   WALL_COST, WATER_CROPS, bedUpgradeCost, maxBedUpgrades, roleLabel, utilitySlots,
 } from "@/lib/town/sim/catalog";
 import {
@@ -16,24 +16,26 @@ import {
 } from "@/lib/town/sim/loot";
 import {
   addUtility, assignGuard, bindEmblem, buyBed, cancelClear, clear, demolish, fire, freeWorkers, harvestYield, hire, paint, place, recruit,
-  cancelEarthworks, markEarthworks, schoolTrain, sell, sendOnBreak, setMode, stokeFire, trade, unpaint, upgrade,
+  cancelEarthworks, combineHomes, combinePartners, markEarthworks, upgradeWalls, schoolTrain, sell, sendOnBreak, setMode, stokeFire, trade, unpaint, upgrade,
 } from "@/lib/town/sim/actions";
 import { MONSTERS, partyName } from "@/lib/town/sim/bestiary";
-import { canRepel, performRite, repelRequirement, stepCombat } from "@/lib/town/sim/combat";
+import { FIRE_BANISH, canRepel, performRite, repelRequirement, stepCombat } from "@/lib/town/sim/combat";
 import {
-  beds, byId, census, clock, countedTroops, guardsAt, isMilitary, migrate, militaryCapacity, newTown, residents, totalBeds,
+  beds, byId, census, clock, countedTroops, guardsAt, isMilitary, migrate, militaryCapacity, newTown, packSave, residents, totalBeds, unpackSave,
 } from "@/lib/town/sim/state";
 import { advance, FESTIVAL_COST, holdFestival, raidChance, raidForecast, scheduleRaid, trainingPace, IDEA_BOOST, RAID_PERIOD, type SimContext } from "@/lib/town/sim/tick";
 import { buildingEffects, type Effect } from "@/lib/town/sim/effects";
 import {
   alertRadius, burnRate, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, houseWarm, warmFields,
   idx, irrigation, isLit, lightRange, occupancy, rng, unlitBuildings, warmthRange, LIGHT_TYPES, MILITARY_TYPES,
-  BULK, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, storageCap,
+  BULK, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, passiveRadius, storageCap,
+  WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost,
 } from "@/lib/town/sim/world";
 import { FOREST_FLOOR, REGROW, TILE_WOOD, forestOf, regrows } from "@/lib/town/sim/woods";
+import { PACK_SLOTS, canPack, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
 import { MAP_H, MAP_W, Overlay, Terrain, TILE, type GameState, type MonsterKind, type Structure, type StructureType, type Villager } from "@/lib/town/sim/types";
 import {
-  composeWorld, drawFrame, drawMinimap, structureArt, VIEW_H, VIEW_W, WORLD_H, WORLD_W,
+  drawFrame, drawMinimap, newWorld, structureArt, MINI_H, MINI_W, VIEW_H, VIEW_W, WORLD_H, WORLD_W,
   type Camera, type Walker, type Overlays, type World,
 } from "./map/render";
 import type { TroopArt } from "./art/sprites";
@@ -58,7 +60,8 @@ const ZOOMS = [1, 2, 3, 4];
 type Tool =
   | { kind: "select" }
   | { kind: "build"; type: StructureType }
-  | { kind: "pavement" | "wall" | "gate" | "clear" | "unpave" | "demolish" | "dig" | "fill" };
+  | { kind: "pavement" | "wall" | "gate" | "clear" | "unpave" | "demolish" | "dig" | "fill" | "upwall" }
+  | { kind: "scout"; villagerId: number };
 
 const ALLOWED_EMBLEM: Record<"wizard" | "knight", Attribute[]> = {
   wizard: ["ABSTRACT", "CREATIVITY", "MIND", "LOGIC", "REASON"],
@@ -69,7 +72,7 @@ function loadOrFound(scenario: string, bonus: number): GameState {
   try {
     const raw = localStorage.getItem(SAVE_KEY(scenario));
     if (raw) {
-      const s = JSON.parse(raw) as GameState;
+      const s = unpackSave(raw);
       if (s.version === 2) return migrate(s);
     }
   } catch {
@@ -83,7 +86,7 @@ const foundingFor = (scenario: string) => (scenario === "yours" ? "starter" : "s
 
 function save(scenario: string, s: GameState) {
   try {
-    localStorage.setItem(SAVE_KEY(scenario), JSON.stringify(s));
+    localStorage.setItem(SAVE_KEY(scenario), packSave(s));
   } catch {
     /* quota or private mode — the game keeps running unsaved */
   }
@@ -125,11 +128,39 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   /** A tree, rock or rubble tile picked for harvesting. */
   const [tileSel, setTileSel] = useState<number | null>(null);
   const [tab, setTab] = useState<"build" | "info" | "hall" | "raid" | "trade" | "log">("build");
+  // Full screen, for phones and foldables: the map fills the screen in
+  // landscape, and the side panel becomes a quest-log pop-up over it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [full, setFull] = useState(false);
+  const [quest, setQuest] = useState(false);
+  const [touch, setTouch] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const sync = () => setTouch(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    const onFs = () => {
+      if (!document.fullscreenElement) {
+        setFull(false);
+        setQuest(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => {
+      mq.removeEventListener("change", sync);
+      document.removeEventListener("fullscreenchange", onFs);
+    };
+  }, []);
   const [toast, setToast] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const miniRef = useRef<HTMLCanvasElement>(null);
   const cam = useRef<Camera>({ x: 80, y: 120, zoom: 1 });
-  const world = useRef<{ key: string; w: World } | null>(null);
+  // The static world, painted a chunk at a time as it comes into view.
+  const world = useRef<World>(newWorld());
+  // The minimap's window: follows the camera until dragged.
+  const miniOrigin = useRef<[number, number]>([0, 0]);
+  const miniFollow = useRef(true);
+  const miniDrag = useRef<{ x: number; y: number; ox: number; oy: number; moved: boolean } | null>(null);
   const ui = useRef({
     hover: null as [number, number] | null,
     dragFrom: null as [number, number] | null,
@@ -159,6 +190,8 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   useEffect(() => {
     const s = loadOrFound(scenario, bonus);
     stateRef.current = s;
+    world.current = newWorld();
+    miniFollow.current = true;
     const hall = s.structures.find((st) => st.type === "townhall");
     if (hall) {
       cam.current.x = Math.max(0, hall.x * TILE + 56 - VIEW_W / 2);
@@ -207,11 +240,6 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           else advance(s, dt * speed * MIN_PER_SEC, ctx);
         }
 
-        // Recompose the static world only when the town changed.
-        const key = worldKey(s, profile.archetype);
-        if (world.current?.key !== key) world.current = { key, w: composeWorld(s, profile.archetype) };
-        const wk = key + ":" + s.villagers.map((v) => `${v.id}${v.work ?? ""}`).join(",");
-        if (walkersRef.current.key !== wk) walkersRef.current = { key: wk, list: computeWalkers(s) };
 
         const ov: Overlays = {
           hover: ui.current.hover, ghost: null, paint: null, selected: selectedRef.current, tile: tileRef.current,
@@ -226,14 +254,14 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           const check = checkPlacement(s, tl.type, gx, gy);
           const fake: Structure = { id: 999999, type: tl.type, x: gx, y: gy, w: def.w, h: def.h, level: 1, hp: 1, condition: 100, workers: [] };
           ov.ghost = { type: tl.type, x: gx, y: gy, w: def.w, h: def.h, ok: check.ok, art: structureArt(fake, profile.archetype) };
-        } else if (h && (tl.kind === "pavement" || tl.kind === "wall" || tl.kind === "gate" || tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill")) {
+        } else if (h && (tl.kind === "pavement" || tl.kind === "wall" || tl.kind === "gate" || tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill" || tl.kind === "upwall")) {
           const from = ui.current.dragFrom ?? h;
-          const tiles = tl.kind === "clear" || tl.kind === "unpave" ? rectTiles(from, h) : lPath(from, h);
+          const tiles = tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "upwall" ? rectTiles(from, h) : lPath(from, h);
           const occ = occupancy(s);
-          const ok = tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill" || tiles.every((i) => !checkTile(s, i, tl.kind as "pavement", occ));
+          const ok = tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill" || tl.kind === "upwall" || tiles.every((i) => !checkTile(s, i, tl.kind as "pavement", occ));
           ov.paint = { tiles, ok, kind: tl.kind };
         }
-        drawFrame(c, world.current.w, s, cam.current, ov, (now - t0) / 1000);
+        drawFrame(c, world.current, s, cam.current, ov, (now - t0) / 1000);
         // The camera, mirrored onto the element: lets tests and tools map a
         // screen point to a tile without reaching into component state.
         const camTag = `${cam.current.x},${cam.current.y},${cam.current.zoom}`;
@@ -243,9 +271,22 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
         if (uiAcc > 0.25) {
           uiAcc = 0;
           effectsRef.current = buildingEffects(s, ctx);
+          // Walkers follow the roads and the rota; recomputed only when either changes.
+          const wk = walkersKey(s);
+          if (walkersRef.current.key !== wk) walkersRef.current = { key: wk, list: computeWalkers(s) };
           setTick((n) => (n + 1) % 1e9);
           const mini = miniRef.current?.getContext("2d");
-          if (mini) drawMinimap(mini, s, cam.current);
+          if (mini) {
+            if (miniFollow.current) {
+              const cx = (cam.current.x + VIEW_W / cam.current.zoom / 2) / TILE;
+              const cy = (cam.current.y + VIEW_H / cam.current.zoom / 2) / TILE;
+              miniOrigin.current = [
+                Math.max(0, Math.min(MAP_W - MINI_W, Math.round(cx - MINI_W / 2))),
+                Math.max(0, Math.min(MAP_H - MINI_H, Math.round(cy - MINI_H / 2))),
+              ];
+            }
+            drawMinimap(mini, s, cam.current, miniOrigin.current);
+          }
         }
       }
       raf = requestAnimationFrame(frame);
@@ -329,7 +370,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
     const t = toTile(e);
     ui.current.moved = false;
     const tl = toolRef.current;
-    const painting = tl.kind === "pavement" || tl.kind === "wall" || tl.kind === "gate" || tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill";
+    const painting = tl.kind === "pavement" || tl.kind === "wall" || tl.kind === "gate" || tl.kind === "clear" || tl.kind === "unpave" || tl.kind === "dig" || tl.kind === "fill" || tl.kind === "upwall";
     if (painting && e.button === 0) ui.current.dragFrom = t;
     else ui.current.panFrom = [e.clientX, e.clientY, cam.current.x, cam.current.y];
   }
@@ -393,7 +434,12 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       say(unpaint(s, tiles));
       cancelEarthworks(s, tiles);
     } else if (from && (tl.kind === "dig" || tl.kind === "fill")) say(markEarthworks(s, tl.kind, lPath(from, t)));
-    else if (tl.kind === "build") {
+    else if (from && tl.kind === "upwall") say(upgradeWalls(s, rectTiles(from, t)));
+    else if (tl.kind === "scout") {
+      const err = sendScout(s, tl.villagerId, t[0], t[1]);
+      say(err);
+      if (!err) setTool({ kind: "select" });
+    } else if (tl.kind === "build") {
       const def = CATALOG[tl.type];
       const err = place(s, ctx, tl.type, t[0] - Math.floor(def.w / 2), t[1] - Math.floor(def.h / 2));
       say(err);
@@ -408,20 +454,73 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
       setSelected(id || null);
       // Nothing built here: a tree, a rock or rubble can be picked to harvest.
       const tile = idx(t[0], t[1]);
-      const loose = !id && (harvestYield(s, tile) || s.map.terrain[tile] === Terrain.Forest) ? tile : null;
+      const isWall = s.map.overlay[tile] === Overlay.Wall || s.map.overlay[tile] === Overlay.Gate;
+      const loose = !id && (harvestYield(s, tile) || s.map.terrain[tile] === Terrain.Forest || isWall) ? tile : null;
       setTileSel(loose);
-      if (id || loose !== null) setTab("info");
+      if (id || loose !== null) {
+        setTab("info");
+        if (full) setQuest(true);
+      }
     }
     setTick((n) => n + 1);
   }
 
-  function onMini(e: React.PointerEvent<HTMLCanvasElement>) {
+  // The minimap: drag to look around the map, click to go there.
+  function onMiniDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* no live pointer to capture (a synthetic event): the drag still works inside the map */
+    }
+    miniDrag.current = { x: e.clientX, y: e.clientY, ox: miniOrigin.current[0], oy: miniOrigin.current[1], moved: false };
+  }
+  function onMiniMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    const d = miniDrag.current;
+    if (!d) return;
     const r = e.currentTarget.getBoundingClientRect();
-    const mx = ((e.clientX - r.left) / r.width) * MAP_W;
-    const my = ((e.clientY - r.top) / r.height) * MAP_H;
+    const dx = ((e.clientX - d.x) / r.width) * MINI_W;
+    const dy = ((e.clientY - d.y) / r.height) * MINI_H;
+    if (Math.abs(dx) + Math.abs(dy) > 1.5) d.moved = true;
+    if (!d.moved) return;
+    miniFollow.current = false;
+    miniOrigin.current = [
+      Math.max(0, Math.min(MAP_W - MINI_W, Math.round(d.ox - dx))),
+      Math.max(0, Math.min(MAP_H - MINI_H, Math.round(d.oy - dy))),
+    ];
+    const s = stateRef.current;
+    const mini = miniRef.current?.getContext("2d");
+    if (s && mini) drawMinimap(mini, s, cam.current, miniOrigin.current);
+  }
+  function onMiniUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    const d = miniDrag.current;
+    miniDrag.current = null;
+    if (!d || d.moved) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const mx = miniOrigin.current[0] + ((e.clientX - r.left) / r.width) * MINI_W;
+    const my = miniOrigin.current[1] + ((e.clientY - r.top) / r.height) * MINI_H;
     cam.current.x = mx * TILE - VIEW_W / cam.current.zoom / 2;
     cam.current.y = my * TILE - VIEW_H / cam.current.zoom / 2;
     clampCam();
+    miniFollow.current = true;
+  }
+
+  /** A new town in this slot: a fresh map, and the day's tally kept as the best if it was. */
+  function resetGame() {
+    const old = stateRef.current;
+    if (old) recordDay(scenario, old.fallen?.day ?? clock(old.time).day);
+    const fresh = newTown(Math.floor(Math.random() * 1e9), bonus, foundingFor(scenario));
+    stateRef.current = fresh;
+    world.current = newWorld();
+    miniFollow.current = true;
+    save(scenario, fresh);
+    setSelected(null);
+    setTileSel(null);
+    const hall = fresh.structures.find((st) => st.type === "townhall");
+    if (hall) {
+      cam.current.x = Math.max(0, hall.x * TILE + 56 - VIEW_W / 2);
+      cam.current.y = Math.max(0, hall.y * TILE + 28 - VIEW_H / 2);
+    }
+    setGame(fresh);
   }
 
   const s = game;
@@ -437,8 +536,32 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   const avgHealth = pop ? s.villagers.reduce((a, v) => a + v.health, 0) / pop : 100;
   const avgHappy = pop ? s.villagers.reduce((a, v) => a + v.happy, 0) / pop : 60;
 
+  async function enterFull() {
+    setFull(true);
+    try {
+      await rootRef.current?.requestFullscreen?.({ navigationUI: "hide" });
+    } catch {
+      /* no Fullscreen API (some phones): the fixed layout still fills the window */
+    }
+    try {
+      await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape");
+    } catch {
+      /* orientation lock is not allowed everywhere; landscape is then up to the player */
+    }
+  }
+  async function exitFull() {
+    setFull(false);
+    setQuest(false);
+    try {
+      screen.orientation?.unlock?.();
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch {
+      /* already out */
+    }
+  }
+
   return (
-    <div className="tg">
+    <div className={`tg ${full ? "tg-full" : ""}`} ref={rootRef}>
       <div className="tg-top">
         <div className="tg-clock">
           <span className={`tg-season ${clk.season}`}>{clk.season}</span>
@@ -465,21 +588,16 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             if (!window.confirm(scenario === "yours"
               ? "Reset the game? Your town is lost for good, and you start again with a level-1 hall and one home with two villagers."
               : "Reset this preview town?")) return;
-            const fresh = newTown(Math.floor(Math.random() * 1e9), bonus, foundingFor(scenario));
-            stateRef.current = fresh;
-            save(scenario, fresh);
-            setSelected(null);
-            setTileSel(null);
-            const hall = fresh.structures.find((st) => st.type === "townhall");
-            if (hall) {
-              cam.current.x = Math.max(0, hall.x * TILE + 56 - VIEW_W / 2);
-              cam.current.y = Math.max(0, hall.y * TILE + 28 - VIEW_H / 2);
-            }
-            setGame(fresh);
+            resetGame();
           }}
         >
           Reset
         </button>
+        {(touch || full) && (
+          full
+            ? <button className="town-btn sm tg-fullbtn" onClick={exitFull} aria-label="Leave full screen">✕ Exit</button>
+            : <button className="town-btn sm tg-fullbtn" onClick={enterFull} aria-label="Play full screen in landscape">⛶ Full screen</button>
+        )}
       </div>
       {s.debuffs.length > 0 && (
         <div className="tg-debuffs">{s.debuffs.map((d) => <span key={d.id} className="tg-debuff">{d.label} · {Math.ceil((d.until - s.time) / 60)}h</span>)}</div>
@@ -505,7 +623,27 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               aria-label="Town map — drag to pan, Ctrl+scroll or pinch to zoom"
             />
             <ResourceHud s={s} ctx={ctx} onSell={(k) => run(() => sell(s, ctx, k, 10))} />
-            <canvas ref={miniRef} width={MAP_W} height={MAP_H} className="tg-mini" onPointerDown={onMini} aria-label="Minimap" />
+            <canvas
+              ref={miniRef} width={MINI_W} height={MINI_H} className="tg-mini"
+              onPointerDown={onMiniDown} onPointerMove={onMiniMove} onPointerUp={onMiniUp}
+              title="Drag to look around the map; click to go there"
+              aria-label="Minimap — drag to look around, click to go there"
+            />
+            {s.fallen && !s.fallen.seen && (
+              <div className="tg-fallen" role="dialog" aria-label="The town has fallen">
+                <p className="town-kicker">The run is over</p>
+                <h2 className="town-title">The town fell on day {s.fallen.day}</h2>
+                <p className="town-sub">{bestDay(scenario) > s.fallen.day ? `Your best is day ${bestDay(scenario)}.` : "Your longest yet."} Start again, or stay and rebuild from the ruins — the tally stays where it fell.</p>
+                <div className="town-row">
+                  <button className="town-btn" onClick={resetGame}>Start again</button>
+                  <button className="town-btn ghost" onClick={() => {
+                    const live = stateRef.current;
+                    if (live?.fallen) live.fallen.seen = true;
+                    setTick((n) => n + 1);
+                  }}>Rebuild from the ruins</button>
+                </div>
+              </div>
+            )}
             {s.raid && (
               <div className="town-alarm">
                 <span className="town-alarm-name">{partyName(s.raid.party)}</span>
@@ -517,6 +655,11 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               </div>
             )}
             {toast && <div className="tg-toast">{toast}</div>}
+            {full && !quest && (
+              <button className="tg-quest-btn" onClick={() => setQuest(true)} aria-label="Open the quest log">
+                <span aria-hidden>▤</span> Quest log{s.raid ? " !" : ""}
+              </button>
+            )}
           </div>
           <div className="tg-tools">
             <ToolBtn label="Select" on={tool.kind === "select"} onClick={() => setTool({ kind: "select" })} />
@@ -526,6 +669,7 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             <ToolBtn label="Clear" on={tool.kind === "clear"} onClick={() => setTool({ kind: "clear" })} />
             <ToolBtn label="Dig channel" on={tool.kind === "dig"} onClick={() => setTool({ kind: "dig" })} />
             <ToolBtn label="Fill water" on={tool.kind === "fill"} onClick={() => setTool({ kind: "fill" })} />
+            <ToolBtn label="Raise wall" on={tool.kind === "upwall"} onClick={() => setTool({ kind: "upwall" })} />
             <ToolBtn label="Remove road/wall" on={tool.kind === "unpave"} onClick={() => setTool({ kind: "unpave" })} />
             <ToolBtn label="Demolish" on={tool.kind === "demolish"} onClick={() => setTool({ kind: "demolish" })} danger />
           </div>
@@ -536,11 +680,19 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
               tool.kind === "dig" ? `Drag out from the river to dig a channel. Slow: ${DIG_HOURS} villager-hours a tile (half with tools). Remove road/wall over a marked tile cancels it.` :
               tool.kind === "fill" ? `Drag over water to fill it in from the bank. ${FILL_HOURS} villager-hours a tile (half with tools).` :
               tool.kind === "demolish" ? "Click a building to tear it down. It leaves rubble to clear." :
+              tool.kind === "upwall" ? "Drag a box over wall and gate to raise every tile in it a level: more hits to break, and at 10, 20 and 30 rebuilt grander. Click a wall with Select to see its level." :
+              tool.kind === "scout" ? "Click where to scout — anywhere in the fog. The hero walks out with their torches and comes home when the last burns out." :
               "Drag to pan · Ctrl+scroll or pinch to zoom · click a building to manage it · minimap to jump. Only troops posted to a watchtower defend."}
           </p>
         </div>
 
-        <div className="tg-side">
+        <div className={full ? `tg-side tg-quest ${quest ? "open" : ""}` : "tg-side"} role={full ? "dialog" : undefined} aria-label={full ? "Quest log" : undefined}>
+          {full && (
+            <div className="tg-quest-head">
+              <span>✦ Quest log ✦</span>
+              <button className="tg-quest-close" onClick={() => setQuest(false)} aria-label="Close the quest log">✕</button>
+            </div>
+          )}
           <div className="tg-tabs" role="tablist">
             {(["build", "info", "hall", "raid", "trade", "log"] as const).map((k) => (
               <button key={k} role="tab" aria-selected={tab === k} className={`tg-tab ${tab === k ? "on" : ""} ${(k === "raid" && s.raid) || (k === "trade" && s.caravan) ? "alert" : ""}`} onClick={() => setTab(k)}>
@@ -549,12 +701,24 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             ))}
           </div>
           <div className="tg-panel">
-            {tab === "build" && <BuildPanel s={s} tool={tool} setTool={setTool} />}
-            {tab === "info" && (sel ? <InfoPanel s={s} st={sel} ctx={ctx} run={run} input={input} />
+            {tab === "build" && <BuildPanel s={s} tool={tool} setTool={(t) => {
+              setTool(t);
+              if (full) setQuest(false); // back to the map to place it
+            }} />}
+            {tab === "info" && (sel ? <InfoPanel s={s} st={sel} ctx={ctx} run={run} input={input} onScout={(id) => {
+              setTool({ kind: "scout", villagerId: id });
+              if (full) setQuest(false);
+            }} />
               : tileSel !== null && harvestYield(s, tileSel) ? <TilePanel s={s} tile={tileSel} run={run} />
               : tileSel !== null && s.map.terrain[tileSel] === Terrain.Forest ? <ForestPanel s={s} tile={tileSel} />
+              : tileSel !== null && (s.map.overlay[tileSel] === Overlay.Wall || s.map.overlay[tileSel] === Overlay.Gate) ? <WallPanel s={s} tile={tileSel} run={run} />
               : <p className="town-sub">Click a building on the map — or a tree, rock or rubble to harvest it, or a forest to see its wood.</p>)}
-            {tab === "hall" && <CensusPanel s={s} />}
+            {tab === "hall" && (
+              <>
+                <Goal s={s} scenario={scenario} />
+                <CensusPanel s={s} />
+              </>
+            )}
             {tab === "raid" && <RaidPanel s={s} ctx={ctx} run={run} />}
             {tab === "trade" && <TradePanel s={s} run={run} />}
             {tab === "log" && (
@@ -571,24 +735,31 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
   );
 }
 
-// ── World key and walkers ─────────────────────────────────
+// ── Walkers ───────────────────────────────────────────────
 
-/** Changes whenever anything painted into the static world changes. */
-function worldKey(s: GameState, arch: string): string {
-  let h = 0;
-  const { terrain, overlay } = s.map;
-  for (let i = 0; i < terrain.length; i++) h = (h * 31 + terrain[i] * 7 + overlay[i]) | 0;
-  // Loose trees by stage, and forest tiles by how thin their stand has run.
-  const { meta } = s.map;
-  for (let i = 0; i < terrain.length; i++) {
-    if (overlay[i] === Overlay.Tree) h = (h * 31 + meta[i]) | 0;
-    else if (terrain[i] === Terrain.Forest) h = (h * 31 + (meta[i] >= TILE_WOOD / 2 ? 3 : meta[i] >= TILE_WOOD / 5 ? 2 : meta[i] > TILE_WOOD / 20 ? 1 : 0)) | 0;
-  }
-  const st = s.structures.map((x) => `${x.id}:${x.level}:${x.mode ?? ""}:${x.buildUntil ? 1 : 0}`).join(",");
-  // Winter repaints the world, and so does a pit fire lighting or going cold in it.
-  const ice = clock(s.time).season === "winter" ? `|w:${warmFields(s).map((w) => `${w.id}:${w.r}`).join(";")}` : "";
-  return `${arch}|${h}|${st}${ice}`;
+/** What the walkers depend on: who works where, what stands, and the roads. */
+function walkersKey(s: GameState): string {
+  let roads = 0;
+  for (let i = 0; i < s.map.terrain.length; i++) if (s.map.terrain[i] === Terrain.Pavement) roads = (roads * 31 + i) | 0;
+  return `${roads}|${s.structures.map((x) => `${x.id}${x.buildUntil ? "b" : ""}`).join(",")}|${s.villagers.map((v) => `${v.id}:${v.work ?? ""}:${v.house ?? ""}${v.scout ? "s" : ""}`).join(",")}`;
 }
+
+/** The longest a town has lasted in this slot, kept in the browser. */
+function bestDay(scenario: string): number {
+  try {
+    return Number(localStorage.getItem(`xtnl-town-best:${scenario}`) ?? 0);
+  } catch {
+    return 0;
+  }
+}
+function recordDay(scenario: string, day: number) {
+  try {
+    if (day > bestDay(scenario)) localStorage.setItem(`xtnl-town-best:${scenario}`, String(day));
+  } catch {
+    /* private mode */
+  }
+}
+
 
 const WALKER_KIND: Partial<Record<string, TroopArt>> = { trader: "merchant", fisher: "fisher" };
 const MILITARY_ROLES = ["infantry", "archer", "heavy", "wizard", "knight"];
@@ -647,7 +818,7 @@ function ToolBtn({ label, on, onClick, danger }: { label: string; on: boolean; o
 }
 
 const RES_ORDER = [
-  "coin", "wood", "stone", "coal", "iron", "silver", "platinum", "diamond", "gold", "mithril", "tools", "meals",
+  "coin", "wood", "stone", "coal", "iron", "silver", "platinum", "diamond", "gold", "mithril", "tools", "torches", "meals",
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
   "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish",
   "ice", "planks", "bricks", "ingots", "gunpowder", "poison", "formula", "tonic", "fertiliser",
@@ -742,7 +913,7 @@ function BuildPanel({ s, tool, setTool }: { s: GameState; tool: Tool; setTool: (
   );
 }
 
-function InfoPanel({ s, st, ctx, run, input }: { s: GameState; st: Structure; ctx: SimContext; run: (fn: () => string | null) => void; input: TownInput }) {
+function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Structure; ctx: SimContext; run: (fn: () => string | null) => void; input: TownInput; onScout: (villagerId: number) => void }) {
   const def = CATALOG[st.type];
   const links = computeLinks(s);
   const workers = st.workers.map((id) => s.villagers.find((v) => v.id === id)).filter(Boolean) as GameState["villagers"];
@@ -753,7 +924,7 @@ function InfoPanel({ s, st, ctx, run, input }: { s: GameState; st: Structure; ct
   return (
     <div className="tg-info">
       <p className="town-kicker">Level {st.level}{st.buildUntil ? ` · building (${Math.ceil((st.buildUntil - s.time) / 60)}h)` : ""}</p>
-      <h2 className="town-title">{def.name}</h2>
+      <h2 className="town-title">{st.type === "house" || st.type === "apartment" ? homeTitle(st.type, st.level) : def.name}{grade(st.level) ? ` · ${GRADE_NAMES[grade(st.level)]}` : ""}</h2>
       <p className="town-sub">{def.blurb}</p>
       <div className="tg-stats">
         <Meter label="HP" value={(st.hp / maxHp) * 100} warn={st.hp < maxHp * 0.5} />
@@ -764,8 +935,26 @@ function InfoPanel({ s, st, ctx, run, input }: { s: GameState; st: Structure; ct
 
       {st.type === "townhall" && <CensusPanel s={s} compact />}
 
-      {st.type === "house" && (
+      {(st.type === "house" || st.type === "apartment") && (
         <>
+          {st.type === "house" && (
+            <p className="town-dim">
+              {HOME_TIERS.map((t, i) => `${i === homeTier(st.level) ? "▸ " : ""}${t.name} (${t.from}+)`).join(" · ")} · Apartment (two duplexes joined)
+            </p>
+          )}
+          {st.type === "house" && st.level >= COMBINE_FROM && (() => {
+            const partners = combinePartners(s, st.id);
+            return (
+              <div className="tg-combine">
+                <p className="town-kicker" style={{ marginTop: 8 }}>Join into an apartment</p>
+                {partners.length ? partners.map((b) => (
+                  <button key={b.id} className="town-btn sm" onClick={() => run(() => combineHomes(s, st.id, b.id))}>
+                    Join with the duplex at {b.x},{b.y} ({costText(COMBINE_COST)})
+                  </button>
+                )) : <p className="town-dim">Stand another duplex flush beside this one — same row, touching — and they can be joined into an apartment block.</p>}
+              </div>
+            );
+          })()}
           <p className="town-sub">
             {residents(s, st).length}/{beds(s, st)} beds · {houseWarm(s, st) ? "warm" : clock(s.time).season === "winter" ? "COLD — build a pit fire nearby" : "no fire in reach"}
             {st.breakUntil && st.breakUntil > s.time ? ` · on break ${Math.ceil((st.breakUntil - s.time) / 60)}h` : ""}
@@ -977,6 +1166,7 @@ function InfoPanel({ s, st, ctx, run, input }: { s: GameState; st: Structure; ct
                     {isAway(s, v) && <span className="town-dim">— on a sortie, back in {Math.ceil((v.deployedUntil! - s.time) / 60)}h</span>}
                     <GuardPost s={s} v={v} run={run} />
                     {isSpecial(v) && <TroopGear s={s} v={v} run={run} />}
+                    {canPack(v) && <HeroPack s={s} v={v} run={run} onScout={onScout} />}
                     {v.role === "wizard" && v.rank >= ASCEND_FROM && <Ascension s={s} v={v} ctx={ctx} run={run} />}
                     {v.role === "knight" && v.rank >= 22 && <EmblemKnight s={s} v={v} run={run} />}
                     {heroic && (
@@ -1021,13 +1211,21 @@ function InfoPanel({ s, st, ctx, run, input }: { s: GameState; st: Structure; ct
       <div className="town-upgrade">
         {upCost ? (
           <>
-            <p className="town-kicker">Upgrade to {st.level + 1}</p>
+            <p className="town-kicker">Upgrade to {st.level + 1}{grade(st.level + 1) > grade(st.level) ? ` — ${GRADE_NAMES[grade(st.level + 1)]}` : ""}</p>
+            {grade(st.level + 1) > grade(st.level) && (
+              <p className="town-sub">A major step: rebuilt grander, half as many hit points again, a quarter more from everything it does — and something rare on the bill.</p>
+            )}
             <p className="town-dim">{costText(upCost)}</p>
             {(() => {
               const need = upgradePeople(st.type, st.level);
               const ok = s.villagers.length >= need;
               return <p className={`town-dim ${ok ? "" : "warn-text"}`}>{ok ? "✓" : "✗"} Needs a town of {need} people — you have {s.villagers.length}.</p>;
             })()}
+            {jewelCost(st.level + 1) > 0 && (
+              <p className={`town-dim ${stock(s, "jewel") >= jewelCost(st.level + 1) ? "" : "warn-text"}`}>
+                {stock(s, "jewel") >= jewelCost(st.level + 1) ? "✓" : "✗"} Set with {jewelCost(st.level + 1)} monster jewel{jewelCost(st.level + 1) === 1 ? "" : "s"} from the forge&apos;s store — it has {stock(s, "jewel")}.
+              </p>
+            )}
             <button className="town-btn" disabled={!!st.buildUntil} onClick={() => run(() => upgrade(s, ctx, st.id))}>Upgrade</button>
           </>
         ) : (
@@ -1080,7 +1278,9 @@ function FireFuel({ s, st, run }: { s: GameState; st: Structure; run: (fn: () =>
       <Meter label="Fuel" value={(fuel / cap) * 100} warn={fuel < cap * 0.2} hint={`${Math.round(fuel)} of ${cap}`} />
       <p className="town-sub">
         {fuel > 0 ? `Burning ${now}/h now — about ${days < 1 ? `${Math.round(days * 24)} hours` : `${days.toFixed(1)} days`} left at this season's rate.` : "Out. A cold fire gives no light and no warmth."}{" "}
-        Warms and lights everything within {warmthRange(st.level)} tiles{st.level < 5 ? ` (${warmthRange(st.level + 1)} at level ${st.level + 1})` : ""}; in winter it keeps the ground around it from freezing.
+        Warms and lights everything within {warmthRange(st.level)} tiles{st.level < 30 ? ` (${warmthRange(st.level + 1)} at level ${st.level + 1})` : ""}; in winter it keeps the ground around it from freezing.
+        Things of the night that come into its light are scorched — slowed, weakened, burning — and any {FIRE_BANISH} or more levels below it
+        {st.level > FIRE_BANISH ? ` (level ${st.level - FIRE_BANISH} and under, at this fire)` : ""} are destroyed outright.
       </p>
       {(() => {
         const w = warmFields(s).find((x) => x.id === st.id);
@@ -1204,8 +1404,8 @@ function TowerGuards({ s, st, run }: { s: GameState; st: Structure; run: (fn: ()
   return (
     <>
       <p className="town-sub">
-        Watches {alertRadius(st)} tiles from its centre (the ring on the map). Guards posted here wait inside and come out
-        only when a monster crosses that circle; they fight inside it and go back in when it is clear.
+        Two circles. The inner one, {alertRadius(st)} tiles from its centre: guards come out for anything that crosses it. The outer one,
+        {" "}{passiveRadius(st)} tiles: they come out only for something attacking a building or the wall out there. They fight, then go back in when it is clear.
       </p>
       <p className="town-kicker" style={{ marginTop: 8 }}>Guards {guards.length}/{cap}</p>
       <ul className="tg-people">
@@ -1334,6 +1534,68 @@ function ForgePanel({ s, st, ctx, run }: { s: GameState; st: Structure; ctx: Sim
 }
 
 /** A special troop's weapon and armour, and what they could put on from the store. */
+/** A knight's or wizard's six-slot pack: torches for the fog, and the order to go out into it. */
+/** One tile of wall or gate: its level, how much it can take, and raising it. */
+function WallPanel({ s, tile, run }: { s: GameState; tile: number; run: (fn: () => string | null) => void }) {
+  const gate = s.map.overlay[tile] === Overlay.Gate;
+  const meta = s.map.meta[tile];
+  const lvl = wallLevel(meta);
+  const max = wallMaxHp(lvl, gate);
+  const next = lvl < WALL_MAX_LEVEL ? wallUpgradeCost(lvl) : null;
+  return (
+    <div className="tg-info">
+      <p className="town-kicker">Tile {tile % MAP_W}, {Math.floor(tile / MAP_W)}</p>
+      <h2 className="town-title">{gate ? "Gate" : "Wall"} · level {lvl}{grade(lvl) ? ` · ${GRADE_NAMES[grade(lvl)]}` : ""}</h2>
+      <Meter label="Holds" value={(wallHp(meta) / max) * 100} hint={`${wallHp(meta)} of ${max}`} />
+      <p className="town-sub">Takes {max} in blows before it breaks. Each level adds more; at levels 10, 20 and 30 it is rebuilt grander and much stronger.</p>
+      {next ? (
+        <>
+          <p className="town-dim">Level {lvl + 1}: {costText(next)} — {wallMaxHp(lvl + 1, gate)} hit points.</p>
+          <button className="town-btn sm" onClick={() => run(() => upgradeWalls(s, [tile]))}>Raise this tile</button>
+          <p className="town-dim" style={{ marginTop: 6 }}>The Raise wall tool raises a whole stretch at once.</p>
+        </>
+      ) : (
+        <p className="town-dim">At its highest level.</p>
+      )}
+    </div>
+  );
+}
+
+function HeroPack({ s, v, run, onScout }: { s: GameState; v: Villager; run: (fn: () => string | null) => void; onScout: (villagerId: number) => void }) {
+  const pack = v.pack ?? Array(PACK_SLOTS).fill(null);
+  const torches = pack.filter((p) => p?.startsWith("torch")).length;
+  return (
+    <div className="tg-pack">
+      <div className="tg-pack-slots" aria-label="Pack">
+        {pack.map((p, i) => {
+          const lit = p?.startsWith("torch:");
+          const left = lit ? Math.ceil(Number(p!.slice(6)) / 60 * 10) / 10 : 0;
+          return (
+            <button
+              key={i} className={`tg-slot ${p ? "" : "empty"} ${lit ? "lit" : ""}`}
+              title={p ? (lit ? `Torch, burning — ${left}h left` : "Torch — burns 2 hours once lit. Click to put it back.") : "Empty slot"}
+              onClick={() => p && run(() => unpackSlot(s, v.id, i))}
+            >
+              {p ? <IconCanvas id="torches" /> : null}
+              {lit && <span>{left}h</span>}
+            </button>
+          );
+        })}
+      </div>
+      {v.scout ? (
+        <span className="town-dim">
+          Out in the fog, {v.scout.phase === "out" ? "heading out" : "coming home"} — {torches} torch{torches === 1 ? "" : "es"} left.
+        </span>
+      ) : (
+        <div className="town-row">
+          <button className="town-btn ghost sm" onClick={() => run(() => packTorch(s, v.id))} disabled={s.res.torches < 1 || pack.every(Boolean)}>+ Torch ({Math.floor(s.res.torches)})</button>
+          <button className="town-btn ghost sm" onClick={() => onScout(v.id)} disabled={!pack.some((p) => p === "torch")}>Scout the fog…</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TroopGear({ s, v, run }: { s: GameState; v: Villager; run: (fn: () => string | null) => void }) {
   const cap = gearCap(v);
   const slot = (sl: GearSlot) => {
@@ -1412,6 +1674,46 @@ function EmblemKnight({ s, v, run }: { s: GameState; v: Villager; run: (fn: () =
         <li data-ok={(v.battalion ?? 0) >= req.battalion ? "1" : undefined}>Battalion {v.battalion ?? 0}/{req.battalion}</li>
         <li data-ok={jewels >= req.jewels ? "1" : undefined}>Monster jewels {jewels}/{req.jewels}</li>
         <li data-ok={(v.emblem?.depth ?? 0) >= req.depth ? "1" : undefined}>Emblem depth {v.emblem?.depth ?? 0}/{req.depth} — a real skill of yours</li>
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * What the game is: a building survival. The land is fog; monsters come at
+ * the town on a clock that speeds up as it grows, and lairs deep in the fog
+ * breed worse. The run lasts as long as the hall stands.
+ */
+function Goal({ s, scenario }: { s: GameState; scenario: string }) {
+  const day = s.fallen?.day ?? clock(s.time).day;
+  const best = Math.max(bestDay(scenario), day);
+  const hall = s.structures.find((x) => x.type === "townhall");
+  const found = (s.lairs ?? []).filter((l) => l.discovered).length;
+  const milestones: [boolean, string][] = [
+    [day >= 2, "Survive the first night"],
+    [day >= 19, "Reach the first winter"],
+    [day >= 29, "See the spring after it — a full year"],
+    [s.villagers.length >= 10, "A town of 10"],
+    [s.villagers.length >= 25, "A town of 25"],
+    [(hall?.level ?? 1) >= 3, "Raise the hall to level 3"],
+    [found >= 1, "Find a lair in the fog"],
+    [day >= 60, "Last 60 days"],
+    [day >= 100, "Last 100 days"],
+  ];
+  return (
+    <div className="tg-goal">
+      <p className="town-kicker">The goal</p>
+      <h2 className="town-title">Survive</h2>
+      <p className="town-sub">
+        Your town is a light in a land of fog. Keep the hall standing as long as you can. Raids come every few hours — likelier and stronger the more
+        people you have — lairs deep in the fog loose bands that roam toward you, the nights send haunts for every building left dark, and winter
+        freezes all a fire cannot reach. Build, light, feed and defend; if the hall falls, the run is over.
+      </p>
+      <p className="town-sub">
+        <b>Day {day}</b> {s.fallen ? "— fallen" : "survived"} · best: day {best} · difficulty: hard
+      </p>
+      <ul className="town-checks">
+        {milestones.map(([ok, label]) => <li key={label} data-ok={ok ? "1" : undefined}>{ok ? "✓" : "·"} {label}</li>)}
       </ul>
     </div>
   );

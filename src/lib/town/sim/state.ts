@@ -7,6 +7,7 @@ import {
   type GameState, type Resources, type Role, type Season, type Structure, type StructureType, type Villager,
 } from "./types";
 import { MATURE, TILE_WOOD, treeMeta } from "./woods";
+import { placeLairs } from "./wilds";
 
 /**
  * Founding a town, and the read-only questions everything else asks of it:
@@ -42,7 +43,7 @@ export function makeStructure(s: GameState, type: StructureType, x: number, y: n
     workers: [],
     buildUntil: built ? undefined : s.time + def.buildHours * 60,
   };
-  if (type === "house") {
+  if (type === "house" || type === "apartment") {
     st.bedUpgrades = 0;
     st.utilities = [];
   }
@@ -103,7 +104,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
     raid: null,
     // Three days' grace before the first raid: long enough to build a fire,
     // a barracks and a tower, short enough that the threat is felt early.
-    nextRaidAt: 3 * 24 * 60,
+    nextRaidAt: 2 * 24 * 60,
     kills: [],
     clearing: [],
     log: [],
@@ -124,7 +125,11 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   };
 
   makeStructure(s, "townhall", 30, 22, true);
-  if (founding === "starter") return foundStarter(s, bonus);
+  if (founding === "starter") {
+    foundStarter(s, bonus);
+    placeLairs(s);
+    return s;
+  }
   pave(20, 29, 60, 29); // high street under the hall
   pave(21, 30, 21, 44); // lane down to the fields
   pave(37, 30, 37, 44); // lane to the market
@@ -173,6 +178,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   }
 
   s.log.push({ t: s.time, text: "The town is founded. Six villagers, two fields, one fire, a few lamps.", tone: "info" });
+  placeLairs(s);
   // Everything above was placed while the occupancy was empty; confirm the
   // layout is still legal now that it is not, so a bad seed fails loudly.
   void occupancy(s);
@@ -183,14 +189,15 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
 function starterStores(bonus: number): Resources {
   return {
     ...emptyResources(),
-    coin: 80 + bonus * 4,
-    wood: 160 + bonus * 6,
-    stone: 130 + bonus * 5,
-    coal: 20 + bonus,
-    iron: 10 + bonus,
-    potato: 40,
-    wheat: 20,
-    meals: 40,
+    coin: 60 + bonus * 4,
+    wood: 120 + bonus * 6,
+    stone: 90 + bonus * 5,
+    coal: 12 + bonus,
+    iron: 6 + bonus,
+    potato: 30,
+    wheat: 10,
+    meals: 30,
+    torches: 2,
     silver: Math.floor(bonus / 3),
     gold: Math.floor(bonus / 6),
   };
@@ -237,6 +244,8 @@ export function migrate(s: GameState): GameState {
   // One soldier tree, knights from the army school, and no captains apart:
   // archers and heavies join the soldier tree at the matching title, and
   // captains become knights.
+  // Lairs lie deep in the fog of every map, old ones included.
+  placeLairs(s);
   if (s.ranksV !== 1) {
     for (const v of s.villagers) {
       if (v.role === "archer") {
@@ -347,10 +356,11 @@ export function beds(s: GameState, house: Structure): number {
   // The hall shelters two, so a town that has lost every house can still
   // take in the refugees it needs to rebuild.
   if (house.type === "townhall") return 2;
+  if (house.type === "apartment") return baseBeds(house.level) * 2 + 4 + (house.bedUpgrades ?? 0);
   return baseBeds(house.level) + (house.bedUpgrades ?? 0);
 }
 
-export const isDwelling = (st: Structure) => (st.type === "house" || st.type === "townhall") && !st.buildUntil;
+export const isDwelling = (st: Structure) => (st.type === "house" || st.type === "apartment" || st.type === "townhall") && !st.buildUntil;
 
 export function totalBeds(s: GameState): number {
   return s.structures.filter(isDwelling).reduce((a, h) => a + beds(s, h), 0);
@@ -399,10 +409,53 @@ export function townPower(s: GameState): { power: number; avgTroopLevel: number 
   const troops = s.villagers.filter(isMilitary);
   const avg = troops.length ? troops.reduce((a, v) => a + Math.max(1, v.rank), 0) / troops.length : 1;
   // A crowded town draws bigger monsters: every six people add a level.
-  return { power: (hall?.level ?? 1) + avg + troops.length / 4 + s.villagers.length / 6, avgTroopLevel: avg };
+  return { power: (hall?.level ?? 1) + avg + troops.length / 4 + s.villagers.length / 5, avgTroopLevel: avg };
 }
 
 export function log(s: GameState, text: string, tone: "good" | "bad" | "info" = "info") {
   s.log.unshift({ t: s.time, text, tone });
   if (s.log.length > 80) s.log.length = 80;
+}
+
+// ── Saving ────────────────────────────────────────────────
+
+/**
+ * Map layers run-length encoded for the save: long runs of grass, water and
+ * empty overlay pack to a few numbers each, so a map many times larger saves
+ * and loads in a fraction of the space.
+ */
+export function rle(a: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < a.length; ) {
+    let j = i + 1;
+    while (j < a.length && a[j] === a[i]) j++;
+    out.push(a[i], j - i);
+    i = j;
+  }
+  return out;
+}
+
+export function unrle(r: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < r.length; i += 2) for (let k = 0; k < r[i + 1]; k++) out.push(r[i]);
+  return out;
+}
+
+/** The save as text: the whole state, with its map layers packed. */
+export function packSave(s: GameState): string {
+  const { terrain, overlay, meta, seen, ...rest } = s.map;
+  return JSON.stringify({ ...s, map: { ...rest, packed: 1, terrain: rle(terrain), overlay: rle(overlay), meta: rle(meta), seen: seen ? rle(seen) : undefined } });
+}
+
+/** Reads a save written by `packSave` — or an older, unpacked one. */
+export function unpackSave(raw: string): GameState {
+  const s = JSON.parse(raw) as GameState & { map: GameState["map"] & { packed?: number } };
+  if (s.map.packed) {
+    s.map.terrain = unrle(s.map.terrain);
+    s.map.overlay = unrle(s.map.overlay);
+    s.map.meta = unrle(s.map.meta);
+    if (s.map.seen) s.map.seen = unrle(s.map.seen);
+    delete s.map.packed;
+  }
+  return s;
 }
