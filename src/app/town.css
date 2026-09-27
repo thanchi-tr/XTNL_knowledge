@@ -450,3 +450,13 @@
   .tg-top { gap: 6px; }
   .tg-mini { width: min(96px, 26%); }
 }
+
+/* ── Survival readouts (docs/town-survival-systems.md) ── */
+.tg-weather { display: flex; align-items: baseline; gap: 6px; font-family: var(--font-mono, monospace); font-size: 11px; color: #a99db6; white-space: nowrap; }
+.tg-weather b { color: #d8ecff; font-size: 12.5px; }
+.tg-weather.warn b, .tg-weather.warn span { color: #ff9a86; }
+.tg-zone, .tg-society, .tg-stores, .tg-threat { margin-top: 4px; }
+.tg-decrees { display: grid; gap: 6px; margin-top: 6px; font-size: 11.5px; }
+.tg-decrees li { display: block; }
+.tg-decrees .town-btn { margin-top: 3px; }
+.tg-society label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }

@@ -10,6 +10,7 @@ import { MATURE, TILE_WOOD, treeMeta } from "./woods";
 import { placeLairs } from "./wilds";
 import { FOG } from "./vision";
 import { sowWild } from "./forage";
+import { initSurvival, initVillager } from "./survival";
 
 /**
  * Founding a town, and the read-only questions everything else asks of it:
@@ -73,6 +74,7 @@ export function makeVillager(s: GameState, house: number | null, role: Role = "i
     work: null,
   };
   s.villagers.push(v);
+  if (s.survivalV === 1) initVillager(s, v);
   return v;
 }
 
@@ -131,6 +133,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
     foundStarter(s, bonus);
     placeLairs(s);
     firstCrops(s);
+    initSurvival(s);
     return s;
   }
   pave(20, 29, 60, 29); // high street under the hall
@@ -194,6 +197,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   // Everything above was placed while the occupancy was empty; confirm the
   // layout is still legal now that it is not, so a bad seed fails loudly.
   void occupancy(s);
+  initSurvival(s);
   return s;
 }
 
@@ -287,6 +291,11 @@ export function migrate(s: GameState): GameState {
       if (s.map.terrain[i] === Terrain.Forest) s.map.meta[i] = TILE_WOOD;
     }
     s.woodsV = 1;
+  }
+  // The survival systems (docs/town-survival-systems.md): an old town inherits a scar of aggro.
+  if (s.survivalV !== 1) {
+    initSurvival(s);
+    log(s, "The land has noticed the town. Cold, hunger, rot and what lives in the fog now answer everything it does.", "bad");
   }
   // A town from before night haunts gets tonight's grace and fair warning.
   if (s.hauntDay === undefined) {

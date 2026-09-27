@@ -498,14 +498,18 @@ export const FARM_LOSS = [0.6, 0.45, 0.3, 0.18, 0.08];
 
 // ── Refinery recipes ──────────────────────────────────────
 
-export const RECIPES: { id: string; name: string; input: Cost; output: Cost; scientist?: boolean }[] = [
+export const RECIPES: { id: string; name: string; input: Cost; output: Cost; scientist?: boolean; toolMat?: import("./types").ToolMat }[] = [
   { id: "planks", name: "Planks", input: { wood: 3 }, output: { planks: 1 } },
   { id: "bricks", name: "Bricks", input: { stone: 3, coal: 1 }, output: { bricks: 1 } },
   { id: "ingots", name: "Iron ingots", input: { iron: 3, coal: 2 }, output: { ingots: 1 } },
   { id: "gunpowder", name: "Gunpowder", input: { coal: 2, herb: 1 }, output: { gunpowder: 1 }, scientist: true },
   { id: "poison", name: "Poison extract", input: { herb: 3, grape: 1 }, output: { poison: 1 }, scientist: true },
-  { id: "charcoal", name: "Charcoal", input: { wood: 4 }, output: { coal: 1 } },
-  { id: "tools", name: "Tools", input: { ingots: 1, planks: 2 }, output: { tools: 2 } },
+  { id: "charcoal", name: "Charcoal kiln", input: { wood: 5 }, output: { charcoal: 1 } },
+  { id: "tools", name: "Wrought-iron tools", input: { ingots: 1, planks: 2 }, output: { tools: 2 }, toolMat: "wrought" },
+  { id: "steeltools", name: "Steel tools", input: { ingots: 1, charcoal: 1, planks: 1 }, output: { tools: 1 }, toolMat: "steel" },
+  { id: "bogtools", name: "Bog-iron tools", input: { bogiron: 10, charcoal: 2, planks: 1 }, output: { tools: 2 }, toolMat: "bog" },
+  { id: "saltmeat", name: "Salt-cure meat", input: { meat: 4, salt: 1 }, output: { meals: 3.4 } },
+  { id: "smokefish", name: "Smoke fish", input: { fish: 4, wood: 0.3 }, output: { meals: 3 } },
   { id: "torches", name: "Torches", input: { wood: 2, coal: 1 }, output: { torches: 4 } },
 ];
 

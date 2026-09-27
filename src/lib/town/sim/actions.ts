@@ -11,6 +11,10 @@ import { forgeOf, stock, store, take } from "./loot";
 import { inSight } from "./vision";
 import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage } from "./woods";
 import { WILD_EFFORT, wildAmount, wildCrop } from "./forage";
+import { HEARTHS, isHeated, isZone } from "./zones";
+import { FOOTING, footingOf, frameNodes, hasFrame } from "./frame";
+import { defaultPolicy } from "./psyche";
+import type { Footing, HearthKind, Policy } from "./types";
 import { MILITARY, Overlay, Terrain, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
 
 /**
@@ -173,6 +177,70 @@ export function stokeFire(s: GameState, id: number, kind: "wood" | "coal", amoun
   if (n <= 0) return `No ${kind} in store.`;
   s.res[kind] -= n;
   f.fuel = (f.fuel ?? 0) + n * per;
+  return null;
+}
+
+// ── Survival: hearths, chimneys, footings, roofs, policy (design §1, §5) ──
+
+/** Fits a building with a hearth: open hearth, chimney fireplace, masonry stove or charcoal brazier. */
+export function fitHearth(s: GameState, id: number, kind: HearthKind): Result {
+  const st = byId(s, id);
+  if (!st || !isHeated(st)) return "Only homes, the hall, schools and barracks take a hearth.";
+  if (st.hearth === kind) return `It already has a ${HEARTHS[kind].name.toLowerCase()}.`;
+  const cost = HEARTHS[kind].cost as Cost;
+  if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
+  pay(s.res, cost);
+  st.hearth = kind;
+  if (st.zone) st.zone.creo = 0;
+  log(s, `A ${HEARTHS[kind].name.toLowerCase()} is fitted in the ${CATALOG[st.type].name.toLowerCase()} at ${st.x},${st.y}.`);
+  return null;
+}
+
+/** Sweeps a flue clean of creosote: an hour's work and a couple of coin for the brushes. */
+export function sweepChimney(s: GameState, id: number): Result {
+  const st = byId(s, id);
+  if (!st?.zone) return "Nothing to sweep.";
+  if (st.hearth !== "chimney" && st.hearth !== "stove") return "Only a chimney or a stove's flue needs sweeping.";
+  if (s.res.coin < 2) return "Needs 2 coin.";
+  s.res.coin -= 2;
+  st.zone.creo = 0;
+  return null;
+}
+
+/** Re-founds a building on deeper footings: every post reset, frost heave no longer reaching them. */
+export function setFooting(s: GameState, id: number, footing: Footing): Result {
+  const st = byId(s, id);
+  if (!st || !hasFrame(st)) return "That building has no frame to underpin.";
+  if (footingOf(st) === footing) return "Already on those footings.";
+  const n = frameNodes(st.w, st.h).length;
+  const cost: Cost = Object.fromEntries(Object.entries(FOOTING[footing].cost).map(([k, v]) => [k, (v as number) * n]));
+  if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
+  pay(s.res, cost);
+  st.footing = footing;
+  st.frame = Array(n).fill(1);
+  log(s, `The ${CATALOG[st.type].name.toLowerCase()} at ${st.x},${st.y} is underpinned on ${FOOTING[footing].name.toLowerCase()}.`);
+  return null;
+}
+
+/** Re-roofs a building: turf (warm and heavy, and nothing to catch fire) or back to its grade's roof. */
+export function reroof(s: GameState, id: number, kind: "turf" | "default"): Result {
+  const st = byId(s, id);
+  if (!st || !isZone(st)) return "Only enclosed buildings have a roof to change.";
+  const cost: Cost = kind === "turf" ? { wood: 10 + st.w * st.h * 2 } : { wood: 5 + st.w * st.h };
+  if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
+  pay(s.res, cost);
+  st.roofKind = kind === "turf" ? "turf" : undefined;
+  st.roofSnow = 0;
+  return null;
+}
+
+/** Sets a town policy: heating target, ration, nightsoil, coal first. */
+export function setPolicy(s: GameState, patch: Partial<Policy>): Result {
+  s.policy = { ...defaultPolicy(), ...s.policy, ...patch };
+  if (patch.shift !== undefined && !s.decrees?.includes("shifts") && patch.shift > 14) {
+    s.policy.shift = 14;
+    return "Longer than fourteen hours takes the extended-shift decree.";
+  }
   return null;
 }
 

@@ -46,6 +46,10 @@ function firelight(s: GameState, monsters: Combatant[], dt: number) {
   }
 }
 import { kill } from "./tick";
+import { strikeFrame } from "./frame";
+import { downhill, fieldAt, flowField, groupOf, type Field } from "./breach";
+import { emit, rememberDeath } from "./aggro";
+import { bodyOf, effOf } from "./body";
 import { dropsFor, gearBonus, isAway, store, gearCap } from "./loot";
 import {
   MAP_H, MAP_W, Overlay,
@@ -117,6 +121,60 @@ const TROOP_STATS: Record<string, Stats> = {
   wizard: { hp: 45, dmg: 14, interval: 1.5, range: 4, speed: 1.3 },
   knight: { hp: 115, dmg: 16, interval: 1.0, range: 1.2, speed: 1.9 },
 };
+
+/**
+ * The town's defence as Lanchester strength (design §2.3): Σ hp × dps of
+ * every posted guard, tower and the hall, and a militia when guards are few.
+ * Given a target, only what can reach a fight there counts: guards whose
+ * post's outer circle covers it, towers within range, the hall and its
+ * militia if it is by the hall.
+ */
+export function defencePower(s: GameState, target?: Structure): number {
+  const bonus = damageBonus(s);
+  // Lanchester's square law for mixed forces: (Σ dps) × (Σ hp that can absorb blows).
+  let dps = 0;
+  let hp = 0;
+  const [tx, ty] = target ? center(target) : [0, 0];
+  const half = target ? Math.max(target.w, target.h) / 2 : 0;
+  const reaches = (x: number, y: number, r: number) => !target || Math.hypot(x - tx, y - ty) <= r + half;
+  const guards = countedTroops(s).filter((v) => {
+    if (isAway(s, v)) return false;
+    const post = byId(s, v.guard);
+    return !!post && reaches(center(post)[0], center(post)[1], passiveRadius(post));
+  });
+  for (const v of guards) {
+    const { st, k: rankK } = troopStats(v);
+    const k = rankK * captainBonus(s, byId(s, v.guard));
+    const gear = gearBonus(v);
+    const fit = v.body ? Math.max(0.2, effOf(v)) : 1;
+    hp += st.hp * k * gear.hp;
+    dps += ((st.dmg * k * bonus * gear.dmg) / st.interval) * fit;
+  }
+  let byHall = !target;
+  for (const t of s.structures) {
+    if (t.buildUntil) continue;
+    const [cx, cy] = center(t);
+    // Towers and the hall shoot at whatever comes within their range of the fight; only the objective's own walls soak blows.
+    // A static shooter counts only if its range reaches the objective's middle: the fight may be on the far side.
+    const covers = (r: number) => !target || Math.hypot(cx - tx, cy - ty) <= r;
+    if (isGuardPost(t) && covers(t.type === "armypoint" ? 8 : 7)) {
+      dps += ((t.type === "armypoint" ? 18 : 14) * t.level * bonus) / 1.1;
+      if (!target) hp += t.hp;
+    }
+    if (t.type === "townhall" && (t === target || covers(6))) {
+      dps += (10 * t.level * bonus) / 1.2;
+      byHall = true;
+      if (!target) hp += t.hp;
+    }
+  }
+  if (target) hp += target.hp;
+  if (byHall && countedTroops(s).length < 3) {
+    const n = Math.min(6, s.villagers.filter((v) => !isMilitary(v)).length);
+    hp += n * 30;
+    dps += (n * 4 * bonus) / 1.2;
+  }
+  return dps * hp;
+}
 
 // ── Repel rites ───────────────────────────────────────────
 
@@ -470,6 +528,9 @@ export function stepCombat(s: GameState, dt: number) {
       s.kills.push({ kind: c.kind as MonsterKind, at: s.time });
       s.res.coin += c.level * 4;
       spoil(s, c);
+      // Blood on the snow, and the land remembers where its own fell.
+      emit(s, "bio", Math.min(40, 2 + c.level * 0.8), c.x, c.y);
+      rememberDeath(s, c.x, c.y);
     } else if (c.villagerId) {
       const v = s.villagers.find((x) => x.id === c.villagerId);
       if (v) {
@@ -489,7 +550,9 @@ export function stepCombat(s: GameState, dt: number) {
     const levels = slain.reduce((a, c) => a + c.level, 0);
     const spoils = spoilsText(raid.spoils);
     if (raid.haunt) log(s, slain.length ? `The night haunt is driven off. ${levels * 4} coin.${spoils}` : "The haunt fades, its work done.", slain.length ? "good" : "bad");
+    else if (raid.retreated) log(s, `Having brought down the ${raid.retreated}, they drag off into the fog.${slain.length ? ` ${slain.length} did not make it: ${levels * 4} coin.${spoils}` : ""}`, "bad");
     else log(s, `The raid is broken. ${levels * 4} coin taken from the fallen.${spoils}`, "good");
+    if (!raid.haunt && !raid.retreated && slain.length) s.hopeEvents = (s.hopeEvents ?? 0) + 5;
     // Time served: everyone who fought and lived has a chance to be promoted
     // in the field. It is the only way past what the barracks and the army
     // school can teach.
@@ -592,13 +655,28 @@ function moveMonster(s: GameState, m: Combatant, defenders: Combatant[], dt: num
   if (!target) return;
   if (distToStruct(m, target) > m.range) {
     const [cx, cy] = center(target);
-    step(s, m, cx, cy, dt);
+    // Night haunts rise beside their building; everything else walks the breach field.
+    const f = !m.flying && !m.haunt ? fieldFor(s, target) : null;
+    const next = f && Number.isFinite(fieldAt(f, m.x, m.y)) ? downhill(f, m.x, m.y) : null;
+    if (next) step(s, m, next[0], next[1], dt);
+    else step(s, m, cx, cy, dt);
+  } else if (s.raid!.archetype === "B" && !m.haunt) {
+    // Burrowers (§2.5): at the stores they gorge and carry off, then dig back down.
+    raidStores(s, m, target);
   } else if (m.cooldown <= 0) {
     m.cooldown = m.interval;
     m.swingAt = s.raid!.clock;
     const [hx, hy] = center(target);
     m.hitAt = [hx, hy, s.raid!.clock];
     target.hp -= Math.round(m.dmg * scorchFactor(m));
+    // Siege beasts go for the posts that hold the roof up (§2.5).
+    if (s.raid!.archetype === "K") {
+      strikeFrame(s, target, m.x, m.y, m.dmg * 4);
+      if (!s.structures.includes(target)) {
+        m.targetStruct = null;
+        return;
+      }
+    }
     // The dark takes buildings, not towns: a haunt cannot bring the hall down.
     if (m.haunt && target.type === "townhall" && target.hp <= 0) {
       target.hp = 1;
@@ -618,9 +696,72 @@ function moveMonster(s: GameState, m: Combatant, defenders: Combatant[], dt: num
     if (target.hp <= 0) {
       m.targetStruct = null;
       if (target.type === "townhall") return sack(s);
+      const objective = !m.haunt && s.raid!.target === target.id;
       destroyStructure(s, target);
+      // Their objective down, they pillage and go (§2.5): the rest of the town is not what they came for.
+      if (objective) retreat(s, CATALOG[target.type].name.toLowerCase());
     }
   }
+}
+
+const fields = new WeakMap<object, Map<number, { f: Field; at: number }>>();
+/** Raids whose walls have changed since their field was cast. */
+const wallsBroken = new WeakSet<object>();
+
+/**
+ * The breach field for a raid's target (§5.6), cached per raid and rebuilt
+ * when a wall falls or every five seconds of fighting.
+ */
+function fieldFor(s: GameState, target: Structure): Field | null {
+  const raid = s.raid;
+  if (!raid) return null;
+  let byTarget = fields.get(raid);
+  if (!byTarget) fields.set(raid, (byTarget = new Map()));
+  if (wallsBroken.has(raid)) {
+    byTarget.clear();
+    wallsBroken.delete(raid);
+  }
+  const hit = byTarget.get(target.id);
+  if (hit && raid.clock - hit.at < 5) return hit.f;
+  const party = raid.party.length ? raid.party : [{ kind: "troll" as MonsterKind, level: 1, count: 1 }];
+  const f = flowField(s, target, groupOf(party), raid.archetype ?? "K");
+  byTarget.set(target.id, { f, at: raid.clock });
+  return f;
+}
+
+/** Every monster still standing withdraws: the raid ends when the step's deaths are counted. */
+function retreat(s: GameState, what: string) {
+  const raid = s.raid;
+  if (!raid) return;
+  raid.retreated = what;
+  for (const c of raid.combatants) {
+    if (c.side !== "monster" || c.hp <= 0) continue;
+    c.hp = 0;
+    (c as { faded?: boolean }).faded = true;
+  }
+}
+
+/**
+ * A burrower at its target: it takes food from the stores — twenty units a
+ * level, grain and meals first — and goes back down the way it came. What it
+ * takes is gone; the building is left standing.
+ */
+function raidStores(s: GameState, m: Combatant, target: Structure) {
+  let want = 20 * m.level;
+  const taken: Record<string, number> = {};
+  for (const k of ["meals", "wheat", "barley", "potato", "corn", "rice", "bean", "fish", "meat"] as const) {
+    if (want <= 0) break;
+    const n = Math.min(want, s.res[k]);
+    if (n <= 0) continue;
+    s.res[k] -= n;
+    want -= n;
+    taken[k] = (taken[k] ?? 0) + n;
+  }
+  m.hp = 0;
+  (m as { faded?: boolean }).faded = true;
+  const what = Object.entries(taken).map(([k, n]) => `${Math.round(n)} ${k}`).join(", ");
+  pop(s, m.x, m.y - 1, "DIGS DOWN", "crit");
+  log(s, `Something breaks up through the floor of the ${CATALOG[target.type].name.toLowerCase()}${what ? ` and drags down ${what}` : ", finds nothing, and is gone"}.`, "bad");
 }
 
 /** Moves toward a point; walls stop anything that walks, and get attacked. */
@@ -644,6 +785,7 @@ function step(s: GameState, c: Combatant, x: number, y: number, dt: number) {
         if (left <= 0) {
           s.map.overlay[tile] = Overlay.Debris;
           s.map.meta[tile] = 0;
+          if (s.raid) wallsBroken.add(s.raid);
         } else s.map.meta[tile] = wallMeta(wallLevel(s.map.meta[tile]), left);
       }
       return;
@@ -719,6 +861,17 @@ function strike(s: GameState, a: Combatant, b: Combatant) {
   if (a.side === "defender" && a.range <= 1.5 && b.flying) dmg *= 0.5; // swords reach a low flyer, badly
   dmg = Math.round(dmg);
   b.hp -= dmg;
+  // A villager hit bleeds: minor, major or an artery (design §7).
+  if (b.villagerId && a.side === "monster") {
+    const v = s.villagers.find((x) => x.id === b.villagerId);
+    if (v) {
+      const body = bodyOf(v);
+      const roll = rng(Math.floor(s.raid!.clock * 100) + b.id)();
+      const bleed = roll < 0.05 ? 0.2 : roll < 0.3 ? 0.03 : 0.005;
+      body.bleed = Math.max(body.bleed, bleed);
+      v.health = Math.max(1, v.health - (dmg / Math.max(1, b.maxHp)) * 60);
+    }
+  }
   pop(s, b.x, b.y - 1, `-${dmg}`, crit ? "crit" : "hit");
   if (a.range > 2) {
     const kind = a.kind === "archer" || a.kind === "tower" || a.kind === "hall" ? "arrow" : a.kind === "wizard" ? "bolt" : "fire";

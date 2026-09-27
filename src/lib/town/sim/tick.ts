@@ -1,5 +1,5 @@
 import {
-  CATALOG, CROP_YIELD, DIG_HOURS, DISHES, FARM_LOSS, FILL_HOURS, FISH_CATCH, FISH_SEASON, FOOD_PACE, LAB_RECIPES, LADDERS, RECIPES, TRAIN_CAP, UTILITIES,
+  CATALOG, CROP_YIELD, DIG_HOURS, DISHES, FARM_LOSS, FILL_HOURS, FISH_CATCH, FISH_SEASON, FOOD_PACE, LAB_RECIPES, LADDERS, RECIPES, TRAIN_CAP,
   grade, knightPay, promotionHours, roleLabel,
 } from "./catalog";
 import { MONSTERS, expectedLevel, partyName, raidTable, rollRaid } from "./bestiary";
@@ -7,18 +7,31 @@ import {
   byId, clock, countedTroops, isMilitary, log, makeVillager, residents, totalBeds, townPower, beds,
 } from "./state";
 import {
-  BULK, LIGHT_TYPES, RARE_FINDS, isHome, structureMaxHp, burnRate, computeLinks, exposure, hallDistance, mineRareRate, farmReachesMarket, fieldFrozen, fuelCap, growsInWinter, houseWarm, idx, inBounds, irrigation, ringOf, rng, occupancy, unlitBuildings, storageCap,
+  BULK, LIGHT_TYPES, RARE_FINDS, isHome, structureMaxHp, burnRate, computeLinks, exposure, hallDistance, mineRareRate, farmReachesMarket, fieldFrozen, fuelCap, growsInWinter, idx, inBounds, irrigation, ringOf, rng, occupancy, unlitBuildings, storageCap,
 } from "./world";
 import { TREE_EFFORT, TREE_WOOD, growWoods, treeStage, winterCull } from "./woods";
 import { ASCEND_FROM, domainBonus, finishCrafts, gearCap, isAway, isSpecial, returnFromSortie, xpToNext } from "./loot";
 import { summonHaunt } from "./combat";
 import { stepWilds, wildsHourly } from "./wilds";
 import { WILD_EFFORT, sowWild, wildAmount, wildCrop } from "./forage";
+import { weatherHourly, air } from "./weather";
+import { effOf, illnessHourly, stepBodies, townHunger } from "./body";
+import { aggroHourly, aggroOf, archetypeOdds, channelAggro, emit, noteLoss, threatForecast, waveLevel, ROSTER } from "./aggro";
+import { storesHourly, storesDaily, storesOf, addWood, mixMealTaint, mixMealVitC } from "./stores";
+import { soilDaily, soilWorked, soilYield } from "./soil";
+import { workTool, type Target } from "./tools";
+import { framesDaily, framesHourly } from "./frame";
+import { addCorpse, corpsesHourly, psycheHourly, societyWork, witnessDeath } from "./psyche";
+import { discoverNodes, nodesDaily } from "./wilds";
+import { initSurvival } from "./survival";
+import { woodFuel, FUEL_UNIT_KG } from "./zones";
+import { targetValue } from "./breach";
+import { strikingFaction } from "./body";
+import { CHANNELS } from "./types";
 import {
   MAP_H, MILITARY, Overlay, RAW_FOODS, Terrain, type Caravan, type CaravanOffer, type GameState, type ResourceKey, type Structure, type Villager,
 } from "./types";
 import type { TownInput, TownProfile } from "../rules";
-import { troopUpkeep } from "../rules";
 
 /**
  * Time passing. `advance` moves the clock; everything slow happens on the
@@ -77,10 +90,13 @@ export function trainingPace(input: SimContext["input"]): Pace {
 }
 
 export function advance(s: GameState, minutes: number, ctx: SimContext) {
+  initSurvival(s);
   s.time += minutes;
   s.hourAcc += minutes;
   // Bands in the fog and scouts with torches move on the minute.
   stepWilds(s, minutes);
+  // Every body, every minute; the rooms every ten (design §8.2–8.3).
+  stepBodies(s, minutes);
 
   // Lessons and drills wear down at the current pace.
   const pace = trainingPace(ctx.input).factor;
@@ -111,6 +127,12 @@ export function advance(s: GameState, minutes: number, ctx: SimContext) {
 
   // Raid arrival is checked every call, so it lands on time at any speed.
   if (s.raid?.phase === "incoming" && s.time >= s.raid.arrivesAt) {
+    // Blizzard stalkers only come in a whiteout: a clearing sky scatters them.
+    if (s.raid.archetype === "Wr" && air(s).vis >= 50) {
+      log(s, "The blizzard lifts, and whatever was coming in it is gone.", "info");
+      s.raid = null;
+      return;
+    }
     // combat.ts turns the party into combatants on its next step
     s.raid.phase = "fighting";
   }
@@ -119,6 +141,19 @@ export function advance(s: GameState, minutes: number, ctx: SimContext) {
 function hourly(s: GameState, ctx: SimContext) {
   const c = clock(s.time);
   const r = rng(Math.floor(s.time) * 31 + s.seed);
+  weatherHourly(s);
+  const a = air(s);
+  const [hallX, hallY] = (() => {
+    const h = s.structures.find((st) => st.type === "townhall");
+    return h ? [h.x + h.w / 2, h.y + h.h / 2] : [40, 30];
+  })();
+  // Tool use this hour: each tool once.
+  const usedTools = new Set<number>();
+  const toolFor = (target: Target, intensity = 1) => workTool(s, target, a.T, intensity, usedTools);
+  const sw = societyWork(s);
+  const striker = s.society?.state === "strike" ? strikingFaction(s) : -1;
+  /** A worker's share of a full hour's output: fitness, attendance, the town's temper. */
+  const wf = (v: Villager) => (v.body ? effOf(v) * (v.body.presence ?? 1) : 1) * sw * (v.fac === striker ? 0 : 1) * (v.broken && v.broken.until > s.time ? 0 : 1);
   // Bulk goods as they stood, so the hour's gains can be held to what the stores take.
   const held = BULK.map((k) => s.res[k]);
   const prod = productionFactor(s);
@@ -131,6 +166,12 @@ function hourly(s: GameState, ctx: SimContext) {
   for (const f of s.structures.filter((st) => st.type === "pitfire" && live(st))) {
     const had = f.fuel ?? 0;
     f.fuel = Math.max(0, had - burnRate(c.season, c.night));
+    const burnt = had - f.fuel;
+    if (burnt > 0) {
+      const fuel = woodFuel(storesOf(s).woodMC);
+      emit(s, "smk", (burnt * FUEL_UNIT_KG * fuel.pm) / 1000, f.x, f.y);
+      emit(s, "heat", (burnt * FUEL_UNIT_KG * 14.3) / 3600, f.x, f.y);
+    }
     if (had > 0 && f.fuel === 0) log(s, `The pit fire at ${f.x},${f.y} has burnt out. Load it with wood or coal to light it again.`, "bad");
     else if (had >= fuelCap(f.level) * 0.2 && f.fuel < fuelCap(f.level) * 0.2) log(s, `The pit fire at ${f.x},${f.y} is burning low.`, "info");
   }
@@ -140,11 +181,8 @@ function hourly(s: GameState, ctx: SimContext) {
     while ((b.fuel ?? 0) < 3 && s.res.coal >= 1) {
       s.res.coal -= 1;
       b.fuel = (b.fuel ?? 0) + 2;
+      emit(s, "smk", 0.12, b.x, b.y);
     }
-  }
-  const coldHouses = new Set<number>();
-  if (c.season === "winter") {
-    for (const h of s.structures.filter(isHome)) if (!houseWarm(s, h)) coldHouses.add(h.id);
   }
 
   // ── Production ─────────────────────────────────────────
@@ -153,7 +191,7 @@ function hourly(s: GameState, ctx: SimContext) {
     const h = byId(s, v.house);
     return !!h?.breakUntil && h.breakUntil > s.time;
   };
-  const working = (st: Structure) => workersOf(st).filter((v) => !onBreak(v) && v.health > 20);
+  const working = (st: Structure) => workersOf(st).filter((v) => !onBreak(v) && v.health > 20 && wf(v) > 0);
   // Condition, and the tenth-level steps: a quarter more from each.
   const cond = (st: Structure) => (0.5 + st.condition / 200) * (1 + 0.25 * grade(st.level));
   const biologists = s.villagers.filter((v) => v.role === "biologist" || (v.role === "farmhand" && v.rank >= 4)).length;
@@ -169,20 +207,17 @@ function hourly(s: GameState, ctx: SimContext) {
     // Even inside the warmth, only potatoes grow through winter.
     if (c.season === "winter" && !growsInWinter(f)) continue;
     const w = ws[0];
+    const fit = wf(w);
+    soilWorked(f, fit);
     const rank = w.role === "biologist" ? 4 : Math.min(4, w.rank);
     // Neighbouring blocks growing the same crop raise each other's yield.
     const ring = new Set(ringOf(f.x, f.y, f.w, f.h));
     const same = farms.filter((o) => o !== f && o.mode === f.mode && ringsTouch(o, ring)).length;
     const base = CROP_YIELD[f.mode ?? "potato"] ?? 5;
     const seasonal = f.type === "waterfarm" && c.season === "winter" ? 0.2 : seasonYield;
-    // A field that gets fertiliser this hour grows a quarter more.
-    let fed = 1;
-    if (s.res.fertiliser >= 0.25) {
-      s.res.fertiliser -= 0.25;
-      fed = 1.25;
-    }
+    // The soil carries the yield now (design §3.5): fertiliser and compost go into it.
     const amount = base * (1 + 0.25 * (f.level - 1)) * ctx.profile.harvestScale * (1 + 0.12 * same) *
-      (1 - FARM_LOSS[rank]) * bioBonus * seasonal * irrigation(s, f) * cond(f) * prod * fed * FOOD_PACE;
+      (1 - FARM_LOSS[rank]) * bioBonus * seasonal * irrigation(s, f) * cond(f) * prod * soilYield(f) * fit * toolFor("loam", 0.3) * FOOD_PACE;
     if (farmReachesMarket(s, links, f)) {
       const key = (f.mode ?? "potato") as keyof typeof s.res;
       s.res[key] += amount;
@@ -192,20 +227,35 @@ function hourly(s: GameState, ctx: SimContext) {
   const served = new Set<string>();
   for (const st of s.structures.filter(live)) {
     const ws = working(st);
-    const n = ws.length;
+    const n = ws.reduce((acc, v) => acc + wf(v), 0);
     const k = cond(st) * prod;
     switch (st.type) {
       case "kitchen": {
         // Each chef cooks the kitchen's dish if they have the standing and
         // the store has the crops; otherwise pottage from whatever is there.
         const dish = DISHES.find((d) => d.id === st.mode) ?? DISHES[0];
+        const stores = storesOf(s);
+        /** Takes food, the spoiled share first: it goes in the pot before it goes off. */
+        const takeFood = (key: ResourceKey, n: number): number => {
+          const sp = Math.min(n, stores.spoiled[key] ?? 0);
+          stores.spoiled[key] = (stores.spoiled[key] ?? 0) - sp;
+          s.res[key] -= n;
+          return sp;
+        };
         for (const v of ws) {
           // Hard economy: a chef gets through half what they used to.
-          let batches = Math.max(1, Math.floor((1 + 0.3 * v.rank) * k + 0.5));
+          let batches = Math.max(1, Math.floor((1 + 0.3 * v.rank) * k * wf(v) + 0.5));
           if (dish.id !== "pottage" && v.rank >= dish.rank) {
             while (batches > 0 && Object.entries(dish.input).every(([key, n]) => s.res[key as keyof typeof s.res] >= (n as number))) {
-              for (const [key, n] of Object.entries(dish.input)) s.res[key as keyof typeof s.res] -= n as number;
+              let spoiled = 0;
+              let total = 0;
+              for (const [key, n] of Object.entries(dish.input)) {
+                spoiled += takeFood(key as ResourceKey, n as number);
+                total += n as number;
+              }
               s.res.meals += dish.meals;
+              mixMealTaint(s, spoiled, total, dish.meals);
+              mixMealVitC(s, dish.input, dish.meals);
               served.add(dish.id);
               batches--;
             }
@@ -214,8 +264,11 @@ function hourly(s: GameState, ctx: SimContext) {
           for (const food of RAW_FOODS) {
             if (cap <= 0) break;
             const take = Math.min(cap, s.res[food]);
-            s.res[food] -= take;
+            if (take <= 0) continue;
+            const spoiled = takeFood(food, take);
             s.res.meals += take * DISHES[0].meals;
+            mixMealTaint(s, spoiled, take, take * DISHES[0].meals);
+            mixMealVitC(s, { [food]: take }, take * DISHES[0].meals);
             cap -= take;
           }
         }
@@ -224,9 +277,13 @@ function hourly(s: GameState, ctx: SimContext) {
       case "mine": {
         if (!n) break;
         const geo = ws.filter((v) => v.role === "geologist").reduce((a, v) => a + v.rank + 1, 0);
-        s.res.stone += n * (2 + st.level) * k;
-        s.res.coal += n * (1 + st.level * 0.5) * k;
-        s.res.iron += n * Math.max(0, st.level - 1) * 0.4 * k;
+        // Picks on rock: each worker's tool, and the strikes ring through the bedrock (§2.1).
+        const edge = ws.reduce((acc, v) => acc + wf(v) * toolFor(v.rank % 2 ? "coal" : "limestone"), 0) / Math.max(1e-6, n);
+        emit(s, "ac", ws.length * 0.054, st.x, st.y);
+        const kk = k * edge;
+        s.res.stone += n * (2 + st.level) * kk;
+        s.res.coal += n * (1 + st.level * 0.5) * kk;
+        s.res.iron += n * Math.max(0, st.level - 1) * 0.4 * kk;
         // Precious things are rare, and richer the further the mine lies from the hall.
         const luck = (1 + geo * 0.1) * (1 + 0.1 * (st.level - 1));
         if (r() < mineRareRate(s, st) * luck) {
@@ -245,23 +302,34 @@ function hourly(s: GameState, ctx: SimContext) {
       }
       case "lumbercamp": {
         if (!n) break;
-        let want = n * 6 * (1 + 0.2 * (st.level - 1)) * k;
+        const edge = ws.reduce((acc, v) => acc + wf(v) * toolFor(v.id % 2 ? "oak" : "softwood"), 0) / Math.max(1e-6, n);
+        let want = n * 6 * (1 + 0.2 * (st.level - 1)) * k * edge;
+        let cut = 0;
         for (const i of forestNear(s, st)) {
           const take = Math.min(want, s.map.meta[i]);
           s.map.meta[i] -= take;
-          s.res.wood += take;
+          cut += take;
           want -= take;
           if (want <= 0) break;
         }
+        // Green wood into the stock; the canopy torn open (§2.1).
+        addWood(s, cut, 0.5);
+        emit(s, "can", cut, st.x, st.y);
         break;
       }
       case "refinery": {
         const recipe = RECIPES.find((rc) => rc.id === st.mode) ?? RECIPES[0];
-        const crew = recipe.scientist ? ws.filter((v) => v.role === "scientist").length : n;
-        for (let i = 0; i < crew * st.level; i++) {
+        const crew = recipe.scientist ? ws.filter((v) => v.role === "scientist").reduce((acc, v) => acc + wf(v), 0) : n;
+        for (let i = 0; i < Math.round(crew * st.level); i++) {
           if (!Object.entries(recipe.input).every(([key, v]) => s.res[key as keyof typeof s.res] >= (v as number))) break;
           for (const [key, v] of Object.entries(recipe.input)) s.res[key as keyof typeof s.res] -= v as number;
-          for (const [key, v] of Object.entries(recipe.output)) s.res[key as keyof typeof s.res] += (v as number) * k;
+          for (const [key, v] of Object.entries(recipe.output)) {
+            if (key === "tools" && recipe.toolMat) for (let t = 0; t < Math.floor((v as number) * k); t++) (s.toolsPending ??= []).push(recipe.toolMat);
+            s.res[key as keyof typeof s.res] += (v as number) * k;
+          }
+          // Kilns and furnaces smoke: 40 g a kilo of wood charred, less for the rest.
+          const woodIn = (recipe.input.wood ?? 0) * FUEL_UNIT_KG;
+          emit(s, "smk", (woodIn * (recipe.id === "charcoal" ? 40 : 8)) / 1000, st.x, st.y);
         }
         break;
       }
@@ -278,12 +346,18 @@ function hourly(s: GameState, ctx: SimContext) {
       }
       case "fishery": {
         // Each fisher's catch grows with their rank; the hut's level adds lines in the water.
-        for (const v of ws) s.res.fish += (FISH_CATCH + v.rank * 1.2) * (1 + 0.2 * (st.level - 1)) * FISH_SEASON[c.season] * k * FOOD_PACE;
+        for (const v of ws) s.res.fish += (FISH_CATCH + v.rank * 1.2) * (1 + 0.2 * (st.level - 1)) * FISH_SEASON[c.season] * k * wf(v) * FOOD_PACE;
+        // Gutting the catch: a little blood into the river.
+        if (ws.length) emit(s, "bio", 0.05 * ws.length, st.x, st.y);
         break;
       }
       case "icefactory": {
         if (c.season !== "winter") break;
-        for (const v of ws) s.res.ice += (1 + v.rank * 0.6) * st.level * k;
+        for (const v of ws) s.res.ice += (1 + v.rank * 0.6) * st.level * k * wf(v) * toolFor("ice", 0.5);
+        break;
+      }
+      case "forge": {
+        if (ws.length) emit(s, "ac", ws.length * 0.032, st.x, st.y);
         break;
       }
       case "market": {
@@ -296,17 +370,8 @@ function hourly(s: GameState, ctx: SimContext) {
 
 
   // ── Eating ─────────────────────────────────────────────
-  const troops = s.villagers.filter(isMilitary);
-  const upkeepRole = (v: Villager) => {
-    if (v.role === "wizard" && v.rank >= 15) return 0; // grand wizards keep themselves
-    const kind = v.role === "archer" ? "ranger" : v.role === "heavy" ? "knight" : v.role === "wizard" ? "witch" : v.role === "knight" ? "paladin" : "footman";
-    return troopUpkeep(kind, ctx.input.scores) * 0.1;
-  };
-  const need = s.villagers.length * 0.12 + troops.reduce((a, v) => a + upkeepRole(v), 0);
-  const eaten = Math.min(need, s.res.meals);
-  s.res.meals -= eaten;
-  const fed = need === 0 ? 1 : eaten / need;
-  s.hunger = clamp(s.hunger + (fed >= 0.999 ? 2.5 : -6 * (1 - fed)), 0, 100);
+  // People eat at their sittings (./body); the meter shows how fed they are.
+  s.hunger = townHunger(s);
 
   // Good cooking shows: dishes served this hour lift the town that ate them.
   for (const id of served) {
@@ -318,16 +383,10 @@ function hourly(s: GameState, ctx: SimContext) {
     }
   }
 
-  // ── Ice ────────────────────────────────────────────────
-  let noIce = false;
-  if (c.season === "summer") {
-    const want = s.villagers.length * 0.02;
-    if (s.res.ice >= want) s.res.ice -= want;
-    else {
-      s.res.ice = 0;
-      noIce = s.villagers.length > 0;
-    }
-  }
+  // ── Stores, illness, the dead (design §3, §7) ─────────
+  storesHourly(s);
+  illnessHourly(s);
+  corpsesHourly(s);
 
   // ── Tonic: the sickest take it first, three doses an hour at most ──
   for (const v of [...s.villagers].sort((a, b) => a.health - b.health).slice(0, 3)) {
@@ -336,45 +395,25 @@ function hourly(s: GameState, ctx: SimContext) {
     v.health = clamp(v.health + 25, 0, 100);
   }
 
-  // ── Happiness, health, deaths ──────────────────────────
+  // ── Injuries heal; the gravely hurt die of them ────────
   for (const v of [...s.villagers]) {
-    const home = byId(s, v.house);
-    const rested = !!home?.breakUntil && home.breakUntil > s.time;
-    const utilities = (home?.utilities ?? []).reduce((a, id) => a + (UTILITIES.find((u) => u.id === id)?.happy ?? 0), 0);
-    // Work tires people by day; the night restores them. Draining happiness
-    // around the clock drove every employed town to zero within a week.
-    const workingHours = c.hour >= 6 && c.hour < 20;
-    let dh = rested ? 3 : v.work && workingHours ? -0.3 : 0.35;
-    dh += utilities;
-    if (!home) dh -= 1;
-    v.happy = clamp(v.happy + dh, 0, 100);
-
-    let dHealth = 0.4;
-    if (home && coldHouses.has(home.id)) dHealth -= 2.2;
-    if (!home && c.season === "winter") dHealth -= 3;
-    if (s.hunger < 30) dHealth -= 1.2;
-    v.health = clamp(v.health + dHealth, 0, 100);
+    const b = v.body;
+    const heal = b && b.vitC < 300 ? 0.2 : 0.4;
+    v.health = clamp(v.health + heal, 0, 100);
     if (v.health <= 0) {
       kill(s, v);
-      log(s, `${v.name} did not survive the ${c.season === "winter" ? "cold" : "hunger"}.`, "bad");
+      log(s, `${v.name} died of their injuries.`, "bad");
     }
   }
 
-  // ── Mood ───────────────────────────────────────────────
-  let dm = 0;
-  if (s.hunger > 75) dm += 0.3;
-  else if (s.hunger < 40) dm -= 0.6;
-  const avgHappy = s.villagers.length ? s.villagers.reduce((a, v) => a + v.happy, 0) / s.villagers.length : 60;
-  if (avgHappy > 60) dm += 0.4;
-  else if (avgHappy < 35) dm -= 0.4;
-  if (coldHouses.size) dm -= 1.5 * (coldHouses.size / Math.max(1, s.structures.filter(isHome).length));
-  if (noIce) dm -= 0.5;
-  if (s.festivalUntil > s.time) dm += 3;
+  // ── Minds: sanity, breaks, Hope, discontent, society (§6) ──
+  psycheHourly(s);
   const stars = s.villagers.filter((v) => v.role === "chef" && v.rank >= 3).reduce((a, v) => a + (v.rank - 2), 0);
-  dm += Math.min(0.5, stars * 0.05);
-  for (const d of s.debuffs) dm += d.moodPerHour;
-  s.mood = clamp(s.mood + dm, 0, 100);
+  s.mood = clamp(s.mood + Math.min(0.5, stars * 0.05) / 24, 0, 100);
   s.debuffs = s.debuffs.filter((d) => d.until > s.time);
+
+  // ── Frames: snow on the roofs, posts checked (§5) ──────
+  framesHourly(s);
 
   // ── Deterioration below half mood ──────────────────────
   for (const st of s.structures) {
@@ -427,7 +466,8 @@ function hourly(s: GameState, ctx: SimContext) {
   const free = totalBeds(s) - s.villagers.length;
   // Refugees come to a near-empty town whatever its mood — otherwise a
   // sacked town, whose grief holds mood down, could never be repopulated.
-  const welcoming = (s.mood > 40 && s.hunger > 40) || s.villagers.length < 4;
+  // Nobody comes to a place without hope, however empty it stands.
+  const welcoming = (s.mood > 40 && s.hunger > 40) || (s.villagers.length < 4 && s.mood >= 10);
   if (free > 0 && welcoming && s.time - s.lastVillagerAt >= 180) {
     const house = [...s.structures.filter(isHome), ...s.structures.filter((h) => h.type === "townhall")]
       .find((h) => !h.buildUntil && residents(s, h).length < beds(s, h));
@@ -447,8 +487,10 @@ function hourly(s: GameState, ctx: SimContext) {
   // ── Clearing: idle hands clear trees, rocks and rubble ─
   // With nobody idle the town still gets to it after work, only slowly —
   // a marked job never sits forever, and rubble never blocks a plot for good.
-  const idle = s.villagers.filter((v) => v.role === "idle" && !v.work && v.health > 20).length;
+  const idlers = s.villagers.filter((v) => v.role === "idle" && !v.work && v.health > 20);
+  const idle = idlers.reduce((acc, v) => acc + wf(v), 0);
   let effort = idle > 0 ? idle : s.clearing.length && s.villagers.length ? 0.5 : 0;
+  if (s.clearing.length && idlers.length) effort *= idlers.slice(0, 4).reduce((acc) => acc + toolFor("softwood", 0.5), 0) / Math.min(4, idlers.length);
   for (const job of s.clearing) {
     if (effort <= 0) break;
     const o = s.map.overlay[job.tile];
@@ -457,7 +499,11 @@ function hourly(s: GameState, ctx: SimContext) {
     job.progress += put;
     effort -= put;
     if (job.progress >= need) {
-      if (o === Overlay.Tree) s.res.wood += TREE_WOOD[treeStage(s.map.meta[job.tile])];
+      if (o === Overlay.Tree) {
+        const stage = treeStage(s.map.meta[job.tile]);
+        addWood(s, TREE_WOOD[stage], stage === 4 ? 0.3 : 0.5);
+        emit(s, "can", [0, 0.5, 8, 30, 4][stage], job.tile % 360, Math.floor(job.tile / 360));
+      }
       else if (o === Overlay.Rock) {
         const kind = s.map.meta[job.tile];
         if (kind === 0) s.res.stone += 10;
@@ -512,7 +558,11 @@ function hourly(s: GameState, ctx: SimContext) {
     // pace. A tile only has room for a spade or two, so however many turn
     // out, each tile takes the better part of two days.
     const hands = s.villagers.filter((v) => v.role === "idle" && !v.work && v.health > 20).length || 0.5;
-    const pace = s.res.tools >= 1 ? 2 : 1;
+    const handsN = Math.max(1, Math.round(hands));
+    let pace = 0;
+    for (let i = 0; i < Math.min(handsN, 6); i++) pace += toolFor("loam", 1) * 2;
+    pace = pace / Math.min(handsN, 6);
+    emit(s, "ac", hands * 0.012, hallX, hallY);
     let work = hands * pace;
     for (const job of s.earthworks) {
       if (work <= 0) break;
@@ -523,7 +573,6 @@ function hourly(s: GameState, ctx: SimContext) {
       if (job.progress >= need) {
         if (job.kind === "dig") s.map.terrain[job.tile] = Terrain.Water;
         else s.map.terrain[job.tile] = Terrain.Bank;
-        if (pace > 1) s.res.tools -= 1;
         log(s, job.kind === "dig" ? "A new stretch of channel fills with water." : "A stretch of water is filled in.", "info");
       }
     }
@@ -556,6 +605,21 @@ function hourly(s: GameState, ctx: SimContext) {
   // Wild crops come up at dawn; winter kills all but the potato.
   if (c.hour === 6) sowWild(s, r);
 
+  // ── The day's slow processes, before dawn (§8.5) ───────
+  if (c.hour === 5) {
+    storesDaily(s);
+    soilDaily(s);
+    framesDaily(s);
+    nodesDaily(s);
+  }
+  discoverNodes(s);
+  // The night watch burns four torches along the perimeter.
+  if (c.hour === 20 && s.decrees?.includes("nightwatch")) {
+    const n = Math.min(4, s.res.torches);
+    s.res.torches -= n;
+    emit(s, "smk", n * 0.05, hallX, hallY);
+  }
+
   // ── Night haunts ───────────────────────────────────────
   // Three nights' grace, like the raids. A warning at dusk; at nine, one
   // dark thing for every building no light reaches.
@@ -572,14 +636,9 @@ function hourly(s: GameState, ctx: SimContext) {
   // ── The wilds: lairs breed, bands roam, and strike ─────
   wildsHourly(s, r);
 
-  // ── Raids ──────────────────────────────────────────────
-  // Every few hours the wilds take notice — more likely the more people the
-  // town holds, and a crowded town draws more, and stronger, monsters.
-  if (!s.raid && s.time >= s.nextRaidAt) {
-    if (r() < raidChance(s.villagers.length)) scheduleRaid(s, r);
-    else s.nextRaidAt = s.time + RAID_PERIOD * 60;
-  }
-  if (!s.raid && s.nextRaidAt < s.time) s.nextRaidAt = s.time + 60;
+  // ── The land's answer (design §2) ──────────────────────
+  // Every act of the town is a stimulus; the director spends what they add up to.
+  aggroHourly(s, r);
 
   // ── Storage ────────────────────────────────────────────
   // What the hour brought in past the stores' room is lost. Stock already
@@ -672,12 +731,24 @@ export function raidForecast(s: GameState): {
       merged.set(t.def.kind, m);
     }
   }
-  const total = [...merged.values()].reduce((a, m) => a + m.w, 0) || 1;
-  const monsters = [...merged.values()].map((m) => ({ kind: m.kind, name: m.name, pct: m.w / total, level: m.level, night: m.night })).sort((a, b) => b.pct - a.pct);
-  const pool = s.structures.map((st) => ({ st, w: targetWeight(s, st) })).filter((x) => x.w > 0);
+  void merged;
+  // The director's view (design §2): what each of the land's answers would send, and how likely each is.
+  const odds = archetypeOdds(s);
+  const A = channelAggro(s);
+  const days = s.time / 1440;
+  const monsters = CHANNELS.map((ch, j) => {
+    const level = waveLevel(A[j], days);
+    const band = ROSTER[ch].filter((u) => level >= u.min);
+    const kind = (band[band.length - 1] ?? ROSTER[ch][0]).kind;
+    return { kind, name: MONSTERS[kind].name, pct: odds[j], level, night: !!MONSTERS[kind].night };
+  }).filter((m) => m.pct > 0).sort((a, b) => b.pct - a.pct);
+  const pool = s.structures.map((st) => ({ st, w: targetValue(s, st, "K") })).filter((x) => x.w > 0);
   const wsum = pool.reduce((a, x) => a + x.w, 0) || 1;
   const exposed = pool.map((x) => ({ st: x.st, share: x.w / wsum, bonus: exposure(s, x.st) })).sort((a, b) => b.share - a.share);
-  return { chance: raidChance(s.villagers.length), nextCheckIn: Math.max(0, s.nextRaidAt - s.time), monsters, exposed };
+  const f = threatForecast(s);
+  const ag = aggroOf(s);
+  const chance = s.time < s.nextRaidAt ? 0 : Math.min(0.99, ag.trigger > 0 ? ag.purse / ag.trigger : 0);
+  return { chance, nextCheckIn: Number.isFinite(f.hoursToWave) ? f.hoursToWave * 60 : 99 * 60, monsters, exposed };
 }
 
 /** Villager-hours of digging one tile can take in an hour: a spade or two at a time. */
@@ -747,7 +818,11 @@ export function kill(s: GameState, v: Villager) {
   if (st) st.workers = st.workers.filter((id) => id !== v.id);
   s.villagers = s.villagers.filter((x) => x.id !== v.id);
   s.deaths += 1;
-  s.mood = Math.max(0, s.mood - 2);
+  noteLoss(s);
+  const home = byId(s, v.house);
+  const [x, y] = home ? [home.x + home.w / 2, home.y + home.h / 2] : [40, 30];
+  addCorpse(s, v.name, x, y);
+  witnessDeath(s, v);
 }
 
 export function scheduleRaid(s: GameState, r: () => number) {

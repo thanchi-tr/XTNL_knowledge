@@ -55,13 +55,15 @@ export const RESOURCE_KEYS = [
   "formula",
   /** Laboratory goods: a healing tonic, and fertiliser for the fields. */
   "tonic", "fertiliser",
+  /** Survival goods: salt for curing, peat and charcoal to burn, meat, bloomery iron, aged compost. */
+  "salt", "peat", "charcoal", "meat", "bogiron", "compost",
 ] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 export type Resources = Record<ResourceKey, number>;
 
 export const RAW_FOODS: ResourceKey[] = [
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
-  "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish",
+  "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish", "meat",
 ];
 
 // ── Structures ────────────────────────────────────────────
@@ -112,6 +114,224 @@ export interface Structure {
   fuel?: number;
   /** Forge: the piece on the anvil. */
   craft?: { item: string; until: number } | null;
+  /** Enclosed buildings: the room's thermal state (design §1.8). */
+  zone?: Zone;
+  /** Heated buildings: what the fire burns in. */
+  hearth?: HearthKind;
+  /** Fields: nitrogen, phosphorus, organic matter (design §3.5). */
+  soil?: Soil;
+  /** Load-bearing frame: capacity factor per post, 1 intact, 0 failed (design §5). */
+  frame?: number[];
+  /** Footings under the posts. */
+  footing?: Footing;
+  /** Roof snow and eave ice, kg/m² water equivalent. */
+  roofSnow?: number;
+  eaveIce?: number;
+  /** Timber decay and frost-heave damage, 0 (sound) to 1. */
+  rot?: number;
+  /** A roof the town chose over the grade's default (turf: warm and heavy). */
+  roofKind?: string;
+}
+
+// ── Survival (design doc: docs/town-survival-systems.md) ──
+export type HearthKind = "open" | "chimney" | "stove" | "brazier";
+export type Footing = "pad" | "trench" | "deep";
+
+export interface Zone {
+  /** Air temperature, °C. */
+  T: number;
+  /** Carbon monoxide, mg/m³. */
+  co: number;
+  /** Masonry-stove mass temperature, °C. */
+  Ts: number;
+  /** Creosote in the flue, kg. */
+  creo: number;
+  /** Fuel burnt last step, kg/h, and what it was. */
+  burn: number;
+  fuel?: string;
+  /** Minutes accumulated towards the next ten-minute update. */
+  acc?: number;
+  /** Day the town was last told this hearth had no fuel. */
+  warnDay?: number;
+}
+
+export interface Soil {
+  N: number;
+  P: number;
+  O: number;
+  /** Consecutive cycles of the same crop, and which crop. */
+  nc: number;
+  crop: string;
+  /** Hours into the current growing cycle. */
+  hours: number;
+}
+
+export type Affliction = "normal" | "shivering" | "hypoMild" | "hypoModerate" | "hypoSevere" | "undressing" | "cardiac";
+export type IllnessKind = "poisoning" | "dysentery" | "ergotism" | "typhus" | "pneumonia" | "gangrene" | "scurvy" | "infection";
+
+export interface Illness {
+  kind: IllnessKind;
+  /** Minute symptoms begin (after incubation). */
+  onset: number;
+  /** Minute it resolves on its own, if survived. */
+  until: number;
+}
+
+/** A villager's physiology (design §1, §3.4, §7). */
+export interface Body {
+  /** Core temperature, °C. */
+  Tc: number;
+  /** Clothing and foot wetness, 0–1. */
+  W: number;
+  Wf: number;
+  /** Glycogen / ready energy, kcal; body fat, kg; lean tissue lost, kg. */
+  Eg: number;
+  F: number;
+  B: number;
+  /** Fatigue, 0–1. */
+  phi: number;
+  /** Vitamin C pool, mg; water deficit, L; carboxyhaemoglobin, %. */
+  vitC: number;
+  h2o: number;
+  cohb: number;
+  /** Blood lost, L, and the open bleed, L/min. */
+  blood: number;
+  bleed: number;
+  /** Frostbite dose, K·min (hands, feet); chilblain and trench-foot doses. */
+  frostH: number;
+  frostF: number;
+  cb: number;
+  tf: number;
+  state: Affliction;
+  ill: Illness[];
+  /** Out of work to warm up until the core recovers. */
+  warming?: boolean;
+  /** Productivity this hour (mean of the minutes), and its accumulator. */
+  eff: number;
+  effAcc: number;
+  effN: number;
+  /** Where they are this minute: a building id, or null outdoors. */
+  at?: number | null;
+  /** Hours soaked through (W > 0.8), for pneumonia. */
+  soaked: number;
+  /** Lost limbs or digits. */
+  amputee?: number;
+  /** Spoiled meals eaten since the last hour. */
+  spoiledMeals: number;
+  /** Hot meals eaten since the last hour. */
+  meals: number;
+  /** Rescue / afterdrop risk: set while being rewarmed after collapse. */
+  afterdrop?: number;
+  /** Came through moderate hypothermia this hour (pneumonia risk). */
+  hypoDone?: boolean;
+  /** Productivity averaged over recent shifts: what a 24-hour workplace sees. */
+  effDay?: number;
+  /** Share of the shift actually at work (warming breaks, sickness), and its minute counters. */
+  presence?: number;
+  shiftMin?: number;
+  workMin?: number;
+}
+
+/** Aggro channels: kinetic breachers, burrowers, weather-riders, infiltrators. */
+export const CHANNELS = ["K", "B", "Wr", "I"] as const;
+export type Channel = (typeof CHANNELS)[number];
+export const STIMULI = ["can", "smk", "ac", "bio", "heat", "food", "pop"] as const;
+export type Stimulus = (typeof STIMULI)[number];
+
+export interface Aggro {
+  hot: number[];
+  scar: number[];
+  /** This hour's stimuli, in their units. */
+  ledger: Record<Stimulus, number>;
+  /** Channel input over the last day, for the readout. */
+  daily: number[];
+  purse: number;
+  trigger: number;
+  lastWaveAt: number;
+  /** Times of casualties, for the director's relief. */
+  losses: number[];
+  /** Channel aggro for the last six hours, for punitive waves. */
+  past: number[][];
+  /** Tile → hostile deaths remembered (decays, half-life 3 days). */
+  deathMap: Record<number, number>;
+}
+
+export interface Stores {
+  /** Spoiled (edible, risky) share of each food, in its units. */
+  spoiled: Partial<Record<ResourceKey, number>>;
+  /** Miasma in the stores, and the freeze-thaw damage multiplier. */
+  miasma: number;
+  kMul: number;
+  frozen: boolean;
+  /** Share of the meal stock cooked from spoiled food; vitamin C carried per meal, mg. */
+  mealTaint: number;
+  mealVitC: number;
+  /** Spore contamination of grain and of the water. */
+  contamFood: number;
+  contamWater: number;
+  /** Moisture content of the wood stock (wet basis). */
+  woodMC: number;
+  /** Nightsoil: fresh, and composting (person-days). */
+  soilFresh: number;
+  soilAging: number;
+}
+
+export type ToolMat = "flint" | "bronze" | "bog" | "wrought" | "steel" | "crucible";
+export interface Tool {
+  id: number;
+  mat: ToolMat;
+  /** Sharpness 0–1, fatigue damage, remaining mass share. */
+  s: number;
+  D: number;
+  m: number;
+}
+
+export interface Corpse {
+  id: number;
+  x: number;
+  y: number;
+  at: number;
+  kg: number;
+  name: string;
+  /** Labour-hours of burial done. */
+  dug: number;
+}
+
+export type SocietyState = "stable" | "strained" | "unrest" | "strike" | "mutiny" | "exile";
+export interface Society {
+  state: SocietyState;
+  since: number;
+  /** A faction's demand and when it runs out. */
+  ultimatum?: { faction: number; demand: "repeal" | "rations" | "rest"; until: number } | null;
+  /** Hours the worst faction has held its discontent over the strike line. */
+  strikeHours: number;
+  /** Hours Hope has lain at nothing. Three days of it and the town is abandoned. */
+  despairHours?: number;
+}
+
+export type NodeKind = "bogiron" | "salt" | "coal" | "peat" | "flint" | "silver";
+/** A wilderness extraction site (design §4.4). */
+export interface ExtractionNode {
+  id: number;
+  kind: NodeKind;
+  x: number;
+  y: number;
+  wake: number;
+  awakened: boolean;
+  discovered: boolean;
+}
+
+export interface Policy {
+  /** What homes heat to while people are in, °C. */
+  heat: number;
+  /** Portion at each meal, 1 = full. */
+  ration: number;
+  /** Spread nightsoil fresh instead of composting it. */
+  freshSoil: boolean;
+  /** Burn coal in stoves and fireplaces before wood. */
+  coalFirst: boolean;
+  /** Workday length in hours (the extended-shift decree raises it). */
+  shift: number;
 }
 
 // ── People ────────────────────────────────────────────────
@@ -151,6 +371,15 @@ export interface Villager {
   unpaidSince?: number | null;
   /** The watchtower this troop is posted to. Only posted troops defend. */
   guard?: number | null;
+  /** Physiology (design §1). */
+  body?: Body;
+  /** Discontent 0–100, and faction: 0 Tradition, 1 Pragmatism, 2 Faith. */
+  disc?: number;
+  fac?: number;
+  /** Traits: hardy, pious, nyctophobe, navigator, physician, hollow, leftThem. */
+  traits?: string[];
+  /** A mental break: what, and until when. */
+  broken?: { kind: string; until: number } | null;
 }
 
 // ── Monsters and raids ────────────────────────────────────
@@ -234,6 +463,10 @@ export interface Raid {
   reach?: number;
   /** Where a band out of the fog stood when it turned on the town: it attacks from there. */
   origin?: [number, number];
+  /** Which of the land's four answers this is (design §2.5). */
+  archetype?: Channel;
+  /** Set when the raiders took their objective and withdrew: what they brought down. */
+  retreated?: string;
   phase: "incoming" | "fighting" | "repelled";
   combatants: Combatant[];
   projectiles: Projectile[];
@@ -300,6 +533,15 @@ export interface Scout {
   haul?: Partial<Record<ResourceKey, number>>;
   /** When the next find is rolled for. */
   nextFindAt?: number;
+  /** Heading error (rad) and cross-track drift (tiles) of the party's reckoning (design §4.2). */
+  psi?: number;
+  err?: number;
+  /** Cargo carried beyond the pack, kg, and marching power last minute, W. */
+  load?: number;
+  power?: number;
+  /** A node being worked, and hours spent at it. */
+  node?: number;
+  worked?: number;
 }
 
 export type LairKind = "tomb" | "dragonpit" | "shadowgate";
@@ -328,6 +570,8 @@ export interface Roamer {
   y: number;
   tx: number;
   ty: number;
+  /** A band hunting a hero out in the fog: the villager it follows. */
+  hunt?: number;
 }
 
 export interface GameState {
@@ -378,4 +622,26 @@ export interface GameState {
   ranksV?: number;
   /** 1 once trees carry growth stages and forests hold a wood stock. */
   woodsV?: number;
+  // ── Survival (design doc) ──
+  /** 1 once the survival systems are initialised on this save. */
+  survivalV?: number;
+  weather?: import("./weather").Weather;
+  aggro?: Aggro;
+  stores?: Stores;
+  toolkit?: Tool[];
+  /** Materials of tools made but not yet in the kit. */
+  toolsPending?: ToolMat[];
+  nextToolId?: number;
+  corpses?: Corpse[];
+  society?: Society;
+  decrees?: string[];
+  nodes?: ExtractionNode[];
+  policy?: Policy;
+  /** Community Hope change waiting to be applied (deaths, victories, decrees). */
+  hopeEvents?: number;
+  /** Minutes accumulated towards the next physiology step, and the next ten-minute zone step. */
+  bodyAcc?: number;
+  zoneAcc?: number;
+  /** Cause of the run's end, if not a sack. */
+  fallCause?: string;
 }

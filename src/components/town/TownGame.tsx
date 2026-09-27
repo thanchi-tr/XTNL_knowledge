@@ -23,16 +23,16 @@ import { FIRE_BANISH, canRepel, performRite, repelRequirement, stepCombat } from
 import {
   beds, byId, census, clock, countedTroops, guardsAt, isMilitary, migrate, militaryCapacity, newTown, packSave, residents, totalBeds, unpackSave,
 } from "@/lib/town/sim/state";
-import { advance, FESTIVAL_COST, holdFestival, raidChance, raidForecast, scheduleRaid, trainingPace, IDEA_BOOST, RAID_PERIOD, type SimContext } from "@/lib/town/sim/tick";
+import { advance, FESTIVAL_COST, holdFestival, raidForecast, scheduleRaid, trainingPace, IDEA_BOOST, type SimContext } from "@/lib/town/sim/tick";
 import { buildingEffects, type Effect } from "@/lib/town/sim/effects";
 import {
-  alertRadius, burnRate, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, houseWarm, warmFields,
+  alertRadius, burnRate, checkPlacement, checkTile, computeLinks, costText, farmReachesMarket, fieldFrozen, findPath, fuelCap, growsInWinter, guardSlots, warmFields,
   idx, irrigation, isLit, lightRange, occupancy, rng, unlitBuildings, warmthRange, LIGHT_TYPES, MILITARY_TYPES,
   BULK, armyPointsAllowed, captainBonus, commanderOf, hallDistance, hallRadius, isGuardPost, mineRareRate, passiveRadius, storageCap,
   WALL_MAX_LEVEL, wallHp, wallLevel, wallMaxHp, wallUpgradeCost, fitAt,
 } from "@/lib/town/sim/world";
 import { FOREST_FLOOR, REGROW, TILE_WOOD, forestOf, regrows } from "@/lib/town/sim/woods";
-import { LOST_MINUTES, PACK_SLOTS, RATION_MEALS, adventureReach, canPack, packRation, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
+import { PACK_SLOTS, RATION_MEALS, adventureReach, canPack, packRation, packTorch, sendScout, unpackSlot } from "@/lib/town/sim/wilds";
 import { MAP_H, MAP_W, Overlay, Terrain, TILE, type GameState, type MonsterKind, type Structure, type StructureType, type Villager } from "@/lib/town/sim/types";
 import {
   drawFrame, drawMinimap, newWorld, structureArt, MINI_H, MINI_W, VIEW_H, VIEW_W, WORLD_H, WORLD_W,
@@ -40,6 +40,7 @@ import {
 } from "./map/render";
 import type { TroopArt } from "./art/sprites";
 import { troopLook, type Look } from "./art/heroes";
+import { NodeList, SocietyPanel, SoilPanel, StoresPanel, ThreatPanel, Vitals, WeatherBadge, ZonePanel } from "./SurvivalPanels";
 import { icon } from "./art/icons";
 
 /**
@@ -577,15 +578,16 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
           <b>Year {clk.year} · Day {clk.day}</b>
           <span className="mono">{String(clk.hour).padStart(2, "0")}:{String(clk.minute).padStart(2, "0")}{clk.night ? " ☾" : " ☀"}</span>
         </div>
+        <WeatherBadge s={s} />
         <div className="tg-speed" role="group" aria-label="Game speed">
           {SPEEDS.map((sp, i) => (
             <button key={sp} className={`tg-sp ${speedIdx === i ? "on" : ""}`} onClick={() => setSpeedIdx(i)}>{sp === 0 ? "❚❚" : `${sp}×`}</button>
           ))}
         </div>
-        <Meter label="Mood" value={s.mood} warn={s.mood < 50} hint={s.mood < 50 ? "below half — buildings are deteriorating" : "sets work speed"} />
-        <Meter label="Hunger" value={s.hunger} warn={s.hunger < 75} hint="keep above 75% to lift mood" />
+        <Meter label="Hope" value={s.mood} warn={s.mood < 50} hint={s.mood < 50 ? "below half — buildings are deteriorating" : "sets work speed; three days near nothing and the town is abandoned"} />
+        <Meter label="Fed" value={s.hunger} warn={s.hunger < 75} hint="how full people's energy and fat stores are" />
         <Meter label="Health" value={avgHealth} warn={avgHealth < 60} />
-        <Meter label="Happy" value={avgHappy} warn={avgHappy < 60} hint="above 60% recharges mood" />
+        <Meter label="Sanity" value={avgHappy} warn={avgHappy < 60} hint="below 35 minds start to break" />
         <div className="tg-pop"><b>{pop}</b>/{totalBeds(s)} beds</div>
         <button className="town-btn sm" onClick={() => run(() => holdFestival(s))} title={`Costs ${costText(FESTIVAL_COST)}`}>
           {s.festivalUntil > s.time ? "Festival!" : "Festival"}
@@ -734,7 +736,9 @@ export function TownGame({ input, scenario, bonus }: { input: TownInput; scenari
             {tab === "hall" && (
               <>
                 <Goal s={s} scenario={scenario} />
+                <SocietyPanel s={s} run={run} />
                 <CensusPanel s={s} />
+                <StoresPanel s={s} />
               </>
             )}
             {tab === "raid" && <RaidPanel s={s} ctx={ctx} run={run} />}
@@ -950,6 +954,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
       </div>
 
       <EffectList list={buildingEffects(s, ctx).get(st.id) ?? []} />
+      <ZonePanel s={s} st={st} run={run} />
 
       {st.type === "townhall" && <CensusPanel s={s} compact />}
 
@@ -974,7 +979,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
             );
           })()}
           <p className="town-sub">
-            {residents(s, st).length}/{beds(s, st)} beds · {houseWarm(s, st) ? "warm" : clock(s.time).season === "winter" ? "COLD — build a pit fire nearby" : "no fire in reach"}
+            {residents(s, st).length}/{beds(s, st)} beds · {st.zone ? `${Math.round(st.zone.T)} °C inside` : ""}
             {st.breakUntil && st.breakUntil > s.time ? ` · on break ${Math.ceil((st.breakUntil - s.time) / 60)}h` : ""}
           </p>
           <div className="town-row wrap">
@@ -996,7 +1001,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
           </div>
           <ul className="tg-people">
             {residents(s, st).map((v) => (
-              <li key={v.id}><b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span></li>
+              <li key={v.id}><b>{v.name}</b> <span>{roleLabel(v.role, v.rank)}</span> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span> <Vitals s={s} v={v} /></li>
             ))}
           </ul>
         </>
@@ -1021,6 +1026,7 @@ function InfoPanel({ s, st, ctx, run, input, onScout }: { s: GameState; st: Stru
               <li data-ok={w ? "1" : undefined}>{w ? `✓ ${w.name}, ${roleLabel(w.role, w.rank)} — ${Math.round(FARM_LOSS[rank] * 100)}% of the crop lost` : "✗ No worker — every block needs one"}</li>
             </ul>
             <p className="town-dim">Blocks touching others of the same crop grow 12% faster each.</p>
+            <SoilPanel st={st} />
             {clock(s.time).season === "winter" && (
               <p className="town-sub warn-text">
                 {fieldFrozen(s, st, true) ? "Iced over — no pit fire reaches this field, so nothing grows until spring."
@@ -1654,7 +1660,7 @@ function HeroPack({ s, v, run, onScout }: { s: GameState; v: Villager; run: (fn:
       {sc ? (
         <span className={sc.lost !== undefined || (sc.fed ?? 1) <= 0 ? "warn-text" : "town-dim"}>
           {sc.lost !== undefined
-            ? `Lost in the fog without a torch — ${Math.max(0, Math.ceil(LOST_MINUTES - sc.lost))} minutes before they are gone. Light the ground near them to guide them home.`
+            ? `Lost for ${Math.round(sc.lost)} minutes, wandering until a landmark — the town's light, the river, a lair — gives them their bearings. Light the ground near them to guide them home.`
             : `On an adventure, ${sc.phase === "out" ? "heading out" : "coming home"} — ${torches} torch${torches === 1 ? "" : "es"}, ${rations} ration${rations === 1 ? "" : "s"} left${(sc.fed ?? 1) <= 0 ? ", starving" : ""}.`}
           {Object.keys(sc.haul ?? {}).length > 0 && ` Found so far: ${Object.entries(sc.haul!).map(([k, n]) => `${n} ${k}`).join(", ")}.`}
         </span>
@@ -1667,9 +1673,10 @@ function HeroPack({ s, v, run, onScout }: { s: GameState; v: Villager; run: (fn:
           </div>
           <span className="town-dim">
             {torches && rations
-              ? `Light for ${reach.lightHours}h, food for ${reach.foodHours}h: about ${reach.tiles} tiles out and back. The last torch lit turns them home — past the town's light without one, they are lost.`
+              ? `Carrying ${Math.round(reach.load)} kg at ${reach.pace.toFixed(1)} m/s (${reach.watts} W): light for ${reach.lightHours}h, food for ${reach.foodHours}h — about ${reach.tiles} tiles out and back. They turn home while food and light last the way back; with no torch and no landmark they lose their bearings.`
               : "Pack at least one torch and one ration to set out."}
           </span>
+          {torches > 0 && rations > 0 && <NodeList s={s} onSend={(x, y) => run(() => sendScout(s, v.id, x, y))} />}
         </>
       )}
     </div>
@@ -1785,9 +1792,9 @@ function Goal({ s, scenario }: { s: GameState; scenario: string }) {
       <p className="town-kicker">The goal</p>
       <h2 className="town-title">Survive</h2>
       <p className="town-sub">
-        Your town is a light in a land of fog. Keep the hall standing as long as you can. Raids come every few hours — likelier and stronger the more
-        people you have — lairs deep in the fog loose bands that roam toward you, the nights send haunts for every building left dark, and winter
-        freezes all a fire cannot reach. Build, light, feed and defend; if the hall falls, the run is over.
+        Your town is a parasite in a land that wants it gone. Everything it does — felling, burning, mining, bleeding — draws the land&apos;s answer:
+        siege beasts, burrowers, blizzard stalkers, spores. Cold kills through the body; food rots; tools break; roofs come down under snow;
+        minds break. Keep the hall standing and the people hoping: if the hall falls, or Hope lies dead for three days, the run is over.
       </p>
       <p className="town-sub">
         <b>Day {day}</b> {s.fallen ? "— fallen" : "survived"} · best: day {best} · difficulty: hard
@@ -1810,7 +1817,7 @@ function CensusPanel({ s, compact }: { s: GameState; compact?: boolean }) {
       </ul>
       <p className="town-kicker" style={{ marginTop: 10 }}>Available workers ({idle.length})</p>
       <ul className="tg-people">
-        {idle.slice(0, 20).map((v) => <li key={v.id}><b>{v.name}</b> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span></li>)}
+        {idle.slice(0, 20).map((v) => <li key={v.id}><b>{v.name}</b> <span className="town-dim">♥{Math.round(v.health)} ☺{Math.round(v.happy)}</span> <Vitals s={s} v={v} /></li>)}
         {idle.length === 0 && <li className="town-dim">Everyone is working.</li>}
       </ul>
     </div>
@@ -1851,11 +1858,12 @@ function RaidPanel({ s, ctx, run }: { s: GameState; ctx: SimContext; run: (fn: (
         <>
           <h2 className="town-title">All quiet</h2>
           <p className="town-sub">
-            Every {RAID_PERIOD} hours there is a {Math.round(raidChance(s.villagers.length) * 100)}% chance something comes — next in about {Math.max(0, Math.round((s.nextRaidAt - s.time) / 60))}h.
-            The more people live here, the likelier a raid, and the bigger and stronger it is. Autumn wakes the skeleton army; some things come only by night.
+            For now. Every tree felled, every hearth&apos;s smoke, every pick-strike in the mine, the blood of every fight and the heat leaking from every roof
+            feeds the land&apos;s answer. It is sized against what defends the building it comes for — and it never forgets.
           </p>
         </>
       )}
+      <ThreatPanel s={s} />
       <RaidOdds s={s} />
       <details className="tg-test">
         <summary>Test a raid</summary>
@@ -1885,7 +1893,7 @@ function RaidOdds({ s }: { s: GameState }) {
   const f = raidForecast(s);
   return (
     <div className="tg-odds">
-      <p className="town-kicker" style={{ marginTop: 12 }}>Next raid · {Math.round(f.chance * 100)}% chance at the check in {Math.ceil(f.nextCheckIn / 60)}h</p>
+      <p className="town-kicker" style={{ marginTop: 12 }}>Next wave · the purse {Math.round(f.chance * 100)}% full · about {Math.ceil(f.nextCheckIn / 60)}h</p>
       <table className="tg-table">
         <thead><tr><th>Could come</th><th>Share</th><th>Level</th></tr></thead>
         <tbody>
@@ -1896,14 +1904,14 @@ function RaidOdds({ s }: { s: GameState }) {
       </table>
       <p className="town-kicker" style={{ marginTop: 10 }}>Most exposed</p>
       <table className="tg-table">
-        <thead><tr><th>Target</th><th>Odds</th><th>Extra levels</th></tr></thead>
+        <thead><tr><th>Target</th><th>Draw</th><th>Extra levels</th></tr></thead>
         <tbody>
           {f.exposed.slice(0, 5).map((x) => (
             <tr key={x.st.id}><td>{CATALOG[x.st.type].name} at {x.st.x},{x.st.y}</td><td>{Math.round(x.share * 100)}%</td><td>{x.bonus ? `+${x.bonus}` : "—"}</td></tr>
           ))}
         </tbody>
       </table>
-      <p className="town-dim">Raids make for one building; the further it stands from the hall, the likelier it is chosen and the stronger what comes. ☾ only by night.</p>
+      <p className="town-dim">A wave makes for one building — whatever is worth most to it for the time it takes to get there: sleepers, food, warmth, a roof about to give. Having brought it down, it goes. ☾ things of the night.</p>
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { MAP_W, MAP_H, Overlay, RAW_FOODS, Terrain, type GameState, type Structu
 import { FOG, UNSEEN, VISIBLE, visionMap } from "../src/lib/town/sim/vision";
 import { MONSTERS } from "../src/lib/town/sim/bestiary";
 import { DROPS } from "../src/lib/town/sim/loot";
+import { aggroOf } from "../src/lib/town/sim/aggro";
 import { PACK_SLOTS, RATION_MEALS, adventureReach, packRation, packTorch, sendScout, unpackSlot } from "../src/lib/town/sim/wilds";
 import { WILD_CAP, sowWild, wildCrop } from "../src/lib/town/sim/forage";
 // These checks build wherever they need to; the fog has checks of its own.
@@ -746,8 +747,8 @@ console.log("ranks, knights, reach and trade");
   check(hits > 80 / r.structures.length * 2, `a far outpost is targeted ${hits} times in 80 raids (of ${r.structures.length} buildings)`);
   check(bonus >= 5, `and raids on it come ${bonus} levels stronger`);
   const fc = raidForecast(r);
-  check(fc.monsters.length > 0 && Math.abs(fc.monsters.reduce((a, m) => a + m.pct, 0) - 1) < 1e-6 && fc.exposed[0].st.id === outpost.id,
-    `the forecast lists what could come (${fc.monsters.slice(0, 3).map((m) => `${m.name} ${Math.round(m.pct * 100)}%`).join(", ")}) and names the most exposed building`);
+  check(fc.monsters.length > 0 && Math.abs(fc.monsters.reduce((a, m) => a + m.pct, 0) - 1) < 1e-6 && fc.exposed.length > 0,
+    `the forecast lists what the land could send (${fc.monsters.slice(0, 3).map((m) => `${m.name} ${Math.round(m.pct * 100)}%`).join(", ")}) and the most tempting targets (${fc.exposed[0]?.st.type})`);
 
   // Digging the river: slow, from the water out.
   const d = newTown(127, 20);
@@ -847,6 +848,12 @@ console.log("fog, lairs and scouts");
   band!.tx = band!.x;
   band!.ty = band!.y;
   g.hourAcc = 59.9;
+  // A band strikes only with the director's purse behind it, and only if it would not
+  // overwhelm what defends the building beyond the director's aim (design §2.3).
+  aggroOf(g).purse = 1e6;
+  band!.level = 1;
+  band!.count = 1;
+  g.nextRaidAt = g.time;
   advance(g, 0.2, ctx);
   const struck = g.raid as GameState["raid"];
   check(!!struck && !!struck.origin && !(g.roamers ?? []).includes(band!), "a band that comes near the town attacks it, from where it stood");
@@ -879,30 +886,40 @@ console.log("fog, lairs and scouts");
   const noTorch = makeVillager(g, null, "wizard");
   check(!!sendScout(g, noTorch.id, target[0], target[1]), "nobody goes into the fog without a torch");
 
-  // Hungry: out of rations, a hero weakens.
+  // Hungry: out of rations, a hero burns their fat on the march (design §1.6).
   const hungry = makeVillager(g, null, "knight");
   packTorch(g, hungry.id);
   packTorch(g, hungry.id);
   packRation(g, hungry.id);
   sendScout(g, hungry.id, Math.floor(hx) + 60, Math.floor(hy));
   hungry.pack = hungry.pack!.map((p) => (p === "ration" ? null : p));
-  hungry.scout!.fed = 1;
-  hungry.health = 80;
-  for (let i = 0; i < 60; i++) advance(g, 1, ctx);
-  check(hungry.health < 75, `with no food left, they weaken (${Math.round(hungry.health)} health after an hour)`);
+  hungry.body!.Eg = 100;
+  const fat0 = hungry.body!.F;
+  for (let i = 0; i < 120; i++) advance(g, 1, ctx);
+  check((hungry.body!.F < fat0 || hungry.body!.B > 0), `with no food left, they march on fat and muscle (${(fat0 - hungry.body!.F).toFixed(2)} kg fat, ${hungry.body!.B.toFixed(2)} kg lean in two hours)`);
+  hungry.scout = null;
 
-  // Lost: the last torch gutters out deep in the fog.
+  // Lost: without a torch, drift outruns what can be seen (design §4.2).
   const lost = makeVillager(g, null, "knight");
   packTorch(g, lost.id);
   packRation(g, lost.id);
-  sendScout(g, lost.id, Math.floor(hx) + 120, Math.floor(hy));
+  sendScout(g, lost.id, Math.floor(hx) + 150, Math.floor(hy) + 40);
   lost.scout!.x = hx + 110;
   lost.scout!.hx = hx;
   lost.pack = lost.pack!.map((p) => (p?.startsWith("torch") ? "torch:1" : p));
-  advance(g, 2, ctx);
+  for (let i = 0; i < 360 && lost.scout && lost.scout.lost === undefined; i++) advance(g, 1, ctx);
   check(lost.scout?.lost !== undefined, "torchless in the fog, they lose the way");
-  for (let i = 0; i < 100 && g.villagers.includes(lost); i++) advance(g, 1, ctx);
-  check(!g.villagers.includes(lost) && g.log.some((l) => /never found/.test(l.text)), "and lost too long, they are never found");
+  // Lost in a winter blizzard, what kills them is the cold, not a timer.
+  while (clock(g.time).season !== "winter") g.time += 24 * 60;
+  g.weather!.regime = "blizzard";
+  lost.pack = lost.pack!.map(() => null);
+  lost.body!.Eg = 300;
+  g.raid = null;
+  for (let i = 0; i < 24 * 60 && g.villagers.includes(lost); i++) {
+    g.weather!.regime = "blizzard";
+    advance(g, 1, ctx);
+  }
+  check(!g.villagers.includes(lost) && g.log.some((l) => l.text.startsWith(lost.name) && /froze|heart|cold|taken/.test(l.text)), `and lost in a blizzard, the cold takes them (${g.log.find((l) => l.text.startsWith(lost.name))?.text ?? "still alive"})`);
   FOG.rules = false;
 
   // Saves pack their map.

@@ -1,6 +1,6 @@
 import { CATALOG, DISHES } from "./catalog";
 import { clock } from "./state";
-import { computeLinks, farmReachesMarket, fieldFrozen, growsInWinter, houseWarm, MILITARY_TYPES } from "./world";
+import { computeLinks, farmReachesMarket, fieldFrozen, growsInWinter, MILITARY_TYPES } from "./world";
 import { trainingPace, type SimContext } from "./tick";
 import type { GameState } from "./types";
 
@@ -47,12 +47,17 @@ export function buildingEffects(s: GameState, ctx: SimContext): Map<number, Effe
         add(st.id, { kind: "cold", tone: "debuff", label: "Dormant", detail: "Only potatoes grow through winter. Switch this field to potatoes, or wait for spring." });
       } else if (!farmReachesMarket(s, links, st)) {
         add(st.id, { kind: "cutoff", tone: "debuff", label: "Harvest lost", detail: "No paved road to a market — the crop rots in the field." });
-      } else if (s.res.fertiliser >= 0.25) {
-        add(st.id, { kind: "fertilised", tone: "buff", label: "Fertilised +25%", detail: "The laboratory's fertiliser is going on this field." });
+      } else if ((st.soil?.N ?? 12) < 8) {
+        add(st.id, { kind: "decay", tone: "debuff", label: "Tired soil", detail: `Nitrogen down to ${(st.soil?.N ?? 0).toFixed(1)} g/m². Rotate to beans, leave it fallow, or spread compost or fertiliser.` });
+      } else if (s.res.fertiliser >= 1 || s.res.compost >= 1) {
+        add(st.id, { kind: "fertilised", tone: "buff", label: "Fed ground", detail: "Compost and fertiliser in store go on this field when its nitrogen runs low." });
       }
     }
-    if ((st.type === "house" || st.type === "apartment") && winter && !houseWarm(s, st)) {
-      add(st.id, { kind: "cold", tone: "debuff", label: "Cold", detail: "No lit pit fire reaches it. Its residents lose health every hour." });
+    if ((st.type === "house" || st.type === "apartment") && st.zone && st.zone.T < 5) {
+      add(st.id, { kind: "cold", tone: "debuff", label: `Cold · ${Math.round(st.zone.T)} °C`, detail: "The room is near freezing. Those who sleep here chill, and a cold core is how hypothermia starts. Fit a better hearth, feed it, or build warmer." });
+    }
+    if (st.zone && st.zone.co > 230) {
+      add(st.id, { kind: "decay", tone: "debuff", label: "Fumes", detail: `Carbon monoxide ${Math.round(st.zone.co / 1.145)} ppm. Sleepers here may not wake.` });
     }
     if (st.type === "kitchen" && st.workers.length) {
       const dish = DISHES.find((d) => d.id === st.mode);

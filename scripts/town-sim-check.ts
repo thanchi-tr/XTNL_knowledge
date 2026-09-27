@@ -9,7 +9,7 @@
 import { newTown, clock, census, countedTroops } from "../src/lib/town/sim/state";
 import { advance, scheduleRaid, type SimContext } from "../src/lib/town/sim/tick";
 import { stepCombat } from "../src/lib/town/sim/combat";
-import { place, paint, hire, recruit, upgrade, assignGuard, stokeFire } from "../src/lib/town/sim/actions";
+import { fitHearth, sweepChimney, place, paint, hire, recruit, upgrade, assignGuard, stokeFire } from "../src/lib/town/sim/actions";
 import { profileFor, type TownInput } from "../src/lib/town/rules";
 import { rng, idx, checkPlacement, fuelCap, ringOf, unlitBuildings } from "../src/lib/town/sim/world";
 import { MAP_W } from "../src/lib/town/sim/types";
@@ -33,7 +33,7 @@ const input: TownInput = {
   newIdeasToday: 2,
 };
 const ctx: SimContext = { profile: profileFor(input), input };
-const s = newTown(42, 20);
+const s = newTown(Number(process.env.TOWN_SEED ?? 42), 20);
 
 function tryPlace(type: StructureType, x0: number, y0: number) {
   for (let y = y0; y < y0 + 12; y++) for (let x = x0; x < x0 + 16; x++) {
@@ -65,8 +65,11 @@ s.res.coal += 200;
 
 const r = rng(9);
 let lastDay = 0;
-for (let step = 0; step < 24 * 30; step++) {
+for (let step = 0; step < 24 * 60 && !s.fallen; step++) {
   advance(s, 60, ctx);
+  // a sensible player puts chimneys in the homes as soon as they can, and keeps the flues swept
+  for (const h of s.structures.filter((x) => (x.type === "house" || x.type === "apartment") && !x.buildUntil && x.hearth === "open")) fitHearth(s, h.id, "chimney");
+  for (const h of s.structures) if ((h.zone?.creo ?? 0) > 2) sweepChimney(s, h.id);
   // a sensible player lights what they build, before the dusk warning comes true
   for (const st of unlitBuildings(s)) {
     const t = ringOf(st.x, st.y, st.w, st.h).find((i) => checkPlacement(s, "lamppost", i % MAP_W, Math.floor(i / MAP_W)).ok);
@@ -108,6 +111,10 @@ for (let step = 0; step < 24 * 30; step++) {
 }
 void r;
 void upgrade;
+// G1 (docs/town-survival-systems.md §10): the town must fall, and not too soon.
+const fell = s.fallen?.day ?? null;
+const inBand = fell !== null && fell >= 18 && fell <= 45;
+console.log(`\nG1: ${fell === null ? "still standing after 60 days" : `fell on day ${fell}${s.fallCause ? ` (${s.fallCause})` : ""}`} — ${inBand ? "inside" : "OUTSIDE"} the 18–45 day band.`);
 void scheduleRaid;
 console.log("\ncensus:", census(s).map((c) => `${c.label} ${c.count}`).join(", "));
 console.log("kills:", s.kills.map((k) => k.kind).join(", ") || "none");

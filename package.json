@@ -17,7 +17,8 @@
     "db:backfill-attributes": "tsx scripts/backfill-attributes.ts",
     "skills:stats": "tsx scripts/print-skill-pool-stats.ts",
     "balance:horizon": "tsx scripts/balance-horizon.ts",
-    "town:check": "tsx scripts/town-sim-check.ts"
+    "town:check": "tsx scripts/town-sim-check.ts",
+    "town:survival": "tsx scripts/town-survival-check.ts"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
