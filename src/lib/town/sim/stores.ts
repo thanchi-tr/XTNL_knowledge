@@ -6,6 +6,8 @@ import { center } from "./world";
 import { emit } from "./aggro";
 import { FOOD_VITC } from "./body";
 import { RAW_FOODS, type GameState, type ResourceKey, type Stores } from "./types";
+import { cellarCut } from "./paths";
+import { BIOME_SPOIL } from "./biomes";
 
 /**
  * The negative-sum stores (design §3.1–3.4). Every food decays by first-order
@@ -23,8 +25,9 @@ export const K20: Partial<Record<ResourceKey, number>> = {
   cabbage: 0.78, watercress: 0.78, herb: 0.78, lotus: 0.78, reed: 0.78,
   onion: 0.1, garlic: 0.1,
   potato: 0.078, turnip: 0.078, carrot: 0.078, taro: 0.078,
-  pumpkin: 0.05, chestnut: 0.05,
+  pumpkin: 0.05, chestnut: 0.05, apple: 0.12,
   wheat: 0.01, barley: 0.01, bean: 0.01, corn: 0.01, rice: 0.01,
+  ...BIOME_SPOIL,
 };
 export const Q10 = 2.3;
 /** Grains and pulses: what spores settle on. */
@@ -95,6 +98,8 @@ export function storesHourly(s: GameState, forcedT?: number) {
   // The bruising fades as the stock turns over.
   st.kMul = 1 + (st.kMul - 1) * Math.exp(-1 / (5 * 24));
   let rotten = 0;
+  // Storehouses on the thrifty path keep their share of the stock cooler (./paths).
+  const cool = 1 - cellarCut(s);
   const keys = [...RAW_FOODS, "meals" as ResourceKey];
   for (const k of keys) {
     const total = s.res[k];
@@ -102,7 +107,7 @@ export function storesHourly(s: GameState, forcedT?: number) {
       st.spoiled[k] = 0;
       continue;
     }
-    const k1 = (kAt(k, T, RH, st.miasma, st.kMul) / 24) * legendMods(s).rot;
+    const k1 = (kAt(k, T, RH, st.miasma, st.kMul) / 24) * legendMods(s).rot * cool;
     if (!k1) continue;
     const next = spoilStep(total, Math.min(total, st.spoiled[k] ?? 0), k1);
     s.res[k] = next.total;

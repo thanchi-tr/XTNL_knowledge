@@ -16,6 +16,7 @@ import {
   type EnrichResult,
 } from "@/lib/dedup";
 import { encodeIdeaContent, type IdeaContent } from "@/lib/idea-payload";
+import { cardTextFromStored } from "@/lib/novelty";
 import { estimateDifficulty } from "@/lib/difficulty";
 import { embeddingTextFromStored } from "@/lib/embedding-text";
 import { toVectorLiteral } from "@/lib/vector";
@@ -99,6 +100,7 @@ export type SubmitIdeaResult =
 export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResult> {
   const { question, answer, questionType } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
+  const card = cardTextFromStored(questionType, question, answer);
 
   const userId = getCurrentUserId();
   // Progression rather than modifiers alone: the daily focus draw is skewed
@@ -132,10 +134,11 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
 
   const field = await prisma.field.findUniqueOrThrow({ where: { id: fieldId } });
   const mergeThreshold = SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta;
-  const { decision, embedding, neighbours } = await analyzeCandidate(
+  const { decision, embedding, neighbours, targetDomainId } = await analyzeCandidate(
     fieldId,
     field.name,
     contentText,
+    card,
     mergeThreshold,
     precomputed
   );
@@ -152,12 +155,14 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
 
   const nearest = neighbours[0] ?? null;
 
-  if (decision.action === "SATURATION" && decision.target_node_id && nearest) {
+  // The card that stopped the submission is not always the nearest: a
+  // conflicting answer third in line outranks a loose paraphrase first.
+  if (decision.action === "SATURATION" && decision.target_node_id && targetDomainId) {
     return {
       status: "saturated",
       matchedIdeaId: decision.target_node_id,
-      domainId: nearest.domainId,
-      similarity: decision.confidence_score,
+      domainId: targetDomainId,
+      similarity: decision.verdict.match?.similarity ?? decision.confidence_score,
       decision,
     };
   }
@@ -174,10 +179,13 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
     classification = "MANUAL";
     nSimilar = await countSimilarInDomain(domain.id, embedding);
   } else {
-    const routing = await routeFromNearest(embedding, nearest);
+    // Cleared: dedup has read this card against its neighbours and found it
+    // new, even where a sibling fact sits above the saturation line.
+    const routing = await routeFromNearest(embedding, nearest, true);
 
-    // Unreachable: dedup returns above for anything past the saturation line.
-    // Narrowing the union rather than casting keeps that guarantee checked.
+    // Unreachable: dedup returns above for anything it stops, and the
+    // cleared route never reports SATURATION. Narrowing the union rather
+    // than casting keeps that guarantee checked.
     if (routing.classification === "SATURATION") {
       return {
         status: "saturated",
@@ -280,12 +288,18 @@ export interface PreviewIdeaResult extends CandidatePreview {
 export async function previewIdea(input: PreviewIdeaInput): Promise<PreviewIdeaResult> {
   const { question, answer, questionType } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
+  const card = cardTextFromStored(questionType, question, answer);
 
   const userId = getCurrentUserId();
-  const [preview, modifiers] = await Promise.all([
-    previewCandidate(input.fieldId, contentText),
-    loadModifiers(userId),
-  ]);
+  // Modifiers first: the DEDUP_PRECISION skill moves the merge line, and the
+  // preview must draw it where the submission will.
+  const modifiers = await loadModifiers(userId);
+  const preview = await previewCandidate(
+    input.fieldId,
+    card,
+    contentText,
+    SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta
+  );
 
   const basePoints = XP_BASE[questionType];
   return {

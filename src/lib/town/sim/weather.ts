@@ -1,5 +1,6 @@
 import { clock } from "./state";
 import { rng } from "./world";
+import { biomeDef, biomeOf, type Biome } from "./biomes";
 import { DAY_MIN, SEASON_LENGTH, SEASONS, YEAR_DAYS, type GameState, type Season } from "./types";
 
 /**
@@ -7,9 +8,19 @@ import { DAY_MIN, SEASON_LENGTH, SEASONS, YEAR_DAYS, type GameState, type Season
  * swing, an AR(1) anomaly and a Markov regime — calm, snow, blizzard and
  * thaw in winter; fair and rain otherwise. Snow lies on the ground, settles
  * and melts; the winter's freezing index drives frost depth (§5.4).
+ *
+ * Each map has its own sky (design §18). The green country keeps the chains
+ * above. The desert runs fair days broken by heatwaves and sandstorms, with
+ * its rain in winter; the floating isles run gales, thunderstorms and fog
+ * banks, and a winter of snow and blizzards blown in on the gale.
  */
 
-export type Regime = "calm" | "snow" | "blizzard" | "thaw" | "fair" | "rain";
+export type Regime =
+  | "calm" | "snow" | "blizzard" | "thaw" | "fair" | "rain"
+  /** The desert's: a wall of blown sand, and days of killing heat. */
+  | "sandstorm" | "heatwave"
+  /** The isles': a gale, a thunderstorm, a bank of cloud come down to lie on the island. */
+  | "gale" | "thunder" | "fog";
 
 export interface Weather {
   regime: Regime;
@@ -46,7 +57,44 @@ export const REGIME_FX: Record<Regime, RegimeFx> = {
   thaw: { dT: 10, v: 4, P: 1.5, vis: 800, RH: 1.0 },
   fair: { dT: 0, v: 3, P: 0, vis: 5000, RH: 0.6 },
   rain: { dT: -1, v: 5, P: 1.0, vis: 1500, RH: 0.95 },
+  sandstorm: { dT: 2, v: 18, P: 0, vis: 40, RH: 0.15 },
+  heatwave: { dT: 8, v: 2, P: 0, vis: 2500, RH: 0.12 },
+  gale: { dT: -2, v: 20, P: 0.2, vis: 2500, RH: 0.75 },
+  thunder: { dT: -3, v: 11, P: 3.0, vis: 500, RH: 1.0 },
+  fog: { dT: -1, v: 1, P: 0, vis: 60, RH: 1.0 },
 };
+
+/**
+ * The new maps' chains, by season: the states, then each state's row of
+ * hourly transitions (summing to 1). A state holds for about 1/(1 − p)
+ * hours: a sandstorm some seven, a heatwave a day or two, a fog bank five.
+ */
+type Chain = { states: Regime[]; rows: number[][] };
+const DESERT_STATES: Regime[] = ["fair", "heatwave", "sandstorm", "rain"];
+const SKY_STATES: Regime[] = ["fair", "gale", "thunder", "fog", "rain"];
+const SKY_WINTER: Regime[] = ["calm", "snow", "blizzard", "thaw", "gale"];
+export const CHAINS: Record<Exclude<Biome, "temperate">, Record<Season, Chain>> = {
+  desert: {
+    spring: { states: DESERT_STATES, rows: [[0.965, 0.012, 0.018, 0.005], [0.08, 0.92, 0, 0], [0.14, 0, 0.86, 0], [0.2, 0, 0, 0.8]] },
+    summer: { states: DESERT_STATES, rows: [[0.95, 0.035, 0.013, 0.002], [0.05, 0.95, 0, 0], [0.15, 0, 0.85, 0], [0.3, 0, 0, 0.7]] },
+    autumn: { states: DESERT_STATES, rows: [[0.96, 0.008, 0.028, 0.004], [0.1, 0.9, 0, 0], [0.13, 0, 0.87, 0], [0.25, 0, 0, 0.75]] },
+    winter: { states: DESERT_STATES, rows: [[0.965, 0, 0.012, 0.023], [1, 0, 0, 0], [0.15, 0, 0.85, 0], [0.12, 0, 0, 0.88]] },
+  },
+  skyisles: {
+    spring: { states: SKY_STATES, rows: [[0.935, 0.02, 0.008, 0.02, 0.017], [0.14, 0.86, 0, 0, 0], [0.2, 0.05, 0.75, 0, 0], [0.2, 0, 0, 0.8, 0], [0.13, 0, 0.02, 0, 0.85]] },
+    summer: { states: SKY_STATES, rows: [[0.93, 0.015, 0.03, 0.01, 0.015], [0.15, 0.85, 0, 0, 0], [0.22, 0.03, 0.75, 0, 0], [0.25, 0, 0, 0.75, 0], [0.15, 0, 0.03, 0, 0.82]] },
+    autumn: { states: SKY_STATES, rows: [[0.925, 0.03, 0.01, 0.025, 0.01], [0.12, 0.88, 0, 0, 0], [0.2, 0.05, 0.75, 0, 0], [0.18, 0, 0, 0.82, 0], [0.14, 0, 0.01, 0, 0.85]] },
+    winter: { states: SKY_WINTER, rows: [[0.93, 0.04, 0.01, 0.005, 0.015], [0.05, 0.88, 0.065, 0.005, 0], [0.02, 0.1, 0.88, 0, 0], [0.06, 0.02, 0, 0.92, 0], [0.15, 0, 0.05, 0, 0.8]] },
+  },
+};
+
+/** One step of a chain: a state not in it (a save from another season) starts from its first. */
+function stepChain(chain: Chain, now: Regime, pick: number): Regime {
+  const i = Math.max(0, chain.states.indexOf(now));
+  const row = chain.rows[i];
+  const k = row.findIndex((p) => (pick -= p) < 0);
+  return chain.states[k < 0 ? 0 : k];
+}
 
 /** Hourly transitions in winter, rows summing to 1 (§1.1). */
 const WINTER_CHAIN: Record<"calm" | "snow" | "blizzard" | "thaw", [number, number, number, number]> = {
@@ -119,14 +167,16 @@ export function air(s: GameState): Air {
   const c = clock(s.time);
   const h = (s.time % DAY_MIN) / 60;
   const fx = REGIME_FX[w.regime];
-  const T = seasonalT(s.time) + DIURNAL[c.season] * Math.cos((2 * Math.PI * (h - 15)) / 24) + w.anom + fx.dT;
+  // Each map's climate (./biomes): the desert hot by day and cold by night, the isles cold and windy.
+  const cl = biomeDef(s);
+  const T = seasonalT(s.time) + cl.dT + DIURNAL[c.season] * cl.swing * Math.cos((2 * Math.PI * (h - 15)) / 24) + w.anom + fx.dT;
   // Night cuts what can be seen: a clear night is a few hundred metres at best.
   const night = c.darkness > 0.5;
   const vis = night ? Math.min(fx.vis, 300) : fx.vis;
   const Tseason = seasonalT(s.time);
   return {
     T,
-    v: Math.min(30, fx.v * w.gust),
+    v: Math.min(30, fx.v * w.gust * cl.wind),
     P: fx.P,
     snowing: fx.P > 0 && T < 0.5,
     RH: fx.RH,
@@ -142,8 +192,11 @@ export function weatherHourly(s: GameState) {
   const w = weatherOf(s);
   const r = rng(Math.floor(s.time / 60) * 97 + s.seed * 3 + 11);
   const c = clock(s.time);
-  // Regime.
-  if (c.season === "winter") {
+  // Regime: the new maps run their own chains; the green country its old ones.
+  const biome = biomeOf(s);
+  if (biome !== "temperate") {
+    w.regime = stepChain(CHAINS[biome][c.season], w.regime, r());
+  } else if (c.season === "winter") {
     if (!WINTER_STATES.includes(w.regime as (typeof WINTER_STATES)[number])) w.regime = "calm";
     const row = WINTER_CHAIN[w.regime as (typeof WINTER_STATES)[number]];
     let pick = r();
@@ -151,7 +204,7 @@ export function weatherHourly(s: GameState) {
     w.regime = WINTER_STATES[k < 0 ? 0 : k];
   } else {
     if (w.regime !== "fair" && w.regime !== "rain") w.regime = "fair";
-    if (w.regime === "fair" && r() < 0.03) w.regime = "rain";
+    if (w.regime === "fair" && r() < 0.03 * biomeDef(s).wet) w.regime = "rain";
     else if (w.regime === "rain" && r() < 0.12) w.regime = "fair";
   }
   // Anomaly: θ ← 0.94θ + 1.1ε, ε ~ N(0,1) by Box–Muller.
@@ -211,4 +264,17 @@ export function frostDepth(fi: number): number {
 /** Label for the top bar. */
 export const REGIME_LABEL: Record<Regime, string> = {
   calm: "Still cold", snow: "Snow", blizzard: "Blizzard", thaw: "Thaw", fair: "Fair", rain: "Rain",
+  sandstorm: "Sandstorm", heatwave: "Heatwave", gale: "Gale", thunder: "Thunderstorm", fog: "Fog",
+};
+
+/** What each kind of weather does, in a line, for the badge (./habits, ./crops, ./combat). */
+export const REGIME_EFFECT: Partial<Record<Regime, string>> = {
+  rain: "the fields drink; bows shoot shorter",
+  snow: "snow settles on the roofs",
+  blizzard: "a whiteout: stalkers strike, scouts lose the way",
+  sandstorm: "sand buries the fields; bows are half blind; sandworms, jackals and djinn ride it in",
+  heatwave: "crops that hate heat wilt; troops tire; desert things walk by night",
+  gale: "tall crops are flattened; fliers come fast; arrows drift",
+  thunder: "lightning strikes the tall buildings; hail on the fields; thunderbirds and sky serpents hunt",
+  fog: "guards see late; wisps, pixies and cloud jellies come in the murk",
 };

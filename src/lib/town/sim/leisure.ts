@@ -1,6 +1,7 @@
 import { CATALOG, type Cost } from "./catalog";
 import { log } from "./state";
-import { canAfford, costText, pay } from "./world";
+import { canAfford, costText, pay, rng } from "./world";
+import { windfall } from "./paths";
 import { stats } from "./stats";
 import { MILITARY, type GameState, type Villager } from "./types";
 
@@ -71,9 +72,12 @@ export function leisureHourly(s: GameState) {
     v.awayUntil = undefined;
     v.awayFor = undefined;
     if (kind === "museum") {
-      const lvl = Math.max(1, ...s.structures.filter((m) => m.type === "museum").map((m) => m.level));
-      v.happy = clamp(v.happy + 12 + 3 * lvl);
-      s.hopeEvents = (s.hopeEvents ?? 0) + 0.5;
+      const best = s.structures.filter((m) => m.type === "museum").sort((a, b) => b.level - a.level)[0];
+      const lvl = Math.max(1, best?.level ?? 1);
+      // Its path (./paths): each visit does more good, or now and then moves them twice as much.
+      const moved = (best?.pr ?? 1) * (windfall(s, best, rng(Math.floor(s.time) * 17 + v.id)) ? 2 : 1);
+      v.happy = clamp(v.happy + (12 + 3 * lvl) * moved);
+      s.hopeEvents = (s.hopeEvents ?? 0) + 0.5 * moved;
       stats(s).museum += 1;
     } else if (kind === "travel") {
       v.happy = clamp(v.happy + 30);

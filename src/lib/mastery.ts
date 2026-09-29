@@ -4,6 +4,7 @@ import { cached, invalidate } from "./cache";
 import { gradeMasteryAttestation } from "./gemini";
 import { SKILL_POOL } from "./skill-pool";
 import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
+import { reviewDetail, type ReviewDetail } from "./town/rules";
 
 /**
  * The mastery-point economy. `MasteryLedgerEntry` is append-only (see its
@@ -22,6 +23,12 @@ import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
  *      invents a rule). Rate-limited to once per UTC day.
  *
  *   4. **Decay** debits idle points — see `decayStaleMastery`.
+ *
+ * It also keeps one record that is not money: every wrong answer writes a
+ * zero-delta `REVIEW_MISS` row, so the ledger holds every answer, right or
+ * wrong, and nothing else (the town counts study from it). A zero delta
+ * leaves every sum alone; readers that ask "when did this account start"
+ * skip those rows so a miss never looks like income history.
  *
  * All four paths are deliberately slow. Driving one Idea from level 1 to
  * mastery yields ~2.3 points total, and the top of the tree costs
@@ -88,14 +95,46 @@ export function mintIdeaMasteryOp(userId: string, ideaId: string, multiplier: nu
   });
 }
 
-/** Ditto, for the per-review fraction. Same transaction, so a review's XP and its mastery income can never disagree. */
-export function mintReviewFractionOp(userId: string, ideaId: string, ideaLevel: number, multiplier: number) {
+/**
+ * Ditto, for the per-review fraction. Same transaction, so a review's XP and
+ * its mastery income can never disagree. `left` is the card's new level and
+ * the cards still due after this answer, recorded as the row's detail
+ * (town/rules.ts `reviewDetail`), so the town can tell a Field emptied by
+ * answers from one emptied by the midnight degrade. Null when the count could
+ * not be taken: the row is written bare, as rows were before.
+ */
+export function mintReviewFractionOp(
+  userId: string,
+  ideaId: string,
+  ideaLevel: number,
+  multiplier: number,
+  left: (ReviewDetail & { lv: number }) | null
+) {
   return prisma.masteryLedgerEntry.create({
     data: {
       userId,
       delta: reviewMasteryFraction(ideaLevel) * multiplier,
       reason: "REVIEW_FRACTION",
       ideaId,
+      detail: left ? reviewDetail(left) : undefined,
+    },
+  });
+}
+
+/**
+ * A wrong answer, recorded at zero delta: it pays nothing, and exists so the
+ * ledger holds every answer and not only the right ones. Written only from a
+ * real answer in srs.ts `applyReviewResult` — never by the degrade cron, which
+ * is neglect, not study. `left` as for a pass, with no level.
+ */
+export function mintReviewMissOp(userId: string, ideaId: string, left: { due: number; fdue: number } | null) {
+  return prisma.masteryLedgerEntry.create({
+    data: {
+      userId,
+      delta: 0,
+      reason: "REVIEW_MISS",
+      ideaId,
+      detail: left ? reviewDetail({ due: left.due, fdue: left.fdue }) : undefined,
     },
   });
 }
@@ -233,7 +272,8 @@ export async function decayStaleMastery(userId: string, now: Date = new Date()):
 
 async function earliestLedgerDate(userId: string, fallback: Date): Promise<Date> {
   const first = await prisma.masteryLedgerEntry.findFirst({
-    where: { userId },
+    // A wrong answer is a record, not income: it must not start the idle clock.
+    where: { userId, reason: { not: "REVIEW_MISS" } },
     orderBy: { createdAt: "asc" },
     select: { createdAt: true },
   });

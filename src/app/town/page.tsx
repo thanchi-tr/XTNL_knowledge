@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function TownPage() {
   const input = await loadTownInput(getCurrentUserId());
   return (
-    <main className="site-container flex-1 py-6">
+    <main className="site-container town-main flex-1 py-6">
       <TownWithScenarios input={input} />
     </main>
   );

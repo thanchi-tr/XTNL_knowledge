@@ -5,7 +5,8 @@ import type { GameState, ResourceKey } from "@/lib/town/sim/types";
 import { HALL_GOODS, STORE_GOODS, capOf, hallCap, storeRoom, unlitBuildings } from "@/lib/town/sim/world";
 import { STORE_PER_LEVEL } from "@/lib/town/sim/catalog";
 import { clock } from "@/lib/town/sim/state";
-import { raidForecast, trainingPace, IDEA_BOOST, type SimContext } from "@/lib/town/sim/tick";
+import { raidForecast, trainingPace, IDEA_BOOST, MAX_BOOST, type SimContext } from "@/lib/town/sim/tick";
+import { ADD_HREF, hungerText, landHunger, paceStep, reviewHref, stepText, toFullPace } from "@/lib/town/sim/orders";
 import { icon } from "./art/icons";
 
 /**
@@ -59,6 +60,7 @@ export function ResourceHud({ s, ctx, onSell, onOpen }: {
   const clk = clock(s.time);
   const dark = clk.darkness > 0.2 ? unlitBuildings(s).length : 0;
   const pace = trainingPace(ctx.input);
+  const hunger = landHunger(s);
   const store = hasStorehouse(s);
   const stored = STORE_GOODS.filter((k) => s.res[k] >= 1).sort((a, b) => s.res[b] - s.res[a]);
   const lostStore = STORE_GOODS.reduce((a, k) => a + lostOf(s, k), 0);
@@ -103,14 +105,30 @@ export function ResourceHud({ s, ctx, onSell, onOpen }: {
         {treasure.map(chip)}
         <button className="tg-hud-item tg-hud-open" onClick={onOpen} title="Open the inventory">▤ Inventory</button>
       </span>
-      <span
-        className={`tg-hud-item ${pace.slowed ? "warn" : "good"}`}
-        title={pace.slowed
-          ? `Training in town runs at ${Math.round(pace.factor * 100)}% until today's ${pace.due} due review${pace.due === 1 ? " is" : "s are"} done.`
-          : `Reviews done. Each new idea added today adds ${Math.round(IDEA_BOOST * 100)}% to training speed.`}
-      >
-        {pace.slowed ? `⧗ ${Math.round(pace.factor * 100)}% · ${pace.due} due` : `✦ ${Math.round(pace.factor * 100)}%`}
-      </span>
+      {pace.due > 0 ? (
+        <a
+          className={`tg-hud-item tg-hud-link ${pace.slowed ? "warn" : "good"}`}
+          href={reviewHref()}
+          title={pace.slowed
+            ? `Training in town runs at ${Math.round(pace.factor * 100)}%. Each right answer adds ${stepText(paceStep(pace.muster))}% (a miss half that): ${toFullPace(pace.muster)} more right for full speed. ${pace.due} still due.`
+            : `Today's muster is met: training at full speed. ${pace.due} still due; they feed the land until answered.`}
+        >
+          {`${pace.slowed ? "⧗" : "✦"} ${Math.round(pace.factor * 100)}% · ${pace.due} due → Review`}
+        </a>
+      ) : (
+        <a
+          className="tg-hud-item tg-hud-link good"
+          href={ADD_HREF}
+          title={`Reviews done. Each new idea added today adds ${Math.round(IDEA_BOOST * 100)}% to training speed, to +${Math.round(MAX_BOOST * 100)}%.`}
+        >
+          ✦ {Math.round(pace.factor * 100)}%
+        </a>
+      )}
+      {hunger.shown && (
+        <a className="tg-hud-item tg-hud-link warn" href={reviewHref()} title={`Neglected study feeds the land: its waves are budgeted ×${hunger.budget.toFixed(2)}. ${hungerText(hunger)}`}>
+          ☠ Land ×{hunger.budget.toFixed(1)}
+        </a>
+      )}
       {dark > 0 && <span className="tg-hud-item warn" title="Buildings no light reaches — a haunt will come for each">☾ {dark} unlit</span>}
       {!s.raid && (() => {
         const f = raidForecast(s);

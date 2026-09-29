@@ -2,9 +2,10 @@ import { CATALOG, hallMinDay, jewelCost, upgradePeople } from "./catalog";
 import { clock, countedTroops, totalBeds } from "./state";
 import { stock } from "./loot";
 import { readPlayer } from "./nemesis";
-import { FESTIVAL_COST, raidForecast, trainingPace, type SimContext } from "./tick";
-import { HALL_GOODS, STORE_GOODS, canAfford, capOf, costText, fuelCap, structureMaxHp, unlitBuildings } from "./world";
+import { FESTIVAL_COST, raidForecast, type SimContext } from "./tick";
+import { HALL_GOODS, STORE_GOODS, canAfford, capOf, costText, fuelCap, structureMaxHp, unlitBuildings, LAMP_CAP, lampFuel } from "./world";
 import type { GameState, Structure, StructureType } from "./types";
+import { needsOf, TIER_NAME } from "./needs";
 
 /**
  * The town's steward: reads the state and says what to do next.
@@ -28,7 +29,10 @@ export type Act =
   | { kind: "festival" }
   | { kind: "tab"; tab: "raid" | "trade" | "hall" }
   | { kind: "inventory" }
-  | { kind: "review" };
+  /** To /review, on one Field when it names one. */
+  | { kind: "review"; fieldId?: string }
+  /** To /add: a new idea is what feeds the study buffs. */
+  | { kind: "add" };
 
 export interface Advice {
   id: string;
@@ -59,6 +63,29 @@ export function upgradeBlock(s: GameState, st: Structure): string | null {
   const j = jewelCost(st.level + 1, st.type);
   if (j && stock(s, "jewel") < j) return `needs ${j} monster jewels`;
   return null;
+}
+
+/**
+ * The one tap that answers a need of the pyramid (./needs). Study is fed by
+ * the day's new ideas, not its reviews (needs.ts builds it from the idea
+ * buffs), so its answer is to add one.
+ */
+export function needAnswer(s: GameState, need: string): { cta: string; act: Act } {
+  const hall = s.structures.find((x) => x.type === "townhall");
+  const answer: Record<string, { cta: string; act: Act }> = {
+    food: { cta: "Place a farm", act: { kind: "build", type: "farm" } },
+    warmth: { cta: "Place a lumber camp", act: { kind: "build", type: "lumbercamp" } },
+    rest: { cta: "Place a house", act: { kind: "build", type: "house" } },
+    homes: { cta: "See the policy", act: { kind: "tab", tab: "hall" } },
+    defence: { cta: "Place a watchtower", act: { kind: "build", type: "watchtower" } },
+    reserves: { cta: "Place a storehouse", act: { kind: "build", type: "storehouse" } },
+    leisure: { cta: "Hold a festival", act: { kind: "festival" } },
+    skill: { cta: "Place a school", act: { kind: "build", type: "school" } },
+    learning: { cta: "Place a school", act: { kind: "build", type: "school" } },
+    standing: hall ? { cta: "Open the hall", act: { kind: "select", id: hall.id } } : { cta: "See the census", act: { kind: "tab", tab: "hall" } },
+    study: { cta: "Add an idea", act: { kind: "add" } },
+  };
+  return answer[need] ?? { cta: "See the needs", act: { kind: "tab", tab: "hall" } };
 }
 
 export function advise(s: GameState, ctx: SimContext): Advice[] {
@@ -101,7 +128,13 @@ export function advise(s: GameState, ctx: SimContext): Advice[] {
   const fires = built(s, "pitfire");
   const dark = unlitBuildings(s).length;
   if (!fires.length) add({ id: "fire", score: 86, urgency: "now", title: "Light a pit fire", why: `Nothing warms the town or keeps the dark off it. ${priced(s, "pitfire")}`, cta: "Place a pit fire", act: { kind: "build", type: "pitfire" } });
-  else if (dark > 0 && (clk.hour >= 14 || clk.night)) add({ id: "light", score: 82, urgency: "now", title: `Light ${dark} dark building${dark === 1 ? "" : "s"} before night`, why: `Anything no light reaches is haunted after dark. A lamppost needs no fuel. ${priced(s, "lamppost")}`, cta: "Place a lamppost", act: { kind: "build", type: "lamppost" } });
+  else if (dark > 0 && (clk.hour >= 14 || clk.night)) add({ id: "light", score: 82, urgency: "now", title: `Light ${dark} dark building${dark === 1 ? "" : "s"} before night`, why: `Anything no light reaches is haunted after dark. A lamppost lights four tiles and burns half a unit of fuel a night. ${priced(s, "lamppost")}`, cta: "Place a lamppost", act: { kind: "build", type: "lamppost" } });
+  // Lamps run dry a night at a time: before dusk, the driest first.
+  const lamps = built(s, "lamppost").sort((a, b) => lampFuel(a) - lampFuel(b));
+  const dryLamps = lamps.filter((l) => lampFuel(l) <= 0).length;
+  const lowLamps = lamps.filter((l) => lampFuel(l) < LAMP_CAP * 0.25).length;
+  if (lowLamps && (clk.hour >= 12 || clk.night))
+    add({ id: "lamps", score: dryLamps ? 80 : 60, urgency: dryLamps ? "now" : "soon", title: `Refill ${lowLamps} lamp${lowLamps === 1 ? "" : "s"}`, why: `${dryLamps ? `${dryLamps} ${dryLamps === 1 ? "is" : "are"} dry and dark` : "They are burning low"} — a dark lamp leaves its buildings to the night. A coal is three units of a lamp's twelve, a wood one.`, cta: "Open the driest lamp", act: { kind: "select", id: lamps[0].id } });
   const cold = fires.find((f) => (f.fuel ?? 0) < fuelCap(f.level) * 0.25);
   if (cold) add({ id: "stoke", score: clk.season === "winter" ? 87 : 64, urgency: clk.season === "winter" ? "now" : "soon", title: "Stoke the pit fire", why: `Its grate is down to ${Math.round(cold.fuel ?? 0)} of ${fuelCap(cold.level)}. When it goes out, the warmth and the light go with it.`, cta: "Open the fire", act: { kind: "select", id: cold.id } });
   if (clk.season === "winter" && m.fuelDays < 2) add({ id: "fuel", score: 78, urgency: "now", title: "Lay in fuel", why: `${m.fuelDays.toFixed(1)} days of fuel for the homes. Fell trees or raise a lumber camp by the forest.`, cta: "Place a lumber camp", act: { kind: "build", type: "lumbercamp" } });
@@ -128,6 +161,9 @@ export function advise(s: GameState, ctx: SimContext): Advice[] {
   const f = raidForecast(s);
   if (!towers.length && clk.day >= 2 && !s.raid) add({ id: "tower-first", score: 66, urgency: "soon", title: "Build a watchtower", why: `Raids come for the town, ${Math.round(f.chance * 100)}% at the next check. A tower counts the garrison and shoots. ${priced(s, "watchtower")}`, cta: "Place a watchtower", act: { kind: "build", type: "watchtower" } });
   else if (!s.raid && f.chance >= 0.5 && !troops.length && towers.length) add({ id: "guard-soon", score: 72, urgency: "soon", title: "Post a guard before the raid", why: `${Math.round(f.chance * 100)}% chance of a raid in ${Math.ceil(f.nextCheckIn / 60)}h, and no troops are posted.`, cta: "Open the tower", act: { kind: "select", id: towers[0].id } });
+  const watch = s.villagers.filter((v) => v.nightWatch).length;
+  if (!watch && troops.length && clk.day >= 3)
+    add({ id: "watch", score: 58, urgency: "soon", title: "Name a night watch", why: `From eight at night to six in the morning only those on the watch answer an alarm — everyone else sleeps, and the towers stand alone. ${troops.length} troop${troops.length === 1 ? "" : "s"} could keep it.`, cta: "Open Raids", act: { kind: "tab", tab: "raid" } });
   if (towers.length && !has(s, "barracks") && !has(s, "archery") && clk.day >= 3) add({ id: "barracks", score: 48, urgency: "grow", title: "Raise a barracks", why: `Troops come from the barracks; bowmen from an archery range. ${priced(s, "barracks")}`, cta: "Place a barracks", act: { kind: "build", type: "barracks" } });
 
   // ── Homes and hands ────────────────────────────────────
@@ -138,9 +174,8 @@ export function advise(s: GameState, ctx: SimContext): Advice[] {
     if (open) add({ id: "idle", score: 50, urgency: "soon", title: `${idle.length} villagers stand idle`, why: `The ${CATALOG[open.type].name.toLowerCase()} has room for workers.`, cta: `Open the ${CATALOG[open.type].name.toLowerCase()}`, act: { kind: "select", id: open.id } });
   }
 
-  // ── Study ──────────────────────────────────────────────
-  const pace = trainingPace(ctx.input);
-  if (pace.slowed) add({ id: "review", score: 46, urgency: "soon", title: `Finish today's ${pace.due} review${pace.due === 1 ? "" : "s"}`, why: `Training in town runs at ${Math.round(pace.factor * 100)}% until they are done, and the study buffs fade.`, cta: "Go to review", act: { kind: "review" } });
+  // Study has no rule here: the orders strip (./orders) always shows it, outside the one hint a day.
+  void ctx;
 
   // ── Growth ─────────────────────────────────────────────
   if (hall) {
@@ -154,6 +189,20 @@ export function advise(s: GameState, ctx: SimContext): Advice[] {
     add({ id: `next-${next}`, score: 30, urgency: "grow", title: `Build a ${CATALOG[next].name.toLowerCase()}`, why: `${CATALOG[next].blurb} ${priced(s, next)}`, cta: `Place a ${CATALOG[next].name.toLowerCase()}`, act: { kind: "build", type: next } });
   }
   if (!out.length) add({ id: "explore", score: 10, urgency: "grow", title: "Look beyond the walls", why: "The town is steady. Send a knight or wizard into the fog for lairs and ruins, or raise a building a level.", cta: "Open Raids", act: { kind: "tab", tab: "raid" } });
+
+  // ── The pyramid: its weakest need, lower tiers first ──
+  const nd = needsOf(s);
+  if (nd.weakest) {
+    const { tier, part } = nd.weakest;
+    const rank = ["survival", "safety", "belonging", "esteem", "purpose"].indexOf(tier);
+    const a = needAnswer(s, part.id);
+    add({
+      id: `need-${part.id}`, score: 76 - rank * 12, urgency: rank === 0 ? "now" : rank === 1 ? "soon" : "grow",
+      title: `${TIER_NAME[tier]}: ${part.label.toLowerCase()} is the weakest need`,
+      why: `${part.note[0].toUpperCase()}${part.note.slice(1)}.${rank === 0 ? " Nothing above it counts while it fails." : " A run of small answers mends it; no single one will."}`,
+      cta: a.cta, act: a.act,
+    });
+  }
 
   // Most urgent first; one action per id.
   const seen = new Set<string>();

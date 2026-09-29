@@ -1,4 +1,5 @@
 import { YEAR_DAYS, type Resources, type Role, type StructureType } from "./types";
+import { BIOME_CROPS, BIOME_YIELD } from "./biomes";
 
 /**
  * Every building the town can raise, in one table.
@@ -36,6 +37,8 @@ export interface BuildingDef {
   needsForest?: boolean;
   /** Someone of this role must live in town before it can be placed. */
   requires?: { role: Role; reason: string };
+  /** Buildings that must already stand, at a level, before it can be placed. */
+  needs?: { type: StructureType; level: number }[];
   /** Human-readable placement and connection rules. */
   rules: string[];
   category: "civic" | "food" | "industry" | "military" | "infrastructure";
@@ -314,10 +317,10 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
   },
   armoury: {
     type: "armoury", name: "Heavy Armoury", category: "military",
-    blurb: "No longer built. An old armoury still houses soldiers and drills them to level 6.",
+    blurb: "The heavy school: fits the strong for harness and trains five heavy classes — shieldbearer, pikeman, juggernaut, giant-breaker, iron warden — each with its own bar to enrol and its own work in the fight.",
     w: 9, h: 4, cost: { wood: 40, stone: 60, iron: 20 }, upgrade: growth({ stone: 50, iron: 16 }, { ingots: 8 }),
     buildHours: 10, maxLevel: 40, slots: () => 0, hpPerLevel: 180,
-    rules: ["Same connection rules as a barracks."],
+    rules: ["Same connection rules as a barracks: recruits come from houses joined to it by road.", "Each class takes only those who clear its bar (Might, Vitality, Agility, Valor…), and iron for the harness.", "Drills them to level 6; higher ranks are won in battle."],
   },
   wizardhut: {
     type: "wizardhut", name: "Wizard Hut", category: "military",
@@ -360,7 +363,9 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
   lumbercamp: {
     type: "lumbercamp", name: "Lumber Camp", category: "industry",
     blurb: "Fells timber from the neighbouring forest, drawing down its stock of wood. A forest grows back while it holds more than 15% of its wood.",
-    w: 4, h: 3, cost: { wood: 20, stone: 5 }, upgrade: growth({ wood: 20, stone: 10 }),
+    // Built of the forest's own timber on a stone footing: a town with an empty woodpile can
+    // always raise one, so running out of wood is a crisis, never a lock.
+    w: 4, h: 3, cost: { stone: 15 }, upgrade: growth({ wood: 20, stone: 10 }),
     buildHours: 3, maxLevel: 40, slots: (l) => 1 + l, workRole: "lumberjack", needsForest: true, hpPerLevel: 70,
     rules: ["Must be placed next to forest.", "Cuts within 4 tiles. Below 15% the forest stops growing back, and every tile cut bare becomes open ground."],
   },
@@ -390,6 +395,33 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
     requires: { role: "scientist", reason: "A laboratory needs a scientist to set it up — train one at the school first." },
     rules: ["Needs at least one scientist in town before it can be placed.", "Staffed by scientists only."],
   },
+  alchemy: {
+    type: "alchemy", name: "Alchemist's Workshop", category: "industry",
+    blurb: "Alembics, a furnace and a great deal of mercury. Makes quicksilver, turns silver slowly into gold, and refines the essences a legendary kill leaves.",
+    w: 5, h: 4, cost: { stone: 120, bricks: 30, silver: 10, coin: 80 }, upgrade: growth({ stone: 80, bricks: 20, silver: 6 }, { ingots: 4 }),
+    buildHours: 14, maxLevel: 30, slots: (l) => 1 + Math.floor(l / 2), workRole: "scientist", hpPerLevel: 120,
+    requires: { role: "scientist", reason: "An alchemist's workshop needs a scientist — train one at the school." },
+    needs: [{ type: "laboratory", level: 10 }],
+    rules: ["Only once a laboratory stands at level 10.", "Staffed by scientists."],
+  },
+  observatory: {
+    type: "observatory", name: "Astral Observatory", category: "industry",
+    blurb: "A domed tower with a great lens. By night its scientists draw star charts: the Eye of Time reads the next wave from them for half the metal, and the mythic laboratory writes with them.",
+    w: 5, h: 5, cost: { stone: 160, bricks: 40, planks: 30, silver: 12, gold: 2 }, upgrade: growth({ stone: 90, bricks: 20, planks: 10, silver: 6 }, { ingots: 4 }),
+    buildHours: 18, maxLevel: 30, slots: (l) => 1 + Math.floor(l / 3), workRole: "scientist", hpPerLevel: 110,
+    requires: { role: "scientist", reason: "An observatory needs a scientist — train one at the school." },
+    needs: [{ type: "laboratory", level: 15 }],
+    rules: ["Only once a laboratory stands at level 15.", "Works only at night, when the sky can be read.", "Staffed by scientists."],
+  },
+  mythiclab: {
+    type: "mythiclab", name: "Mythic Laboratory", category: "industry", unique: true,
+    blurb: "Where the nine wards are made: one for each element's omen. It also writes the Book of Enlightenment from one of your emblems, and forges the Crown of the Realm.",
+    w: 7, h: 5, cost: { stone: 300, bricks: 80, ingots: 40, gold: 10, platinum: 4, diamond: 1 }, upgrade: growth({ stone: 160, bricks: 40, ingots: 20, gold: 4 }, { platinum: 1 }),
+    buildHours: 30, maxLevel: 30, slots: (l) => 1 + Math.floor(l / 4), workRole: "scientist", hpPerLevel: 200,
+    requires: { role: "scientist", reason: "A mythic laboratory needs a scientist — train one at the school." },
+    needs: [{ type: "laboratory", level: 20 }, { type: "alchemy", level: 1 }, { type: "observatory", level: 1 }],
+    rules: ["Only one. Only once a laboratory stands at level 20, with an alchemist's workshop and an observatory beside it.", "Staffed by scientists."],
+  },
   fishery: {
     type: "fishery", name: "Fishing Hut", category: "food",
     blurb: "A hut on stilts, a jetty and a drying rack. Fishers bring in the river's catch — a raw food the kitchen cooks.",
@@ -399,10 +431,10 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
   },
   lamppost: {
     type: "lamppost", name: "Lamppost", category: "infrastructure",
-    blurb: "An oil lamp on an iron post. Lights a small circle, needs no fuel.",
+    blurb: "A lantern on an iron post. Lights a small circle through the night on a little fuel — a full load lasts about twenty-four nights.",
     w: 1, h: 1, cost: { iron: 4, stone: 4 }, upgrade: () => ({}),
     buildHours: 1, maxLevel: 1, slots: () => 0, hpPerLevel: 30,
-    rules: ["Lights everything within 4 tiles at night.", "Light, not warmth: it thaws no ice."],
+    rules: ["Lights everything within 4 tiles at night.", "Burns half a unit of fuel a night; holds twelve. Refill it with wood (1) or coal (3) — dry, it goes dark.", "Light, not warmth: it thaws no ice."],
   },
   storehouse: {
     type: "storehouse", name: "Storehouse", category: "civic",
@@ -455,8 +487,8 @@ export const CATALOG: Record<StructureType, BuildingDef> = {
 
 export const BUILDABLE: StructureType[] = [
   "house", "pitfire", "farm", "waterfarm", "watermill", "fishery", "kitchen", "market", "school",
-  "lumbercamp", "mine", "refinery", "laboratory", "icefactory", "forge",
-  "barracks", "archery", "wizardhut", "watchtower",
+  "lumbercamp", "mine", "refinery", "laboratory", "alchemy", "observatory", "mythiclab", "icefactory", "forge",
+  "barracks", "archery", "armoury", "wizardhut", "watchtower",
   "lamppost", "brazier", "storehouse", "armyschool", "armypoint", "museum",
 ];
 
@@ -500,12 +532,15 @@ export const CROP_YIELD: Record<string, number> = {
   potato: 10, wheat: 8, grape: 5, herb: 3, cabbage: 7, carrot: 8, pumpkin: 5, barley: 9,
   onion: 7, bean: 6, turnip: 9, corn: 8, strawberry: 4, garlic: 3,
   rice: 9, taro: 7, lotus: 4, reed: 6, watercress: 6, chestnut: 5,
+  ...BIOME_YIELD,
 };
 
 export const LAND_CROPS = [
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
 ] as const;
 export const WATER_CROPS = ["rice", "taro", "lotus", "reed", "watercress", "chestnut"] as const;
+/** Every land crop on every map, in a fixed order: wild patches store an index into it (./forage). */
+export const ALL_LAND_CROPS = [...LAND_CROPS, ...BIOME_CROPS] as const;
 
 // ── Kitchen dishes ────────────────────────────────────────
 
@@ -550,6 +585,14 @@ export const DISHES: Dish[] = [
   { id: "dumplings", name: "Chestnut dumplings", input: { chestnut: 1, rice: 1, cabbage: 1 }, meals: 5.5, rank: 3, mood: 0.1, blurb: "Steamed in the paddy's own leaves." },
   { id: "feast", name: "Captain's feast", input: { corn: 1, garlic: 1, fish: 2, strawberry: 1 }, meals: 9, rank: 6, mood: 0.35, happy: 0.25, blurb: "A four-star table fit to toast a campaign." },
   { id: "banquet", name: "Harvest banquet", input: { grape: 1, pumpkin: 1, wheat: 1, cabbage: 1 }, meals: 9, rank: 5, mood: 0.3, happy: 0.2, blurb: "A three-star table. The whole town hears of it." },
+  // The desert's table.
+  { id: "datecake", name: "Date cakes", input: { date: 2, millet: 1 }, meals: 4, rank: 0, happy: 0.05, blurb: "Sweet, dense, and they keep for a caravan's length." },
+  { id: "chickpea", name: "Chickpea stew", input: { chickpea: 2, onion: 1 }, meals: 5, rank: 1, health: 0.1, blurb: "Slow-cooked in the ashes of the evening fire." },
+  { id: "saffronrice", name: "Saffron rice", input: { rice: 2, saffron: 1, date: 1 }, meals: 7, rank: 4, mood: 0.25, happy: 0.15, blurb: "Gold in a bowl. The whole oasis smells it." },
+  // The isles' table.
+  { id: "sunbread", name: "Sunflower bread", input: { sunflower: 1, wheat: 2 }, meals: 4.5, rank: 0, blurb: "Seeded, nutty, baked hard for the long cold." },
+  { id: "cloudtart", name: "Cloudberry tart", input: { cloudberry: 2, wheat: 1 }, meals: 3.5, rank: 2, happy: 0.3, blurb: "Tart and bright as the air up here." },
+  { id: "skyfeast", name: "Starfruit feast", input: { starfruit: 2, windroot: 2, fish: 1 }, meals: 8, rank: 5, mood: 0.3, happy: 0.2, blurb: "Laid out under the open sky, for the whole isle." },
 ];
 
 /** Share of a block's crop lost, by the worker's rank on the farm ladder. */
@@ -583,6 +626,51 @@ export const LAB_RECIPES: { id: string; name: string; input: Cost; output: Cost;
   { id: "salve", name: "Garlic salve", input: { garlic: 2, herb: 1 }, output: { tonic: 1 }, blurb: "A cheaper tonic from the garlic beds: +25 health below 70." },
 ];
 
+/** A recipe of the newer laboratories: goods, and items from the forge's store, in and out. */
+export interface LabRecipe {
+  id: string;
+  name: string;
+  input: Cost;
+  output: Cost;
+  /** Items taken from the forge's store, and put back into it. */
+  items?: Record<string, number>;
+  outItems?: Record<string, number>;
+  /** Refine the essence in greatest supply: three lesser into one greater. */
+  refine?: boolean;
+  /** Only at night, when the sky can be read. */
+  night?: boolean;
+  /** The bench stops once this much of its output is in store, rather than burn every input to make more. */
+  keep?: number;
+  blurb: string;
+}
+
+export const ALCHEMY_RECIPES: LabRecipe[] = [
+  { id: "quicksilver", name: "Quicksilver", input: { silver: 1, coal: 2 }, output: { quicksilver: 2 }, keep: 60, blurb: "Living metal. The mythic laboratory cannot work without it." },
+  { id: "transmute", name: "Transmute gold", input: { silver: 6, quicksilver: 2 }, output: { gold: 1 }, blurb: "Silver into gold, slowly and at a loss." },
+  { id: "refine", name: "Refine essences", input: { quicksilver: 1 }, output: {}, refine: true, blurb: "Three lesser essences of one element into a greater, the element in greatest supply first." },
+];
+export const OBSERVATORY_RECIPES: LabRecipe[] = [
+  { id: "starchart", name: "Star chart", input: { planks: 1, silver: 1 }, output: { starchart: 1 }, night: true, keep: 40, blurb: "A night's observation, drawn up. The Eye of Time reads by it for half the metal." },
+];
+
+export type WardKey = "earthward" | "fireward" | "waterward" | "airward" | "thunderward" | "lightward" | "darkward" | "timeward" | "spaceward";
+/** The ward for each element's omen, and the essence it is made from: the element that beats it. */
+export const WARDS: { element: import("./elements").Element; key: WardKey; name: string; from: import("./elements").Element; blurb: string }[] = [
+  { element: "earth", key: "earthward", name: "Earth ward", from: "air", blurb: "Steadies the ground: the tremors pass under the town." },
+  { element: "fire", key: "fireward", name: "Fire ward", from: "water", blurb: "A salt that drinks heat: the ashfall does not catch." },
+  { element: "water", key: "waterward", name: "Water ward", from: "fire", blurb: "Burnt on the walls, it lifts the drowning mist." },
+  { element: "air", key: "airward", name: "Air ward", from: "earth", blurb: "Weighs the air down: the gale goes round." },
+  { element: "thunder", key: "thunderward", name: "Thunder ward", from: "earth", blurb: "Grounds the storm: lightning finds the rods and not the roofs." },
+  { element: "light", key: "lightward", name: "Light ward", from: "dark", blurb: "A smoke that softens the glare." },
+  { element: "dark", key: "darkward", name: "Dark ward", from: "light", blurb: "A lamp that the unnatural night cannot put out." },
+  { element: "time", key: "timeward", name: "Time ward", from: "space", blurb: "Holds the hours in place while time slips." },
+  { element: "space", key: "spaceward", name: "Space ward", from: "time", blurb: "Pins the town to where it stands while space warps." },
+];
+export const MYTHIC_RECIPES: LabRecipe[] = WARDS.map((w) => ({
+  id: w.key, name: w.name, input: { quicksilver: 2, gold: 1, starchart: 1 }, output: { [w.key]: 1 } as Cost, keep: 10,
+  items: { [`essence-${w.from}-lesser`]: 1 }, blurb: `${w.blurb} Made from a lesser ${w.from} essence.`,
+}));
+
 // ── School courses ────────────────────────────────────────
 
 export const COURSES: { role: Role; name: string; hours: number; cost: Cost; blurb: string }[] = [
@@ -615,7 +703,7 @@ export function roleLabel(role: Role, rank: number): string {
   if (role === "knight") return `${knightTitle(rank).name} ${rank}`;
   if (role === "infantry" || role === "archer" || role === "heavy") return `${soldierTitle(rank).name} ${rank}`;
   const names: Partial<Record<Role, string>> = {
-    idle: "Idle", scientist: "Scientist", commander: "Commander", biologist: "Biologist", artist: "Artist",
+    idle: "Idle", scientist: "Scientist", commander: "Commander", biologist: "Biologist", artist: "Artist", seer: "Eye of Time",
     miner: "Miner", lumberjack: "Lumberjack", refiner: "Refiner", trader: "Trader", fisher: "Fisher",
     infantry: "Infantry", archer: "Archer", heavy: "Heavy Infantry",
   };

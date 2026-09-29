@@ -1,4 +1,5 @@
-import { LAND_CROPS, WATER_CROPS } from "./catalog";
+import { ALL_LAND_CROPS, LAND_CROPS, WATER_CROPS } from "./catalog";
+import { biomeDef, biomeOf, landCrops } from "./biomes";
 import { clock } from "./state";
 import { MAP_H, MAP_W, Overlay, Terrain, type GameState } from "./types";
 import { center, occupancy } from "./world";
@@ -28,8 +29,10 @@ export const marshKind = (roll: number) => MARSH_KIND + WATER_CROPS.indexOf(roll
 /** Tiles from the hall over which the crops run from the commonest to the rarest. */
 const WILD_SPAN = 150;
 
-export const wildCrop = (meta: number): (typeof LAND_CROPS)[number] | (typeof WATER_CROPS)[number] =>
-  meta >= MARSH_KIND ? WATER_CROPS[Math.min(WATER_CROPS.length - 1, meta - MARSH_KIND)] : LAND_CROPS[Math.max(0, Math.min(LAND_CROPS.length - 1, meta))];
+/** A wild patch's crop: its meta indexes every map's land crops together, so a patch reads the same on any map. */
+export const wildCrop = (meta: number): (typeof ALL_LAND_CROPS)[number] | (typeof WATER_CROPS)[number] =>
+  meta >= MARSH_KIND ? WATER_CROPS[Math.min(WATER_CROPS.length - 1, meta - MARSH_KIND)] : ALL_LAND_CROPS[Math.max(0, Math.min(ALL_LAND_CROPS.length - 1, meta))];
+void LAND_CROPS;
 
 /**
  * Which crop comes up at a spot: mostly the one its distance calls for,
@@ -39,18 +42,25 @@ export function wildKindAt(s: GameState, x: number, y: number, roll: number): nu
   const hall = s.structures.find((st) => st.type === "townhall");
   const [hx, hy] = hall ? center(hall) : [MAP_W / 2, MAP_H / 2];
   const far = Math.min(1, Math.hypot(x - hx, y - hy) / WILD_SPAN);
-  const top = Math.round(far * (LAND_CROPS.length - 1));
-  return Math.max(0, top - Math.floor(roll * roll * 4));
+  // This map's own crops, commonest first (./biomes).
+  const list = landCrops(s);
+  const top = Math.round(far * (list.length - 1));
+  return ALL_LAND_CROPS.indexOf(list[Math.max(0, top - Math.floor(roll * roll * 4))] as (typeof ALL_LAND_CROPS)[number]);
 }
 
 /** At dawn: wild crops come up, and in winter all but the potato die back. */
 export function sowWild(s: GameState, r: () => number) {
   const winter = clock(s.time).season === "winter";
   const { overlay, terrain, meta } = s.map;
+  // What outlasts the winter here: the potato in the green country, each map its own hardy crops (./biomes).
+  const hardy = biomeDef(s).winterCrops;
+  const hardyKind = ALL_LAND_CROPS.indexOf(hardy[0] as (typeof ALL_LAND_CROPS)[number]);
+  // Salt pans grow nothing wild.
+  const pans = biomeOf(s) === "desert";
   let count = 0;
   for (let i = 0; i < overlay.length; i++) {
     if (overlay[i] !== Overlay.Crop) continue;
-    if (winter && meta[i] !== 0) {
+    if (winter && (meta[i] >= MARSH_KIND || !hardy.includes(wildCrop(meta[i])))) {
       overlay[i] = Overlay.None;
       meta[i] = 0;
     } else count++;
@@ -64,9 +74,9 @@ export function sowWild(s: GameState, r: () => number) {
     // Wild things come up on grass and meadow; reeds and cress in the marsh.
     const t = terrain[i];
     if ((t !== Terrain.Grass && t !== Terrain.Meadow && t !== Terrain.Marsh) || overlay[i] !== Overlay.None || occ[i]) continue;
-    if (t === Terrain.Marsh && winter) continue;
+    if (t === Terrain.Marsh && (winter || pans)) continue;
     overlay[i] = Overlay.Crop;
-    meta[i] = winter ? 0 : t === Terrain.Marsh ? marshKind(r()) : wildKindAt(s, x, y, r());
+    meta[i] = winter ? hardyKind : t === Terrain.Marsh ? marshKind(r()) : wildKindAt(s, x, y, r());
     count++;
   }
 }

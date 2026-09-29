@@ -8,9 +8,15 @@ interface Props {
   dueCount: number;
   domainCount: number;
   onStart: () => void;
+  /**
+   * What right answers in this run send the player's town, and any open
+   * requisition in scope (lib/town/pulse-core): the rates, stated before the
+   * first card. Empty when there is no town to speak for.
+   */
+  townLines?: string[];
 }
 
-export function SessionSummary({ scopeName, dueCount, domainCount, onStart }: Props) {
+export function SessionSummary({ scopeName, dueCount, domainCount, onStart, townLines = [] }: Props) {
   const accent = scopeName === "All Fields" ? "#00cc7a" : fieldColor(scopeName);
   const estMinutes = Math.max(1, Math.round((dueCount * 20) / 60));
 
@@ -36,6 +42,11 @@ export function SessionSummary({ scopeName, dueCount, domainCount, onStart }: Pr
         idea{dueCount === 1 ? "" : "s"} ready for review across {domainCount} domain{domainCount === 1 ? "" : "s"}
       </p>
       <p className="mt-1 font-mono text-xs text-ink-3">~{estMinutes} min</p>
+      {townLines.map((t) => (
+        <p key={t} className="mt-2 max-w-sm" style={{ fontSize: 11, lineHeight: 1.5, color: "var(--ink-2)" }}>
+          {t}
+        </p>
+      ))}
 
       <button type="button" onClick={onStart} className="btn-primary mt-8">
         ▶ Start Session

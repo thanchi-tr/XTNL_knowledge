@@ -189,6 +189,134 @@ export function marsh(c: Ctx, x0: number, y0: number, w: number, h: number, seed
 }
 
 /** A stand of reeds with a bulrush head, for a marsh's wild plants. */
+// ── The other maps' ground (lib/town/sim/biomes) ──────────
+
+/**
+ * Dunes: sand in long wind ripples. The ripples run across the wind in
+ * wavy lines — a lit crest over a shaded lee — so the ground reads as
+ * blown even from straight above.
+ */
+export function dunes(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(22, seed + 60, 0.3, 0.72);
+  g.despeckle();
+  g.paint(c, M.DUNE);
+  for (let x = 0; x < w; x++) {
+    const X = x0 + x;
+    for (let band = Math.floor(y0 / 5) - 1; band * 5 < y0 + h + 5; band++) {
+      const Y = band * 5 + Math.round(Math.sin((X + band * 7) / 6) * 1.5 + valueNoise(X, band, 11, seed + 61) * 2);
+      if (Y < y0 || Y >= y0 + h - 1 || hash(X >> 2, band, seed + 62) < 0.3) continue;
+      px(c, X, Y, 1, 1, M.DUNE[LIT]);
+      px(c, X, Y + 1, 1, 1, M.DUNE[SHADE]);
+    }
+  }
+  // pebbles and a dry tuft now and then
+  for (let i = 0; i < (w * h) / 260; i++) {
+    const x = x0 + Math.floor(hash(i, 4, seed + 63) * (w - 2));
+    const y = y0 + Math.floor(hash(i, 5, seed + 63) * (h - 2));
+    if (hash(i, 6, seed + 63) > 0.6) {
+      px(c, x, y, 1, 2, M.THATCH[MID]);
+      px(c, x + 1, y + 1, 1, 1, M.THATCH[SHADE]);
+    } else {
+      px(c, x, y, 2, 1, M.MESA[MID]);
+      px(c, x, y + 1, 2, 1, M.DUNE[DEEP]);
+    }
+  }
+}
+
+/** An oasis: lush grass in the palm ramp, green where the water reaches. */
+export function oasis(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(10, seed + 70, 0.28, 0.72);
+  g.despeckle();
+  g.paint(c, M.PALM);
+  for (let i = 0; i < (w * h) / 80; i++) {
+    const x = Math.floor(hash(i, 1, seed + 70) * (w - 2));
+    const y = Math.floor(hash(i, 2, seed + 70) * (h - 3));
+    const under = g.get(x, y + 1);
+    px(c, x0 + x, y0 + y, 1, 2, M.PALM[Math.max(LIT, under - 1)]);
+    px(c, x0 + x + 1, y0 + y + 1, 1, 1, M.PALM[Math.min(DEEP, under + 1)]);
+  }
+  for (let i = 0; i < (w * h) / 300; i++) {
+    const x = x0 + Math.floor(hash(i, 7, seed + 71) * (w - 2));
+    const y = y0 + Math.floor(hash(i, 8, seed + 71) * (h - 2));
+    px(c, x, y, 2, 1, hash(i, 9, seed + 71) > 0.5 ? M.CLOTHRED[LIT] : M.OCHRE[LIT]);
+    px(c, x, y + 1, 2, 1, M.PALM[SHADE]);
+  }
+}
+
+/** A mesa's flat top: red rock in strata, cracked, with sand blown into the cracks. */
+export function mesa(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(18, seed + 80, 0.32, 0.76);
+  g.despeckle();
+  g.paint(c, M.MESA);
+  for (let y = 0; y < h; y++) {
+    const Y = y0 + y;
+    if ((Y + Math.round(valueNoise(x0, Y, 30, seed + 81) * 3)) % 6 !== 0) continue;
+    for (let x = 0; x < w; x++) if (hash((x0 + x) >> 3, Y, seed + 82) > 0.2) px(c, x0 + x, Y, 1, 1, M.MESA[SHADE]);
+  }
+  for (let i = 0; i < (w * h) / 140; i++) {
+    const x = x0 + Math.floor(hash(i, 4, seed + 83) * (w - 3));
+    const y = y0 + Math.floor(hash(i, 5, seed + 83) * (h - 2));
+    px(c, x, y, 3, 1, M.DUNE[MID]);
+    px(c, x + 1, y + 1, 1, 1, M.MESA[DEEP]);
+  }
+}
+
+/** A salt pan: white crust in polygons, dried mud showing in the seams. */
+export function saltPan(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  const g = new GroundMap(x0, y0, w, h);
+  g.patches(12, seed + 90, 0.3, 0.7);
+  g.despeckle();
+  g.paint(c, M.SALT);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x;
+      const Y = y0 + y;
+      // the seams: where the cell noise changes from one cell to the next
+      const a = Math.floor(valueNoise(X, Y, 9, seed + 91) * 6);
+      const b = Math.floor(valueNoise(X + 1, Y + 1, 9, seed + 91) * 6);
+      if (a !== b) px(c, X, Y, 1, 1, M.SALT[SHADE]);
+    }
+  }
+}
+
+/**
+ * Open sky, below the floating isles: one soft blue, deepening in broad
+ * dithered pools, with banks of cloud drifting through it and a paler halo
+ * round each bank. No hard-edged bands of tone: the only edges are clouds.
+ */
+export function skyClouds(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x;
+      const Y = y0 + y;
+      const v = valueNoise(X, Y * 1.8, 40, seed + 100) * 0.7 + valueNoise(X, Y * 1.8, 14, seed + 101) * 0.3;
+      const deep = valueNoise(X * 0.7, Y, 120, seed + 102) + valueNoise(X, Y, 30, seed + 103) * 0.15;
+      // a checkerboard dither where the deeper blue begins, so its edge is a gradient
+      const dither = (X + Y) % 2 === 0 ? 0.02 : -0.02;
+      let col: string = M.SKY[deep + dither < 0.34 ? SHADE : MID];
+      if (v > 0.66) col = M.CLOUD[v > 0.74 ? LIT : v > 0.7 ? MID : SHADE];
+      else if (v > 0.6 + dither) col = M.SKY[LIT];
+      px(c, X, Y, 1, 1, col);
+    }
+  }
+}
+
+/** A bridge over the sky: planks across two ropes. */
+export function bridgeDeck(c: Ctx, x0: number, y0: number, w: number, h: number, seed = 1) {
+  for (let y = 0; y < h; y++) {
+    const Y = y0 + y;
+    const seam = Y % 4 === 3;
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x;
+      const tone = seam ? SHADE : hash(X >> 3, Y >> 2, seed + 110) > 0.7 ? LIT : MID;
+      px(c, X, Y, 1, 1, M.PINE[tone]);
+    }
+  }
+}
+
 export function reedStand(c: Ctx, x: number, y: number, seed: number) {
   for (let k = 0; k < 3; k++) {
     const h = 5 + Math.floor(hash(k, 1, seed) * 3);

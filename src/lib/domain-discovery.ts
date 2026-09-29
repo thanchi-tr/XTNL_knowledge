@@ -75,19 +75,22 @@ export async function routeIdea(fieldId: string, contentText: string): Promise<R
  * embeds once, classifies, and — when the verdict is CREATE_NEW_NODE —
  * hands the same vector here to pick the Domain.
  *
- * Reached from dedup only when similarity is already known to be at or
- * below the saturation line, so in that path the SATURATION branch is
- * unreachable; it still fires for direct `routeIdea` callers.
+ * `cleared` says deduplication has already read the candidate against its
+ * neighbours and found it a card of its own — a sibling fact can sit above
+ * the saturation line in cosine (one template, another subject) and still
+ * be new. Such a card files beside its nearest neighbour, as an expansion
+ * of that Domain. Direct `routeIdea` callers get the cosine-only reading.
  */
 export async function routeFromNearest(
   embedding: number[],
-  nearest: NearestIdea | null
+  nearest: NearestIdea | null,
+  cleared = false
 ): Promise<RoutingResult> {
   if (!nearest) {
     return { classification: "NOVELTY", embedding, nSimilar: 0 };
   }
 
-  if (nearest.similarity > SIMILARITY_SATURATION_MIN) {
+  if (nearest.similarity > SIMILARITY_SATURATION_MIN && !cleared) {
     return {
       classification: "SATURATION",
       embedding,

@@ -2,6 +2,7 @@ import { cached } from "./core";
 import { M, E, CAVITY } from "./materials";
 import { renderSprite, type Materials } from "./sprites";
 import { crop, oreChunk, ORE_COLORS, type CropArt } from "./nature";
+import { isItemIcon, itemIcon } from "./items";
 
 /**
  * Icons for resources, monster parts and gear: tiny sprites through the same
@@ -34,6 +35,7 @@ const ICONS: Record<string, Icon> = {
   reed: { rows: ["b.b.b", "b.b.b", "r.r.r", "r.r.r", "r.r.r"], mats: { b: M.FUR, r: M.NEEDLE } },
   watercress: { rows: [".g.g.", "gGgGg", "ggggg", ".s.s.", ".s.s."], mats: { g: M.CLOTHGRN, s: M.FOLIAGE } },
   chestnut: { rows: ["..s..", ".ccc.", "cCccc", "ccccc", ".ccc."], mats: { s: M.FOLIAGE, c: M.LEATHER } },
+  apple: { rows: ["..sl.", ".rrr.", "rRrrr", "rrrrr", ".rrr."], mats: { s: M.OAK, l: M.FOLIAGE, r: M.CLOTHRED } },
   // monster parts
   hide: { rows: ["hhhhh..", "hHHhhh.", ".hhhhhh", "..hhhhh", "...hhh."], mats: { h: M.LEATHER } },
   fang: { rows: ["fff", "fFf", ".ff", ".ff", "..f"], mats: { f: M.BONE } },
@@ -47,6 +49,22 @@ const ICONS: Record<string, Icon> = {
   heart: { rows: [".h.h.", "hHhhh", "hhhhh", ".hhh.", "..h.."], mats: { h: E.BLOOD } },
   eye: { rows: [".www.", "wwiww", "wiIiw", "wwiww", ".www."], mats: { w: M.BONE, i: E.AMBER } },
   foot: { rows: ["..ff.", "..ff.", ".fff.", "fffff", "c.c.c"], mats: { f: M.FUR, c: M.BONE } },
+  // The side panel's own marks: its tabs, and the gauges on a building.
+  "ui-build": { rows: ["..sss..", ".sSsss.", "..sws..", "...w...", "...w...", "...w...", "...W..."], mats: { s: M.STEEL, w: M.OAK } },
+  "ui-info": { rows: ["...r...", "..rRr..", ".rRrrr.", "rrrrrrr", ".wwdww.", ".wwdww.", ".wwdww."], mats: { r: M.CLOTHRED, w: M.DAUB, d: M.OAK } },
+  "ui-hall": { rows: [".s...s.", "sSs.sSs", ".s...s.", ".c...b.", "cCc.bBb", "ccc.bbb", "c.c.b.b"], mats: { s: M.SKIN, c: M.CLOTHBLU, b: M.CLOTHRED } },
+  "ui-raid": { rows: ["S.....S", ".s...s.", "..s.s..", "...s...", "..s.s..", ".h...h.", "h.....h"], mats: { s: M.STEEL, h: M.OAK } },
+  "ui-trade": { rows: ["...t...", "..lll..", ".lLlll.", "lllglll", "llgGgll", "lllglll", ".lllll."], mats: { t: M.OCHRE, l: M.LEATHER, g: M.BRASS } },
+  "ui-log": { rows: [".ppppp.", "pPpppp.", ".lllll.", ".lLlll.", ".lllll.", ".ppppp.", "pPpppp."], mats: { p: M.OAK, l: M.LINEN } },
+  "ui-trophy": { rows: ["g.ggg.g", "gGGgggg", ".ggggg.", "..ggg..", "...g...", "..ggg..", ".ggggg."], mats: { g: M.BRASS } },
+  "ui-codex": { rows: [".bbbbb.", "bBbbbbp", "bbbbbbp", "bbgbbbp", "bbbbbbp", "bbbbbbp", ".bbbbb."], mats: { b: M.CLOTHRED, p: M.LINEN, g: M.BRASS } },
+  "ui-hp": { rows: [".h.h.", "hHhhh", "hhhhh", ".hhh.", "..h.."], mats: { h: M.CLOTHRED } },
+  "ui-cond": { rows: ["bbb.bbb", "bBb.bbb", "bb.bbb.", "bb.bBb.", "bbb.bbb"], mats: { b: M.STONE } },
+  "ui-fuel": { rows: ["...f...", "..fFf..", ".fFfff.", ".ffaff.", "ffaaaff", ".faAaf.", "..www.."], mats: { f: E.AMBER, a: E.GOLD, w: M.OAK } },
+  "ui-lamp": { rows: ["..iii..", ".iiiii.", ".igggi.", ".igGgi.", ".igggi.", ".iiiii.", "...i..."], mats: { i: M.IRON, g: E.AMBER } },
+  "ui-lamp-dry": { rows: ["..iii..", ".iiiii.", ".igggi.", ".igGgi.", ".igggi.", ".iiiii.", "...i..."], mats: { i: M.IRON, g: M.SLATE } },
+  "ui-people": { rows: ["..sss..", "..sSs..", "...s...", ".ccccc.", "c.cCc.c", "..c.c..", "..c.c.."], mats: { s: M.SKIN, c: M.CLOTHGRN } },
+  "ui-effort": { rows: ["..a....", ".aAa...", "aaaaa..", "..a....", "..a.a..", ".a...a.", "a.....a"], mats: { a: E.GOLD } },
 };
 
 // Gear: one shape per kind, its materials by tier.
@@ -70,12 +88,13 @@ const GEAR_KIND: Record<string, [string, number]> = {
   hidecoat: ["coat", 1], bonemail: ["coat", 2], aegis: ["coat", 3], starweave: ["coat", 3],
 };
 
-const LAND = new Set(["potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic"]);
+const LAND = new Set(["potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic", "date", "millet", "chickpea", "melon", "saffron", "cloudberry", "sunflower", "starfruit", "windroot"]);
 
-/** The icon for a resource, part or gear id. Unknown ids get a plain stone. */
+/** The icon for a resource, part or gear id — or any of the eight hundred items (./items). Unknown ids get a plain stone. */
 export function icon(id: string): HTMLCanvasElement {
   if (LAND.has(id)) return crop(id as CropArt, 2);
   if (ORE_COLORS[id]) return oreChunk(id);
+  if (!GEAR_KIND[id] && !ICONS[id] && isItemIcon(id)) return itemIcon(id);
   return cached(`icon:${id}`, () => {
     const g = GEAR_KIND[id];
     if (g) return renderSprite(GEAR_SHAPES[g[0]], TIER_MATS[g[1]], `icon-gear:${id}`);

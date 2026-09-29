@@ -1,6 +1,9 @@
-import { MONSTERS, partyName, statsAt } from "./bestiary";
+import { inOpening, nightbornFor, otherShare, partyTraits, toNight } from "./menace";
+import { NOT_TARGETS, unguarded } from "./needs";
+import { MONSTERS, localKind, partyName, statsAt } from "./bestiary";
 import { landCalm } from "./endgame";
 import { clock, log } from "./state";
+import { onDeath } from "./recognition";
 import { center } from "./world";
 import { air } from "./weather";
 import { chooseTarget } from "./breach";
@@ -9,7 +12,9 @@ import { frameUtil } from "./frame";
 import { kmod } from "./knowledge";
 import { CATALOG } from "./catalog";
 import { TACTICS, TACTIC_CHANNEL, TACTIC_LABEL, neglect, nemesisOf, noteLaunch, pickTactic, stalkOrStrike, tacticKind, tacticOdds, type Tactic } from "./nemesis";
-import { CHANNELS, STIMULI, Terrain, type Aggro, type Channel, type GameState, type IncomingMonster, type MonsterKind, type Stimulus } from "./types";
+import { takeProphecy } from "./seer";
+import { arrivalFor } from "./habits";
+import { CHANNELS, STIMULI, Terrain, type Aggro, type Channel, type GameState, type IncomingMonster, type MonsterKind, type Stimulus, type Structure } from "./types";
 
 /**
  * Ecological vengeance (design §2). Every productive act writes a stimulus
@@ -52,8 +57,8 @@ export const SEASON_SIGMA: Record<string, [number, number, number, number]> = {
 const UNIT_COST: Record<Channel, number> = { K: 12, B: 10, Wr: 14, I: 6 };
 /** What each archetype sends, by level band. */
 export const ROSTER: Record<Channel, { kind: MonsterKind; min: number }[]> = {
-  K: [{ kind: "ogre", min: 1 }, { kind: "troll", min: 4 }, { kind: "cyclops", min: 9 }, { kind: "oni", min: 14 }, { kind: "gashadokuro", min: 24 }],
-  B: [{ kind: "ghoul", min: 1 }, { kind: "jiangshi", min: 5 }, { kind: "jorogumo", min: 10 }, { kind: "serpent", min: 16 }],
+  K: [{ kind: "ogre", min: 1 }, { kind: "troll", min: 4 }, { kind: "cyclops", min: 9 }, { kind: "oni", min: 14 }, { kind: "gashadokuro", min: 24 }, { kind: "behemoth", min: 70 }],
+  B: [{ kind: "ghoul", min: 1 }, { kind: "jiangshi", min: 5 }, { kind: "jorogumo", min: 10 }, { kind: "serpent", min: 16 }, { kind: "leviathan", min: 70 }],
   Wr: [{ kind: "wendigo", min: 1 }, { kind: "yurei", min: 4 }, { kind: "wraith", min: 8 }, { kind: "banshee", min: 12 }],
   I: [{ kind: "wisp", min: 1 }, { kind: "kitsune", min: 12 }],
 };
@@ -112,8 +117,37 @@ export function dailyBudget(s: GameState): number {
   const N = s.villagers.length;
   const season = clock(s.time).season;
   // Every monster gate the town seals quiets the land: down to half its answer with all of them sealed.
-  return 3 * Math.pow(1 + A / A_REF, 1.35) * Math.pow(N, 0.8) * (Math.sqrt(footprint(s)) / 10) * SEASON_BUDGET[season] * neglect(s).budget * landCalm(s);
+  return 3 * Math.pow(1 + A / A_REF, 1.35) * Math.pow(N, 0.8) * (Math.sqrt(footprint(s)) / 10) * SEASON_BUDGET[season] * neglect(s).budget * landCalm(s) * (1 + 0.6 * bareShare(s));
 }
+
+/**
+ * The share of the town's buildings that nothing defends (./needs unguarded).
+ * The land smells it: an undefended town draws more of the land's answer
+ * (the budget, to 60% more), a sharper aim (rho), and the fog's bands come
+ * every eight hours instead of twelve (./wilds). A town that guards what it
+ * builds feels none of it.
+ */
+export function bareShare(s: GameState): number {
+  const worth = s.structures.filter((b) => !b.buildUntil && !NOT_TARGETS.includes(b.type)).length;
+  return worth ? unguarded(s).length / worth : 0;
+}
+
+/** The most a wave is aimed at, as a share of the defence it meets. */
+export const AIM_CAP = 0.7;
+
+/**
+ * How much stronger a few big monsters fight than the square law credits
+ * them: every blow of a lone ogre kills a militiaman outright, where the
+ * estimate spreads it over the whole garrison. Measured in staged fights
+ * (a lone level-3 ogre takes a hall the estimate thought 2.4 times its
+ * match; four level-3 wolves at half the estimate lose). 2.5 for one,
+ * fading with numbers: 1.6 for two, 1.2 for six.
+ */
+export const LONE = 2.5;
+export const loneFactor = (count: number) => Math.pow(LONE, 1 / Math.max(1, count));
+/** A party's fighting power, as the land reckons it: n² × one's, the few big ones counted at their worth. */
+export const partyPi = (kind: MonsterKind, level: number, count: number) =>
+  count * count * unitPi(kind, level) * loneFactor(count) * partyTraits(kind, count, !!MONSTERS[kind]?.legendary);
 
 /** How hard the next wave is aimed, as a share of the town's defence (§2.3). */
 export function rho(s: GameState): number {
@@ -122,8 +156,10 @@ export function rho(s: GameState): number {
   const A = channelAggro(s).reduce((a, b) => a + b, 0);
   const recent = ag.losses.filter((t) => s.time - t <= 3 * 1440).length;
   const relief = Math.min(1, recent / Math.max(4, 0.15 * s.villagers.length));
-  // The nemesis presses a winning player, and feeds on neglected study (§13.4).
-  const aim = 0.45 + 0.12 * Math.log(1 + days / 5) + 0.05 * Math.min(8, A / A_REF) - 0.25 * relief + nemesisOf(s).pressure + neglect(s).rho;
+  // The nemesis presses a winning player, and feeds on neglected study (§13.4). And the land smells
+  // weakness: every building standing undefended sharpens its aim, to a fifth more (./needs unguarded).
+  const bare = bareShare(s);
+  const aim = 0.45 + 0.12 * Math.log(1 + days / 5) + 0.05 * Math.min(8, A / A_REF) - 0.25 * relief + nemesisOf(s).pressure + neglect(s).rho + 0.2 * bare;
   // The first week is for building: no wave is aimed above four fifths of what it meets.
   return days < 7 ? Math.min(0.8, aim) : aim;
 }
@@ -165,7 +201,8 @@ export function aggroHourly(s: GameState, r: () => number) {
   const budget = dailyBudget(s);
   ag.purse += budget / 24;
   if (!ag.trigger) ag.trigger = (0.8 + r() * 0.8) * budget * 1.5;
-  const grace = s.time < s.nextRaidAt;
+  // The opening is the town's (./menace): no raid before it is out.
+  const grace = s.time < s.nextRaidAt || inOpening(s);
   const spiked = ag.past.length >= 7 && A.some((a, j) => a - ag.past[0][j] >= 0.5 * A_REF);
   const due = ag.purse >= ag.trigger || spiked;
   if (!grace && due && !s.raid && s.time - ag.lastWaveAt >= 12 * 60) {
@@ -208,6 +245,13 @@ function pickKind(ch: Channel, level: number): MonsterKind {
   return (band[band.length - 1] ?? ROSTER[ch][0]).kind;
 }
 
+/** What a wave fought this way would likely be, now: for the Eye of Time's diamond vision (./seer). */
+export function waveGuess(s: GameState, tactic: Tactic): { kind: MonsterKind; level: number } {
+  const ch = TACTIC_CHANNEL[tactic];
+  const level = Math.max(1, waveLevel(channelAggro(s)[CHANNELS.indexOf(ch)], s.time / 1440));
+  return { kind: tacticKind(tactic, level) ?? pickKind(ch, level), level };
+}
+
 /** Offensive power of a monster at a level: hp × dps. */
 export function unitPi(kind: MonsterKind, level: number): number {
   const def = MONSTERS[kind];
@@ -229,6 +273,9 @@ export function launchWave(s: GameState, r: () => number, forced?: number, chose
     if (j < 0) j = odds.findIndex((p) => p > 0);
     if (j < 0) j = 0;
   }
+  // What the Eye of Time has seen comes true: its side, its target, its way of fighting (./seer).
+  const foreseen = CHANNELS[j] === "I" ? null : s.prophecy ?? null;
+  if (foreseen?.tactic) chosen = foreseen.tactic;
   // Spores are the land's own; every other wave is the nemesis's tactic (§13.2).
   let tactic: Tactic | undefined;
   let tp = 1;
@@ -250,23 +297,43 @@ export function launchWave(s: GameState, r: () => number, forced?: number, chose
   if (tactic === "swarm") level = Math.max(1, level - 3);
   let kindAt = (lv: number): MonsterKind => (tactic && tacticKind(tactic, lv)) || pickKind(ch, lv);
   const hall = s.structures.find((x) => x.type === "townhall");
-  const loaded = [...s.structures].filter((x) => !x.buildUntil).sort((a, b) => frameUtil(s, b) - frameUtil(s, a))[0];
-  const forcedTarget = tactic === "decapitate" ? hall : tactic === "siege" ? loaded : undefined;
+  // The most loaded frame in the town, for a siege: each weighed once, the first of the heaviest.
+  const loaded = () => {
+    let best: Structure | undefined;
+    let most = -Infinity;
+    for (const x of s.structures) {
+      if (x.buildUntil) continue;
+      const u = frameUtil(s, x);
+      if (u > most) {
+        most = u;
+        best = x;
+      }
+    }
+    return best;
+  };
+  const seenTarget = foreseen?.target ? s.structures.find((x) => x.id === foreseen.target && !x.buildUntil) : undefined;
+  const forcedTarget = seenTarget ?? (tactic === "decapitate" ? hall : tactic === "siege" ? loaded() : undefined);
   const probe = ch === "I" ? undefined : forcedTarget
-    ? { target: forcedTarget, side: (["east", "south", "north", "west"] as const)[Math.floor(r() * 4)], label: CATALOG[forcedTarget.type].name.toLowerCase() } as ReturnType<typeof chooseTarget>
+    ? { target: forcedTarget, side: foreseen?.side ?? (["east", "south", "north", "west"] as const)[Math.floor(r() * 4)], label: CATALOG[forcedTarget.type].name.toLowerCase() } as ReturnType<typeof chooseTarget>
     : chooseTarget(s, ch, [{ kind: kindAt(level), level, count: 1 }], r);
+  if (probe && foreseen) {
+    probe.side = foreseen.side;
+    probe.origin = undefined;
+  }
   // What went unspent last time makes this wave larger: up to half again (§2.3).
   const surplus = Math.min(0.5, Math.max(0, ag.purse - ag.trigger) / (3 * Math.max(1, dailyBudget(s))));
   const flies = tactic === "flyers" || !!MONSTERS[kindAt(level)]?.flying;
   const kappa = nemesisOf(s).kappa ?? 1;
-  const defence = Math.max(1, kappa * defencePower(s, probe?.target, flies));
-  const target = rho(s) * (1 + surplus) * defence;
+  const defence = Math.max(1, kappa * defencePower(s, probe?.target, flies, !!MONSTERS[kindAt(level)]?.mythic));
+  // Never aimed above what meets it (AIM_CAP): a town that has kept its defence up to the
+  // land's answer wins its fights, and pays for them in the wounded, not the fallen.
+  const target = Math.min(AIM_CAP, rho(s) * (1 + surplus)) * defence;
   // The level the channel calls for — stepped down while one of them alone would outmatch the target.
-  while (level > 1 && unitPi(kindAt(level), level) > target) level--;
+  while (level > 1 && partyPi(kindAt(level), level, 1) > target) level--;
   // Even one of them at level 1 would be more than the aim: send the strongest lesser thing that fits.
-  if (unitPi(kindAt(1), 1) > target) {
+  if (partyPi(kindAt(1), 1, 1) > target) {
     const lesser = (["troll", "harpy", "wolf", "ghoul", "goblin", "skeleton", "spider", "bat", "slime"] as MonsterKind[])
-      .filter((k) => unitPi(k, 1) <= target)
+      .filter((k) => partyPi(k, 1, 1) <= target)
       .sort((x, y) => unitPi(y, 1) - unitPi(x, 1));
     const fallback: MonsterKind = lesser[0] ?? "slime";
     kindAt = () => fallback;
@@ -279,28 +346,33 @@ export function launchWave(s: GameState, r: () => number, forced?: number, chose
   }
   // Spores are not fought: they settle.
   if (ch === "I") return sporeEvent(s, r, level);
-  const kind = kindAt(level);
-  const pi = unitPi(kind, level);
+  // Early on the land sends the things of the dark, at night; over the days after the opening, more and more of the rest (./menace).
+  const ofDark = r() >= otherShare(Math.floor(days) + 1);
+  const kind = ofDark ? nightbornFor(level) : kindAt(level);
   let n = 0;
   let spent = 0;
   // Square law: n of them are n² as strong as one.
-  while (n < 60 && spent + cost <= ag.purse && (n === 0 || (n + 1) * (n + 1) * pi <= target)) {
+  while (n < 60 && spent + cost <= ag.purse && (n === 0 || partyPi(kind, level, n + 1) <= target)) {
     n++;
     spent += cost;
   }
   ag.purse -= spent;
   ag.trigger = nextTrigger(s, r);
   ag.lastWaveAt = s.time;
-  const party: IncomingMonster[] = [{ kind, level, count: n }];
+  // Whatever the land sends, it sends as this map's own (./biomes).
+  const party: IncomingMonster[] = [{ kind: localKind(s, kind), level, count: n }];
   const aim = probe && probe.target ? probe : chooseTarget(s, ch, party, r);
-  const arrivesAt = s.time + (ch === "B" ? 60 + Math.floor(r() * 120) : 120 + Math.floor(r() * 240));
+  // In the desert's heat the land's answer too waits for dusk (./habits).
+  const soon = arrivalFor(s, s.time + (ch === "B" ? 60 + Math.floor(r() * 120) : 120 + Math.floor(r() * 240)), localKind(s, kind));
+  const arrivesAt = ofDark ? toNight(soon) : soon;
   const others = (["east", "south", "north", "west"] as const).filter((x) => x !== aim.side);
   s.raid = {
     arrivesAt, party, side: aim.side, target: aim.target?.id, reach: 0, phase: "incoming",
     combatants: [], projectiles: [], clock: 0, nextId: 1, archetype: ch, origin: aim.origin,
     flank: tactic === "flank" ? others[Math.floor(r() * others.length)] : undefined, tactic,
   };
-  if (tactic) noteLaunch(s, tactic, tp, (n * n * pi) / defence);
+  if (foreseen) takeProphecy(s);
+  if (tactic) noteLaunch(s, tactic, tp, partyPi(kind, level, n) / defence);
   const what = (aim.target ? ` making for the ${aim.label}` : "") + (tactic && tactic !== "assault" ? ` — ${TACTIC_LABEL[tactic]}` : "");
   const heard = ch === "B" && aim.warned ? " The listening posts hear digging under the ground." : ch === "B" ? " Nobody hears them coming." : "";
   log(s, `The land answers — ${partyName(party)}${what}, in ${Math.round((arrivesAt - s.time) / 60)} hours.${heard}`, "bad");
@@ -324,7 +396,8 @@ function sporeEvent(s: GameState, r: () => number, level: number) {
     log(s, "A pale mist drifts in from the wilds, and dies in the frost.", "info");
     return;
   }
-  const dose = Math.min(0.5, (0.15 * spend) / Math.max(1, dailyBudget(s)));
+  // One plume spoils a share, never the granary at a stroke.
+  const dose = Math.min(0.25, (0.15 * spend) / Math.max(1, dailyBudget(s)));
   const seal = storeSeal(s);
   st.contamFood = Math.min(1, st.contamFood + dose * (1 - seal));
   st.contamWater = Math.min(1, st.contamWater + dose * 1.0);
@@ -353,12 +426,13 @@ function weatherStalkers(s: GameState, r: () => number) {
     const lit = v.scout ? (v.pack?.some((p) => p?.startsWith("torch:")) ? 0.8 : 0) : 0.5;
     const U = (1 / (1 + allies)) * Math.max(0, 37.5 - b.Tc) * (1 - lit);
     const lam = 0.02 * (A / A_REF) * U;
-    if (lam > 0 && r() < 1 - Math.exp(-lam)) {
+    if (lam > 0 && !v.champion && r() < 1 - Math.exp(-lam)) {
       s.villagers = s.villagers.filter((q) => q !== v);
       for (const st of s.structures) st.workers = st.workers.filter((id) => id !== v.id);
       s.deaths += 1;
       noteLoss(s);
       s.hopeEvents = (s.hopeEvents ?? 0) - 6;
+      onDeath(s, "taken in the blizzard");
       log(s, `${v.name} was taken in the blizzard${v.scout ? ` near ${Math.round(x)},${Math.round(y)}` : ""}. Nothing was found but tracks.`, "bad");
     }
   }

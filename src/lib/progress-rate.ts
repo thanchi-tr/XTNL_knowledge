@@ -64,7 +64,9 @@ async function measureMasteryRate(userId: string, now: Date): Promise<number | n
       _sum: { delta: true },
     }),
     prisma.masteryLedgerEntry.findFirst({
-      where: { userId },
+      // Zero-delta wrong-answer records are not income history (the sum
+      // above already skips them by `delta > 0`); a miss must not stretch the span.
+      where: { userId, reason: { not: "REVIEW_MISS" } },
       orderBy: { createdAt: "asc" },
       select: { createdAt: true },
     }),

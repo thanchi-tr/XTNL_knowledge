@@ -95,6 +95,14 @@ export const M = {
   NEEDLE: ["#688A5C", "#3C6B49", "#1C4A3C", "#122930"],
   /** Wood left standing dead: bleached grey in the sun, cold violet in the cracks. */
   DEADWOOD: ["#A99F90", "#7F7671", "#57505A", "#33303D"],
+  /** The desert (lib/town/sim/biomes): dune sand, mesa rock, the white of a salt pan, a palm's fronds. */
+  DUNE: ["#F0D49A", "#DDB472", "#BE8E55", "#8A6440"],
+  MESA: ["#D98B5F", "#B6603F", "#8A4234", "#55292C"],
+  SALT: ["#FBF8F0", "#E6E0D2", "#C4BCAA", "#968C7C"],
+  PALM: ["#9CB44E", "#6C9440", "#3F6E38", "#234A34"],
+  /** The floating isles: open sky, and the clouds drifting in it. */
+  SKY: ["#D6ECFF", "#A9D2F4", "#7CB2E2", "#5586C4"],
+  CLOUD: ["#FFFFFF", "#EEF4FA", "#D2DEEA", "#AEBFD2"],
 } as const satisfies Record<string, Ramp4>;
 
 /**
@@ -109,6 +117,15 @@ export const E = {
   BLOOD: ["#FFFFFF", "#FF8080", "#FF0033", "#800010"],
   VOID: ["#FFFFFF", "#E6B8FF", "#B319FF", "#4D0080"],
   BILE: ["#FFFFFF", "#CCFF99", "#55E62E", "#1F6B0F"],
+  // The elements (see art/elements): each glows in its own ramp.
+  GOLD: ["#FFFFFF", "#FFF7B0", "#FFD21A", "#8A6A00"],
+  SUN: ["#FFFFFF", "#FFFBE6", "#FFE9A8", "#B39149"],
+  SEA: ["#FFFFFF", "#9ED0FF", "#2E7BFF", "#0B2F80"],
+  MINT: ["#FFFFFF", "#DAFFF0", "#7FF2C3", "#227A5A"],
+  EARTH: ["#FFFFFF", "#F5DDA0", "#C9A04A", "#5E4518"],
+  DUSK: ["#FFFFFF", "#C9B8E6", "#6B4FA3", "#241640"],
+  SAND: ["#FFFFFF", "#FFEFC9", "#E0B866", "#7A5A21"],
+  STAR: ["#FFFFFF", "#FFC2F0", "#FF3DCB", "#6B0F57"],
 } as const satisfies Record<string, Ramp4>;
 
 /** Eye sockets, visor slits, open mouths: the darkest thing in a sprite, never pure black. */

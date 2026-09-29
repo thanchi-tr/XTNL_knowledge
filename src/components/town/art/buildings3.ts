@@ -3,7 +3,7 @@ import { M, E, VOID, LIT, MID, SHADE, DEEP } from "./materials";
 import { masonry, casement, doorway, boards, halfTimber, chimney, flowerBox } from "./textures";
 import { obliqueHouse } from "./oblique";
 import { ROOF, type RoofStyle } from "./buildings";
-import { goblinWarren, webHollow, frostRift, titanGate } from "./gates";
+import { goblinWarren, webHollow, frostRift, titanGate, stormSpire } from "./gates";
 import type { LairKind } from "@/lib/town/sim/types";
 
 /**
@@ -218,6 +218,7 @@ export function lairArt(kind: LairKind): HTMLCanvasElement {
     case "webhollow": return webHollow();
     case "frostrift": return frostRift();
     case "titangate": return titanGate();
+    case "stormspire": return stormSpire();
   }
 }
 

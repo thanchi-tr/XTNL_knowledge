@@ -1,12 +1,14 @@
 import { MONSTERS, statsAt } from "./bestiary";
 import { troopStats } from "./combat";
-import { gearBonus, isAway, store } from "./loot";
+import { claimSingleton, gearBonus, isAway, store } from "./loot";
 import { clock, countedTroops, log } from "./state";
+import { onDeath } from "./recognition";
 import { stats } from "./stats";
 import { broodOf } from "./wilds";
 import { Overlay, MILITARY, type GameState, type Lair, type Villager } from "./types";
 import { HALL_MAX_LEVEL } from "./catalog";
 import { footOf } from "./augment";
+import { petrify } from "./champions";
 
 /**
  * The end of the game, and the way there.
@@ -74,11 +76,17 @@ export function assaultGate(s: GameState, lairId: number, r: () => number): stri
   const deathP = won ? Math.min(0.5, 0.18 / Math.max(0.5, ratio)) : 0.55;
   const fallen: string[] = [];
   for (const v of army) {
-    if (r() < deathP) {
+    const dies = r() < deathP;
+    if (dies && v.champion) {
+      petrify(s, v, "falls at the gate");
+      continue;
+    }
+    if (dies) {
       fallen.push(v.name);
       s.villagers = s.villagers.filter((x) => x !== v);
       for (const st of s.structures) st.workers = st.workers.filter((id) => id !== v.id);
       s.deaths += 1;
+      onDeath(s, "fell at the gate");
     } else v.health = Math.max(10, v.health - (won ? 15 : 35));
   }
   const name = `${l.kind === "titangate" ? "titan's gate" : l.kind.replace(/([a-z])([A-Z])/g, "$1 $2")} at ${l.x},${l.y}`;
@@ -100,6 +108,12 @@ export function assaultGate(s: GameState, lairId: number, r: () => number): stri
     }
     stats(s).sealed += 1;
     s.hopeEvents = (s.hopeEvents ?? 0) + 8;
+    // A deep gate's hoard may hold something singular.
+    if (l.level >= 60 && r() < 0.5) {
+      const id = claimSingleton(s, r);
+      if (id && store(s, id, 1) > 0) s.singletons = (s.singletons ?? []).filter((x) => x !== id);
+      else if (id) log(s, "Deep in the gate's hoard lies something singular. It is carried home to the forge.", "good");
+    }
     const msg = `The army storms the ${name} and seals it for good. ${25 * l.level} coin and ${jewels} jewel${jewels > 1 ? "s" : ""} from its hoard.${fallen.length ? ` Lost: ${fallen.join(", ")}.` : " Nobody lost."}`;
     log(s, msg, "good");
     return msg;

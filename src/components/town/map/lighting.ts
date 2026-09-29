@@ -23,9 +23,10 @@ export interface Grade {
 
 export const GRADES = {
   DAY: { mul: [1, 1, 1], add: [0, 0, 0] },
-  // Night is the town's weakest hour: the land goes near black and cold blue, and
-  // only what a fire, a lamp or a lit window reaches can be made out.
-  NIGHT: { mul: [0.17, 0.22, 0.42], add: [-4, -3, 8] },
+  // Night is the town's weakest hour: the land goes black with a trace of cold blue,
+  // and only what a fire, a lamp, a lit window or a hero's own light reaches can be
+  // made out — and whatever is out there, by its eyes.
+  NIGHT: { mul: [0.075, 0.09, 0.2], add: [-6, -6, 1] },
   FOG: { mul: [0.7, 0.75, 0.8], add: [35, 40, 45] },
   RAID: { mul: [1.35, 0.55, 0.5], add: [25, -10, -15] },
   SUMMER: { mul: [1.04, 1, 0.92], add: [4, 2, 0] },
@@ -75,9 +76,63 @@ export function stampLight(map: Uint8Array, w: number, h: number, x: number, y: 
 }
 
 /**
+ * A colour table for one grade: open addressing on typed arrays, keyed by the
+ * source pixel. Pixel art has a few hundred colours, so a table fills once and
+ * then serves every frame the grade holds — dusk steps, a raid, an omen each
+ * get their own and keep it.
+ */
+const LUT_BITS = 13;
+const LUT_SIZE = 1 << LUT_BITS;
+const LUT_MASK = LUT_SIZE - 1;
+interface Lut { keys: Uint32Array; vals: Uint32Array; used: Uint8Array; n: number }
+const luts = new Map<string, Lut>();
+const protectIds = new WeakMap<Set<number>, number>();
+let nextProtect = 1;
+
+function lutFor(g: Grade, sat: number, protect: Set<number>): Lut {
+  let pid = protectIds.get(protect);
+  if (pid === undefined) protectIds.set(protect, (pid = nextProtect++));
+  const key = `${g.mul.join(",")}|${g.add.join(",")}|${sat}|${pid}`;
+  let lut = luts.get(key);
+  if (!lut) {
+    // A handful of grades live at once; forget the oldest when there are many.
+    if (luts.size >= 24) luts.delete(luts.keys().next().value!);
+    lut = { keys: new Uint32Array(LUT_SIZE), vals: new Uint32Array(LUT_SIZE), used: new Uint8Array(LUT_SIZE), n: 0 };
+    luts.set(key, lut);
+  }
+  return lut;
+}
+
+const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+
+/** The graded value of one pixel: what the table would hold for it. */
+function gradePixel(v: number, g: Grade, sat: number, protect: Set<number>): number {
+  // little-endian RGBA: the red byte is lowest
+  const r = v & 255;
+  const gg = (v >>> 8) & 255;
+  const b = (v >>> 16) & 255;
+  if (protect.has((r << 16) | (gg << 8) | b)) return v;
+  let R = r * g.mul[0] + g.add[0];
+  let G = gg * g.mul[1] + g.add[1];
+  let B = b * g.mul[2] + g.add[2];
+  if (sat !== 1) {
+    // toward the colour's own lightness, never toward grey paint laid over it
+    const l = 0.299 * R + 0.587 * G + 0.114 * B;
+    R = l + (R - l) * sat;
+    G = l + (G - l) * sat;
+    B = l + (B - l) * sat;
+  }
+  return ((v & 0xff000000) | (clamp(B) << 16) | (clamp(G) << 8) | clamp(R)) >>> 0;
+}
+
+/**
  * Grades the frame in place. `grades[level]` applies where the light map
  * reads `level` (everywhere, `grades[0]`, when there is no map). Colours in
  * `protect` — and every emissive colour — are left as they are.
+ *
+ * Fast because a frame is mostly runs of the same colour and a few hundred
+ * colours in all: a pixel like the one before it is copied, and every other
+ * is looked up in the grade's table, which outlives the frame.
  */
 export function applyEnvironmentLighting(
   ctx: CanvasRenderingContext2D,
@@ -91,39 +146,45 @@ export function applyEnvironmentLighting(
 ) {
   const img = ctx.getImageData(0, 0, width, height);
   const u32 = new Uint32Array(img.data.buffer);
-  // Pixel art has a few hundred colours, not millions: memoise per level.
-  const memo = grades.map(() => new Map<number, number>());
-  const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+  const tables = grades.map((g) => lutFor(g, sat, protect));
+  let pv = -1;
+  let pl = -1;
+  let po = 0;
   for (let p = 0; p < u32.length; p++) {
     const v = u32[p];
     if (v >>> 24 === 0) continue;
     const level = light ? light[p] : 0;
-    const m = memo[level];
-    let out = m.get(v);
-    if (out === undefined) {
-      // little-endian RGBA: the red byte is lowest
-      const r = v & 255;
-      const g = (v >>> 8) & 255;
-      const b = (v >>> 16) & 255;
-      if (protect.has((r << 16) | (g << 8) | b)) out = v;
-      else {
-        const gr = grades[level];
-        let R = r * gr.mul[0] + gr.add[0];
-        let G = g * gr.mul[1] + gr.add[1];
-        let B = b * gr.mul[2] + gr.add[2];
-        if (sat !== 1) {
-          // toward the colour's own lightness, never toward grey paint laid over it
-          const l = 0.299 * R + 0.587 * G + 0.114 * B;
-          R = l + (R - l) * sat;
-          G = l + (G - l) * sat;
-          B = l + (B - l) * sat;
+    if (v === pv && level === pl) {
+      u32[p] = po;
+      continue;
+    }
+    const t = tables[level];
+    let h = Math.imul(v, 0x9e3779b1) >>> (32 - LUT_BITS);
+    let out: number;
+    for (;;) {
+      if (!t.used[h]) {
+        out = gradePixel(v, grades[level], sat, protect);
+        // A full table is cleared rather than grown: it refills in a frame.
+        if (t.n > LUT_SIZE * 0.7) {
+          t.used.fill(0);
+          t.n = 0;
         }
-        out = (v & 0xff000000) | (clamp(B) << 16) | (clamp(G) << 8) | clamp(R);
-        out >>>= 0;
+        t.used[h] = 1;
+        t.keys[h] = v;
+        t.vals[h] = out;
+        t.n++;
+        break;
       }
-      m.set(v, out);
+      if (t.keys[h] === v) {
+        out = t.vals[h];
+        break;
+      }
+      h = (h + 1) & LUT_MASK;
     }
     u32[p] = out;
+    pv = v;
+    pl = level;
+    po = out;
   }
   ctx.putImageData(img, 0, 0);
 }

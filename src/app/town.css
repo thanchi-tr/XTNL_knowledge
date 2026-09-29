@@ -223,7 +223,7 @@
 .tg-hint { margin-top: 5px; font-size: 11.5px; color: #8a7f96; }
 
 .tg-side { position: sticky; top: calc(var(--nav-h, 56px) + 8px); display: flex; flex-direction: column; }
-.tg-tabs { display: flex; }
+.tg-tabs { display: flex; flex-wrap: wrap; }
 .tg-tab { flex: 1; font-family: var(--font-mono, monospace); font-size: 10.5px; letter-spacing: .04em; padding: 7px 4px; border: 2px solid #3a3040; border-bottom: none; background: #141019; color: #8a7f96; cursor: pointer; }
 .tg-tab.on { background: #1b1622; color: #ffe07a; }
 .tg-tab.alert { color: #ff8a6a; animation: town-alarm 1.2s steps(2, end) infinite; }
@@ -413,7 +413,8 @@
 .tg-full .tg-stage {
   flex: 1; min-height: 0; border: 0; display: grid; place-items: center; container-type: size;
 }
-.tg-full .tg-stage .town-canvas { width: min(100cqw, 150cqh); height: auto; aspect-ratio: 3 / 2; max-width: none; }
+/* The view takes the stage's own shape (map/render viewFor), so the canvas fills it exactly, upright or wide. */
+.tg-full .tg-stage .town-canvas { width: 100cqw; height: 100cqh; max-width: none; }
 .tg-full .tg-tools {
   flex: none; flex-wrap: nowrap; overflow-x: auto; margin: 0; padding: 5px 6px; gap: 6px;
   background: #120e16; border-top: 2px solid #2a2230; scrollbar-width: none;
@@ -583,3 +584,644 @@
 .tg-trophy-pick { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-top: 8px; padding: 8px; border: 1px solid #4a3c2a; background: #120f17; font-size: 12px; }
 .tg-trophy-pick b { display: block; color: #fff3d6; font-size: 13px; }
 .tg-trophy-pick span { display: block; color: #cfc4d8; }
+
+/* ── Champions, the Eye of Time, omens, the eight hundred items ── */
+.tg-gear-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; margin-top: 4px; }
+.tg-gear-slot { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.tg-gear-slot .town-select { min-width: 0; flex: 1; font-size: 11px; }
+.tg-rarity { font-weight: 600; }
+.tg-element { display: inline-block; padding: 0 5px; border: 1px solid currentColor; font-size: 10.5px; line-height: 16px; letter-spacing: .03em; }
+.tg-element.el-earth { color: #d9b36a; } .tg-element.el-fire { color: #ff9a3c; } .tg-element.el-water { color: #6aa8ff; }
+.tg-element.el-air { color: #8ff2cf; } .tg-element.el-thunder { color: #ffd84a; } .tg-element.el-light { color: #fff0b8; }
+.tg-element.el-dark { color: #a98ade; } .tg-element.el-time { color: #e6c27a; } .tg-element.el-space { color: #ff6bd6; }
+.tg-champion { margin-top: 4px; padding: 6px 8px; border: 1px solid #5a4a72; background: linear-gradient(180deg, #1d1628, #140f1c); display: grid; gap: 4px; }
+.tg-champion b { color: #ffe07a; letter-spacing: .04em; }
+.tg-restore { position: relative; height: 6px; margin: 4px 0; background: #1a1520; border: 1px solid #3a3040; }
+.tg-reqs .tg-restore { display: block; max-width: 220px; }
+.tg-quarter { margin: 8px 0 10px; }
+.tg-stocks { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.tg-stocks .town-tag { display: inline-flex; flex-direction: column; align-items: stretch; gap: 3px; }
+.tg-stock { border-color: #3a3040; background: #141019; color: #a99db6; cursor: pointer; }
+.tg-stock.on { border-color: #c9a44a; background: #2a2114; color: #f3dfa6; }
+.tg-stock:not(.on):hover { color: #efe4f6; border-color: #5a4a66; }
+.tg-need { display: block; height: 4px; min-width: 64px; }
+.tg-need > span { background: #c9a44a; }
+.tg-need.short > span { background: #e0705a; }
+.tg-restore i { position: absolute; left: 0; top: 0; bottom: 0; background: #c9a44a; }
+.tg-restore i.laid { background: #5a4a36; }
+.tg-prophecy { color: #f0d890; border-left: 3px solid #c9a44a; padding-left: 8px; }
+.tg-omen { margin: 8px 0; padding: 8px 10px; border: 2px solid #7a3a2a; background: #22120e; }
+.tg-omen.warded { border-color: #3a5a3a; background: #0f1a12; opacity: .85; }
+.tg-omen b { color: #ffb070; letter-spacing: .05em; }
+.tg-great .tg-work { margin-top: 8px; display: grid; gap: 4px; }
+.tg-store-pick { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; padding: 8px; border: 1px solid #3a3040; background: #120e17; }
+.tg-store-pick > div { display: grid; gap: 3px; min-width: 0; }
+.tg-slot.sel { outline: 2px solid #ffe07a; }
+.tg-store button.tg-slot { cursor: pointer; padding: 0; }
+.tg-codex-grid { display: grid; grid-template-columns: repeat(auto-fill, 34px); gap: 4px; margin-top: 8px; }
+.tg-codex-item { width: 34px; height: 34px; display: grid; place-items: center; background: #15111b; border: 1px solid #3a3040; cursor: pointer; padding: 0; opacity: .35; filter: grayscale(1); }
+.tg-codex-item.on { opacity: 1; filter: none; }
+.tg-codex-item.sel { outline: 2px solid #ffe07a; }
+
+/* ── Building paths ─────────────────────────────── */
+.tg-paths { margin: 10px 0; padding: 8px; border: 1px solid #3a3040; background: #120e17; }
+.tg-path-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 6px 0; }
+.tg-path { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 6px 7px; border: 2px solid #3a3040; background: #17121d; color: #cfc3dc; cursor: pointer; font: inherit; font-size: 11px; }
+.tg-path:hover { border-color: #6a5a7a; }
+.tg-path.on { border-color: #c9a44a; background: #2a2114; color: #f3dfa6; }
+.tg-path b { font-size: 12px; color: #efe4f6; }
+.tg-path.on b { color: #ffe9a8; }
+.tg-path-kind { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: #8a7d98; }
+.tg-path.k-steady .tg-path-kind { color: #7fb0e0; }
+.tg-path.k-mastery .tg-path-kind { color: #d8a0ff; }
+.tg-path.k-windfall .tg-path-kind { color: #7fd08a; }
+.tg-path.k-thrift .tg-path-kind { color: #e0b070; }
+.tg-path-blurb { color: #a99db6; line-height: 1.35; }
+.tg-path-now { color: #efe4f6; font-variant-numeric: tabular-nums; }
+.tg-path-curve { display: block; width: 100%; max-width: 260px; height: auto; margin-top: 4px; }
+.tg-path-curve line, .tg-path-curve polyline { fill: none; stroke-width: 1.6; }
+.tg-path-curve .steady { stroke: #7fb0e0; }
+.tg-path-curve .windfall { stroke: #7fd08a; stroke-dasharray: 3 2; }
+.tg-path-curve .mastery { stroke: #d8a0ff; }
+.tg-path-curve .cross { stroke: #5a4a66; stroke-dasharray: 2 2; stroke-width: 1; }
+.tg-path-curve .now { fill: #ffe9a8; }
+.tg-path-curve text { font-size: 8px; fill: #8a7d98; }
+.tg-path-legend .steady { color: #7fb0e0; }
+.tg-path-legend .windfall { color: #7fd08a; }
+.tg-path-legend .mastery { color: #d8a0ff; }
+
+/* ── Command ───────────────────────────────────── */
+.tg-command { margin: 6px 0; padding: 7px 8px; border: 2px solid #3f6a48; background: #0f1712; color: #cfe8d4; font-size: 11px; }
+.tg-cmd-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.tg-cmd-row b { color: #9dffb4; }
+.tg-cmd-units { display: flex; flex-wrap: wrap; gap: 3px; margin: 5px 0; }
+.tg-cmd-unit { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 1px solid #3f6a48; background: #16241a; color: #e6fbe9; font-size: 11px; }
+.tg-cmd-unit.in { opacity: .6; border-style: dashed; }
+.tg-cmd-unit i { position: absolute; left: 0; bottom: 0; height: 2px; background: #7dff9a; }
+.tg-cmd-btns, .tg-cmd-groups { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.tg-cmd-group { display: inline-flex; gap: 1px; }
+.tg-command kbd { font: inherit; font-size: 9.5px; padding: 0 3px; margin-left: 3px; border: 1px solid #4a6a52; color: #9dffb4; }
+
+/* ── Maps ─────────────────────────────────────── */
+.tg-biome { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 6px; border: 1px solid #3a3040; color: #b9d98a; }
+.tg-biome.b-desert { color: #f0c070; border-color: #6a5030; background: #231a0e; }
+.tg-biome.b-skyisles { color: #a8d8ff; border-color: #3a5a7a; background: #0e1a26; }
+
+/* ═══ Galaxy Z Fold and phones ═════════════════════════════
+ * Two screens with little room to spare. The cover screen is narrow and
+ * tall (about 390 × 860 CSS px): everything above the map is squeezed to a
+ * line or two, every strip of buttons becomes one row that scrolls, and the
+ * map itself goes tall (5:6, map/render viewFor). The unfolded main screen
+ * is nearly square: the map goes 4:3, with the panel under it.
+ */
+.tg-short { display: none; }
+
+/* A Fold's main screen and anything up to a small tablet: the tools are one row that scrolls, so the map above keeps its height. */
+@media (max-width: 900px) {
+  .tg-tools { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tg-tools::-webkit-scrollbar { display: none; }
+  .tg-tool { flex: none; }
+  .town-main { padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+}
+
+@media (max-width: 560px) {
+  /* The page's margins go to the map: a few pixels either side, clear of the screen's rounded corners. */
+  .town-main {
+    padding-top: 8px;
+    padding-left: max(6px, env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
+  }
+  /* The profile tabs: one row that scrolls; their explanation is a line too many here. */
+  .town-scenarios { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 4px; margin-bottom: 6px; }
+  .town-scenarios::-webkit-scrollbar { display: none; }
+  .town-scenarios .town-tab { flex: none; padding: 5px 8px; font-size: 10px; }
+  .town-scenarios > span.town-dim { display: none; }
+
+  /* The top bar: short forms, small meters, the lot in two or three tight rows. */
+  .tg-top { gap: 4px 8px; padding: 5px 6px; }
+  .tg-long { display: none; }
+  .tg-short { display: inline; }
+  .tg-clock { gap: 5px; font-size: 11.5px; }
+  .tg-season, .tg-biome { font-size: 9px; padding: 1px 5px; }
+  .tg-weather { font-size: 10px; gap: 4px; }
+  .tg-meter { grid-template-columns: auto 30px auto; gap: 3px; font-size: 9px; letter-spacing: 0; }
+  .tg-meter b { font-size: 10px; }
+  .tg-sp { padding: 4px 7px; }
+  .tg-pop { font-size: 11px; }
+  .tg-pop b { font-size: 12px; }
+  .tg-top .town-btn.sm { padding: 4px 8px; font-size: 10px; }
+  .tg-fullbtn { order: -1; }
+
+  /* The map's corner furniture, smaller. */
+  .tg-mini { width: min(84px, 24%); right: 4px; bottom: 4px; }
+  .tg-hud { top: 4px; left: 4px; right: 4px; }
+
+  /* The side panel's tabs: one row that scrolls. */
+  .tg-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tg-tabs::-webkit-scrollbar { display: none; }
+  .tg-tab { flex: none; padding: 8px 10px; }
+  .tg-panel { max-height: 58vh; }
+
+  /* Command: the roster of faces is a luxury here; the orders and groups scroll. */
+  .tg-cmd-units { display: none; }
+  .tg-cmd-btns, .tg-cmd-groups { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tg-cmd-btns > *, .tg-cmd-groups > * { flex: none; }
+  .tg-paths .tg-path-grid { grid-template-columns: 1fr 1fr; }
+  .tg-path-curve { max-width: 200px; }
+}
+
+/* Full screen held upright (the cover screen): one row above, the map, one row of tools below;
+   the quest log rises from the bottom as a sheet instead of standing in the middle. */
+@media (max-aspect-ratio: 3 / 4) {
+  .tg-full .tg-top { flex-wrap: nowrap; justify-content: flex-start; }
+  .tg-full .tg-top .tg-meter { width: auto; }
+  .tg-full .tg-tools { flex-wrap: nowrap; justify-content: flex-start; }
+  .tg-full .tg-tool { min-height: 40px; font-size: 11.5px; }
+  .tg-full .tg-command { padding: 4px 6px; margin: 0; }
+  .tg-full .tg-cmd-units { display: none; }
+  .tg-full .tg-side.tg-quest.open {
+    top: auto; bottom: 0; left: 0; transform: none;
+    width: 100vw; max-height: 72dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tg-full .tg-quest .tg-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tg-full .tg-quest .tg-tab { flex: none; }
+}
+
+/* ═══ Confirm: a build or an upgrade, asked before anything is paid ═══
+ * A native modal <dialog> (components/town/Confirm), so it sits above full
+ * screen and the quest log alike. The card keeps to the bottom of the screen,
+ * or the top when the ghost it asks about stands in the lower half, so the
+ * plot stays in sight behind a light veil.
+ */
+.tg-confirm {
+  padding: 0; border: 0; background: transparent; color: #f1e4c4; overflow: visible;
+  width: min(440px, calc(100vw - 28px)); max-width: none; max-height: none;
+  margin: auto auto max(16px, env(safe-area-inset-bottom));
+}
+.tg-confirm.top { margin: max(16px, env(safe-area-inset-top)) auto auto; }
+.tg-confirm::backdrop { background: rgb(6 4 10 / .34); }
+.tg-confirm-card {
+  display: grid; gap: 9px; padding: 12px 14px;
+  max-height: calc(100dvh - 44px); overflow-y: auto; overscroll-behavior: contain;
+  background: #2a2017; border: 4px solid #140d08; font-family: var(--font-mono, monospace);
+  box-shadow: 0 0 0 3px #c9a44a, 0 0 0 6px #140d08, 8px 8px 0 6px rgb(0 0 0 / .45);
+}
+.tg-confirm .town-title { margin-top: 2px; font-size: 16px; line-height: 1.25; }
+.tg-confirm .town-dim { color: #c9b89a; font-size: 11.5px; }
+.tg-confirm-head { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; }
+.tg-confirm-art, .tg-confirm-head .tg-portrait {
+  display: block; image-rendering: pixelated; padding: 4px;
+  background: repeating-conic-gradient(#342818 0 25%, #2e2315 0 50%) 0 0 / 12px 12px; border: 2px solid #140d08;
+}
+.tg-confirm-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 12px; }
+.tg-confirm-facts dt { align-self: center; color: #b9a47a; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.tg-confirm-facts dd { margin: 0; color: #fff3d6; }
+.tg-confirm-bill { display: flex; flex-wrap: wrap; gap: 4px; }
+.tg-confirm-block { padding: 6px 8px; border-left: 3px solid #e0705a; background: #2a1410; color: #ff9a86; font-size: 12px; }
+.tg-confirm-note { font-size: 11px; }
+.tg-confirm-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tg-confirm-btns .town-btn { min-height: 44px; font-size: 13px; }
+.tg-confirm .town-btn:focus-visible { outline: 3px solid #ffe07a; outline-offset: 2px; }
+
+@media (max-width: 560px) {
+  .tg-confirm { width: calc(100vw - 20px); }
+  .tg-confirm-card { padding: 10px; gap: 7px; }
+  .tg-confirm .town-title { font-size: 14.5px; }
+  .tg-confirm-head { gap: 9px; }
+  .tg-confirm-art { max-width: 64px; height: auto !important; }
+}
+/* A short screen (a Fold's cover screen turned sideways): the essentials only. */
+@media (max-height: 480px) {
+  .tg-confirm-head .town-dim, .tg-confirm-note { display: none; }
+  .tg-confirm-art { max-height: 56px; width: auto !important; }
+}
+
+/* ═══ Needs: the pyramid (components/town/Needs) ═══════════
+ * Survival at the base, purpose at the peak: each tier a bar across a step
+ * of the pyramid, narrowing upward. A tier the ones below cannot yet carry
+ * is dimmed. Open a tier for its needs, each with what it stands on.
+ */
+.tg-needs { margin-top: 4px; }
+.tg-pyramid { display: grid; justify-items: center; gap: 3px; margin-top: 6px; }
+.tg-tier { border: 2px solid #1a1206; background: #1b1511; box-shadow: inset 0 1px 0 #3a2e22; min-width: 0; max-width: 100%; }
+.tg-tier > summary {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px;
+  padding: 5px 8px; cursor: pointer; list-style: none; font-size: 11.5px;
+}
+.tg-tier > summary::-webkit-details-marker { display: none; }
+.tg-tier-name { font-family: var(--font-mono, monospace); text-transform: uppercase; letter-spacing: .08em; font-size: 10.5px; color: #e8d6ae; }
+.tg-tier > summary b { font-family: var(--font-mono, monospace); color: #fff3d6; min-width: 3ch; text-align: right; }
+.tg-tier-bar { display: block; height: 7px; background: #0d0b10; border: 1px solid #3a3040; min-width: 30px; }
+.tg-tier-bar > i { display: block; height: 100%; background: #7fd08a; transition: width .4s ease; }
+.tg-tier-bar.sm { height: 5px; }
+.tg-tier-bar.gold > i { background: #c9a44a; }
+.tg-tier.warn .tg-tier-bar > i { background: #d8b04a; }
+.tg-tier.bad .tg-tier-bar > i { background: #e0705a; }
+.tg-tier.bad { border-color: #5a2a22; }
+.tg-tier.shut { opacity: .45; }
+.tg-tier[open] { width: 100% !important; }
+.tg-tier > p { padding: 0 8px 4px; }
+.tg-tier ul { display: grid; gap: 4px; padding: 0 8px 8px; font-size: 11px; }
+.tg-tier li { display: grid; grid-template-columns: 7.5em 60px 1fr; align-items: center; gap: 8px; }
+.tg-tier li em { font-style: normal; color: #a99db6; }
+.tg-tier li.warn-text em { color: #ff9a86; }
+.tg-need-weak { margin-top: 6px; padding: 6px 8px; border-left: 3px solid #e0705a; background: #1d1311; font-size: 11.5px; color: #f1e4c4; }
+.tg-stocks { display: grid; gap: 6px; margin-top: 8px; }
+.tg-stocks > div { display: grid; grid-template-columns: 7.5em 1fr auto; align-items: center; gap: 4px 8px; font-size: 11.5px; }
+.tg-stocks > div > span:first-child { font-family: var(--font-mono, monospace); text-transform: uppercase; letter-spacing: .08em; font-size: 10.5px; color: #e8d6ae; }
+.tg-stocks em { grid-column: 1 / -1; font-style: normal; font-size: 10.5px; color: #8a7f96; }
+@media (max-width: 560px) {
+  .tg-tier li { grid-template-columns: 6.5em 44px 1fr; }
+  .tg-pyramid .tg-tier { width: 100% !important; }
+}
+
+/* ═══ Full screen on a desktop ═════════════════════════════
+ * The map fills the screen and the panel stays docked on the right rather
+ * than folding into the quest log. The view is a larger pixel budget in the
+ * stage's own shape (map/render DESK_AREA), so a big screen sees more of the
+ * world at the same crisp pixel. F toggles full screen; the Panel button
+ * (or its width) folds the panel away for the whole screen.
+ */
+.tg-full.tg-desk .tg-main { flex-direction: row; }
+.tg-full.tg-desk .tg-side.tg-dock {
+  display: flex; flex-direction: column; flex: none; position: static; min-height: 0;
+  width: clamp(300px, 24vw, 440px); margin: 0;
+  background: #120e16; border-left: 2px solid #2a2230;
+  transition: width .18s ease;
+}
+.tg-full.tg-desk .tg-side.tg-dock.shut { width: 0; border-left-width: 0; overflow: hidden; }
+.tg-full.tg-desk .tg-dock .tg-tabs { flex: none; padding: 6px 6px 0; }
+.tg-full.tg-desk .tg-dock .tg-panel { flex: 1; min-height: 0; max-height: none; overflow-y: auto; border-width: 2px 0 0; }
+.tg-full.tg-desk .tg-top { flex-wrap: wrap; overflow: visible; row-gap: 4px; }
+.tg-full.tg-desk .tg-top .tg-meter { width: auto; min-width: 150px; }
+.tg-full.tg-desk .tg-tools { flex-wrap: wrap; justify-content: flex-start; }
+.tg-full.tg-desk .tg-tool { min-height: 34px; }
+.tg-dockbtn { white-space: nowrap; }
+/* A short desktop window: the tool row in one line that scrolls, so the map keeps its height. */
+@media (max-height: 760px) {
+  .tg-full.tg-desk .tg-tools { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tg-full.tg-desk .tg-tools::-webkit-scrollbar { display: none; }
+}
+
+/* ═══ Heroes (components/town/Heroes) ══════════════════════
+ * A card to a hero: level, experience (only battle teaches), points spent
+ * of those earned, and a tree of three branches by three tiers — learned in
+ * gold, ready to learn lit, locked dim. The capstone row is framed.
+ */
+.tg-heroes { margin-top: 14px; }
+.tg-hero { margin-top: 8px; padding: 8px 10px; border: 2px solid #2e2636; border-left: 4px solid #6a5a80; background: #120f17; }
+.tg-hero.c-warden { border-left-color: #7ff2c3; }
+.tg-hero.c-warlord { border-left-color: #ff4d5e; }
+.tg-hero.c-cleric { border-left-color: #ffe9a8; }
+.tg-hero.c-skald { border-left-color: #ff9900; }
+.tg-hero.c-knight { border-left-color: #b319ff; }
+.tg-hero.c-wizard { border-left-color: #00d9d9; }
+.tg-hero-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; font-size: 12.5px; }
+.tg-hero-pts { font-family: var(--font-mono, monospace); font-size: 12px; padding: 2px 6px; border: 1px solid #3a3040; color: #a99db6; }
+.tg-hero-pts.free { color: #1f1404; background: #e8c060; border-color: #6a4a10; animation: town-alarm 1.2s steps(2, end) infinite; }
+.tg-hero-xp { height: 5px; margin-top: 5px; background: #0d0b10; border: 1px solid #3a3040; }
+.tg-hero-xp > i { display: block; height: 100%; background: linear-gradient(90deg, #8a6a00, #ffd21a); }
+.tg-hero-next { margin-top: 4px; font-size: 11px; }
+.tg-tree { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.tg-branch { display: grid; gap: 4px; align-content: start; }
+.tg-branch-name { font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #b9a47a; text-align: center; }
+.tg-skill { display: grid; gap: 2px; text-align: left; padding: 5px 6px; min-height: 44px; border: 2px solid #2e2636; background: #16121c; color: #cfc4d8; font-size: 10.5px; cursor: pointer; }
+.tg-skill b { font-size: 11px; color: #efe4f6; }
+.tg-skill span { color: #8a7f96; line-height: 1.25; }
+.tg-skill.t3 { border-style: double; border-width: 3px; }
+.tg-skill.owned { border-color: #c9a44a; background: #2a2014; cursor: default; }
+.tg-skill.owned b { color: #ffe07a; }
+.tg-skill.ready { border-color: #7fd08a; background: #152018; }
+.tg-skill.ready:hover { filter: brightness(1.15); }
+.tg-skill.locked { opacity: .5; cursor: not-allowed; }
+.tg-raise { margin-top: 10px; }
+.tg-raise-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.tg-raise-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 560px) { .tg-tree { grid-template-columns: 1fr; } }
+
+/* ═══ People: attributes, recognition, the night watch (components/town/People) ═══ */
+.tg-attr { display: inline-flex; gap: 3px; align-items: baseline; padding: 1px 5px; margin: 1px 2px 1px 0; border: 1px solid #2e2636; background: #110e15; font-family: var(--font-mono, monospace); font-size: 10px; color: #a99db6; }
+.tg-attr b { color: #efe4f6; }
+.tg-attr.hi { border-color: #3d5a3e; color: #9fd8a2; }
+.tg-attr.hi b { color: #c9f5cb; }
+.tg-attr.hi2 { border-color: #8a6a00; background: #1d1708; color: #ffd98a; }
+.tg-attr.hi2 b { color: #ffe9a8; }
+.tg-attr.lo { border-color: #4a2220; color: #c48a80; }
+.tg-gift { font-family: var(--font-mono, monospace); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px; border: 1px solid #6a5a80; color: #d9c8ff; background: #1d162a; }
+.tg-gift.prodigy { border-color: #c9a44a; color: #1f1404; background: linear-gradient(180deg, #ffe07a, #c9962c); }
+.tg-attrgrid { display: grid; gap: 3px; margin: 4px 0 6px; }
+.tg-attrgroup { display: inline-block; width: 4.6em; font-family: var(--font-mono, monospace); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: #b9a47a; }
+.tg-rec { font-family: var(--font-mono, monospace); font-size: 11.5px; color: #ffd98a; padding: 2px 7px; border: 1px solid #5a4a26; background: #1a1508; cursor: help; white-space: nowrap; }
+.tg-rec b { color: #ffe9a8; }
+.tg-recpanel .tg-rec-head { display: flex; align-items: baseline; gap: 10px; font-size: 12px; }
+.tg-rec-points { font-family: var(--font-mono, monospace); font-size: 18px; color: #ffd98a; }
+.tg-rec-bar { height: 6px; margin: 5px 0 6px; background: #0d0b10; border: 1px solid #3a3040; }
+.tg-rec-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #8a6a00, #ffd21a); }
+.tg-rec-odds { font-size: 12px; margin-top: 6px; }
+.tg-rec-ledger { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.tg-rec-ledger ul { display: grid; gap: 2px; font-size: 11px; }
+.tg-rec-ledger li { display: flex; justify-content: space-between; gap: 6px; }
+.tg-folk { display: grid; gap: 3px; margin-top: 6px; }
+.tg-folk-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px; width: 100%; text-align: left; padding: 4px 6px; border: 1px solid #2e2636; background: #120f17; color: #cfc4d8; font-size: 12px; cursor: pointer; }
+.tg-folk-row:hover { border-color: #4a3e56; }
+.tg-hero-attrs { margin-top: 4px; }
+.tg-watch-list { display: grid; gap: 2px; margin-top: 4px; font-size: 12px; }
+.tg-watch-list label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; cursor: pointer; }
+.tg-watch-folk { margin-top: 6px; font-size: 12px; }
+.tg-watch-folk summary { cursor: pointer; color: #b9a47a; }
+@media (max-width: 560px) { .tg-rec-ledger { grid-template-columns: 1fr; } }
+
+/* ═══ The side panel, illustrated (components/town/Visuals, TownGame, Paths) ═══ */
+/* Tabs: four to a row, every column the same width, an icon to each. */
+.tg-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.tg-tab { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-tab > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.tg-full .tg-quest .tg-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.tg-ico { display: inline-flex; align-items: center; justify-content: center; flex: none; vertical-align: -2px; }
+.tg-ico .tg-icon { display: block; }
+.tg-tab .tg-ico { opacity: .75; }
+.tg-tab.on .tg-ico { opacity: 1; }
+@media (max-width: 380px) { .tg-tab { font-size: 9.5px; gap: 3px; padding-inline: 2px; } }
+
+/* A building's picture beside its name. */
+.tg-portrait { image-rendering: pixelated; display: block; }
+.tg-ihead { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }
+.tg-ihead-art { display: grid; place-items: center; min-width: 64px; min-height: 56px; padding: 4px; background: radial-gradient(circle at 50% 60%, #2a2233, #120e17 70%); border: 1px solid #2e2636; }
+.tg-ihead .town-title { margin-top: 2px; }
+.tg-ihead-blurb { margin-top: 6px; font-size: 11.5px; line-height: 1.45; color: #a99db6; font-style: italic; }
+
+/* Gauges share their columns: the bars start and end together. */
+.tg-gauges { display: grid; grid-template-columns: 12px max-content minmax(60px, 1fr) max-content; gap: 5px 8px; align-items: center; margin: 10px 0; }
+.tg-gauge { display: contents; }
+.tg-gauge-icon { display: grid; place-items: center; }
+.tg-gauge-label { font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #a99db6; }
+.tg-gauge-bar { height: 8px; background: #0d0b10; border: 1px solid #3a3040; box-shadow: inset 0 1px 0 #000; }
+.tg-gauge-bar > i { display: block; height: 100%; background: linear-gradient(180deg, #9be3a4, #5fb46c); transition: width .3s ease; }
+.tg-gauge.warn .tg-gauge-bar > i { background: linear-gradient(180deg, #ffd98a, #c9962c); }
+.tg-gauge.bad .tg-gauge-bar > i { background: linear-gradient(180deg, #ff9a86, #c9503a); }
+.tg-gauge-value { font-size: 11px; color: #efe4f6; font-variant-numeric: tabular-nums; text-align: right; }
+.tg-gauge.bad .tg-gauge-value { color: #ff9a86; }
+
+/* What things cost: a chip per resource, its icon and its count. */
+.tg-cost { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.tg-cost-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px 1px 2px; border: 1px solid; font-size: 11px; line-height: 1; font-variant-numeric: tabular-nums; }
+.tg-cost-chip .tg-icon { display: block; }
+.tg-cost-chip.ok { color: #9fd8a2; border-color: #2f5a36; background: #0f1a12; }
+.tg-cost-chip.short { color: #ff9a86; border-color: #5a2a22; background: #1d0f0d; }
+.tg-cost-chip.out { color: #e8dcf2; border-color: #4a3e56; background: #1a1422; }
+.tg-cost.compact .tg-cost-chip { font-size: 10px; padding: 1px 4px 1px 1px; gap: 2px; }
+.tg-recipe { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.tg-recipe-arrow { color: #c9a44a; font-weight: 700; }
+.tg-dishes li { align-items: center; }
+.town-upgrade .tg-cost { margin: 4px 0 6px; }
+
+/* Path cards: a curve, a number, a name; the words on a second glance. */
+.tg-path-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.tg-path-val { display: grid; justify-items: end; font-size: 15px; font-weight: 800; color: #efe4f6; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.tg-path-val small { font-size: 9px; font-weight: 500; color: #8a7d98; letter-spacing: .04em; }
+.tg-path.on .tg-path-val { color: #ffe9a8; }
+.tg-path-blurb { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 10.5px; }
+.tg-spark { width: 64px; height: 26px; flex: none; }
+.tg-spark polyline { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.tg-spark .base { stroke: #3a3040; stroke-width: 1; stroke-dasharray: 2 2; }
+.tg-spark .dashed { stroke-dasharray: 4 3; }
+.tg-spark .now { fill: #ffe9a8; }
+.tg-spark.steady polyline { stroke: #7fb0e0; }
+.tg-spark.mastery polyline { stroke: #d8a0ff; }
+.tg-spark.windfall polyline { stroke: #7fd08a; }
+.tg-spark.thrift polyline { stroke: #e0b070; }
+
+/* The long word, folded. */
+.tg-more { margin: 6px 0; border: 1px solid #2e2636; background: #110e15; }
+.tg-more > summary { cursor: pointer; padding: 4px 8px; font-size: 10.5px; letter-spacing: .04em; color: #b9a47a; list-style: none; }
+.tg-more > summary::-webkit-details-marker { display: none; }
+.tg-more > summary::before { content: "▸ "; color: #6a5a4a; }
+.tg-more[open] > summary::before { content: "▾ "; }
+.tg-more-body { padding: 0 8px 6px; }
+.tg-more-body p + p { margin-top: 4px; }
+
+/* Fuel: a line, and the loads as buttons with their fuel's picture. */
+.tg-fuel { margin: 6px 0 10px; }
+.tg-fuel-line { font-size: 12px; color: #cfc4d8; }
+.tg-fuel-line b { color: #ffe9a8; }
+.tg-load { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tg-load .town-btn { display: inline-flex; align-items: center; gap: 3px; }
+
+/* Workers: a bar for the day's effort. */
+.tg-effort { display: inline-block; width: 46px; height: 6px; background: #0d0b10; border: 1px solid #3a3040; vertical-align: middle; }
+.tg-effort > i { display: block; height: 100%; background: #7fd08a; }
+.tg-effort.spent > i { background: #ffd98a; }
+.tg-effort.over > i { background: #ff7a6a; }
+.tg-half { font-size: 10px; color: #ffb38a; border: 1px solid #5a3a22; padding: 0 4px; }
+.tg-crop { display: inline-flex; align-items: center; gap: 3px; }
+.tg-crop small { color: #8a7f96; font-size: 9.5px; }
+
+/* The build list: tiles with the building's picture and its bill. */
+.tg-btiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 5px; margin-top: 6px; }
+.tg-btile { display: grid; justify-items: center; align-content: start; gap: 4px; padding: 6px 4px 7px; border: 1px solid #2e2636; background: #110e15; color: #efe4f6; cursor: pointer; font: inherit; font-size: 11px; text-align: center; }
+.tg-btile:hover { border-color: #5a4a36; }
+.tg-btile.on { border-color: #c9a44a; background: #221a0c; box-shadow: 0 0 0 1px #c9a44a inset; }
+.tg-btile.poor { opacity: .6; }
+.tg-btile b { font-size: 11px; line-height: 1.2; }
+.tg-btile-art { display: grid; place-items: end center; height: 44px; }
+.tg-btile .tg-cost { justify-content: center; }
+.tg-bdetail { margin-top: 6px; padding: 7px 9px; border: 1px solid #c9a44a; background: #1a140a; font-size: 11.5px; }
+.tg-bdetail ul { margin-top: 4px; display: grid; gap: 2px; }
+.tg-bdetail .tg-brule::before { content: "• "; }
+
+/* Effects on a building: tighter, one line where they fit. */
+.tg-effects li { padding: 3px 8px; }
+.tg-effects li span { display: inline; margin-left: 4px; }
+/* A recipe list: the name and its picture on one row, the standing it needs and what is missing under it. */
+.tg-dishes li { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-items: center; gap: 2px 8px; padding: 3px 0; border-bottom: 1px solid #1d1726; }
+.tg-dishes li > .town-tag { justify-self: start; }
+.tg-dishes li > .tg-recipe { justify-self: end; }
+.tg-dishes li > .town-dim { font-size: 10px; }
+.tg-dishes li > .town-dim.warn-text { justify-self: end; }
+
+.tg-mythwatch { margin-top: 6px; padding: 5px 8px; border: 1px solid #6a4a9a; background: #1a1026; color: #d9c8ff; font-size: 11.5px; }
+.tg-mythwatch b { color: #f3e6ff; }
+
+.tg-orders { display: grid; gap: 3px; margin: 6px 0; font-size: 11px; }
+.tg-orders li { padding: 3px 6px; border-left: 3px solid #2e2636; color: #8a7f96; }
+.tg-orders li.on { border-color: #c9a44a; color: #efe4f6; }
+
+/* Training: the procedure, the bar, the candidates (components/town/Training). */
+.tg-train { margin: 8px 0; padding: 8px; border: 1px solid #3a3040; background: #120e17; }
+.tg-train-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.tg-train-title { font-size: 12px; }
+.tg-train-mods { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0; }
+.tg-train-steps { display: grid; gap: 3px; margin: 6px 0; font-size: 11px; color: #cfc4d8; }
+.tg-train-steps li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; align-items: start; }
+.tg-train-steps li > b { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid #c9a44a; color: #ffe07a; font-size: 10px; }
+.tg-train-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 11px; margin: 4px 0; }
+.tg-cands { display: grid; gap: 2px; margin: 4px 0 8px; font-size: 11.5px; }
+.tg-cands li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 2px 4px; }
+.tg-cands li.ok { background: #0f1a12; }
+.tg-cands li.no { opacity: .8; }
+.tg-cand-mark { width: 12px; color: #7fd08a; }
+.tg-cands li.no .tg-cand-mark { color: #e0705a; }
+.tg-gate { font-size: 10px; padding: 0 4px; border: 1px solid #6a5a80; color: #d9c8ff; cursor: help; }
+/* What real study gives the town. */
+.tg-boon-table th { width: 26%; color: #b9a47a; vertical-align: top; }
+.tg-boon-table td { text-align: left !important; vertical-align: top; }
+.tg-boon-now { color: #ffe9a8 !important; white-space: nowrap; }
+.tg-boon-gives { color: #cfc4d8; font-size: 11px; }
+.tg-trades { display: grid; gap: 2px; margin-top: 6px; font-size: 11px; }
+.tg-trades li { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 6px; border-left: 3px solid #3a3040; }
+.tg-trades li.half { border-color: #c9a44a; }
+.tg-trades li.open { border-color: #7fd08a; }
+.tg-trade-gate { margin-left: auto; color: #a99db6; }
+
+/* A fruit tree's panel. */
+.tg-fruit { margin: 6px 0; padding: 6px 8px; border: 1px solid #3a4a2c; background: #10160e; font-size: 12px; }
+.tg-fruit p { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.tg-ripe { color: #9fd8a2; font-weight: 700; }
+
+/* ── Orders: what today's study would pay (lib/town/sim/orders) ──
+ * One row of up to three cards above the map; it folds to its tab and never blinks.
+ * On a phone in full screen it is the first thing in the quest log instead. */
+.tg-ostrip { display: flex; align-items: stretch; gap: 4px; margin: 0 0 6px; min-width: 0; }
+.tg-ostrip-tab {
+  flex: none; padding: 0 8px; min-height: 26px;
+  font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+  color: #ffd98a; background: #1b1622; border: 1px solid #6a5220; cursor: pointer;
+}
+.tg-ostrip ul { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.tg-ostrip ul::-webkit-scrollbar { display: none; }
+.tg-order {
+  flex: 1 1 0; min-width: 220px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 8px; background: #141019; border: 1px solid #2e2636; border-left: 3px solid #6a5f76;
+}
+.tg-order > div { min-width: 0; }
+.tg-order b, .tg-order span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-order b { font-size: 12px; color: #fff3d6; }
+.tg-order span { font-size: 10.5px; color: #a99db6; }
+.tg-order.req { border-left-color: #c9a44a; }
+.tg-order.cart { border-left-color: #7fb0e0; }
+.tg-order.muster { border-left-color: #7fbf6a; }
+.tg-order .town-btn { display: inline-block; white-space: nowrap; text-decoration: none; }
+/* Full screen on a desktop: a slim bar between the top bar and the map. */
+.tg-full .tg-ostrip { flex: none; margin: 0; padding: 4px 6px; background: #120e16; border-bottom: 2px solid #2a2230; }
+/* In the quest log: the cards stacked, in the log's parchment, the detail wrapped rather than cut. */
+.tg-ostrip.in-log { flex: none; flex-direction: column; margin: 0; padding: 6px; background: #211810; border-bottom: 3px solid #140d08; }
+.tg-ostrip.in-log .tg-ostrip-tab { align-self: flex-start; min-height: 32px; border: 3px solid #140d08; background: #3a2a1a; color: #ffe07a; }
+.tg-ostrip.in-log ul { flex-direction: column; overflow: visible; }
+.tg-ostrip.in-log .tg-order { min-width: 0; background: #3a2a1a; border-top-color: #140d08; border-right-color: #140d08; border-bottom-color: #140d08; }
+.tg-ostrip.in-log .tg-order span { white-space: normal; color: #d8c49a; }
+@media (max-width: 640px) {
+  .tg-order { min-width: 200px; }
+  .tg-order .town-btn { min-height: 34px; display: inline-flex; align-items: center; }
+}
+
+/* The pace and the land's hunger over the map are links: to the review, or to add an idea. */
+.tg-hud-item.tg-hud-link { cursor: pointer; text-decoration: none; }
+
+/* ── The delivery: what study has just brought, shown whole (components/town/Delivery) ──
+ * Over the map, framed in the best cart's tier colour. Every row is there at once; only the numbers count up.
+ * Any key or click puts it away, so nothing here needs a button. */
+.tg-delivery {
+  position: absolute; top: 8%; left: 50%; transform: translateX(-50%); z-index: 6;
+  width: min(420px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto;
+  display: grid; gap: 6px; padding: 12px 16px;
+  background: rgb(14 11 18 / .96); border: 3px solid #d8d0c4; color: #cfc4d8;
+  cursor: pointer;
+}
+.tg-delivery .town-title { margin-top: 0; font-size: 16px; line-height: 1.25; }
+.tg-dl-cart h3 { margin: 4px 0 2px; font-size: 12.5px; font-weight: 800; }
+.tg-dl-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 3px 10px; }
+.tg-dl-rows li { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.tg-dl-rows b { min-width: 2.5ch; text-align: right; color: #fff3d6; font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
+.tg-dl-rows span { color: #a99db6; }
+.tg-dl-line { font-size: 12px; line-height: 1.45; color: #cfc4d8; font-variant-numeric: tabular-nums; }
+.tg-dl-line b { color: #fff3d6; }
+.tg-stamp {
+  display: inline-block; padding: 0 5px; margin-right: 2px; transform: rotate(-4deg);
+  font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: #7fd08a; border: 2px solid #7fd08a;
+}
+.tg-dl-heirloom { display: grid; justify-items: center; gap: 4px; padding: 10px 8px; border: 2px solid; background: #1a120a; text-align: center; }
+.tg-dl-heirloom b { font-size: 14px; }
+.tg-dl-heirloom span { font-size: 11.5px; color: #d8c49a; }
+.tg-dl-hook { font-size: 12px; color: #ffd98a; }
+.tg-dl-hook a { color: #ffe07a; }
+.tg-dl-close { text-align: right; }
+@media (max-width: 640px) {
+  .tg-delivery { top: 8px; padding: 10px 12px; }
+  .tg-dl-rows { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+}
+
+/* The sound toggle sits with the speed buttons; muted, its note is struck through. */
+.tg-sound.off { color: #6a5f76; text-decoration: line-through; }
+
+/* The Study panel's carts: today's manifest per Field, fixed before a card is turned. */
+.tg-carts { display: grid; gap: 2px; margin: 6px 0; font-size: 11.5px; }
+.tg-carts li { padding: 2px 6px; border-left: 3px solid #3a3040; color: #cfc4d8; }
+.tg-carts li b { color: #fff3d6; }
+
+/* ── Honest endings (components/town/TownGame PerilMeter, PerilNotice; RunReport) ──
+ * The Peril meter sits after Hope only while the end draws near or a store runs short: amber under five
+ * days, red under three or while a rule's clock runs. It never blinks: a steady colour, and the words. */
+.tg-peril {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 460px;
+  padding: 2px 8px; font-size: 10.5px; border: 1px solid; cursor: help;
+}
+.tg-peril span { font-family: var(--font-mono, monospace); letter-spacing: .08em; text-transform: uppercase; }
+.tg-peril b { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-peril.amber { color: #ffd98a; border-color: #8a6a14; background: #221a08; }
+.tg-peril.red { color: #ffb4a0; border-color: #c0402a; background: #2a1210; }
+.tg-peril.red b { color: #ffd9c8; }
+
+/* 'Pause on alarm' sits with the speed and sound buttons; off, its flag is struck through. */
+.tg-alarmbtn.off { color: #6a5f76; text-decoration: line-through; }
+
+/* A peril or the winter audit, over the map until put away: red for the end drawing near, amber for the audit. */
+.tg-notice {
+  position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 7;
+  width: min(400px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto;
+  display: grid; gap: 8px; padding: 12px 16px;
+  background: rgb(14 11 18 / .96); border: 3px solid #c0402a; color: #cfc4d8;
+}
+.tg-notice.audit { border-color: #c9a44a; }
+.tg-notice h3 { margin: 2px 0 4px; font-size: 14px; font-weight: 800; color: #fff3d6; }
+.tg-notice section p:not(.town-kicker) { font-size: 12px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.tg-notice.peril .town-kicker { color: #ff8a6a; }
+.tg-notice .town-row { align-items: center; margin-top: 2px; }
+
+/* The Run Report: the whole run on one card over the map, scrolling on a small screen. */
+.tg-fallen.tg-report {
+  inset: 4% 6%; align-content: start; overflow-y: auto; gap: 8px; z-index: 8;
+}
+.tg-report section { display: grid; gap: 4px; }
+.tg-report h3 {
+  font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #c9a44a;
+}
+.tg-rr-turn, .tg-rr-line { font-size: 12px; line-height: 1.5; color: #cfc4d8; }
+.tg-rr-turn b { color: #ff9a86; }
+.tg-rr-chart { display: grid; gap: 3px; }
+.tg-rr-chart li { display: grid; grid-template-columns: 76px 1fr 44px; align-items: center; gap: 8px; font-size: 11px; }
+.tg-rr-chart svg { width: 100%; height: 22px; background: #0d0b10; border: 1px solid #2a2230; }
+.tg-rr-chart polyline { fill: none; stroke: #7fd08a; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.tg-rr-chart .tg-rr-alarm { stroke: #c0402a; stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.tg-rr-label { color: #a99db6; }
+.tg-rr-chart b { color: #fff3d6; text-align: right; font-variant-numeric: tabular-nums; }
+.tg-rr-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.tg-rr-chips li { padding: 2px 7px; font-size: 11.5px; border: 1px solid #6a2a22; background: #1a0f10; color: #e6c9c2; }
+.tg-rr-chips b { color: #fff3d6; }
+.tg-rr-grades { display: inline-flex; gap: 4px; }
+.tg-rr-grades span { padding: 0 5px; font-family: var(--font-mono, monospace); font-size: 10.5px; border: 1px solid #3a3040; }
+.tg-rr-grades .g-S { color: #7fd08a; border-color: #3e7a30; }
+.tg-rr-grades .g-A { color: #9ce0c0; }
+.tg-rr-grades .g-B { color: #ffd98a; }
+.tg-rr-grades .g-C { color: #ff9a86; border-color: #6a2a22; }
+.tg-rr-study { display: grid; gap: 2px; font-size: 12px; color: #cfc4d8; }
+.tg-rr-study b { color: #7fd08a; font-variant-numeric: tabular-nums; }
+.tg-rr-lesson { padding: 8px 10px; font-size: 12.5px; line-height: 1.5; color: #fff3d6; background: #221a08; border-left: 3px solid #c9a44a; }
+.tg-rr-lesson b { display: block; font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #c9a44a; }
+@media (max-width: 640px) {
+  .tg-peril { max-width: 100%; font-size: 10px; }
+  .tg-notice { top: 8px; padding: 10px 12px; }
+  .tg-fallen.tg-report { inset: 6px; padding: 10px 12px; }
+  .tg-rr-chart li { grid-template-columns: 64px 1fr 36px; }
+}

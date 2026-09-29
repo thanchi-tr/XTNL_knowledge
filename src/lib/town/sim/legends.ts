@@ -61,7 +61,8 @@ export const LEGENDS: Record<Legend, LegendDef> = {
 export const LEGEND_TOWN = { hall: 30, pop: 60, day: 40, health: 80, mind: 70 } as const;
 
 /** A villager's title: their legendary calling if they have one, else their rank in the trade. */
-export const titleOf = (v: Villager) => (v.legend ? LEGENDS[v.legend].name : roleLabel(v.role, v.rank));
+export const titleOf = (v: Villager) =>
+  v.champion === "king" ? `King · ${roleLabel(v.role, v.rank)}` : v.champion === "master" ? `Master of Mythic Arts · ${v.rank}` : v.legend ? LEGENDS[v.legend].name : roleLabel(v.role, v.rank);
 
 /** The living holder of a calling, if the town has one. */
 export const legendOf = (s: GameState, l: Legend): Villager | undefined => s.villagers.find((v) => v.legend === l);

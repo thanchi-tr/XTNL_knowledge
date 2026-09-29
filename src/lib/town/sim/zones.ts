@@ -220,7 +220,7 @@ export function stepZones(s: GameState, dtMin: number, a: Air, occ: Map<number, 
   const c = clock(s.time);
   const dt = dtMin * 60;
   const r = rng(Math.floor(s.time) * 131 + s.seed);
-  const target = s.policy?.heat ?? 12;
+  const target = s.policy?.heat ?? 10;
   let smokeKg = 0;
   let heatW = 0;
   const fires = fireAir(s);

@@ -11,6 +11,9 @@ import { placeLairs } from "./wilds";
 import { FOG } from "./vision";
 import { sowWild } from "./forage";
 import { initSurvival, initVillager } from "./survival";
+import { BIOME_DEFS, landCrops, waterCrops, type Biome } from "./biomes";
+import { MOMENTS_MAX } from "./moments";
+import { runlogOf } from "./runlog";
 
 /**
  * Founding a town, and the read-only questions everything else asks of it:
@@ -46,6 +49,8 @@ export function makeStructure(s: GameState, type: StructureType, x: number, y: n
     workers: [],
     buildUntil: built ? undefined : s.time + def.buildHours * 60,
   };
+  // A new lamp is put up with its reservoir full (./world LAMP_CAP).
+  if (type === "lamppost") st.fuel = 12;
   // The ground it stands on: meadow and hills change what a building yields.
   const tally = new Map<number, number>();
   for (let yy = y; yy < y + def.h; yy++) for (let xx = x; xx < x + def.w; xx++) {
@@ -59,8 +64,9 @@ export function makeStructure(s: GameState, type: StructureType, x: number, y: n
     st.bedUpgrades = 0;
     st.utilities = [];
   }
-  if (type === "farm") st.mode = "potato";
-  if (type === "waterfarm") st.mode = "rice";
+  // A new field sows this map's first crop (./biomes): potatoes and rice in the green country.
+  if (type === "farm") st.mode = landCrops(s)[0];
+  if (type === "waterfarm") st.mode = waterCrops(s)[0];
   if (type === "refinery") st.mode = "planks";
   if (type === "laboratory") st.mode = "tonic";
   // A new fire's grate is empty: the town has to load it.
@@ -110,12 +116,13 @@ export function makeVillager(s: GameState, house: number | null, role: Role = "i
  */
 export type Founding = "starter" | "showcase";
 
-export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"): GameState {
+export function newTown(seed: number, bonus = 0, founding: Founding = "showcase", biome: Biome = "temperate"): GameState {
   const s: GameState = {
     version: 2,
     seed,
+    biome,
     time: 8 * 60, // founded at eight in the morning
-    map: generateMap(seed),
+    map: generateMap(seed, biome),
     structures: [],
     villagers: [],
     nextId: 1,
@@ -127,7 +134,7 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
     raid: null,
     // Three days' grace before the first raid: long enough to build a fire,
     // a barracks and a tower, short enough that the threat is felt early.
-    nextRaidAt: 2 * 24 * 60,
+    nextRaidAt: 5 * 24 * 60, // the opening (./menace OPENING_DAYS): only the dark comes, at night
     kills: [],
     clearing: [],
     log: [],
@@ -212,6 +219,11 @@ export function newTown(seed: number, bonus = 0, founding: Founding = "showcase"
   }
 
   s.log.push({ t: s.time, text: "The town is founded. Six villagers, two fields, one fire, a few lamps.", tone: "info" });
+  // The founders sow what grows here.
+  if (biome !== "temperate") {
+    const crops = landCrops(s);
+    s.structures.filter((st) => st.type === "farm").forEach((f, i) => (f.mode = crops[i % 3]));
+  }
   placeLairs(s);
   firstCrops(s);
   // Everything above was placed while the occupancy was empty; confirm the
@@ -251,7 +263,7 @@ function foundStarter(s: GameState, bonus: number): GameState {
   s.res = starterStores(bonus);
   makeVillager(s, home.id);
   makeVillager(s, home.id);
-  s.log.push({ t: s.time, text: "The town is founded: a hall, one home, two villagers. Everything else is yours to build — start with a fire before the first night.", tone: "info" });
+  s.log.push({ t: s.time, text: `The town is founded${s.biome && s.biome !== "temperate" ? ` in ${BIOME_DEFS[s.biome].name.toLowerCase()}` : ""}: a hall, one home, two villagers. Everything else is yours to build — start with a fire before the first night.`, tone: "info" });
   return s;
 }
 
@@ -267,7 +279,7 @@ export function migrate(s: GameState): GameState {
   // corner; new country is surveyed around it.
   if (s.map.w !== MAP_W || s.map.h !== MAP_H) {
     const old = s.map;
-    const fresh = generateMap(s.seed);
+    const fresh = generateMap(s.seed, s.biome);
     for (let y = 0; y < Math.min(old.h, MAP_H); y++) {
       for (let x = 0; x < Math.min(old.w, MAP_W); x++) {
         const o = y * old.w + x;
@@ -333,6 +345,10 @@ export function migrate(s: GameState): GameState {
     paintCountry(s.map.terrain, s.map.overlay, s.map.meta, s.seed, home, 26, (i) => !s.map.seen?.[i] && !occ[i]);
     s.terrainV = 1;
   }
+  // Moments (./moments) came later: a save without them has none waiting; one kept past the cap keeps the newest.
+  if (s.moments && s.moments.length > MOMENTS_MAX) s.moments = s.moments.slice(-MOMENTS_MAX);
+  // The run's log (./runlog) came later: an older town starts one today, its deaths and raids won so far kept apart.
+  runlogOf(s);
   return s;
 }
 
@@ -453,6 +469,11 @@ export function countedTroops(s: GameState): Villager[] {
   return s.villagers.filter((v) => isMilitary(v) && v.guard != null && s.structures.some((t) => t.id === v.guard && isGuardPost(t) && !t.buildUntil));
 }
 
+/** Troops the player has stationed out on the map (./command): they defend from there, post or no post. */
+export function stationedTroops(s: GameState): Villager[] {
+  return s.villagers.filter((v) => isMilitary(v) && !!v.stand);
+}
+
 /** The troops posted to one tower. */
 export const guardsAt = (s: GameState, towerId: number) => s.villagers.filter((v) => isMilitary(v) && v.guard === towerId);
 
@@ -467,6 +488,37 @@ export function townPower(s: GameState): { power: number; avgTroopLevel: number 
   const avg = troops.length ? troops.reduce((a, v) => a + Math.max(1, v.rank), 0) / troops.length : 1;
   // A crowded town draws bigger monsters: every six people add a level.
   return { power: (hall?.level ?? 1) + avg + troops.length / 4 + s.villagers.length / 5, avgTroopLevel: avg };
+}
+
+/**
+ * The hour's own reckoning. Inside one hourly tick, a reading the hour asks for
+ * again and again (./needs unguarded) is worked out once and kept; outside it — the panels, the player's orders, a paused game — they
+ * are always read afresh. `n` counts hours, so a kept reading never outlives its own.
+ */
+export const HOUR = { on: false, n: 0 };
+
+/** A reading kept for the rest of this hourly tick, or made now if the tick is not running. */
+export function perHour<T>(memo: WeakMap<GameState, { n: number; key: string; v: T }>, s: GameState, key: string, make: () => T): T {
+  if (!HOUR.on) return make();
+  const m = memo.get(s);
+  if (m && m.n === HOUR.n && m.key === key) return m.v;
+  const v = make();
+  memo.set(s, { n: HOUR.n, key, v });
+  return v;
+}
+
+/**
+ * A pupil or recruit who died, fled or turned to stone gives up the place:
+ * the school is free for the next. Swept at the end of every step, the sim's and the fight's,
+ * after everything in it that can take a life.
+ */
+export function dropLostPupils(s: GameState) {
+  for (const st of s.structures) {
+    const tr = st.training;
+    if (!tr || s.villagers.some((v) => v.id === tr.villagerId)) continue;
+    st.training = null;
+    log(s, `The course at the ${CATALOG[st.type].name.toLowerCase()} ends: its pupil is gone.`, "info");
+  }
 }
 
 export function log(s: GameState, text: string, tone: "good" | "bad" | "info" = "info") {
@@ -500,8 +552,8 @@ export function unrle(r: number[]): number[] {
 
 /** The save as text: the whole state, with its map layers packed. */
 export function packSave(s: GameState): string {
-  const { terrain, overlay, meta, seen, paving, ...rest } = s.map;
-  return JSON.stringify({ ...s, map: { ...rest, packed: 1, terrain: rle(terrain), overlay: rle(overlay), meta: rle(meta), seen: seen ? rle(seen) : undefined, paving: paving ? rle(paving) : undefined } });
+  const { terrain, overlay, meta, seen, paving, bridge, ...rest } = s.map;
+  return JSON.stringify({ ...s, map: { ...rest, packed: 1, terrain: rle(terrain), overlay: rle(overlay), meta: rle(meta), seen: seen ? rle(seen) : undefined, paving: paving ? rle(paving) : undefined, bridge: bridge ? rle(bridge) : undefined } });
 }
 
 /** Reads a save written by `packSave` — or an older, unpacked one. */
@@ -513,6 +565,7 @@ export function unpackSave(raw: string): GameState {
     s.map.meta = unrle(s.map.meta);
     if (s.map.seen) s.map.seen = unrle(s.map.seen);
     if (s.map.paving) s.map.paving = unrle(s.map.paving);
+    if (s.map.bridge) s.map.bridge = unrle(s.map.bridge);
     delete s.map.packed;
   }
   return s;

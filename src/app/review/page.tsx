@@ -1,16 +1,28 @@
+import Link from "next/link";
 import { loadFieldTree } from "@/lib/queries";
 import { isDue, formatDue, daysUntilDue } from "@/lib/due";
 import { displayQuestion } from "@/lib/idea-display";
 import { loadBossStates } from "@/lib/bosses";
 import { getCurrentUserId } from "@/lib/user";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
+import { dayKey } from "@/lib/town/pulse-core";
 
 // Due-ness changes by the second (dueDate <= now) — never let this be
 // statically cached/prerendered.
 export const dynamic = "force-dynamic";
 
-export default async function WorkspacePage() {
+/** The first value of a search param that may repeat. */
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+export default async function WorkspacePage({
+  searchParams,
+}: {
+  // Next 16: a Promise. /review?field=<Field id>&from=town is how the town
+  // sends you to the one Field it is asking for.
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const now = new Date();
+  const params = await searchParams;
 
   // One shared, cached read of the Field tree rather than a bespoke query —
   // the Dashboard wants the same rows, so whichever page is visited second
@@ -31,6 +43,9 @@ export default async function WorkspacePage() {
   }));
 
   const allFieldNames = fields.map((f) => f.name);
+  // An id rather than a name in the link, so a renamed Field still resolves; an unknown one opens on All.
+  const initialField = fields.find((f) => f.id === one(params.field))?.name;
+  const fromTown = one(params.from) === "town";
 
   const fieldsWithDue: WorkspaceField[] = fields
     .map((field) => ({
@@ -90,6 +105,11 @@ export default async function WorkspacePage() {
     <main className="site-container flex-1 py-8">
       <header className="fade-up mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
+          {fromTown && (
+            <Link href="/town" className="mb-2 inline-block no-underline" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+              ← Your town
+            </Link>
+          )}
           <p className="section-eyebrow">Review</p>
           <h1 className="mt-1.5 flex items-baseline gap-2">
             <span
@@ -113,12 +133,17 @@ export default async function WorkspacePage() {
 
       <div className="fade-up fade-up-1">
         <WorkspaceView
+          // A new ?field= opens a fresh view on that Field rather than keeping the old selection.
+          key={initialField ?? "ALL"}
           fieldsWithDue={fieldsWithDue}
           allFieldNames={allFieldNames}
           totalDue={totalDue}
           bosses={bosses}
           upcoming={upcoming}
           scheduledCount={notYetDue.length}
+          initialField={initialField}
+          // The same day key the town's study input is read against (lib/town/input), on the server's clock.
+          today={dayKey(now)}
         />
       </div>
     </main>

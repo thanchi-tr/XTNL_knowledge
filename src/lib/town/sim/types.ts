@@ -32,8 +32,9 @@ export const MAP_H = 240;
  * climb them slowly); marsh is soft wet ground (nothing can stand on it, but
  * it gives peat and bog iron, and raiders flounder in it).
  */
-export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4, Meadow: 5, Hill: 6, Marsh: 7 } as const;
-export const TERRAIN_NAME: Record<number, string> = { 0: "Grass", 1: "Water", 2: "Road", 3: "Forest", 4: "Riverbank", 5: "Meadow", 6: "Hills", 7: "Marsh" };
+export const Terrain = { Grass: 0, Water: 1, Pavement: 2, Forest: 3, Bank: 4, Meadow: 5, Hill: 6, Marsh: 7, Void: 8 } as const;
+/** The green country's names; each map has its own (./biomes). Void is the open sky between floating isles. */
+export const TERRAIN_NAME: Record<number, string> = { 0: "Grass", 1: "Water", 2: "Road", 3: "Forest", 4: "Riverbank", 5: "Meadow", 6: "Hills", 7: "Marsh", 8: "Open sky" };
 export const Overlay = { None: 0, Tree: 1, Rock: 2, Debris: 3, Wall: 4, Gate: 5, Lair: 6, Crop: 7 } as const;
 
 export interface MapState {
@@ -47,6 +48,8 @@ export interface MapState {
   paving?: number[];
   /** 1 where the town has ever seen: the fog lifts to a thin mist there, not the full cloud. */
   seen?: number[];
+  /** 1 where a road is a bridge laid over the open sky (floating isles): taken up, it leaves sky. */
+  bridge?: number[];
 }
 
 // ── Resources ─────────────────────────────────────────────
@@ -59,6 +62,10 @@ export const RESOURCE_KEYS = [
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley",
   "onion", "bean", "turnip", "corn", "strawberry", "garlic",
   "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish",
+  /** Picked from apple trees (./woods). */
+  "apple",
+  /** Desert and floating-isle crops (./biomes). */
+  "date", "millet", "chickpea", "melon", "saffron", "cloudberry", "sunflower", "starfruit", "windroot",
   "meals", "ice", "planks", "bricks", "ingots", "gunpowder", "poison",
   /** Arcane formula: steadies a wizard's ascension past level 12. */
   "formula",
@@ -66,13 +73,18 @@ export const RESOURCE_KEYS = [
   "tonic", "fertiliser",
   /** Survival goods: salt for curing, peat and charcoal to burn, meat, bloomery iron, aged compost. */
   "salt", "peat", "charcoal", "meat", "bogiron", "compost",
+  /** Wards from the mythic laboratory: each turns the omen of one element (see ./omens). */
+  "earthward", "fireward", "waterward", "airward", "thunderward", "lightward", "darkward", "timeward", "spaceward",
+  /** The alchemist's quicksilver and the observatory's star charts. */
+  "quicksilver", "starchart",
 ] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 export type Resources = Record<ResourceKey, number>;
 
 export const RAW_FOODS: ResourceKey[] = [
   "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
-  "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish", "meat",
+  "rice", "taro", "lotus", "reed", "watercress", "chestnut", "fish", "meat", "apple",
+  "date", "millet", "chickpea", "melon", "saffron", "cloudberry", "sunflower", "starfruit", "windroot",
 ];
 
 // ── Structures ────────────────────────────────────────────
@@ -82,12 +94,16 @@ export type StructureType =
   | "nobleyard" | "watchtower" | "icefactory" | "mine" | "lumbercamp" | "forge"
   | "lamppost" | "brazier" | "laboratory" | "fishery"
   | "storehouse" | "armyschool" | "armypoint" | "museum"
+  /** More laboratories: the alchemist's workshop, the astral observatory, the mythic laboratory. */
+  | "alchemy" | "observatory" | "mythiclab"
   /** Two duplexes knocked together: not built, made. */
   | "apartment";
 
 export type Crop =
   | "potato" | "wheat" | "grape" | "herb" | "cabbage" | "carrot" | "pumpkin" | "barley"
-  | "onion" | "bean" | "turnip" | "corn" | "strawberry" | "garlic";
+  | "onion" | "bean" | "turnip" | "corn" | "strawberry" | "garlic"
+  /** Desert and floating-isle crops (./biomes). */
+  | "date" | "millet" | "chickpea" | "melon" | "saffron" | "cloudberry" | "sunflower" | "starfruit" | "windroot";
 export type WaterCrop = "rice" | "taro" | "lotus" | "reed" | "watercress" | "chestnut";
 
 export interface Structure {
@@ -134,6 +150,8 @@ export interface Structure {
    */
   training?: {
     villagerId: number; role: Role; left?: number; until?: number; rank?: number;
+    /** The heavy class an armoury recruit is fitted for (./enrol). */
+    heavy?: import("./enrol").HeavyClass;
     /** A recruit being taken on: a flat four hours, not slowed by the study pace. */
     recruit?: boolean;
   } | null;
@@ -158,6 +176,20 @@ export interface Structure {
   rot?: number;
   /** A roof the town chose over the grade's default (turf: warm and heavy). */
   roofKind?: string;
+  /** The path it has taken (./paths), and when a change of path finishes retooling. */
+  path?: import("./paths").PathKind;
+  pathReady?: number;
+  /** Its path's multiplier on its work, kept on the hour (./paths). */
+  pr?: number;
+  /** Windfalls it has had since taking its path. */
+  lucky?: number;
+  /** A lamppost burning as a beacon tonight; a watermill in flood this hour. */
+  beacon?: boolean;
+  flood?: boolean;
+  /** A field: how the last hour's weather suited its crop (./crops), and why not. */
+  cropNow?: [number, string];
+  /** When lightning last struck it (./habits). */
+  struck?: number;
 }
 
 // ── Survival (design doc: docs/town-survival-systems.md) ──
@@ -334,9 +366,22 @@ export interface Society {
   strikeHours: number;
   /** Hours Hope has lain at nothing. Three days of it and the town is abandoned. */
   despairHours?: number;
-  /** Hours a town that once grew has lain at two people or fewer. Three days of it and it has dwindled away. */
+  /** Hours a town that once grew has lain at a third of its peak or fewer (two at least). Three days of it and it has dwindled away. */
   fewHours?: number;
+  /** Hours a town that never grew past five has stood with no one in it. A day of it and the run is over. */
+  emptyHours?: number;
 }
+
+/**
+ * How a run ends (./psyche, ./combat): three days at a third of its peak or
+ * fewer; three days with Hope at 5 or less; its people depose the steward;
+ * the hall falls with 3 or fewer left; or, in a town too small to dwindle,
+ * a day with no one in it.
+ */
+export type FallCause = "dwindled" | "abandoned" | "deposed" | "sacked" | "emptied";
+
+/** The peril alarms (./psyche perilAlarms): the end drawing near, and the stores running short. */
+export type PerilKind = "doom" | "food" | "fuel";
 
 export type NodeKind = "bogiron" | "salt" | "coal" | "peat" | "flint" | "silver";
 /** A wilderness extraction site (design §4.4). */
@@ -368,6 +413,8 @@ export interface Policy {
 // ── People ────────────────────────────────────────────────
 export type Role =
   | "idle" | "farmhand" | "icer" | "chef" | "scientist" | "geologist" | "commander" | "biologist" | "artist"
+  /** The Eye of Time: a worker who came back from fifty excursions changed (see ./seer). */
+  | "seer"
   | "miner" | "lumberjack" | "refiner" | "trader" | "fisher"
   /** Trained at the army school from a veteran; leads an army point. */
   | "captain"
@@ -395,11 +442,32 @@ export interface Villager {
   xp: number;
   health: number;
   happy: number;
+  /** Game time sanity sank below 20 and has stayed there since, if it has (./psyche). */
+  lowSince?: number | null;
   work: number | null;
   /** Bound emblem, for grand wizards and emblem knights. */
   emblem?: { code: string; name: string; attribute: Attribute; depth: number } | null;
-  /** Special troops: forged gear, by item id (see ./loot). */
-  gear?: { weapon?: string; armour?: string };
+  /** Their twelve attributes (./attributes): labour, war, arcane. They stay with them through every job and promotion. */
+  attrs?: import("./attributes").Attrs;
+  /** Arrived gifted, or a prodigy (./attributes, ./recognition). */
+  gift?: import("./attributes").Gift;
+  /** On the night watch (./menace): the only ones who answer an alarm between eight at night and six in the morning; they rest nine to five. */
+  nightWatch?: boolean;
+  /** A hero's class, level, experience and learned skills (./heroes). Knights and wizards past their thresholds carry only their skills here. */
+  hero?: { cls: import("./heroes").HeroClass; level: number; xp: number; skills: string[] } | null;
+  /** A heavy soldier's class, from the armoury (./enrol HEAVY_CLASSES). */
+  heavy?: import("./enrol").HeavyClass;
+  /** Special troops and heroes: equipment by slot, as item ids (see ./items). */
+  gear?: Partial<Record<"weapon" | "armour" | "helm" | "boots" | "ring" | "amulet" | "relic", string>>;
+  /** Work level from hours at work (every worker, whatever the role's titles), and the experience toward the next. */
+  level?: number;
+  wxp?: number;
+  /** Excursions into the fog come home from alive (workers of level 10 and up). */
+  excursions?: number;
+  /** A champion: a Master of Mythic Arts, or the King (see ./champions). */
+  champion?: "master" | "king" | null;
+  /** A champion struck down: stone until restored at the hall. `restore` 0–1; `fuel`, offerings not yet worked in. */
+  statue?: { since: number; restore: number; fuel: number } | null;
   /** Emblem knights: the soldiers who have sworn to them. */
   battalion?: number;
   /** Emblem knights: away on a sortie until this minute. */
@@ -410,8 +478,10 @@ export interface Villager {
   scout?: Scout | null;
   /** Knights: when their silver pay first went unpaid. They desert after three days. */
   unpaidSince?: number | null;
-  /** The watchtower this troop is posted to. Only posted troops defend. */
+  /** The watchtower this troop is posted to. Posted and stationed troops defend. */
   guard?: number | null;
+  /** Stationed out on the map by the player's command (./command): it stands and fights there. */
+  stand?: [number, number] | null;
   /** Physiology (design §1). */
   body?: Body;
   /** Discontent 0–100, and faction: 0 Tradition, 1 Pragmatism, 2 Faith. */
@@ -429,7 +499,12 @@ export type MonsterKind =
   | "minotaur" | "troll" | "lich" | "golem" | "wyvern" | "serpent" | "demon" | "dragon" | "elderdragon"
   | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk"
   | "ghoul" | "gargoyle" | "cyclops" | "vampire" | "hydra" | "griffin" | "wisp" | "wendigo"
-  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian";
+  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian"
+  /** Mythic: one for every element but time, which is the elder dragon's. */
+  | "phoenix" | "leviathan" | "behemoth" | "stormroc" | "raiju" | "seraph" | "shadowcolossus" | "voidwalker"
+  /** The desert's own, and the floating isles' (./biomes). */
+  | "scorpion" | "jackal" | "mummy" | "sandworm" | "djinn" | "sphinx"
+  | "pixie" | "skyray" | "cloudjelly" | "thunderbird" | "stormgiant" | "skyserpent";
 
 export interface Combatant {
   id: number;
@@ -474,6 +549,40 @@ export interface Combatant {
   post?: number;
   /** Guards waiting inside their post: unseen, untouchable, not yet called out. */
   inside?: boolean;
+  /** The element of its blows, and of its hide (./elements). */
+  element?: import("./elements").Element | null;
+  /** A mythic monster: only a champion's blows land full on it. */
+  mythic?: boolean;
+  /** A champion in the field: struck down, they turn to stone rather than die. */
+  champion?: "master" | "king";
+  /** Which of its kind's looks a monster wears. */
+  variant?: number;
+  /** A phoenix that has already risen once from its ashes. */
+  reborn?: boolean;
+  /** The player's order for it (./command), and the spot it holds once there. */
+  order?: import("./command").Order;
+  anchor?: [number, number];
+  /** A battalion soldier: the knight (villager id) it follows. */
+  leader?: number;
+  /** Tunnels under walls (a sandworm; a storm giant steps over them). */
+  burrow?: boolean;
+  /** A hero's skills in the fight (./heroes), and the raised class it fights as. */
+  hm?: import("./heroes").HeroMods;
+  heroCls?: string;
+  /** A heavy soldier's class: its blows against the great, and inside the hall's circle (./enrol). */
+  heavyCls?: string;
+  /** This tick's share of the auras around it: harder, faster, guarded, weakened, warded. */
+  buff?: { dmg: number; haste: number; guard: number; weaken: number; ward: number };
+  /** Slowed (a snare) until this raid-clock time. */
+  slowUntil?: number;
+  /** A legend's roar on arriving: the defenders near it falter until this raid-clock time (./menace). */
+  roarUntil?: number;
+  /** A defender's firmness against terror, from their Valor (./attributes), 0–1. */
+  valor?: number;
+  /** When a loopholed wall last shot at it (./world WALL_ORDERS). */
+  boltAt?: number;
+  /** Called out by the mythic watch (./menace isMythicWatcher): it goes for the mythic thing first. */
+  mythicWatch?: boolean;
 }
 
 export interface Projectile {
@@ -481,8 +590,15 @@ export interface Projectile {
   y: number;
   tx: number;
   ty: number;
-  kind: "arrow" | "bolt" | "fire" | "rock";
+  /** arrow and quarrel for bows and crossbows, spell for wizards, slash for knights' sword-waves,
+   *  ballista for towers, breath for monsters' fire and frost, rock for what is thrown. `bolt` and `fire` are older names. */
+  kind: "arrow" | "bolt" | "fire" | "rock" | "quarrel" | "spell" | "slash" | "ballista" | "breath";
   t: number;
+  /** How fancy: 0 plain … 5 mythic, from the shooter's level. */
+  tier?: number;
+  element?: import("./elements").Element | null;
+  /** Flight speed multiplier (a spell is quicker than a thrown rock). */
+  v?: number;
 }
 
 export type RaidSide = "east" | "south" | "north" | "west";
@@ -519,6 +635,8 @@ export interface Raid {
   clock: number;
   nextId: number;
   started?: boolean;
+  /** When lightning last fell on the field, for the flash (./habits). */
+  flashAt?: number;
   /** Pieces of the fight worth telling, for the floating combat text. */
   pops?: { x: number; y: number; text: string; at: number; tone: "hit" | "crit" | "heal" }[];
   /** Night prowlers: a haunt that wandered in out of the dark for any building, lit or not. */
@@ -591,7 +709,7 @@ export interface Scout {
   worked?: number;
 }
 
-export type LairKind = "tomb" | "dragonpit" | "shadowgate" | "goblinwarren" | "webhollow" | "frostrift" | "titangate";
+export type LairKind = "tomb" | "dragonpit" | "shadowgate" | "goblinwarren" | "webhollow" | "frostrift" | "titangate" | "stormspire";
 
 /** Something old and bad, deep in the fog. It breeds monsters that roam the map. */
 export interface Lair {
@@ -621,11 +739,33 @@ export interface Roamer {
   ty: number;
   /** A band hunting a hero out in the fog: the villager it follows. */
   hunt?: number;
+  /**
+   * What it is about (./wilds): roaming the wilds; closing on the town to
+   * strike; drawing off out of the town's sight; lying up out there, watching.
+   */
+  mode?: "roam" | "stalk" | "withdraw" | "lurk";
+  /** The spot it moves about in its manner when it is not on the march. */
+  ax?: number;
+  ay?: number;
+  /** Its manner's step: how far round its circle, which leg of its pacing. */
+  ph?: number;
+  /** Whether it is moving about its spot rather than marching. */
+  mill?: boolean;
+  /** Lying still (an ambusher in wait, a brute at rest) until this game minute. */
+  still?: number;
+  /** When it came to lie up out of the town's sight. */
+  since?: number;
+  /** Whether the town has seen it draw back to watch. */
+  eyed?: boolean;
+  /** Coming on at a run: the town has left something unguarded. */
+  rush?: boolean;
 }
 
 export interface GameState {
   version: 2;
   seed: number;
+  /** The map it was founded on (./biomes): the green country when absent. */
+  biome?: import("./biomes").Biome;
   /** Game minutes since founding. */
   time: number;
   map: MapState;
@@ -642,7 +782,9 @@ export interface GameState {
   nextRaidAt: number;
   kills: { kind: MonsterKind; at: number }[];
   /** Tiles queued for clearing (trees, rocks, debris). */
-  clearing: { tile: number; progress: number }[];
+  clearing: { tile: number; progress: number; pick?: boolean; done?: boolean }[];
+  /** Fruit trees picked, by tile: the season they were picked in (year × 4 + season), so each bears once a season (./woods). */
+  picked?: Record<number, number>;
   log: LogLine[];
   /** Accumulated minutes not yet applied as hourly ticks. */
   hourAcc: number;
@@ -706,10 +848,40 @@ export interface GameState {
   /** Minutes accumulated towards the next physiology step, and the next ten-minute zone step. */
   bodyAcc?: number;
   zoneAcc?: number;
-  /** Cause of the run's end, if not a sack. */
-  fallCause?: string;
+  /** How the run ended. Saves from before 'sacked' was set leave a sack without one. */
+  fallCause?: FallCause;
+  /** The run's own record, for its report (./runlog): a page each dawn, the dead by cause, the waves, what study gave. */
+  runlog?: import("./runlog").RunLog;
+  /** Peril alarms already raised (./psyche perilAlarms): the game time each was raised, cleared once it has passed. */
+  perilSeen?: Partial<Record<PerilKind, number>>;
   /** Today's study in town: buffs, drops paid, what the adversary reads (./knowledge). */
   knowledge?: import("./knowledge").Knowledge;
+  /** Carts, tithes, heirlooms and broken waves waiting to be shown, and the last few shown (./moments). */
+  moments?: import("./moments").Moment[];
   /** The adversary: its model of the player, its tactics' weights, its stalking (./nemesis). */
   nemesis?: import("./nemesis").Nemesis;
+  /** Control groups: troops the player has bound to a number key (./command). */
+  groups?: Record<string, number[]>;
+  /** Singular artifacts already found: each exists once (./items). */
+  singletons?: string[];
+  /** Champions turned to stone, standing in the town hall until restored (./champions). */
+  statues?: Villager[];
+  /** What the Eye of Time has seen of the next wave (./seer). */
+  prophecy?: import("./seer").Prophecy | null;
+  /** The air a legendary or mythic thing brought with it (./omens). */
+  omen?: import("./omens").Omen | null;
+  /** The player's real emblems as the town last read them: what the King's blows scale with (./champions). */
+  realm?: { emblems: { code: string; name: string; depth: number; attributes: string[] }[]; at: number };
+  /** 1 once the storm spire has been set into an older map. */
+  spireV?: number;
+  /** The pyramid of needs carried into the town: Wellbeing and Foundations (./needs). */
+  needs?: import("./needs").NeedsState;
+  /** Times the hall has fallen to a raid and been looted (./combat). */
+  hallFalls?: number;
+  /** Spike pits dug in the ground: tile indices, one monster's worth each (./menace). */
+  traps?: number[];
+  /** The town's name, and the ledger of how it was earned and spent (./recognition). */
+  recognition?: import("./recognition").Recognition;
+  /** The player's real study, as the town last read it (./mastery). */
+  mastery?: import("./mastery").Mastery;
 }

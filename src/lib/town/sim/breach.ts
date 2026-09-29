@@ -80,12 +80,11 @@ export function fightBox(s: GameState, extra: [number, number][] = []): Box {
 export interface Field { box: Box; dist: Float64Array; target: number; flying: boolean }
 
 /**
- * Reverse Dijkstra from a target's footprint over the box: every tile's cost
- * to get there and start breaking it.
+ * The cost of entering each tile of the box for this group: ground, walls to
+ * break, the towers' fire and the land's dead. Built ones: the same for every
+ * target, since a target's own footprint is where the search starts, at nothing.
  */
-export function flowField(s: GameState, target: Structure, g: Group, ch: Channel, box: Box = fightBox(s)): Field {
-  const n = box.w * box.h;
-  const dist = new Float64Array(n).fill(Infinity);
+export function costField(s: GameState, g: Group, ch: Channel, box: Box): Float64Array {
   const occ = occupancy(s);
   const threat = threatMap(s, box);
   const deaths = aggroOf(s).deathMap;
@@ -96,7 +95,7 @@ export function flowField(s: GameState, target: Structure, g: Group, ch: Channel
     const o = s.map.overlay[i];
     if (g.flying) return 1;
     if (t === Terrain.Water) return Infinity;
-    if (occ[i] && occ[i] !== target.id) return Infinity;
+    if (occ[i]) return Infinity;
     // Raiders take the road; they climb hills slowly and flounder in marsh.
     let c = t === Terrain.Pavement ? 0.8 : t === Terrain.Forest ? 2 : t === Terrain.Bank ? 1.2 : t === Terrain.Hill ? 1.6 : t === Terrain.Marsh ? 2.4 : 1;
     // A wall must be broken; a gate stands open to anything that walks up to it.
@@ -107,6 +106,20 @@ export function flowField(s: GameState, target: Structure, g: Group, ch: Channel
     if (dm) c += MEMORY * dm;
     return c;
   };
+  const costs = new Float64Array(box.w * box.h);
+  for (let k = 0; k < costs.length; k++) costs[k] = cost(box.x + (k % box.w), box.y + Math.floor(k / box.w));
+  return costs;
+}
+
+/**
+ * Reverse Dijkstra from a target's footprint over the box: every tile's cost
+ * to get there and start breaking it. Given `goals` (cells of the box), it
+ * stops once each is settled — their values are final, the rest of the field
+ * is not: for weighing targets, not for walking.
+ */
+export function flowField(s: GameState, target: Structure, g: Group, ch: Channel, box: Box = fightBox(s), costs = costField(s, g, ch, box), goals?: number[]): Field {
+  const n = box.w * box.h;
+  const dist = new Float64Array(n).fill(Infinity);
   // Binary heap of (dist, cell) in typed arrays; a cell may sit in it more than once (lazy deletion).
   let cap = 1 << 14;
   let heapD = new Float64Array(cap);
@@ -154,30 +167,30 @@ export function flowField(s: GameState, target: Structure, g: Group, ch: Channel
     heapI[k] = li;
     return top;
   };
-  // Cost of entering each tile, computed once.
-  const costs = new Float64Array(n);
-  for (let k = 0; k < n; k++) costs[k] = cost(box.x + (k % box.w), box.y + Math.floor(k / box.w));
   for (let y = target.y - 1; y <= target.y + target.h; y++) for (let x = target.x - 1; x <= target.x + target.w; x++) {
     if (x < box.x || y < box.y || x >= box.x + box.w || y >= box.y + box.h) continue;
     const k = (y - box.y) * box.w + (x - box.x);
     dist[k] = 0;
     push(0, k);
   }
-  const DIRS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+  const waiting = goals ? new Set(goals) : null;
+  const W = box.w;
+  const H = box.h;
   while (size > 0) {
     const k = pop();
     const d = popD;
     if (d > dist[k]) continue;
-    const x = box.x + (k % box.w);
-    const y = box.y + Math.floor(k / box.w);
-    for (const [dx, dy, len] of DIRS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < box.x || ny < box.y || nx >= box.x + box.w || ny >= box.y + box.h) continue;
-      const nk = (ny - box.y) * box.w + (nx - box.x);
+    if (waiting?.delete(k) && !waiting.size) break;
+    const x = k % W;
+    const y = (k - x) / W;
+    for (let q = 0; q < 8; q++) {
+      const nx = x + DX[q];
+      const ny = y + DY[q];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const nk = ny * W + nx;
       const c = costs[nk];
       if (!Number.isFinite(c)) continue;
-      const nd = d + c * len;
+      const nd = d + c * STEP[q];
       if (nd < dist[nk]) {
         dist[nk] = nd;
         push(nd, nk);
@@ -186,6 +199,11 @@ export function flowField(s: GameState, target: Structure, g: Group, ch: Channel
   }
   return { box, dist, target: target.id, flying: g.flying };
 }
+
+/** The eight ways a monster steps, and how far each is: straight, then diagonal. */
+const DX = Int8Array.of(1, -1, 0, 0, 1, 1, -1, -1);
+const DY = Int8Array.of(0, 0, 1, -1, 1, -1, 1, -1);
+const STEP = Float64Array.of(1, 1, 1, 1, 1.414, 1.414, 1.414, 1.414);
 
 export const fieldAt = (f: Field, x: number, y: number) => {
   const gx = Math.floor(x);
@@ -228,6 +246,45 @@ export function targetValue(s: GameState, st: Structure, ch: Channel): number {
 
 const SIDES: RaidSide[] = ["east", "south", "north", "west"];
 
+/** The open ground of the box in connected parts (eight ways, as monsters walk): 0 where nothing can stand. */
+function groundParts(costs: Float64Array, box: Box): Int32Array {
+  const part = new Int32Array(costs.length);
+  const stack = new Int32Array(costs.length);
+  let next = 0;
+  for (let i = 0; i < costs.length; i++) {
+    if (part[i] || !Number.isFinite(costs[i])) continue;
+    part[i] = ++next;
+    let top = 0;
+    stack[top++] = i;
+    while (top) {
+      const k = stack[--top];
+      const x = k % box.w;
+      const y = (k - x) / box.w;
+      for (let q = 0; q < 8; q++) {
+        const nx = x + DX[q];
+        const ny = y + DY[q];
+        if (nx < 0 || ny < 0 || nx >= box.w || ny >= box.h) continue;
+        const nk = ny * box.w + nx;
+        if (part[nk] || !Number.isFinite(costs[nk])) continue;
+        part[nk] = next;
+        stack[top++] = nk;
+      }
+    }
+  }
+  return part;
+}
+
+/** The parts of open ground a search from this building starts in: its ring of seeds, and the ground beside them. */
+function entryParts(part: Int32Array, box: Box, st: Structure): Set<number> {
+  const out = new Set<number>();
+  for (let y = st.y - 2; y <= st.y + st.h + 1; y++) for (let x = st.x - 2; x <= st.x + st.w + 1; x++) {
+    if (x < box.x || y < box.y || x >= box.x + box.w || y >= box.y + box.h) continue;
+    const p = part[(y - box.y) * box.w + (x - box.x)];
+    if (p) out.add(p);
+  }
+  return out;
+}
+
 function sidePoint(side: RaidSide, st: Structure): [number, number] {
   const [cx, cy] = center(st);
   const d = 26;
@@ -254,11 +311,22 @@ export function chooseTarget(s: GameState, ch: Channel, party: IncomingMonster[]
     // Underground, the only cost is distance; take the richest.
     best = { U: cands[0].V, st: cands[0].st, side: SIDES[Math.floor(r() * 4)] };
   } else {
+    // One cost field for all eight, and each search only as far as the four sides it is asked about.
     const box = fightBox(s);
+    const costs = costField(s, g, ch, box);
+    const inBox = (x: number, y: number) => x >= box.x && y >= box.y && x < box.x + box.w && y < box.y + box.h;
+    const cell = (x: number, y: number) => (Math.floor(y) - box.y) * box.w + (Math.floor(x) - box.x);
+    const ground = groundParts(costs, box);
     for (const c of cands) {
-      const f = flowField(s, c.st, g, ch, box);
-      for (const side of SIDES) {
-        const [x, y] = sidePoint(side, c.st);
+      const pts = SIDES.map((side) => sidePoint(side, c.st));
+      // Only a side on the same open ground as the building can be reached: waiting on any other
+      // (on a building, in water, walled off beyond it) would search the whole box for nothing.
+      const reach = entryParts(ground, box, c.st);
+      const goals = pts.filter(([x, y]) => inBox(Math.floor(x), Math.floor(y))).map(([x, y]) => cell(x, y)).filter((k) => reach.has(ground[k]));
+      if (!goals.length) continue;
+      const f = flowField(s, c.st, g, ch, box, costs, goals);
+      for (const [i, side] of SIDES.entries()) {
+        const [x, y] = pts[i];
         const T = fieldAt(f, x, y);
         if (!Number.isFinite(T)) continue;
         const U = c.V / (T + 10);

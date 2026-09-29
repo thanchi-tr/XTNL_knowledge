@@ -3,7 +3,7 @@
 import { CATALOG } from "@/lib/town/sim/catalog";
 import { clock } from "@/lib/town/sim/state";
 import { airBoost, center, costText, fireAir, warmthRange } from "@/lib/town/sim/world";
-import { air, REGIME_LABEL, weatherOf } from "@/lib/town/sim/weather";
+import { air, REGIME_EFFECT, REGIME_LABEL, weatherOf } from "@/lib/town/sim/weather";
 import { FUEL_UNIT_KG, HEARTHS, envelope, isHeated, isZone, materials, ppm, woodFuel, lhv } from "@/lib/town/sim/zones";
 import { FOOTING, footingOf, frameLoads, frameUtil, hasFrame } from "@/lib/town/sim/frame";
 import { ILLNESS, STATE_LABEL, bodyOf } from "@/lib/town/sim/body";
@@ -16,9 +16,11 @@ import { TOOL_MATS, kitSummary } from "@/lib/town/sim/tools";
 import { NODE_DEFS, wakeState } from "@/lib/town/sim/wilds";
 import { fitHearth, reroof, setFooting, setPolicy, sweepChimney } from "@/lib/town/sim/actions";
 import { CHANNELS, STIMULI, type Footing, type GameState, type HearthKind, type Structure, type Villager } from "@/lib/town/sim/types";
-import { ATTR_BUFFS, TIERS, tierOf } from "@/lib/town/sim/knowledge";
+import { ATTR_BUFFS, TIERS, knowledgeOf, tierOf } from "@/lib/town/sim/knowledge";
+import { DEPTH_NAMES, STOCKS, STOCK_KEYS, goodsText, neediest, needs, passesOf, setTitheFocus, type Focus } from "@/lib/town/sim/tithes";
 import { TACTICS, TACTIC_LABEL, neglect, nemesisOf, tacticOdds, vulnerability, type Tactic } from "@/lib/town/sim/nemesis";
 import type { TownInput } from "@/lib/town/rules";
+import { cartAt, cartFor, goodsList, nextRollAt } from "@/lib/town/pulse";
 
 /**
  * The survival systems' readouts and controls (docs/town-survival-systems.md).
@@ -34,7 +36,7 @@ export function WeatherBadge({ s }: { s: GameState }) {
   const a = air(s);
   const w = weatherOf(s);
   return (
-    <div className={`tg-weather ${a.vis < 50 ? "warn" : ""}`} title={`Visibility ${Math.round(a.vis)} m · humidity ${pct(a.RH)} · ground ${r1(a.Tg)} °C · frost depth ${r1(w.zf)} m${s.time < w.thawUntil ? " · the ground is thawing (soft)" : ""}`}>
+    <div className={`tg-weather ${a.vis < 100 || ["sandstorm", "thunder", "heatwave", "gale"].includes(a.regime) ? "warn" : ""}`} title={`${REGIME_EFFECT[a.regime] ? `${REGIME_LABEL[a.regime]}: ${REGIME_EFFECT[a.regime]}. ` : ""}Visibility ${Math.round(a.vis)} m · humidity ${pct(a.RH)} · ground ${r1(a.Tg)} °C · frost depth ${r1(w.zf)} m${s.time < w.thawUntil ? " · the ground is thawing (soft)" : ""}`}>
       <b>{r1(a.T)} °C</b>
       <span>{REGIME_LABEL[a.regime]}</span>
       <span>{r1(a.v)} m/s</span>
@@ -166,7 +168,7 @@ export function SoilPanel({ st }: { st: Structure }) {
 export function SocietyPanel({ s, run }: { s: GameState; run: Run }) {
   const soc = s.society;
   const facs = factionDiscontent(s);
-  const pol = s.policy ?? { heat: 12, ration: 1, freshSoil: false, coalFirst: false, shift: 14 };
+  const pol = s.policy ?? { heat: 10, ration: 1, freshSoil: false, coalFirst: false, shift: 14 };
   const corpses = s.corpses?.length ?? 0;
   return (
     <div className="tg-society">
@@ -190,6 +192,11 @@ export function SocietyPanel({ s, run }: { s: GameState; run: Run }) {
         <label className="town-dim">Heat homes to{" "}
           <select className="town-select" value={pol.heat} onChange={(e) => run(() => setPolicy(s, { heat: Number(e.target.value) }))}>
             {[6, 8, 10, 12, 14, 16, 18].map((t) => <option key={t} value={t}>{t} °C</option>)}
+          </select>
+        </label>
+        <label className="town-dim" title="Longer days get more done; discontent settles higher the longer they are — about 45 at fourteen hours, 70 at sixteen. Past fourteen takes the extended-shift decree.">Working day{" "}
+          <select className="town-select" value={pol.shift ?? 14} onChange={(e) => run(() => setPolicy(s, { shift: Number(e.target.value) }))}>
+            {[10, 11, 12, 13, 14, ...(s.decrees?.includes("shifts") ? [16, 18] : [])].map((h) => <option key={h} value={h}>{h} h</option>)}
           </select>
         </label>
         <label className="town-dim">Rations{" "}
@@ -301,13 +308,21 @@ void clock;
 
 // ── Study and the nemesis (design §12–13) ─────────────────
 
-/** Today's study, Field by Field: the buffs it gives, the drop it pays, what neglect costs. */
-export function StudyPanel({ s, input }: { s: GameState; input: TownInput }) {
+/** Today's study, Field by Field: the buffs it gives, the goods and drop it pays, what the town asks, what neglect costs. */
+export function StudyPanel({ s, input, run }: { s: GameState; input: TownInput; run?: (fn: () => string | null) => void }) {
   const fields = input.fields ?? [];
   const k = s.knowledge;
   const paid = new Set(k?.claimed[input.day ?? ""] ?? []);
+  const focus: Focus = k?.focus ?? "auto";
+  const lack = needs(s);
+  const worst = neediest(s);
+  const passed = fields.reduce((a, f) => a + passesOf(f), 0);
+  const failed = fields.reduce((a, f) => a + (f.failed ?? 0), 0);
+  const reqs = (k?.reqs ?? []).filter((r) => r.day === input.day);
   const mods = Object.entries(k?.mods ?? {}).filter(([, m]) => Math.abs(m ?? 0) > 0.005).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
   const ng = neglect(s);
+  // Today's carts, as the review app states them (lib/town/pulse): a Field with cards due, its cart not yet in.
+  const carts = input.day ? fields.filter((f) => f.dueRemaining > 0 && !paid.has(f.id)).map((f) => cartFor(f, input.day!, false)) : [];
   return (
     <div className="tg-study">
       <p className="town-kicker" style={{ marginTop: 12 }}>Study</p>
@@ -320,19 +335,91 @@ export function StudyPanel({ s, input }: { s: GameState; input: TownInput }) {
             the longer its streak, the rarer the load, and each one finished calms the land a little. Leave cards overdue and the land grows hungrier
             {ng.budget > 1.01 ? ` (right now ×${r1(ng.budget)} its budget, +${r1(ng.rho * 100)}% its aim)` : ng.budget < 0.99 ? ` — today it is calmed to ×${r1(ng.budget)} its budget` : ""}.
           </p>
+          <div className="tg-quarter">
+            <p className="town-sub">
+              <b>Every review you pass pays the town.</b> A new card sends raw goods; a settled one (level 4–6) worked goods; a deep one (7–9)
+              ingots and silver; a rooted one (10+) gold and platinum. Failed reviews send nothing. Today: <b>{passed}</b> passed
+              {failed ? <>, <span className="town-dim">{failed} not yet</span></> : null}.
+            </p>
+            <p className="town-kicker">The quartermaster turns them into</p>
+            <div className="tg-stocks">
+              {(["auto", ...STOCK_KEYS] as Focus[]).map((st) => (
+                <button
+                  key={st}
+                  className={`town-tag tg-stock ${focus === st ? "on" : ""}`}
+                  aria-pressed={focus === st}
+                  disabled={!run}
+                  title={st === "auto" ? "Whatever the town is shortest of, pass by pass" : `${STOCKS[st].blurb}${STOCKS[st].school ? ` · ${STOCKS[st].school} Fields send 25% more` : ""}`}
+                  onClick={() => run?.(() => setTitheFocus(s, knowledgeOf(s), st))}
+                >
+                  {st === "auto" ? `What we lack (${STOCKS[worst].name.toLowerCase()})` : STOCKS[st].name}
+                  {st !== "auto" && (
+                    <span className={`tg-bar tg-need ${lack[st] > 0.6 ? "short" : ""}`} aria-label={`${pct(lack[st])} short`}>
+                      <span style={{ width: `${Math.round(lack[st] * 100)}%` }} />
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <p className="town-dim">{focus === "auto" ? "Each pass goes to whatever is shortest once the passes before it have landed." : "Three passes in four go there; the fourth to whatever is shortest."} Bars show how short each stock is for a town this size.</p>
+          </div>
+          {reqs.length > 0 && (
+            <div className="tg-reqs">
+              <p className="town-kicker">Requisitions today</p>
+              <ul className="tg-people">
+                {reqs.map((r) => {
+                  const f = fields.find((x) => x.id === r.fieldId);
+                  const got = Math.max(0, Math.min(r.need, (f ? passesOf(f) : r.from) - r.from));
+                  return (
+                    <li key={r.fieldId} className={r.done ? "" : undefined}>
+                      <b>{r.done ? "✓ " : ""}{r.field}</b>{" "}
+                      <span className="town-dim">— {r.done ? "filled" : `pass ${r.need - got} more of its reviews`}: {goodsText(r.reward)} ({STOCKS[r.stock].name.toLowerCase()})</span>
+                      <span className="tg-restore"><i style={{ width: `${Math.round((got / r.need) * 100)}%` }} /></span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {carts.length > 0 && (
+            <div>
+              <p className="town-kicker">Carts today</p>
+              <ul className="tg-carts">
+                {carts.map((c) => {
+                  // What it brings if cleared now, or at the first right answer; and where it next grows.
+                  const at = Math.max(1, c.passes);
+                  const step = cartAt(c, at);
+                  const next = nextRollAt(c, at);
+                  return (
+                    <li key={c.fieldId}>
+                      <b>{c.field} cart today ({c.rarity})</b>: {step ? goodsList(step.goods) : "nothing yet"}
+                      {next ? <span className="town-dim"> · +1 load at {next} right answers</span> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="town-dim">A cart comes when the Field has nothing left due and at least half of today&apos;s answers in it were right. Nothing in it is rolled: the day and the Field fix what it holds.</p>
+            </div>
+          )}
           <table className="tg-table">
-            <thead><tr><th>Field</th><th>Ideas</th><th>Due</th><th>Streak</th><th>Today</th></tr></thead>
+            <thead><tr><th>Field</th><th>Ideas</th><th>Passed</th><th>Due</th><th>Streak</th><th>Today</th></tr></thead>
             <tbody>
               {fields.map((f) => {
                 const tier = tierOf(f.streak);
                 const next = TIERS[tier + 1];
+                // Answers from the ledger, right and wrong; a card merely touched today (the midnight reschedule) is not one.
+                const answered = passesOf(f) + (f.misses ?? 0);
                 return (
                   <tr key={f.id} title={`Trains ${f.attrs.map((a) => ATTR_BUFFS[a].name.toLowerCase()).join(" and ") || "nothing yet"}`}>
                     <td>{f.name}<br /><span className="town-dim">{f.attrs.map((a) => ATTR_BUFFS[a].name).join(" · ")}</span></td>
-                    <td>{f.ideasToday}</td>
+                    <td>{f.ideasToday}{f.novelty !== undefined && f.ideasToday > 0 && f.novelty < f.ideasToday - 0.05 ? <><br /><span className="town-dim" title="Ideas count by how new they were: a near-duplicate in a crowded topic buffs the town less">worth {r1(f.novelty)}</span></> : null}{f.newDomains ? <><br /><span className="town-dim">{f.newDomains} new domain{f.newDomains > 1 ? "s" : ""}</span></> : null}</td>
+                    <td title={f.passed ? f.passed.map((n, i) => `${n} ${DEPTH_NAMES[i]}`).join(" · ") : undefined}>
+                      {passesOf(f)}{f.failed ? <span className="town-dim"> / {f.failed}✗</span> : null}
+                      {f.mastered ? <><br /><span className="town-dim">{f.mastered} mastered</span></> : null}
+                    </td>
                     <td className={f.overdue ? "warn-text" : ""}>{f.dueRemaining}{f.overdue ? ` (${f.overdue} overdue)` : ""}</td>
                     <td>{f.streak}d · {TIERS[tier].name}{next ? <><br /><span className="town-dim">{next.name} at {next.from}d</span></> : null}</td>
-                    <td>{f.complete ? (paid.has(f.id) ? "✓ cart in" : "✓ cart coming") : f.reviewedToday ? `${f.reviewedToday} done, ${f.dueRemaining} to go` : f.dueRemaining ? "not started" : "nothing due"}</td>
+                    <td>{f.complete ? (paid.has(f.id) ? "✓ cart in" : "✓ cart coming") : answered ? `${answered} answered, ${f.dueRemaining} to go` : f.dueRemaining ? "not started" : "nothing due"}</td>
                   </tr>
                 );
               })}
@@ -347,6 +434,9 @@ export function StudyPanel({ s, input }: { s: GameState; input: TownInput }) {
                 </li>
               ))}
             </ul>
+          )}
+          {(k?.tithes?.length ?? 0) > 0 && (
+            <p className="town-dim">Last tithes: {k!.tithes!.slice(0, 3).map((t) => `${t.field} (${t.passes} passed): ${t.got}`).join(" · ")}</p>
           )}
           {(k?.drops.length ?? 0) > 0 && (
             <p className="town-dim">Last carts: {k!.drops.slice(0, 3).map((d) => `${d.field} (${TIERS[d.tier].name.toLowerCase()}): ${d.got}`).join(" · ")}</p>

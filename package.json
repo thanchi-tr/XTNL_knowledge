@@ -19,7 +19,9 @@
     "balance:horizon": "tsx scripts/balance-horizon.ts",
     "town:check": "tsx scripts/town-sim-check.ts",
     "town:survival": "tsx scripts/town-survival-check.ts",
-    "town:balance": "tsx scripts/town-balance-check.ts"
+    "town:balance": "tsx scripts/run-shards.ts balance",
+    "town:features": "tsx scripts/town-features-check.ts",
+    "town:bridge": "tsx scripts/town-bridge-check.ts && tsx scripts/town-pulse-check.ts"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",

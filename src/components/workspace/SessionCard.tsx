@@ -20,6 +20,22 @@ interface Props {
   level: number;
   domainName: string;
   onComplete: (result: SubmitReviewResult) => void;
+  /**
+   * What this answer sends the player's town, stated under the outcome
+   * (lib/town/pulse-core): the goods of a pass, or that a miss sends none.
+   * Absent, or returning null, when there is no town to speak for.
+   */
+  townLine?: (result: SubmitReviewResult) => string | null;
+}
+
+/** The town's line: one quiet row, so the brisk result card stays brisk. */
+function TownLine({ text }: { text: string | null | undefined }) {
+  if (!text) return null;
+  return (
+    <p className="mt-1.5" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+      {text}
+    </p>
+  );
 }
 
 interface DiagramQuestion {
@@ -102,7 +118,7 @@ const DISMISS_ARM_MS = 220;
 const INPUT_CLASS =
   "input";
 
-export function SessionCard({ ideaId, questionType, question, preview, level, domainName, onComplete }: Props) {
+export function SessionCard({ ideaId, questionType, question, preview, level, domainName, onComplete, townLine }: Props) {
   const { streak, recordResult } = useStreak();
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<SubmitReviewResult | null>(null);
@@ -206,6 +222,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
 
   if (result) {
     const advanced = result.outcome.outcome === "advanced" ? result.outcome : null;
+    const town = townLine?.(result);
 
     // Mastery — the top of the 12-tier ladder, reachable once per Idea.
     // Previously indistinguishable from any other advance.
@@ -228,6 +245,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
           <p className="label-xs mt-1">
             includes +{MASTERY_BONUS} mastery bonus
           </p>
+          <TownLine text={town} />
         </div>
       );
     }
@@ -239,6 +257,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
           <p className="mt-3 text-[17px] font-semibold" style={{ color: "var(--ink-0)" }}>
             {domainName} reached level {advanced.newDomainLevel}
           </p>
+          <TownLine text={town} />
           <ThresholdBar progress={advanced.domainProgress} />
         </div>
       );
@@ -255,6 +274,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
         <p className="text-3xl leading-none">{result.correct ? "✓" : "✗"}</p>
         <p className="mt-3 text-[17px] font-semibold">{result.correct ? affirmation : "Incorrect"}</p>
         <p className="mt-1 text-xs opacity-70">{describeOutcome(result.outcome)}</p>
+        <TownLine text={town} />
 
         {advanced && (
           <>

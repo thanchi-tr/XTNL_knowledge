@@ -2,28 +2,40 @@
 
 import { useEffect, useRef, useState } from "react";
 import { makeCanvas } from "./art/core";
-import { grass, cobbles, dirtPath, sandBank, meadow, hillside, marsh, masonry, halfTimber, boards, roofBlock, iceField } from "./art/textures";
+import { grass, cobbles, dirtPath, sandBank, meadow, hillside, marsh, masonry, halfTimber, boards, roofBlock, iceField, dunes, oasis, mesa, saltPan, skyClouds, bridgeDeck } from "./art/textures";
 import { frosted } from "./art/winter";
 import { graded, gradedWall } from "./art/grades";
 import { grade } from "@/lib/town/sim/catalog";
-import { goblinWarren, webHollow, frostRift, titanGate } from "./art/gates";
+import { goblinWarren, webHollow, frostRift, titanGate, stormSpire } from "./art/gates";
+import { MYTHIC_FRAMES, mythicSprite, type MythicArt } from "./art/mythic";
+import { drawProjectile, legendaryAura, mythicAura, omenWeather } from "./art/fx";
+import { statueSprite } from "./art/statues";
+import { itemIcon } from "./art/items";
+import { ELEMENTS, ELEMENT_NAME, type Element } from "@/lib/town/sim/elements";
+import { OMEN_NAME } from "@/lib/town/sim/omens";
+import { RARITIES, RARITY_NAME, SINGLETONS, itemList } from "@/lib/town/sim/items";
+import type { Projectile } from "@/lib/town/sim/types";
 import { trophy } from "./art/trophies";
 import { achievementList } from "@/lib/town/sim/achievements";
 import { storehouse, tomb, dragonPit, shadowGate, unitHome, rowHouse, duplexHome, apartmentBlock } from "./art/buildings3";
 import { M } from "./art/materials";
-import { oak, pine, bush, rockFace, crop, oreChunk, sprout, seedling, youngTree, snag, type CropArt } from "./art/nature";
+import { oak, pine, bush, rockFace, crop, oreChunk, sprout, seedling, youngTree, snag, palm, cactus, birch, maple, willow, cherry, cypress, appleTree, chestnutTree, starfruitTree, type CropArt } from "./art/nature";
 import { townhouse, stall, tower, mine, windmillBody, fountain, ruins, ROOF, type RoofStyle } from "./art/buildings";
 import { person, monster, monsterAt, PROPS, type TroopArt, type MonsterArt } from "./art/sprites";
+import { monsterFrame } from "./art/monster-anim";
 import { heroEffect, hasAura, buildingAura, effectBadges, type AuraKind } from "./art/effects";
 import { figure, type Look } from "./art/heroes";
 import { icon } from "./art/icons";
 import { GEAR, PARTS } from "@/lib/town/sim/loot";
-import { STYLE } from "./map/render";
+import { OMEN_GRADE, STYLE } from "./map/render";
 import { GRADES, then, mix, stampLight, applyEnvironmentLighting, type Grade } from "./map/lighting";
 import {
   pitfire, lamppost, brazier, watermill, archery, nobleYard, iceFactory, marketRow, wallTile, rockNode,
 } from "./art/buildings2";
-import { forge, barracks, armySchool, armyPoint, laboratory, fishery, school, kitchen, refinery, armoury, wizardHut, lumberCamp, townHall, museum, HALL_AGES } from "./art/special";
+import {
+  forge, barracks, armySchool, armyPoint, laboratory, fishery, school, kitchen, refinery, armoury, wizardHut, lumberCamp, townHall, museum, HALL_AGES,
+  alchemy, observatory, mythicLab,
+} from "./art/special";
 import type { RoofStyle as Roof } from "./art/buildings";
 import type { Ramp4 } from "./art/materials";
 import { MONSTERS as BESTIARY } from "@/lib/town/sim/bestiary";
@@ -48,7 +60,7 @@ function tile(draw: (c: CanvasRenderingContext2D) => void, w = 48, h = 32): () =
 }
 
 const ROOFS: RoofStyle[] = ["thatch", "red", "teal", "moss", "slate", "purple"];
-const TROOPS: TroopArt[] = ["militia", "footman", "ranger", "heavy", "witch", "villager", "merchant", "fisher"];
+const TROOPS: TroopArt[] = ["militia", "footman", "ranger", "heavy", "shieldbearer", "pikeman", "juggernaut", "breaker", "ironwarden", "witch", "villager", "merchant", "fisher"];
 const KNIGHT_LADDER: [Look, string][] = [
   ["squire", "Noble Squire · 1–5"], ["serjeant", "Mounted Serjeant · 6–10"], ["bachelor", "Knight Bachelor · 11–14"],
   ["champion", "Paladin · 15–18"], ["nobleknight", "Noble Knight · 19–22"], ["hero-knight-23", "Emblem Knight · 23"],
@@ -74,12 +86,15 @@ function heroTile(kind: Look, frame: 0 | 1, t: number): () => HTMLCanvasElement 
   };
 }
 /** Every class at the bottom and the top of its range — level variants are part of the art. */
-const MONSTERS: { kind: MonsterArt; label: string; lv: number }[] = Object.values(BESTIARY).flatMap((m) => {
+const MONSTERS: { kind: MonsterArt; label: string; lv: number }[] = Object.values(BESTIARY).filter((m) => !m.mythic).flatMap((m) => {
   const lows = [{ kind: m.kind as MonsterArt, label: m.name, lv: m.min }];
   const variantAt = m.kind === "goblin" ? 7 : m.kind === "skeleton" ? 7 : m.kind === "golem" ? 15 : m.max >= 30 ? Math.max(30, m.min) : 0;
   return variantAt && variantAt !== m.min ? [...lows, { kind: m.kind as MonsterArt, label: m.kind === "goblin" ? "Goblin King" : m.kind === "golem" ? "Rune Golem" : `${m.name} (elite)`, lv: variantAt }] : lows;
 });
-const CROPS: CropArt[] = ["potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic"];
+const CROPS: CropArt[] = [
+  "potato", "wheat", "grape", "herb", "cabbage", "carrot", "pumpkin", "barley", "onion", "bean", "turnip", "corn", "strawberry", "garlic",
+  "date", "millet", "chickpea", "melon", "saffron", "cloudberry", "sunflower", "starfruit", "windroot",
+];
 
 /**
  * One small scene — a house, a fire, a footman, a goblin, a wraith on grass
@@ -269,6 +284,7 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
       { label: "Frost rift", render: () => frostRift() },
       { label: "Shadow realm gate", render: () => shadowGate() },
       { label: "Titan's gate", render: () => titanGate() },
+      { label: "Storm spire", note: "rocs, raijū, seraphim", render: () => stormSpire() },
       { label: "Dragon pit", render: () => dragonPit() },
     ],
   },
@@ -338,6 +354,170 @@ const SECTIONS: { title: string; blurb: string; zoom: number; assets: Asset[] }[
     blurb: "Silhouette first, and never mirrored: each class reads from its outline alone. Eyes, runes and fire are emissive — a white core in a saturated halo, under 4% of the sprite — so they burn through a raid's red cast.",
     zoom: 4,
     assets: MONSTERS.map((m) => ({ label: `${m.label} · L${m.lv}`, render: () => monsterAt(m.kind, m.lv) })),
+  },
+  {
+    title: "Every kind, three looks",
+    blurb: "No pack is all alike. Every kind wears three looks: its own, and two that swap its hide, skin, scale, cloth and eyes for kindred ones — and mark it, rime along the top of the second, old scars on the third.",
+    zoom: 3,
+    assets: Object.values(BESTIARY).filter((m) => !m.mythic).flatMap((m) => [0, 1, 2].map((v) => ({
+      label: `${m.name} · ${["own", "rimed", "scarred"][v]}`, render: () => monsterAt(m.kind as MonsterArt, m.min, v),
+    }))),
+  },
+  {
+    title: "Every kind · in motion",
+    blurb: "Each kind moves and strikes in its own body: four beats of its walk (wings beating, head bobbing and tail swaying against it, legs in turn, a staff or club leaning with the stride, a serpent's wave, a spirit's rippling hem), four of standing (a breath, a look over the shoulder), and three of its blow (the wind-up, the strike, the recovery).",
+    zoom: 2,
+    assets: Object.values(BESTIARY).filter((m) => !m.mythic).map((m) => ({
+      label: m.name, note: "walk ×4 · stand ×4 · strike ×3", bg: "grass" as const,
+      render: () => {
+        const frames = [
+          ...[0, 1, 2, 3].map((f) => monsterFrame(m.kind as MonsterArt, m.min, 0, "walk", f)),
+          ...[0, 1, 2, 3].map((f) => monsterFrame(m.kind as MonsterArt, m.min, 0, "idle", f)),
+          ...[0, 1, 2].map((f) => monsterFrame(m.kind as MonsterArt, m.min, 0, "attack", f)),
+        ];
+        const fw = frames[0].width;
+        const fh = frames[0].height;
+        const { cv, c } = makeCanvas(frames.length * (fw + 3) + 8, fh);
+        frames.forEach((img, i) => c.drawImage(img, i * (fw + 3) + (i >= 4 ? 4 : 0) + (i >= 8 ? 4 : 0), 0));
+        return cv;
+      },
+    })),
+  },
+  {
+    title: "Legendary · each of an element",
+    blurb: "A legendary thing trails motes of its element as it moves: tongues of flame, droplets, pebbles, gusts, sparks, glints, curls of dark.",
+    zoom: 3,
+    assets: Object.values(BESTIARY).filter((m) => m.legendary && !m.mythic && m.element).map((m) => ({
+      label: `${m.name}`, note: ELEMENT_NAME[m.element!], bg: "dark" as const,
+      render: () => {
+        const img = monsterAt(m.kind as MonsterArt, m.min);
+        const { cv, c } = makeCanvas(img.width + 16, img.height + 16);
+        c.drawImage(img, 8, 10);
+        legendaryAura(c, m.element!, 8, 10, img.width, img.height, 0.8, 3);
+        return cv;
+      },
+    })),
+  },
+  {
+    title: "The mythic · in motion",
+    blurb: "Nine mythic things, one of every element, each in four poses — a wingbeat, a coil rolling, a stride, a flicker — and burning in a ring of its element with its great sign: a corona, rain, orbiting stones, gusts, arcs, rays, tendrils, a clock face, a warp of stars. Only a champion's blows land in full on them.",
+    zoom: 2,
+    assets: Object.values(BESTIARY).filter((m) => m.mythic).flatMap((m) => Array.from({ length: MYTHIC_FRAMES }, (_, f) => ({
+      label: `${m.name} · ${f + 1}`, note: f === 0 ? ELEMENT_NAME[m.element!] : undefined, bg: "dark" as const,
+      render: () => {
+        const img = mythicSprite(m.kind as MythicArt, f);
+        const { cv, c } = makeCanvas(img.width + 40, img.height + 32);
+        c.drawImage(img, 20, 16);
+        mythicAura(c, m.element!, 20 + img.width / 2, 16, 16 + img.height, img.width, 0.6 + f * 0.25, 5);
+        return cv;
+      },
+    }))),
+  },
+  {
+    title: "Champions, statues and the Eye of Time",
+    blurb: "The King under a crown of light, blades circling him; the Master of Mythic Arts in a turning ring of runes with the Book of Enlightenment open at their side; the Eye of Time with a third eye burning. Struck down, a champion is stone on a plinth, and colour comes back from the feet up as offerings are worked in.",
+    zoom: 5,
+    assets: [
+      ...(["champion-king", "champion-master", "seer"] as Look[]).flatMap((k) => [0, 1].map((f) => ({ label: `${k.replace("champion-", "")} · ${f ? "B" : "A"}`, render: heroTile(k, f as 0 | 1, 0.9 + f * 0.4), bg: "dark" as const }))),
+      ...[0, 0.4, 0.8].map((r) => ({ label: `King in stone · ${Math.round(r * 100)}%`, render: () => statueSprite("champion-king", r), bg: "cobble" as const })),
+      ...[0, 0.5].map((r) => ({ label: `Master in stone · ${Math.round(r * 100)}%`, render: () => statueSprite("champion-master", r), bg: "cobble" as const })),
+    ],
+  },
+  {
+    title: "Shots by level",
+    blurb: "Every shot finer as the shooter climbs: a plain shaft, a steel head, a trail, a flaming arrow, a comet; quarrels from crossbows; a spark, an orb, a lance, a comet and a nova from wizards; a wave of light off a great knight's blade; ballista bolts from the towers; and breath in the element of what breathes it.",
+    zoom: 6,
+    assets: [
+      ...[0, 1, 2, 3, 4].map((tier) => ({ kind: "arrow" as const, tier, element: null as Element | null })),
+      ...[2, 3, 4].map((tier) => ({ kind: "quarrel" as const, tier, element: null as Element | null })),
+      ...[0, 1, 2, 3, 4].map((tier) => ({ kind: "spell" as const, tier, element: null as Element | null })),
+      ...(["fire", "water", "thunder", "space"] as Element[]).map((e) => ({ kind: "spell" as const, tier: 5, element: e })),
+      ...[2, 3, 4].map((tier) => ({ kind: "slash" as const, tier, element: null as Element | null })),
+      { kind: "slash" as const, tier: 5, element: "light" as Element },
+      ...[0, 2, 4].map((tier) => ({ kind: "ballista" as const, tier, element: null as Element | null })),
+      ...ELEMENTS.map((e) => ({ kind: "breath" as const, tier: 5, element: e })),
+    ].map((p) => ({
+      label: `${p.kind} · ${p.tier}${p.element ? ` · ${p.element}` : ""}`, note: p.element ? ELEMENT_NAME[p.element] : undefined, bg: "dark" as const,
+      render: () => {
+        const { cv, c } = makeCanvas(34, 18);
+        const shot: Projectile = { x: 0, y: 0, tx: 1, ty: 0, kind: p.kind, t: 0.5, tier: p.tier, element: p.element };
+        drawProjectile(c, shot, 24, 9, 0.35);
+        return cv;
+      },
+    })),
+  },
+  {
+    title: "Omens",
+    blurb: "What a legendary or mythic thing does to the air as it comes: ashfall, drowning mist, tremors, a gale, a storm, a blinding glare, an unnatural night, time slipping, space warping. A ward from the mythic laboratory turns it.",
+    zoom: 3,
+    assets: ELEMENTS.map((e) => ({
+      label: OMEN_NAME[e], note: ELEMENT_NAME[e],
+      render: () => {
+        const W = 72;
+        const H = 44;
+        const { cv, c } = makeCanvas(W, H);
+        grass(c, 0, 0, W, H, 4);
+        cobbles(c, 0, 32, W, 12, 2);
+        const house = townhouse(1, "red", true);
+        c.drawImage(house, 4, 34 - house.height);
+        omenWeather(c, e, W, H, 1.7, 2);
+        applyEnvironmentLighting(c, W, H, [OMEN_GRADE[e]]);
+        return cv;
+      },
+    })),
+  },
+  {
+    title: "Eight hundred things",
+    blurb: "Thirteen families of equipment, each from broken to mythic — rusted and cracked, plain iron, steel, green-tempered, gold, and the element's own stuff burning — thirty singular artifacts that exist once, and the loot: parts, feet, essences, gems, rare metals, reagents, trophies, scrap and curios.",
+    zoom: 4,
+    assets: [
+      ...["sword", "bow", "crossbow", "staff", "halberd", "plate", "robe", "leather", "helm", "boots", "ring", "amulet", "relic"].flatMap((f) =>
+        RARITIES.filter((r) => r !== "singleton").map((r) => {
+          const d = itemList().find((x) => x.family === f && x.rarity === r)!;
+          return { label: d.name, note: RARITY_NAME[r], render: () => itemIcon(d.id), bg: "dark" as const };
+        })),
+      ...SINGLETONS.map((a) => ({ label: a.name, note: "Singleton", render: () => itemIcon(a.id), bg: "dark" as const })),
+      ...itemList().filter((d) => d.kind === "loot" && d.family !== "foot" && d.family !== "part").map((d) => ({ label: d.name, note: RARITY_NAME[d.rarity], render: () => itemIcon(d.id), bg: "dark" as const })),
+    ],
+  },
+  {
+    title: "The desert and the floating isles",
+    blurb: "A new game is founded on one of three maps. The desert: wind-rippled dunes, oasis green where the water stands, red mesa tops in strata, white salt pans cracked into cells, date palms and saguaros. The floating isles: open sky with banks of cloud under every island, and plank bridges laid across it.",
+    zoom: 3,
+    assets: [
+      ...([["Dunes", dunes], ["Oasis", oasis], ["Mesa", mesa], ["Salt pan", saltPan], ["Open sky", skyClouds], ["Sky bridge", bridgeDeck]] as const).map(([label, paint]) => ({
+        label,
+        render: () => {
+          const { cv, c } = makeCanvas(48, 32);
+          paint(c, 0, 0, 48, 32, 5);
+          return cv;
+        },
+      })),
+      ...[0, 1, 2].map((v) => ({ label: `Date palm ${v + 1}`, render: () => palm(v) })),
+      ...[1, 2, 3].map((st) => ({ label: `Saguaro · ${["", "young", "flowering", "grown"][st]}`, render: () => cactus(st, st) })),
+    ],
+  },
+  {
+    title: "Trees of many kinds",
+    blurb: "Each map grows its own mix (lib/town/sim/woods SPECIES_MIX): the green country's mixed wood with birch, maple, willow, cherry, cypress, and orchards of apple and chestnut; the desert's date palms; the isles' cherry and starfruit. Trees keep their kind as they grow. Each face is the season's: cherry and apple in blossom in spring, maple red in autumn, and fruit hanging while it is ripe and unpicked.",
+    zoom: 4,
+    assets: [
+      ...[0, 1].map((v) => ({ label: `Birch ${v + 1}`, render: () => birch(v) })),
+      { label: "Maple", render: () => maple(0) },
+      { label: "Maple · autumn", render: () => maple(1, true) },
+      ...[0, 1].map((v) => ({ label: `Willow ${v + 1}`, render: () => willow(v) })),
+      { label: "Cherry", render: () => cherry(0) },
+      { label: "Cherry · blossom", render: () => cherry(1, true) },
+      ...[0, 1].map((v) => ({ label: `Cypress ${v + 1}`, render: () => cypress(v) })),
+      { label: "Apple tree", render: () => appleTree(0, 0) },
+      { label: "Apple · blossom", render: () => appleTree(1, 1) },
+      { label: "Apple · ripe", render: () => appleTree(2, 2) },
+      { label: "Chestnut", render: () => chestnutTree(0) },
+      { label: "Chestnut · ripe", render: () => chestnutTree(1, true) },
+      { label: "Date palm · ripe", render: () => palm(1, true) },
+      { label: "Starfruit tree", render: () => starfruitTree(0) },
+      { label: "Starfruit · ripe", render: () => starfruitTree(1, true) },
+    ],
   },
   {
     title: "Nature",
@@ -506,6 +686,9 @@ const LADDERS: { name: string; zoom: number; max?: number; draw: (lv: number, ro
   { name: "Mage spire", zoom: 2, draw: (lv, _r, b) => wizardHut(lv, b) },
   { name: "Army point", zoom: 2, draw: (lv, _r, b) => armyPoint(lv, b) },
   { name: "Museum", zoom: 2, max: 30, draw: (lv, r, b) => museum(lv, r, b) },
+  { name: "Alchemist's workshop", zoom: 2, max: 30, draw: (lv, r, b) => alchemy(lv, r, b) },
+  { name: "Astral observatory", zoom: 2, max: 30, draw: (lv, r, b) => observatory(lv, r, b) },
+  { name: "Mythic laboratory", zoom: 2, max: 30, draw: (lv, r, b) => mythicLab(lv, r, b) },
 ];
 const ERA_AT: Record<number, string> = { 1: "Founding", 10: "Fortified", 20: "Grand", 30: "Legendary", 40: "Mythic" };
 const HALL_AT: Record<number, string> = Object.fromEntries(HALL_AGES.map((n, i) => [Math.max(1, i * 10), n]));

@@ -1,13 +1,17 @@
+import { inOpening } from "./menace";
 import { log, clock } from "./state";
-import { MONSTERS } from "./bestiary";
+import { MONSTERS, localKind } from "./bestiary";
+import { bandCanStand, bandRests } from "./habits";
 import { plural } from "./words";
 import { MAP_H, MAP_W, Overlay, RAW_FOODS, Terrain, type GameState, type Lair, type LairKind, type MonsterKind, type NodeKind, type ResourceKey, type Roamer, type Scout, type Villager } from "./types";
 import { air } from "./weather";
 import { MEAL_KCAL, bodyOf, killBody } from "./body";
-import { aggroOf, emit, rho, unitPi } from "./aggro";
+import { aggroOf, bareShare, emit, rho, partyPi, AIM_CAP } from "./aggro";
 import { defencePower } from "./combat";
-import { center, dist, idx, inBounds, rng } from "./world";
+import { unguarded } from "./needs";
+import { center, dist, idx, inBounds, passiveRadius, rng } from "./world";
 import { LAIR_NAMES, TORCH_SIGHT, markSeen, seesPoint, torchLit } from "./vision";
+import { canExcursion, excursionHome } from "./seer";
 import { wildAmount, wildCrop, wildKindAt } from "./forage";
 
 /**
@@ -28,21 +32,23 @@ import { wildAmount, wildCrop, wildKindAt } from "./forage";
  */
 
 export const LAIR_SIZE: Record<LairKind, [number, number]> = {
-  tomb: [4, 3], shadowgate: [4, 4], dragonpit: [6, 5], goblinwarren: [5, 3], webhollow: [4, 4], frostrift: [5, 4], titangate: [6, 5],
+  tomb: [4, 3], shadowgate: [4, 4], dragonpit: [6, 5], goblinwarren: [5, 3], webhollow: [4, 4], frostrift: [5, 4], titangate: [6, 5], stormspire: [5, 5],
 };
 /** How far from where the town is founded each kind of gate lies, at the nearest. */
-const LAIR_FROM: Record<LairKind, number> = { goblinwarren: 50, webhollow: 60, tomb: 70, frostrift: 90, shadowgate: 110, titangate: 130, dragonpit: 150 };
+const LAIR_FROM: Record<LairKind, number> = { goblinwarren: 50, webhollow: 60, tomb: 70, frostrift: 90, shadowgate: 110, titangate: 130, stormspire: 140, dragonpit: 150 };
 /** The level each kind of gate opens at; each gate adds its own depth bonus. */
-export const LAIR_START: Record<LairKind, number> = { goblinwarren: 2, webhollow: 3, tomb: 3, frostrift: 5, shadowgate: 7, titangate: 9, dragonpit: 14 };
+export const LAIR_START: Record<LairKind, number> = { goblinwarren: 2, webhollow: 3, tomb: 3, frostrift: 5, shadowgate: 7, titangate: 9, stormspire: 12, dragonpit: 14 };
 /** What each lair breeds, by the level it has reached. */
 const BROOD: Record<LairKind, { kind: MonsterKind; min: number }[]> = {
-  tomb: [{ kind: "skeleton", min: 1 }, { kind: "ghoul", min: 4 }, { kind: "jiangshi", min: 7 }, { kind: "wraith", min: 10 }, { kind: "lich", min: 14 }, { kind: "gashadokuro", min: 30 }],
-  shadowgate: [{ kind: "werewolf", min: 1 }, { kind: "yurei", min: 8 }, { kind: "banshee", min: 11 }, { kind: "oni", min: 15 }, { kind: "vampire", min: 20 }, { kind: "kitsune", min: 26 }, { kind: "demon", min: 36 }],
-  dragonpit: [{ kind: "salamander", min: 1 }, { kind: "griffin", min: 18 }, { kind: "wyvern", min: 22 }, { kind: "hydra", min: 28 }, { kind: "dragon", min: 40 }],
+  tomb: [{ kind: "skeleton", min: 1 }, { kind: "ghoul", min: 4 }, { kind: "jiangshi", min: 7 }, { kind: "wraith", min: 10 }, { kind: "lich", min: 14 }, { kind: "gashadokuro", min: 30 }, { kind: "shadowcolossus", min: 80 }],
+  shadowgate: [{ kind: "werewolf", min: 1 }, { kind: "yurei", min: 8 }, { kind: "banshee", min: 11 }, { kind: "oni", min: 15 }, { kind: "vampire", min: 20 }, { kind: "kitsune", min: 26 }, { kind: "demon", min: 36 }, { kind: "voidwalker", min: 90 }],
+  dragonpit: [{ kind: "salamander", min: 1 }, { kind: "griffin", min: 18 }, { kind: "wyvern", min: 22 }, { kind: "hydra", min: 28 }, { kind: "dragon", min: 40 }, { kind: "phoenix", min: 62 }, { kind: "elderdragon", min: 100 }],
   goblinwarren: [{ kind: "goblin", min: 1 }, { kind: "wolf", min: 4 }, { kind: "ogre", min: 10 }, { kind: "troll", min: 14 }, { kind: "cyclops", min: 20 }],
   webhollow: [{ kind: "spider", min: 1 }, { kind: "bat", min: 2 }, { kind: "kappa", min: 5 }, { kind: "jorogumo", min: 10 }, { kind: "basilisk", min: 16 }],
-  frostrift: [{ kind: "wolf", min: 1 }, { kind: "wisp", min: 4 }, { kind: "wendigo", min: 14 }, { kind: "frostgiant", min: 18 }, { kind: "nian", min: 25 }],
-  titangate: [{ kind: "gargoyle", min: 1 }, { kind: "golem", min: 10 }, { kind: "minotaur", min: 13 }, { kind: "cyclops", min: 18 }, { kind: "basilisk", min: 22 }, { kind: "gashadokuro", min: 32 }],
+  frostrift: [{ kind: "wolf", min: 1 }, { kind: "wisp", min: 4 }, { kind: "wendigo", min: 14 }, { kind: "frostgiant", min: 18 }, { kind: "nian", min: 25 }, { kind: "leviathan", min: 70 }],
+  titangate: [{ kind: "gargoyle", min: 1 }, { kind: "golem", min: 10 }, { kind: "minotaur", min: 13 }, { kind: "cyclops", min: 18 }, { kind: "basilisk", min: 22 }, { kind: "gashadokuro", min: 32 }, { kind: "behemoth", min: 70 }],
+  // The storm spire: a crag of stones that float, struck by lightning without end.
+  stormspire: [{ kind: "harpy", min: 1 }, { kind: "tengu", min: 9 }, { kind: "griffin", min: 16 }, { kind: "wyvern", min: 22 }, { kind: "stormroc", min: 60 }, { kind: "raiju", min: 68 }, { kind: "seraph", min: 82 }],
 };
 
 /** What a gate breeds at its level now, and at the next step up the brood. */
@@ -61,16 +67,16 @@ export const STRIKE_RANGE = 8;
 /** Sets the lairs down for a new map, or an old save that has none. */
 export function placeLairs(s: GameState) {
   const fresh = !s.lairs;
-  if (!fresh && s.lairsV === 2) return;
+  if (!fresh && s.lairsV === 3) return;
   const r = rng(s.seed * 7 + 13 + (fresh ? 0 : 977));
   const hall = s.structures.find((st) => st.type === "townhall");
   const home: [number, number] = hall ? center(hall) : [37, 26];
   const older: LairKind[] = ["tomb", "tomb", "tomb", "shadowgate", "shadowgate", "dragonpit"];
   const newer: LairKind[] = ["goblinwarren", "goblinwarren", "webhollow", "webhollow", "frostrift", "frostrift", "titangate"];
-  // An older save keeps the gates it has; only the newer kinds are set into it, in the fog.
-  const want = fresh ? [...older, ...newer] : newer;
+  // An older save keeps the gates it has; only the kinds it lacks are set into it, in the fog.
+  const want = fresh ? [...older, ...newer, "stormspire" as const] : s.lairsV === 2 ? ["stormspire" as const] : [...newer, "stormspire" as const];
   s.lairs ??= [];
-  s.lairsV = 2;
+  s.lairsV = 3;
   let id = s.lairs.reduce((a, l) => Math.max(a, l.id), 0) + 1;
   for (const kind of want) {
     const [w, h] = LAIR_SIZE[kind];
@@ -81,7 +87,7 @@ export function placeLairs(s: GameState) {
       if (s.lairs.some((l) => Math.abs(l.x - x) < 22 && Math.abs(l.y - y) < 22)) continue;
       if (!fresh && s.map.seen?.[idx(x, y)]) continue;
       let ok = true;
-      for (let yy = y; yy < y + h && ok; yy++) for (let xx = x; xx < x + w; xx++) if (s.map.terrain[idx(xx, yy)] === Terrain.Water) ok = false;
+      for (let yy = y; yy < y + h && ok; yy++) for (let xx = x; xx < x + w; xx++) if (s.map.terrain[idx(xx, yy)] === Terrain.Water || s.map.terrain[idx(xx, yy)] === Terrain.Void) ok = false;
       if (!ok) continue;
       for (let yy = y; yy < y + h; yy++) {
         for (let xx = x; xx < x + w; xx++) {
@@ -116,6 +122,129 @@ export const lairGrowth = (day: number) => (day <= 60 ? Math.floor(day / 3) : 20
 /** The chance, when a band picks where to go next, that it turns toward the town. */
 export const turnChance = (s: GameState) => Math.min(0.7, 0.25 + clock(s.time).day * 0.01);
 
+// ── Manners: how a band carries itself off the march ─────────
+/**
+ * A band that has come where it was going does not stand: it moves about the
+ * spot in its kind's manner — a pack circles, restless; flyers wheel; the
+ * dead shamble; brutes pace to and fro; ambushers lie in wait, then creep to
+ * a new spot; spirits drift. `r` is how far from the spot, `pace` how fast
+ * against a march, `rest` the chance it lies still a while at each stop.
+ */
+export type Manner = "pack" | "wheel" | "shamble" | "pace" | "creep" | "drift";
+export const MANNERS: Record<Manner, { r: number; pace: number; rest: number; blurb: string }> = {
+  pack: { r: 3, pace: 1.6, rest: 0, blurb: "circles, restless" },
+  wheel: { r: 5, pace: 2.4, rest: 0, blurb: "wheels overhead" },
+  shamble: { r: 2, pace: 0.6, rest: 0.25, blurb: "shambles about" },
+  pace: { r: 3, pace: 0.9, rest: 0.2, blurb: "paces to and fro" },
+  creep: { r: 2.5, pace: 0.9, rest: 0.6, blurb: "lies in wait, then creeps to a new spot" },
+  drift: { r: 2.5, pace: 0.8, rest: 0.1, blurb: "drifts" },
+};
+const MANNER_OF: Partial<Record<MonsterKind, Manner>> = {
+  wolf: "pack", werewolf: "pack", goblin: "pack", jackal: "pack", raiju: "pack",
+  skeleton: "shamble", ghoul: "shamble", mummy: "shamble", jiangshi: "shamble", lich: "shamble", gashadokuro: "shamble", slime: "shamble", treant: "shamble", shadowcolossus: "shamble",
+  minotaur: "pace", troll: "pace", golem: "pace", ogre: "pace", cyclops: "pace", frostgiant: "pace", behemoth: "pace", oni: "pace", stormgiant: "pace", nian: "pace", wendigo: "pace", demon: "pace", sphinx: "pace", hydra: "pace",
+  spider: "creep", jorogumo: "creep", mimic: "creep", kappa: "creep", basilisk: "creep", scorpion: "creep", sandworm: "creep", salamander: "creep", serpent: "creep", leviathan: "creep",
+  wraith: "drift", banshee: "drift", yurei: "drift", wisp: "drift", kitsune: "drift", voidwalker: "drift", djinn: "drift", pixie: "drift", cloudjelly: "drift", vampire: "drift",
+};
+export function mannerOf(kind: MonsterKind): Manner {
+  const m = MANNER_OF[kind];
+  if (m) return m;
+  const def = MONSTERS[kind];
+  return def?.flying ? "wheel" : def?.pack && def.pack[1] > 1 ? "pack" : "drift";
+}
+
+/**
+ * How far a band sees a building, in tiles: a walker ten, a flyer fourteen,
+ * and a thing of the night four further in the dark. Whatever it sees, it
+ * does not idle beside: it strikes, or it draws off beyond its sight.
+ */
+export function perceptionOf(s: GameState, b: { kind: MonsterKind }): number {
+  const def = MONSTERS[b.kind];
+  return (def?.flying ? 14 : 10) + (def?.night && clock(s.time).night ? 4 : 0);
+}
+
+/** Whether a point lies in the hall's passive zone: its guard post rises for whatever comes in there. */
+export function inHallZone(s: GameState, x: number, y: number): boolean {
+  const hall = s.structures.find((st) => st.type === "townhall" && !st.buildUntil);
+  if (!hall) return false;
+  const [hx, hy] = center(hall);
+  return Math.hypot(x - hx, y - hy) <= passiveRadius(hall);
+}
+
+/** Whether a band may stand at a point and not see the town: past its sight of every building, and out of the hall's zone. */
+function outOfSight(s: GameState, x: number, y: number, reach: number): boolean {
+  if (inHallZone(s, x, y)) return false;
+  const n = nearestStructure(s, { x, y });
+  return !n || n.d > reach;
+}
+
+/** Where a band draws off to: straight away from the town, past its sight with room to move about. */
+function lurkPoint(s: GameState, b: Roamer, r: () => number): [number, number] {
+  const flying = !!MONSTERS[b.kind]?.flying;
+  const reach = perceptionOf(s, b) + MANNERS[mannerOf(b.kind)].r + 2;
+  const near = nearestStructure(s, b);
+  const [cx, cy] = near ? center(near.st) : [b.x, b.y];
+  const away = Math.atan2(b.y - cy, b.x - cx);
+  for (let i = 0; i < 16; i++) {
+    const a = away + (i ? (r() - 0.5) * Math.PI * Math.min(2, 0.3 + i * 0.12) : 0);
+    for (let d = reach; d <= reach + 36; d += 3) {
+      const x = cx + Math.cos(a) * d;
+      const y = cy + Math.sin(a) * d;
+      if (!inBounds(Math.floor(x), Math.floor(y))) break;
+      if (outOfSight(s, x, y, reach) && bandCanStand(s, flying, x, y)) return [x, y];
+    }
+  }
+  return [Math.max(2, Math.min(MAP_W - 3, b.x + Math.cos(away) * reach)), Math.max(2, Math.min(MAP_H - 3, b.y + Math.sin(away) * reach))];
+}
+
+/** The next spot about its own that a band moves to, in its manner. */
+function mill(s: GameState, b: Roamer) {
+  const man = mannerOf(b.kind);
+  const m = MANNERS[man];
+  if (b.ax === undefined || b.ay === undefined) {
+    b.ax = b.x;
+    b.ay = b.y;
+  }
+  const ph = (b.ph = (b.ph ?? 0) + 1);
+  const r = rng(b.id * 7919 + ph * 104729 + s.seed);
+  let x = b.ax;
+  let y = b.ay;
+  if (man === "pack" || man === "wheel") {
+    const a = ph * (man === "wheel" ? Math.PI / 6 : Math.PI / 4) + b.id;
+    x += Math.cos(a) * m.r;
+    y += Math.sin(a) * m.r * 0.7;
+  } else if (man === "pace") {
+    const a = b.id * 1.7;
+    const leg = ph % 2 ? 1 : -1;
+    x += Math.cos(a) * m.r * leg;
+    y += Math.sin(a) * m.r * leg * 0.6;
+  } else {
+    const a = r() * Math.PI * 2;
+    const d = m.r * (0.3 + 0.7 * r());
+    x += Math.cos(a) * d;
+    y += Math.sin(a) * d;
+  }
+  if (!inBounds(Math.floor(x), Math.floor(y)) || !bandCanStand(s, !!MONSTERS[b.kind]?.flying, x, y)) {
+    x = b.ax;
+    y = b.ay;
+  }
+  b.tx = x;
+  b.ty = y;
+  b.mill = true;
+}
+
+/** Sets a band marching somewhere new: it moves about that spot when it gets there. */
+function march(b: Roamer, x: number, y: number, mode: NonNullable<Roamer["mode"]>, rush = false) {
+  b.tx = x;
+  b.ty = y;
+  b.ax = x;
+  b.ay = y;
+  b.mode = mode;
+  b.mill = false;
+  b.still = undefined;
+  b.rush = rush || undefined;
+}
+
 /** Band movement and scouting: on the minute, so both glide rather than jump. */
 export function stepWilds(s: GameState, minutes: number) {
   for (const b of s.roamers ?? []) {
@@ -127,11 +256,36 @@ export function stepWilds(s: GameState, minutes: number) {
         b.ty = q.y;
       } else b.hunt = undefined;
     }
+    // Habits (./habits): in the desert's heat a band lies up; on the isles a walker never steps off its island.
+    if (b.hunt === undefined && bandRests(s, b.kind)) continue;
+    // Come where it was going, it moves about the spot in its manner — or lies still a while, if that is its way.
+    if (b.hunt === undefined && Math.hypot(b.tx - b.x, b.ty - b.y) < 0.05) {
+      if (b.still !== undefined) {
+        if (s.time < b.still) continue;
+        b.still = undefined;
+      } else {
+        const m = MANNERS[mannerOf(b.kind)];
+        const rest = rng(b.id * 31 + (b.ph ?? 0) * 977 + s.seed);
+        if (rest() < m.rest) {
+          b.still = s.time + 30 + rest() * (mannerOf(b.kind) === "creep" ? 150 : 45);
+          continue;
+        }
+      }
+      mill(s, b);
+    }
     const d = Math.hypot(b.tx - b.x, b.ty - b.y);
-    const step = Math.min(d, (b.hunt !== undefined ? HUNT_PACE / 60 : ROAM_PACE) * minutes);
+    const pace = b.hunt !== undefined ? HUNT_PACE / 60 : b.mode === "withdraw" || b.rush ? ROAM_PACE * 2.5 : b.mill ? ROAM_PACE * MANNERS[mannerOf(b.kind)].pace : ROAM_PACE;
+    const step = Math.min(d, pace * minutes);
     if (d > 0.01) {
-      b.x += ((b.tx - b.x) / d) * step;
-      b.y += ((b.ty - b.y) / d) * step;
+      const nx = b.x + ((b.tx - b.x) / d) * step;
+      const ny = b.y + ((b.ty - b.y) / d) * step;
+      if (!bandCanStand(s, !!MONSTERS[b.kind]?.flying, nx, ny)) {
+        b.tx = b.x;
+        b.ty = b.y;
+        continue;
+      }
+      b.x = nx;
+      b.y = ny;
     }
   }
   for (const v of s.villagers) if (v.scout) stepScout(s, v, minutes);
@@ -151,27 +305,93 @@ export function wildsHourly(s: GameState, r: () => number) {
     const count = def.pack ? def.pack[0] + Math.floor(r() * (def.pack[1] - def.pack[0] + 1)) : 1 + Math.floor(r() * 2);
     const [cx, cy] = center(l);
     s.nextRoamerId = (s.nextRoamerId ?? 1) + 1;
-    roamers.push({ id: s.nextRoamerId, lair: l.id, kind: kind.kind, level: Math.max(def.min, Math.min(def.max, l.level)), count, x: cx, y: cy + l.h / 2 + 1, tx: cx, ty: cy });
+    roamers.push({ id: s.nextRoamerId, lair: l.id, kind: localKind(s, kind.kind), level: Math.max(def.min, Math.min(def.max, l.level)), count, x: cx, y: cy + l.h / 2 + 1, tx: cx, ty: cy });
     retarget(s, roamers[roamers.length - 1], r);
     if (l.discovered) log(s, `Something comes out of the ${LAIR_NAMES[l.kind]} at ${l.x},${l.y}.`, "bad");
   }
-  for (const b of roamers) if (b.hunt === undefined && Math.hypot(b.tx - b.x, b.ty - b.y) < 0.5) retarget(s, b, r);
+  // A band that sees the town — any building within its sight — or stands in the hall's zone does
+  // not idle there: it strikes, if the land will pay for it, or it draws off beyond its sight and
+  // lies up, watching, moving about in its manner. Out of sight it roams, or turns for the town.
+  // One strike a half day at most, as for the land's own waves: the fog wears a town down
+  // over days, it does not pile onto it the hour after a lost fight.
+  const bare = bareShare(s) > 0;
+  const rested = s.time - aggroOf(s).lastWaveAt >= (bare ? 8 : 12) * 60 && !inOpening(s);
+  // The land smells weakness (./aggro bareShare): where the town has left something unguarded, the
+  // bands that watch it come on sooner, at a run, and for what nothing defends.
+  const prey = bare && roamers.length ? unguarded(s) : [];
+  // A band hunts only what it can see: a town that guards its edge hides what it has left bare within.
+  const quarry = (b: Roamer) => {
+    let best: { st: GameState["structures"][number]; d: number } | undefined;
+    const sight = perceptionOf(s, b) + 8;
+    for (const st of prey) {
+      const d = Math.hypot(b.x - Math.max(st.x, Math.min(b.x, st.x + st.w)), b.y - Math.max(st.y, Math.min(b.y, st.y + st.h)));
+      if (d <= sight && (!best || d < best.d)) best = { st, d };
+    }
+    return best;
+  };
+  for (const b of roamers) {
+    if (b.hunt !== undefined) continue;
+    const near = nearestStructure(s, b);
+    const sees = !!near && near.d <= perceptionOf(s, b);
+    if (sees || inHallZone(s, b.x, b.y)) {
+      const aim = quarry(b) ?? near;
+      if (aim && mayStrike(s, b, aim.st, rested)) {
+        if (b.mode !== "stalk" || b.mill) {
+          const [x, y] = center(aim.st);
+          march(b, x, y, "stalk", aim.st !== near?.st || bare);
+        }
+      } else if (b.mode !== "withdraw") {
+        const [x, y] = lurkPoint(s, b, r);
+        march(b, x, y, "withdraw");
+        // Told once a band, and not more than once in six hours: the watchers are many, the chronicle is not theirs.
+        const told = s.log.some((l) => s.time - l.t < 6 * 60 && l.text.includes("drew back beyond it"));
+        if (!b.eyed && !told && seesPoint(s, b.x, b.y)) {
+          b.eyed = true;
+          log(s, `${b.count > 1 ? `${b.count} ${plural(MONSTERS[b.kind].name)}` : `A ${MONSTERS[b.kind].name.toLowerCase()}`} (L${b.level}) came in sight of the town and drew back beyond it, to watch from ${Math.round(x)},${Math.round(y)}.`, "info");
+        }
+      }
+      continue;
+    }
+    switch (b.mode ?? "roam") {
+      case "withdraw":
+        if (Math.hypot((b.ax ?? b.x) - b.x, (b.ay ?? b.y) - b.y) < 1 || b.mill) {
+          b.mode = "lurk";
+          b.since = s.time;
+        }
+        break;
+      case "lurk":
+        // Lying up some hours — four to twelve — then off into the wilds again; now and then, when the
+        // land will pay for it, it comes on instead.
+        if (s.time - (b.since ?? s.time) > (4 + ((b.id * 7) % 9)) * 60) retarget(s, b, r, true);
+        else {
+          const aim = quarry(b) ?? near;
+          const lain = s.time - (b.since ?? s.time);
+          if (aim && (bare ? lain >= 60 && r() < 0.6 : lain >= 3 * 60 && r() < 0.15) && mayStrike(s, b, aim.st, rested)) {
+            const [x, y] = center(aim.st);
+            march(b, x, y, "stalk", bare);
+          }
+        }
+        break;
+      case "stalk":
+        if (b.mill) retarget(s, b, r);
+        break;
+      default:
+        // Come to a waypoint, it lingers a while, moving about it, then goes on.
+        if (b.mill && r() < 0.5) retarget(s, b, r);
+    }
+  }
 
-  // A band that comes near a building attacks — one raid at a time, and only
-  // when the land's purse will pay for it and it would not overwhelm what
-  // defends that building beyond the director's aim (design §2.3). Otherwise
-  // it circles, waiting. A hunter on a hero's trail is not held back.
+  // A band close enough to a building strikes it — one raid at a time, and only when the land's
+  // purse will pay for it and it would not overwhelm what defends that building beyond the
+  // director's aim (design §2.3). A hunter on a hero's trail is not held back.
   if (!s.raid) {
     for (const b of roamers) {
-      const near = nearestStructure(s, b);
+      if (!rested && b.hunt === undefined) continue;
+      const q = b.hunt === undefined ? quarry(b) : undefined;
+      const near = q && q.d <= STRIKE_RANGE ? q : nearestStructure(s, b);
       if (!near || near.d > STRIKE_RANGE) continue;
       const cost = bandCost(b);
-      if (b.hunt === undefined) {
-        const pi = unitPi(b.kind, b.level) * b.count * b.count;
-        const local = defencePower(s, near.st);
-        // Undefended ground is easy prey; a defended building is not stormed with more than the aim.
-        if (aggroOf(s).purse < cost || (local > 0 && pi > 1.5 * rho(s) * local)) continue;
-      }
+      if (b.hunt === undefined && !mayStrike(s, b, near.st, rested)) continue;
       aggroOf(s).purse = Math.max(0, aggroOf(s).purse - cost);
       aggroOf(s).lastWaveAt = s.time;
       s.roamers = roamers.filter((x) => x !== b);
@@ -191,6 +411,20 @@ export function wildsHourly(s: GameState, r: () => number) {
 /** What a band costs the director's purse to strike: as a wave of its size. */
 export const bandCost = (b: { level: number; count: number }) => 12 * Math.pow(b.level, 1.5) * b.count;
 
+/**
+ * Whether a band may strike a building now: the land has rested since its
+ * last blow, no fight is on, its purse will pay, and the band would not
+ * overwhelm what defends the building beyond the director's aim.
+ */
+function mayStrike(s: GameState, b: Roamer, st: GameState["structures"][number], rested: boolean): boolean {
+  if (s.raid || !rested) return false;
+  if (aggroOf(s).purse < bandCost(b)) return false;
+  const pi = partyPi(b.kind, b.level, b.count);
+  const local = defencePower(s, st, !!MONSTERS[b.kind].flying, !!MONSTERS[b.kind].mythic);
+  // Undefended ground is easy prey; a defended building is not stormed with more than the aim.
+  return !(local > 0 && pi > Math.min(AIM_CAP, 1.5 * rho(s)) * local);
+}
+
 function nearestStructure(s: GameState, p: { x: number; y: number }) {
   let best: { st: GameState["structures"][number]; d: number } | undefined;
   for (const st of s.structures) {
@@ -202,20 +436,28 @@ function nearestStructure(s: GameState, p: { x: number; y: number }) {
   return best;
 }
 
-function retarget(s: GameState, b: Roamer, r: () => number) {
-  if (r() < turnChance(s)) {
+/** Where a band goes next: now and then toward the town — never, when it is giving up a watch on it. */
+function retarget(s: GameState, b: Roamer, r: () => number, away = false) {
+  if (!away && r() < turnChance(s)) {
     const near = nearestStructure(s, b);
     if (near) {
       const [x, y] = center(near.st);
-      b.tx = x;
-      b.ty = y;
+      march(b, x, y, "stalk");
       return;
     }
   }
-  const a = r() * Math.PI * 2;
-  const d = 8 + r() * 18;
-  b.tx = Math.max(2, Math.min(MAP_W - 3, b.x + Math.cos(a) * d));
-  b.ty = Math.max(2, Math.min(MAP_H - 3, b.y + Math.sin(a) * d));
+  // A wander in the wilds: somewhere the town cannot be seen from, if it can find one.
+  const reach = perceptionOf(s, b) + 2;
+  let x = b.x;
+  let y = b.y;
+  for (let i = 0; i < 6; i++) {
+    const a = r() * Math.PI * 2;
+    const d = 8 + r() * 18;
+    x = Math.max(2, Math.min(MAP_W - 3, b.x + Math.cos(a) * d));
+    y = Math.max(2, Math.min(MAP_H - 3, b.y + Math.sin(a) * d));
+    if (outOfSight(s, x, y, reach)) break;
+  }
+  march(b, x, y, "roam");
 }
 
 // ── Heroes' packs and expeditions (design §4) ─────────────
@@ -226,7 +468,9 @@ export const TORCH_MINUTES = 120;
 export const RATION_MEALS = 3;
 export const RATION_RAW = 4;
 export const RATION_KCAL = RATION_MEALS * MEAL_KCAL;
-export const canPack = (v: Villager) => v.role === "knight" || v.role === "wizard";
+/** Who carries a pack and goes out into the fog: knights, wizards, the Eye of Time, and any worker of level 10 on an excursion (./seer). */
+export const canPack = (v: Villager) => v.role === "knight" || v.role === "wizard" || v.role === "seer" || canExcursion(v);
+const outing = (v: Villager) => (v.role === "knight" || v.role === "wizard" ? "adventure" : "excursion");
 
 /** Out in the fog-country one tile stands for about 0.72 km of walking. */
 export const TILE_KM = 0.72;
@@ -248,7 +492,7 @@ function packSlot(v: Villager): number {
 /** Puts a torch from the store into a hero's pack. */
 export function packTorch(s: GameState, villagerId: number): Result {
   const v = s.villagers.find((x) => x.id === villagerId);
-  if (!v || !canPack(v)) return "Only knights and wizards carry a pack.";
+  if (!v || !canPack(v)) return "Only knights, wizards and workers of level 10 carry a pack.";
   if (v.scout) return "Not while they are out in the fog.";
   const slot = packSlot(v);
   if (slot < 0) return "The pack is full — six slots.";
@@ -261,7 +505,7 @@ export function packTorch(s: GameState, villagerId: number): Result {
 /** A ration into the pack: three meals, or else four of the most plentiful raw food. */
 export function packRation(s: GameState, villagerId: number): Result {
   const v = s.villagers.find((x) => x.id === villagerId);
-  if (!v || !canPack(v)) return "Only knights and wizards carry a pack.";
+  if (!v || !canPack(v)) return "Only knights, wizards and workers of level 10 carry a pack.";
   if (v.scout) return "Not while they are out in the fog.";
   const slot = packSlot(v);
   if (slot < 0) return "The pack is full — six slots.";
@@ -356,7 +600,7 @@ export function adventureReach(v: Villager): { torches: number; rations: number;
  */
 export function sendScout(s: GameState, villagerId: number, tx: number, ty: number): Result {
   const v = s.villagers.find((x) => x.id === villagerId);
-  if (!v || !canPack(v)) return "Only knights and wizards go out into the fog.";
+  if (!v || !canPack(v)) return "Only knights, wizards and workers of level 10 go out into the fog.";
   if (v.scout) return "Already out.";
   if (v.deployedUntil && v.deployedUntil > s.time) return "Away on a sortie.";
   if (!v.pack?.some((p) => p === "torch")) return "Pack a torch first — nobody sees in the fog without one.";
@@ -374,7 +618,7 @@ export function sendScout(s: GameState, villagerId: number, tx: number, ty: numb
     x: hx, y: hy, tx: (node ? node.x : tx) + 0.5, ty: (node ? node.y : ty) + 0.5, hx, hy, phase: "out", haul: {},
     nextFindAt: s.time + 60, psi: 0, err: 0, node: node?.id, worked: 0,
   };
-  log(s, `${v.name} sets out ${node ? `to work the ${NODE_DEFS[node.kind].name.toLowerCase()} at ${node.x},${node.y}` : "on an adventure"} with ${reach.torches} torch${reach.torches === 1 ? "" : "es"} and ${reach.rations} ration${reach.rations === 1 ? "" : "s"}, carrying ${Math.round(reach.load)} kg.`, "info");
+  log(s, `${v.name} sets out ${node ? `to work the ${NODE_DEFS[node.kind].name.toLowerCase()} at ${node.x},${node.y}` : `on an ${outing(v)}`} with ${reach.torches} torch${reach.torches === 1 ? "" : "es"} and ${reach.rations} ration${reach.rations === 1 ? "" : "s"}, carrying ${Math.round(reach.load)} kg.`, "info");
   return null;
 }
 
@@ -555,8 +799,10 @@ function stepScout(s: GameState, v: Villager, minutes: number) {
         }
         s.res[k as ResourceKey] += n as number;
       }
+      // A worker home from an excursion counts it; after fifty, the fog may have changed them (./seer).
+      excursionHome(s, v);
       log(s, got.length
-        ? `${v.name} is back from the adventure with ${got.map(([k, n]) => `${Math.round((n as number) * 10) / 10} ${k}`).join(", ")}.`
+        ? `${v.name} is back from the ${outing(v)} with ${got.map(([k, n]) => `${Math.round((n as number) * 10) / 10} ${k}`).join(", ")}.`
         : `${v.name} is back from the fog, empty-handed.`, got.length ? "good" : "info");
       return;
     }
@@ -701,7 +947,7 @@ function spawnHunter(s: GameState, node: { x: number; y: number; kind: NodeKind;
   const level = Math.max(def.min, Math.min(def.max, Math.round(3 + days / 3) * mult));
   s.nextRoamerId = (s.nextRoamerId ?? 1) + 1;
   (s.roamers ??= []).push({
-    id: s.nextRoamerId, lair: 0, kind: NODE_DEFS[node.kind].guardian, level, count: mult, x: node.x + 1, y: node.y + 1,
+    id: s.nextRoamerId, lair: 0, kind: localKind(s, NODE_DEFS[node.kind].guardian), level, count: mult, x: node.x + 1, y: node.y + 1,
     tx: v.scout?.hx ?? node.x, ty: v.scout?.hy ?? node.y, hunt: v.id,
   });
 }

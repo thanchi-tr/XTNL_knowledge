@@ -22,7 +22,7 @@ import { MAP_H, MAP_W, Overlay, Terrain, YEAR_DAYS, type GameState, type Role, t
  *                     kitchens, fires and lamps
  *   entertainment     north-east: the museum, the markets, the tilting yard,
  *                     a plaza of fires, braziers and lamps
- *   industry          east: forge, refinery, laboratory, storehouses, a mine
+ *   industry          east: forge, refinery, the four laboratories, storehouses, a mine
  *                     in the hills and a lumber camp at the edge of a grove
  *   the farms         south-west along the river: fields, the watermill, the
  *                     fishing hut, the paddies and the ice house — guarded by
@@ -229,6 +229,12 @@ export function endgameTown(seed: number, bonus: number): GameState {
   const forge = put("forge", 40, WORKS, undefined, [70, 42]);
   put("refinery", 40, WORKS, undefined, [82, 42]);
   const lab = put("laboratory", 40, WORKS, undefined, [72, 54]);
+  // The newer laboratories stand by the old one: the alchemist, the observatory, the mythic laboratory.
+  const alch = put("alchemy", 25, WORKS, undefined, [78, 48]);
+  const obs = put("observatory", 25, WORKS, undefined, [90, 48]);
+  if (alch) alch.mode = "quicksilver";
+  if (obs) obs.mode = "starchart";
+  const mlab = put("mythiclab", 20, WORKS, undefined, [96, 40]);
   for (const at of [[84, 54], [70, 64], [84, 64]] as [number, number][]) put("storehouse", 30, WORKS, undefined, at);
   const mine = put("mine", 30, HILL, undefined, [102, 44]);
   put("lumbercamp", 40, WORKS, undefined, [95, 62]);
@@ -402,18 +408,62 @@ export function endgameTown(seed: number, bonus: number): GameState {
   // The east camp, on the road the dragons come by, keeps only its captain-knight.
   const camps = [farmCamp, southCamp].filter(Boolean) as Structure[];
   for (let k = 0; k < 3; k++) enlist("knight", 23 + k * 3, camps[k % Math.max(1, camps.length)] ?? towers[0], { weapon: "oathblade", armour: "aegis" });
-  for (let k = 0; k < 5; k++) enlist("wizard", 15 + k * 20, towers[k % Math.max(1, towers.length)], { weapon: "hexstaff", armour: "starweave" });
+  const wizards = Array.from({ length: 5 }, (_, k) => enlist("wizard", 15 + k * 20, towers[k % Math.max(1, towers.length)], { weapon: "hexstaff", armour: "starweave" }));
+
+  // The champions. The eastern camp's knight wears the one crown; the eldest wizard reads a Book of Enlightenment.
+  const kingKnight = s.villagers.filter((v) => v.role === "knight").sort((a, b) => b.rank - a.rank)[0];
+  if (kingKnight) {
+    kingKnight.rank = 64;
+    kingKnight.emblem = { code: "preview-oath", name: "Oath of the First Hall", attribute: "FAITH", depth: 9 };
+    kingKnight.gear = {
+      weapon: "dawnbreaker", armour: "aegis-first-king", helm: "crown-of-the-realm", boots: "boots-legendary-3",
+      ring: "ring-mythic-light", amulet: "amulet-legendary-6", relic: "relic-mythic-light",
+    };
+    kingKnight.champion = "king";
+  }
+  const eldest = wizards[wizards.length - 1];
+  eldest.emblem = { code: "preview-stars", name: "The Far Sky", attribute: "ABSTRACT", depth: 12 };
+  eldest.gear = {
+    weapon: "starweaver-rod", armour: "mantle-of-stars", helm: "helm-mythic-space", boots: "boots-mythic-space",
+    ring: "seal-of-the-void", amulet: "amulet-mythic-space", relic: "book:preview-stars",
+  };
+  eldest.champion = "master";
+  // A second Master fell to the last elder dragon, and stands in stone in the hall, half restored.
+  const fallen = makeVillager(s, homeFor(), "wizard");
+  fallen.rank = 60;
+  fallen.emblem = { code: "preview-deep", name: "Deep Water", attribute: "MIND", depth: 7 };
+  fallen.gear = {
+    weapon: "staff-mythic-dark", armour: "robe-mythic-dark", helm: "helm-legendary-2", boots: "boots-legendary-5",
+    ring: "ring-legendary-1", amulet: "eye-of-night", relic: "book:preview-deep",
+  };
+  fallen.champion = "master";
+  s.villagers = s.villagers.filter((v) => v !== fallen);
+  fallen.statue = { since: s.time - 3 * 24 * 60, restore: 0.55, fuel: 0.2 };
+  (s.statues ??= []).push(fallen);
+  s.singletons = [
+    "crown-of-the-realm", "book:preview-stars", "book:preview-deep", "dawnbreaker", "aegis-first-king", "starweaver-rod",
+    "mantle-of-stars", "seal-of-the-void", "eye-of-night",
+  ];
+  // The Eye of Time: a woodsman who came home from the fog fifty-seven times.
+  const eye = makeVillager(s, homeFor(), "seer");
+  eye.level = 14;
+  eye.excursions = 57;
+  // Twenty years of work: the town's hands are old hands.
+  for (const v of s.villagers) if (!["infantry", "archer", "heavy", "wizard", "knight"].includes(v.role)) v.level = Math.max(v.level ?? 1, 6 + (v.id % 9));
+  if (mlab) mlab.mode = "fireward";
 
   // Stores full of what twenty years have brought in.
   Object.assign(s.res, {
     coin: 40000, wood: 6000, stone: 6000, meals: 5000, potato: 3000, wheat: 2000, cabbage: 800, coal: 2000, iron: 1200, silver: 1500, gold: 400,
     platinum: 120, diamond: 60, mithril: 40, planks: 900, bricks: 900, ingots: 600, torches: 80, tools: 80,
+    quicksilver: 40, starchart: 12, fireward: 2, waterward: 1, earthward: 1, airward: 1, thunderward: 1, lightward: 1, darkward: 1, timeward: 1, spaceward: 1,
   });
   if (forge) {
     store(s, "jewel", 20);
     store(s, "heart", 6);
     store(s, "eye", 6);
     store(s, "foot:dragon", 4);
+    for (const id of ["essence-water-lesser", "essence-fire-greater", "gem-ruby-radiant", "gem-sapphire-cut", "metal-adamant", "reagent-dragons-blood", "trophy-dragon", "sword-legendary-2", "bow-mythic-air", "curio-idol"]) store(s, id, id.startsWith("essence") ? 6 : 1);
   }
   const t = stats(s);
   t.raidsWon = 240;

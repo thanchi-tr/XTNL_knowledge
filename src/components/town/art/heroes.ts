@@ -22,7 +22,16 @@ import { KNIGHT, LEGS, ROBE_FEET, WIZARD, person, renderSprite, type Materials, 
  */
 
 export type HeroLook = `hero-knight-${number}` | `hero-wizard-${number}`;
-export type Look = TroopArt | HeroLook | MountedLook;
+/** The champions, and the Eye of Time. */
+export type ChampionLook = "champion-king" | "champion-master";
+/** The four raised hero classes (lib/town/sim/heroes), each on a troop's frame. */
+export type ClassLook = "class-warden" | "class-warlord" | "class-cleric" | "class-skald";
+export type Look = TroopArt | HeroLook | MountedLook | ChampionLook | ClassLook | "seer";
+export const isClassLook = (k: string): k is ClassLook => k.startsWith("class-");
+const CLASS_FRAME: Record<ClassLook, TroopArt> = { "class-warden": "ranger", "class-warlord": "halberdier", "class-cleric": "paladin", "class-skald": "sergeant" };
+/** Each raised class's colour, for its sigil, its light and its effects. */
+export const CLASS_RAMP: Record<ClassLook, Ramp4> = { "class-warden": E.MINT, "class-warlord": E.BLOOD, "class-cleric": E.SUN, "class-skald": E.AMBER };
+export const isChampionLook = (k: string): k is ChampionLook => k === "champion-king" || k === "champion-master";
 
 export const isHeroLook = (k: string): k is HeroLook => k.startsWith("hero-");
 export const heroLevel = (k: HeroLook) => Number(k.slice(k.lastIndexOf("-") + 1));
@@ -35,9 +44,17 @@ const SOLDIER_LOOK: Record<string, TroopArt> = {
 /** The knight tree's look for each title: on foot as a squire, mounted after, a hero at the end. */
 const KNIGHT_LOOK: Record<string, Look> = { squire: "squire", serjeant: "serjeant", bachelor: "bachelor", paladin: "champion", noble: "nobleknight" };
 
-/** The look for a troop at a rank. */
-export function troopLook(role: string, rank: number): Look {
+/** The look for a troop at a rank — a champion's own, if they are one. */
+/** The heavy armoury's classes, each in its own harness (sim/enrol). */
+const HEAVY_LOOK: Record<string, TroopArt> = { shieldbearer: "shieldbearer", pikeman: "pikeman", juggernaut: "juggernaut", breaker: "breaker", warden: "ironwarden" };
+
+export function troopLook(role: string, rank: number, champion?: string | null, heroCls?: string | null, heavy?: string | null): Look {
+  if (champion === "king") return "champion-king";
+  if (champion === "master") return "champion-master";
+  if (heroCls === "warden" || heroCls === "warlord" || heroCls === "cleric" || heroCls === "skald") return `class-${heroCls}`;
+  if (heavy && HEAVY_LOOK[heavy]) return HEAVY_LOOK[heavy];
   switch (role) {
+    case "seer": return "seer";
     case "knight": return rank > 22 ? `hero-knight-${Math.min(150, rank)}` : KNIGHT_LOOK[knightTitle(rank).id];
     case "wizard": return rank >= 15 ? `hero-wizard-${Math.min(500, rank)}` : rank >= 10 ? "archmage" : rank >= 5 ? "wizard" : "apprentice";
     case "militia": return "militia";
@@ -47,9 +64,12 @@ export function troopLook(role: string, rank: number): Look {
   }
 }
 
-/** A villager-sized figure for any look: the typed cast, or a built hero. */
+/** A villager-sized figure for any look: the typed cast, a built hero, a champion, the Eye. */
 export function figure(look: Look, frame: 0 | 1): HTMLCanvasElement {
   if (isMounted(look)) return mountedSprite(look, frame);
+  if (isChampionLook(look)) return championSprite(look, frame);
+  if (look === "seer") return seerSprite(frame);
+  if (isClassLook(look)) return person(CLASS_FRAME[look], frame);
   return isHeroLook(look) ? heroSprite(look, frame) : person(look, frame);
 }
 
@@ -202,4 +222,63 @@ export function heroAura(look: HeroLook): Ramp4 {
   const lv = heroLevel(look);
   if (look.startsWith("hero-knight")) return [E.VOID, E.VOID, E.AMBER, E.BLOOD, E.CYAN][knightEra(lv)];
   return ORB[Math.floor(lv / 10) % ORB.length];
+}
+
+// ── Champions and the Eye of Time ────────────────────────
+
+/**
+ * The King: the emblem knight at the height of the ladder, in gold, under
+ * the crown, a royal cape falling behind him to the ground, and a blade
+ * that burns. The Master of Mythic Arts: the grand wizard in a robe full
+ * of stars, a halo of runes, and the Book of Enlightenment open at their
+ * side, floating. Both are drawn larger in the effects around them
+ * (art/fx), which is where their mythic design lives.
+ */
+export function championSprite(look: ChampionLook, frame: 0 | 1): HTMLCanvasElement {
+  const king = look === "champion-king";
+  const g = grid(king ? knightRows(150) : wizardRows(500));
+  if (king) {
+    // the cape, full length, behind
+    for (let y = 8; y < 14; y++) {
+      behind(g, 1, y, "c");
+      behind(g, 0, y + 1, "c");
+      behind(g, 14, y, "c");
+    }
+    // jewels in the crown, gold trim at the cape's hem
+    put(g, 5, 1, "j");
+    put(g, 9, 1, "j");
+  } else {
+    // the book, open and floating at their side
+    for (const [x, y, ch] of [[0, 6, "n"], [1, 6, "n"], [0, 7, "v"], [1, 7, "v"], [2, 6, "n"], [2, 7, "v"]] as [number, number, string][]) behind(g, x, y, ch);
+  }
+  const top = g.map((r) => r.join(""));
+  const legs = king ? LEGS[frame] : ROBE_FEET[frame];
+  const rows = frame === 1 ? [".".repeat(16), ...top, ...legs] : [...top, ...legs];
+  const mats: Materials = king
+    ? { ...knightMats(150), m: M.BRASS, a: M.BRASS, l: M.BRASS, b: M.BRASS, s: M.BRASS, t: M.CLOTHRED, p: M.CLOTHRED, c: M.CLOTHRED, x: M.BRASS, j: E.BLOOD, w: E.GOLD, y: E.SUN, q: M.LINEN }
+    : { ...wizardMats(500), u: M.CHITIN, l: M.CHITIN, r: M.CHITIN, o: E.STAR, z: [E.STAR[1]], j: E.STAR, n: M.LINEN, v: M.ARCANE, s: M.BRASS };
+  return renderSprite(rows, mats, `${look}:${frame}`);
+}
+
+const SEER = [
+  "................",
+  "......hhhh......",
+  ".....hhhhhh.....",
+  "....hhhEhhhh..o.",
+  "....hhffffhh.oOo",
+  "...hhffffffhh.s.",
+  "...hfkWffkWfh.s.",
+  "...hhffffffhh.s.",
+  "....rrrrrrrr..s.",
+  "...rrRrrrrRrr.s.",
+  "...rrrrrrrrrrfs.",
+  "...rrrrrrrrrr.s.",
+  "...rrrrrrrrrr...",
+  "...rrrrrrrrrr...",
+];
+
+/** The Eye of Time: a hooded worker come home changed, a third eye burning on the brow, an hourglass on a staff. */
+export function seerSprite(frame: 0 | 1): HTMLCanvasElement {
+  const rows = frame === 1 ? [".".repeat(16), ...SEER, ...ROBE_FEET[frame]] : [...SEER, ...ROBE_FEET[frame]];
+  return renderSprite(rows, { h: M.SAND, f: M.SKIN, k: [CAVITY], E: E.SAND, r: M.OCHRE, s: M.OAK, o: E.SAND, b: M.LEATHER }, `seer:${frame}`);
 }

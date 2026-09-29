@@ -21,6 +21,16 @@ import { themeFor } from "@/lib/attribute-themes";
 import { EquationField } from "@/components/math/EquationField";
 import { AnswerExpressionField } from "@/components/math/AnswerExpressionField";
 import { latexToMathjs } from "@/lib/latex";
+import { VerdictDetail, relationChip } from "@/components/NoveltyVerdictView";
+
+/** What a stopped submission's buttons say, by what the verdict suggests. */
+const SUGGESTION_NOTE = {
+  discard: "Nothing here the existing card lacks — keeping it is usually right.",
+  enrich: "Enrich folds the new detail into the existing card.",
+  link: "Both deserve to exist: Link keeps yours as its own card, connected to the other.",
+  merge: "",
+  create: "",
+} as const;
 
 export interface AddFormField {
   id: string;
@@ -274,12 +284,16 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
         setResult(null);
         setPendingContent(null);
         clearContentFields();
+        // The verdict's label says what the card is to what you had; the
+        // classification says where it went.
         setJustCreated(
-          res.classification === "NOVELTY"
-            ? "Created — new domain, this matched nothing existing."
-            : res.classification === "MANUAL"
-              ? "Created — filed in the domain you selected."
-              : "Created — filed in the nearest matching domain."
+          `Created · ${res.decision.label}. ${
+            res.classification === "NOVELTY"
+              ? "Opened a new domain."
+              : res.classification === "MANUAL"
+                ? "Filed in the domain you selected."
+                : `Filed beside ${res.decision.verdict.match?.domainName ? `its neighbours in ${res.decision.verdict.match.domainName}` : "its nearest neighbours"}.`
+          }`
         );
         router.refresh();
         // Focus returns to the first content field so the next idea can be
@@ -351,17 +365,19 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
   if (result?.status === "merged") {
     return (
       <div className="card fade-up p-4">
-        <span className="chip chip-muted">Merged</span>
-        <p className="mt-2.5" style={{ fontSize: 13, color: "var(--ink-1)" }}>
-          Already in your knowledge base at{" "}
-          <span className="mono" style={{ color: "var(--ink-0)" }}>
-            {(result.similarity * 100).toFixed(1)}%
-          </span>{" "}
-          similarity — folded into the existing idea rather than duplicated.
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="chip chip-muted">Merged</span>
+          <span className={`chip ${relationChip(result.decision.relation)}`}>{result.decision.label}</span>
+          <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+            {(result.similarity * 100).toFixed(1)}% in meaning
+          </span>
+        </div>
+        <p className="mt-2.5" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+          Folded into the existing idea rather than duplicated; it gains an endorsement.
         </p>
-        <p className="mt-2" style={{ fontSize: 11, lineHeight: 1.6, color: "var(--ink-3)" }}>
-          {result.decision.deduplication_reasoning}
-        </p>
+        <div className="mt-2.5">
+          <VerdictDetail verdict={result.decision.verdict} />
+        </div>
         <button type="button" className="btn-secondary mt-4" onClick={reset}>
           Add another
         </button>
@@ -370,14 +386,24 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
   }
 
   if (result?.status === "saturated") {
+    const v = result.decision.verdict;
     return (
       <div className="card fade-up p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="chip chip-amber">Near duplicate</span>
+          <span className={`chip ${relationChip(result.decision.relation)}`}>{result.decision.label}</span>
           <span className="mono" style={{ fontSize: 12, color: "var(--ink-1)" }}>
-            {(result.similarity * 100).toFixed(1)}% similar
+            {(result.similarity * 100).toFixed(1)}% in meaning
           </span>
         </div>
+
+        <div className="mt-3">
+          <VerdictDetail verdict={v} />
+        </div>
+        {SUGGESTION_NOTE[v.suggest] && (
+          <p className="mt-3" style={{ fontSize: 12, color: "var(--ink-1)" }}>
+            {SUGGESTION_NOTE[v.suggest]}
+          </p>
+        )}
 
         <dl className="mt-3 space-y-1.5" style={{ fontSize: 12, color: "var(--ink-2)" }}>
           <div className="flex gap-2">
@@ -406,12 +432,18 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
           </p>
         )}
 
+        {/* The suggested resolution leads; the others stay one click away. */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
+          {v.suggest === "discard" && (
+            <button type="button" disabled={isPending} onClick={reset} className="btn-primary">
+              Keep existing
+            </button>
+          )}
           <button
             type="button"
             disabled={isPending}
             onClick={() => handleLink(result.matchedIdeaId)}
-            className="btn-primary"
+            className={v.suggest === "link" ? "btn-primary" : "btn-secondary"}
           >
             Link Idea
           </button>
@@ -419,7 +451,7 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
             type="button"
             disabled={isPending}
             onClick={() => handleEnrich(result.matchedIdeaId, result.similarity)}
-            className="btn-secondary"
+            className={v.suggest === "enrich" ? "btn-primary" : "btn-secondary"}
           >
             {isPending ? "Working…" : "Enrich Existing"}
           </button>
@@ -903,12 +935,15 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
           }}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className={`chip ${preview.action === "CREATE_NEW_NODE" ? "chip-green" : "chip-amber"}`}>
-              {preview.action === "CREATE_NEW_NODE"
-                ? "Clear — will create"
-                : preview.action === "SATURATION"
-                  ? "Near duplicate"
-                  : "Already known"}
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className={`chip ${relationChip(preview.verdict.relation)}`}>{preview.verdict.label}</span>
+              <span style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
+                {preview.action === "CREATE_NEW_NODE"
+                  ? "will create"
+                  : preview.action === "SATURATION"
+                    ? "will stop for you to choose"
+                    : "will merge into the existing card"}
+              </span>
             </span>
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
               worth {preview.projectedPoints.toFixed(1)}
@@ -916,6 +951,10 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
                 <span style={{ color: "var(--ink-3)" }}> of {preview.basePoints}</span>
               )}
             </span>
+          </div>
+
+          <div className="mt-2.5">
+            <VerdictDetail verdict={preview.verdict} />
           </div>
 
           {preview.neighbours.length > 0 ? (
@@ -941,6 +980,11 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
                   <span className="min-w-0 flex-[2] truncate" style={{ fontSize: 10.5, color: "var(--ink-2)" }} title={n.title ?? n.id}>
                     {n.title ?? "untitled node"}
                   </span>
+                  {n.label && (
+                    <span className={`chip ${relationChip(n.relation!)} shrink-0`} style={{ fontSize: 9 }}>
+                      {n.label}
+                    </span>
+                  )}
                 </div>
               ))}
               {preview.nSimilar > 0 && (

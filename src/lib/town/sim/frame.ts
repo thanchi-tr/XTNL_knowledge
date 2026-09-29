@@ -204,7 +204,13 @@ function afterFailure(s: GameState, st: Structure, fresh: number, collapsed: num
       hurt++;
     }
   }
-  if (collapsed >= 0.6) {
+  if (collapsed >= 0.6 && st.type === "townhall") {
+    // The hall's old stones stand when its roof comes in: a shell, repaired between raids like
+    // any wound — the town is not unmade by one bad night of snow and siege.
+    st.hp = 1;
+    st.roofSnow = 0;
+    log(s, `The town hall's roof comes in: ${fresh} post${fresh === 1 ? "" : "s"} gave way.${hurt ? ` ${hurt} hurt.` : ""} Its walls stand, open to the sky, until it is repaired.`, "bad");
+  } else if (collapsed >= 0.6) {
     log(s, `The ${name} at ${st.x},${st.y} collapses: ${fresh} post${fresh === 1 ? "" : "s"} gave way and the roof came in.${hurt ? ` ${hurt} hurt.` : ""}`, "bad");
     destroyStructure(s, st);
   } else {
@@ -281,9 +287,9 @@ export function framesDaily(s: GameState) {
 }
 
 /** The worst post's utilisation: how near the building is to giving way. */
-export function frameUtil(s: GameState, st: Structure): number {
+export function frameUtil(s: GameState, st: Structure, a: Air = air(s)): number {
   if (!hasFrame(st)) return 0;
-  const { u } = frameLoads(s, st);
+  const { u } = frameLoads(s, st, a);
   return Math.max(0, ...u.filter((x) => Number.isFinite(x)));
 }
 

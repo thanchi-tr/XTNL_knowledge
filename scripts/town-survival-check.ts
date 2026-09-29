@@ -21,7 +21,7 @@ import { flowField, groupOf, downhill, fieldAt } from "../src/lib/town/sim/breac
 import { addCorpse, enactDecree, factionOf } from "../src/lib/town/sim/psyche";
 import { Overlay, type Body, type GameState, type Villager } from "../src/lib/town/sim/types";
 import { knowledgeHourly, kmod, rollDrop } from "../src/lib/town/sim/knowledge";
-import { TACTICS, exp3Update, fitness, nemesisOf, neglect, pickTactic, scoreWave, stalkOrStrike, tacticOdds } from "../src/lib/town/sim/nemesis";
+import { PRESSURE_CAP, TACTICS, exp3Update, fitness, nemesisOf, neglect, pickTactic, scoreWave, stalkOrStrike, tacticOdds } from "../src/lib/town/sim/nemesis";
 import type { FieldDaily } from "../src/lib/town/rules";
 
 FOG.rules = false;
@@ -394,7 +394,8 @@ console.log("P — minds");
     for (let h = 0; h < 48; h++) advance(t, 60, ctx);
     if (t.log.some((l) => /breaks down|eats .* meals alone|refuses/.test(l.text))) breaks++;
   }
-  check(inBand(drop, 8, 30) && breaks >= 1, `P1 five unburied dead beside the hall for two days: Hope ${drop.toFixed(1)} lower; minor breaks in ${breaks} of 40 towns`);
+  // Felt, if less than before the needs (sim/needs): a town whose other needs are met holds its minds up.
+  check(inBand(drop, 5, 30) && breaks >= 1, `P1 five unburied dead beside the hall for two days: Hope ${drop.toFixed(1)} lower; minor breaks in ${breaks} of 40 towns`);
 
   const s = make(71, true);
   for (const v of s.villagers) v.fac = s.villagers.indexOf(v) % 2 === 0 ? 2 : 0;
@@ -420,16 +421,16 @@ console.log("K — study into the town");
   knowledgeHourly(s, { ...base, fields: [f({ ideasToday: 30 })] });
   check(kmod(s, "PHYSICAL") <= 0.3 + 1e-9 && kmod(s, "PHYSICAL") > 0.29, `K1 … thirty saturate at the cap (+${(kmod(s, "PHYSICAL") * 100).toFixed(0)}%), not ten times more`);
 
-  const tiers = [0, 3, 7, 14, 30].map((streak) => rollDrop(f({ streak, reviewedToday: 9, complete: true }), "2026-02-02"));
-  check(tiers.map((t) => t.tier).join() === "0,1,2,3,4", `K2 streaks of 0, 3, 7, 14 and 30 days pay common, uncommon, rare, epic and legendary drops`);
+  const tiers = [0, 3, 7, 14, 30].map((streak) => rollDrop(f({ streak, reviewedToday: 9, passed: [9, 0, 0, 0], complete: true }), "2026-02-02"));
+  check(tiers.map((t) => t.tier).join() === "0,1,2,3,4", `K2 streaks of 0, 3, 7, 14 and 30 days bring common, uncommon, rare, epic and legendary carts`);
   const legendary = tiers[4];
   const rare = ["diamond", "mithril", "gold", "platinum", "formula", "gunpowder"].some((k) => (legendary.res as Record<string, number>)[k]) || Object.keys(legendary.items).length > 0 || legendary.tools.includes("crucible");
   const common = tiers[0];
   const plain = Object.keys(common.res).every((k) => ["wood", "stone", "meals", "potato", "coin"].includes(k));
-  check(rare && plain, `K2 … a new streak brings ${Object.entries(common.res).map(([k, n]) => `${n} ${k}`).join(", ")}; a month-long one ${[...Object.entries(legendary.res).map(([k, n]) => `${n} ${k}`), ...Object.entries(legendary.items).map(([k, n]) => `${n} ${k}`), ...legendary.tools].join(", ")}`);
+  check(rare && plain, `K2 … contents fixed by the day and the Field, stated before study: a new streak's cart holds ${Object.entries(common.res).map(([k, n]) => `${n} ${k}`).join(", ")}; a month-long one's ${[...Object.entries(legendary.res).map(([k, n]) => `${n} ${k}`), ...Object.entries(legendary.items).map(([k, n]) => `${n} ${k}`), ...legendary.tools].join(", ")}`);
 
   const t = newTown(83, 20);
-  const done = { ...base, fields: [f({ streak: 8, reviewedToday: 12, complete: true })] };
+  const done = { ...base, fields: [f({ streak: 8, reviewedToday: 12, passed: [12, 0, 0, 0], complete: true })] };
   const silver0 = t.res.silver + t.res.ingots + t.res.planks + t.res.bricks + t.res.charcoal + t.res.fertiliser + (t.toolsPending?.length ?? 0);
   knowledgeHourly(t, done);
   const once = t.res.silver + t.res.ingots + t.res.planks + t.res.bricks + t.res.charcoal + t.res.fertiliser + (t.toolsPending?.length ?? 0);
@@ -477,7 +478,9 @@ console.log("N — the nemesis");
     nemesisOf(u).before = { pop: u.villagers.length, buildings: u.structures.length, food: 0, hallHp: u.structures[0].hp, tactic: "assault", p: 0.2 };
     scoreWave(u);
   }
-  check(nemesisOf(u).pressure > 0.2 && rho(u) > rho0 + 0.2, `N4 three clean defences and it presses harder: aim ${rho0.toFixed(2)} → ${rho(u).toFixed(2)}`);
+  // It presses harder — but only so far: a strategist who keeps winning should keep standing (§19).
+  check(nemesisOf(u).pressure >= PRESSURE_CAP - 1e-9 && rho(u) > rho0 + 0.1 && rho(u) <= rho0 + PRESSURE_CAP + 1e-9,
+    `N4 three clean defences and it presses harder, but only so far: aim ${rho0.toFixed(2)} → ${rho(u).toFixed(2)} (pressure capped at ${PRESSURE_CAP})`);
 
   // N5: the answers work. The same flier wave on the same house: spearmen, then bowmen, posted beside it.
   const flierFight = (rank: number) => {
@@ -515,7 +518,8 @@ console.log("N — the nemesis");
     g.raid = { arrivesAt: g.time, party: [{ kind: "troll", level: 3, count: 2 }], side: "west", target: hall.id, phase: "fighting", combatants: [], projectiles: [], clock: 0, nextId: 1, archetype: "K" };
     let guard = 0;
     while (g.raid && guard++ < 20000) stepCombat(g, 0.05);
-    return !g.fallen;
+    // The hall falling is a looting now, not the end of a town this size: either counts as not holding.
+    return !g.fallen && !g.hallFalls;
   };
   const bare = hallFight(false);
   const kept = hallFight(true);

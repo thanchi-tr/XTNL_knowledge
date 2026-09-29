@@ -22,6 +22,12 @@ export interface Stats {
   winters: number;
   /** The most people the town has held at once. */
   peakPop?: number;
+  /** Visions the Eye of Time has had, omens warded, champions restored from stone. */
+  prophecies?: number;
+  wards?: number;
+  restored?: number;
+  /** Every kind of item the forge's store has ever held (./items). */
+  found?: string[];
   /** The season at the last dawn, to notice a winter come through. */
   lastSeason?: string;
 }

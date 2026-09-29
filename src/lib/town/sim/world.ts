@@ -1,6 +1,7 @@
 import { ARMY_PER_POINT, BARRACKS_CLEARANCE, CATALOG, KITCHEN_REACH, KNIGHT_TITLES, STORE_PER_LEVEL, grade, knightTitle, type Cost } from "./catalog";
-import { MATURE, SEEDLING, SPROUT, TILE_WOOD, YOUNG, treeMeta } from "./woods";
+import { MATURE, SEEDLING, SPROUT, TILE_WOOD, YOUNG, treeMeta, pickSpecies } from "./woods";
 import { inSight } from "./vision";
+import { biomeDef, iceWinter, type Biome } from "./biomes";
 import {
   MAP_H, MAP_W, MILITARY, Overlay, RAW_FOODS, Terrain,
   type GameState, type MapState, type ResourceKey, type Resources, type Season, type Structure, type StructureType,
@@ -41,7 +42,7 @@ export const riverCenter = (y: number) => 11 + Math.round(Math.sin(y / 9) * 3 + 
 /** Rock kinds, by meta value. Low-tier minted resources, as the brief asks. */
 export const ROCK_KINDS = ["stone", "coal", "iron", "silver"] as const;
 
-export function generateMap(seed: number): MapState {
+export function generateMap(seed: number, biome: Biome = "temperate"): MapState {
   const r = rng(seed);
   const n = MAP_W * MAP_H;
   const terrain = new Array<number>(n).fill(Terrain.Grass);
@@ -115,14 +116,140 @@ export function generateMap(seed: number): MapState {
     if (v < 0.05) {
       overlay[i] = Overlay.Tree;
       const age = r();
-      meta[i] = treeMeta(Math.floor(r() * 8), age < 0.6 ? MATURE : age < 0.85 ? YOUNG : age < 0.95 ? SEEDLING : SPROUT);
+      meta[i] = treeMeta(Math.floor(r() * 8), age < 0.6 ? MATURE : age < 0.85 ? YOUNG : age < 0.95 ? SEEDLING : SPROUT, pickSpecies(biome, r()));
     } else if (v < 0.062) {
       overlay[i] = Overlay.Rock;
       const k = r();
       meta[i] = k < 0.55 ? 0 : k < 0.82 ? 1 : k < 0.96 ? 2 : 3;
     }
   }
+  // The other maps are the green country reshaped (./biomes).
+  if (biome === "desert") desertify(terrain, overlay, meta, seed, home);
+  else if (biome === "skyisles") skyify(terrain, overlay, meta, seed);
   return { w: MAP_W, h: MAP_H, terrain, overlay, meta };
+}
+
+/** Tiles from the nearest water, up to `limit` (255 past it): a breadth-first flood from every water tile. */
+function waterDistance(terrain: number[], limit: number): Uint8Array {
+  const d = new Uint8Array(MAP_W * MAP_H).fill(255);
+  let frontier: number[] = [];
+  for (let i = 0; i < terrain.length; i++) if (terrain[i] === Terrain.Water) {
+    d[i] = 0;
+    frontier.push(i);
+  }
+  for (let step = 1; step <= limit && frontier.length; step++) {
+    const next: number[] = [];
+    for (const i of frontier) {
+      const x = i % MAP_W;
+      const y = Math.floor(i / MAP_W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (d[j] !== 255) continue;
+        d[j] = step;
+        next.push(j);
+      }
+    }
+    frontier = next;
+  }
+  return d;
+}
+
+/**
+ * The desert: the river shrinks to a stream down its wadi, palm groves and
+ * green keep only to the water, the open ground is sand with a few cacti and
+ * much sandstone, and mesas rise out in the country. Marsh stays where it
+ * lay, as salt pans.
+ */
+function desertify(terrain: number[], overlay: number[], meta: number[], seed: number, home: [number, number]) {
+  const r = rng(seed * 11 + 5);
+  for (let y = 0; y < MAP_H; y++) {
+    const c = riverCenter(y);
+    for (let x = c - 5; x <= c + 5; x++) {
+      if (!inBounds(x, y)) continue;
+      const i = idx(x, y);
+      if (terrain[i] === Terrain.Water && Math.abs(x - c) > 1) terrain[i] = Terrain.Bank;
+    }
+  }
+  const near = waterDistance(terrain, 8);
+  for (let i = 0; i < terrain.length; i++) {
+    const t = terrain[i];
+    if (t === Terrain.Forest && near[i] > 6) {
+      terrain[i] = Terrain.Grass;
+      meta[i] = 0;
+    } else if (t === Terrain.Meadow && near[i] > 4) terrain[i] = Terrain.Grass;
+    else if (t === Terrain.Grass && near[i] >= 1 && near[i] <= 2 && tileHash(i % MAP_W, Math.floor(i / MAP_W), 211) < 0.85) terrain[i] = Terrain.Meadow;
+    if (overlay[i] === Overlay.Tree && near[i] > 5 && r() < 0.8) {
+      overlay[i] = Overlay.None;
+      meta[i] = 0;
+    }
+  }
+  // Mesas: broad flat-topped rock out in the country, and sandstone on the sand.
+  for (let k = 0; k < Math.round((MAP_W * MAP_H) / 2600); k++) {
+    const bx = 30 + r() * (MAP_W - 30);
+    const by = r() * MAP_H;
+    if (dist(home, [bx, by]) < 30) continue;
+    const rx = 3 + r() * 6;
+    const ry = 2 + r() * 4;
+    for (let y = Math.floor(by - ry - 1); y <= Math.ceil(by + ry + 1); y++) for (let x = Math.floor(bx - rx - 1); x <= Math.ceil(bx + rx + 1); x++) {
+      if (!inBounds(x, y)) continue;
+      const i = idx(x, y);
+      if (terrain[i] !== Terrain.Grass) continue;
+      if (((x - bx) / rx) ** 2 + ((y - by) / ry) ** 2 <= 1 + (tileHash(x, y, 223) - 0.5) * 0.4) {
+        terrain[i] = Terrain.Hill;
+        if (r() < 0.12) {
+          overlay[i] = Overlay.Rock;
+          meta[i] = r() < 0.6 ? 0 : r() < 0.7 ? 2 : 3;
+        }
+      }
+    }
+  }
+  for (let i = 0; i < terrain.length; i++) {
+    if (terrain[i] !== Terrain.Grass || overlay[i] !== Overlay.None || dist(home, [i % MAP_W, Math.floor(i / MAP_W)]) < 14) continue;
+    if (r() < 0.02) {
+      overlay[i] = Overlay.Rock;
+      meta[i] = r() < 0.7 ? 0 : 1;
+    }
+  }
+}
+
+/**
+ * The floating isles: everything but the islands falls away into open sky.
+ * The town's own isle is large — the founding ground, its stretch of river
+ * and room to grow — and the rest are scattered, from rocks a few tiles
+ * across to isles as big as a village, with a chain of stepping stones
+ * leading out east for the first bridges.
+ */
+function skyify(terrain: number[], overlay: number[], meta: number[], seed: number) {
+  const r = rng(seed * 13 + 3);
+  const land = new Uint8Array(MAP_W * MAP_H);
+  const isle = (cx: number, cy: number, rx: number, ry: number, salt: number) => {
+    for (let y = Math.floor(cy - ry * 1.3); y <= Math.ceil(cy + ry * 1.3); y++) for (let x = Math.floor(cx - rx * 1.3); x <= Math.ceil(cx + rx * 1.3); x++) {
+      if (!inBounds(x, y)) continue;
+      const rag = (tileHash(x >> 2, y >> 2, salt) - 0.5) * 0.45 + (tileHash(x, y, salt + 1) - 0.5) * 0.08;
+      if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1 + rag) land[idx(x, y)] = 1;
+    }
+  };
+  isle(44, 34, 56, 40, 301);
+  // Stepping stones east from the home isle.
+  for (let k = 0; k < 5; k++) isle(108 + k * 16 + r() * 4, 30 + (r() - 0.5) * 16, 4 + r() * 3, 3 + r() * 2, 303 + k);
+  // The scattered isles.
+  const count = Math.round((MAP_W * MAP_H) / 1700);
+  for (let k = 0; k < count; k++) {
+    const cx = r() * MAP_W;
+    const cy = r() * MAP_H;
+    if (cx < 106 && cy < 80) continue;
+    const rx = 4 + r() * 16;
+    isle(cx, cy, rx, rx * (0.55 + r() * 0.45), 311 + k);
+  }
+  for (let i = 0; i < land.length; i++) {
+    if (land[i]) continue;
+    terrain[i] = Terrain.Void;
+    overlay[i] = Overlay.None;
+    meta[i] = 0;
+  }
 }
 
 /**
@@ -280,6 +407,7 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
       let why: string | undefined;
       if (occ[i]) why = "Something is already built here.";
       else if (t === Terrain.Water) why = "Cannot build on water.";
+      else if (t === Terrain.Void) why = "Nothing stands on the open sky — only a bridge can cross it.";
       else if (t === Terrain.Marsh) why = "Marsh is too soft to build on — cut its peat, or fill it in.";
       else if (t === Terrain.Hill && (type === "farm" || type === "waterfarm")) why = "Hills are too stony to plough — farm the grass or meadow below.";
       else if (t === Terrain.Forest) why = "Forest must be left standing — build a lumber camp beside it.";
@@ -307,6 +435,10 @@ export function checkPlacement(s: GameState, type: StructureType, x: number, y: 
   }
   if (!reason && def.unique && s.structures.some((st) => st.type === type)) reason = `Only one ${def.name.toLowerCase()} is allowed.`;
   if (!reason && def.requires && !s.villagers.some((v) => v.role === def.requires!.role)) reason = def.requires.reason;
+  if (!reason && def.needs) {
+    const missing = def.needs.find((n) => !s.structures.some((st) => st.type === n.type && !st.buildUntil && st.level >= n.level));
+    if (missing) reason = `Needs a ${CATALOG[missing.type].name.toLowerCase()}${missing.level > 1 ? ` at level ${missing.level}` : ""} first.`;
+  }
   if (!reason && (type === "house" || type === "school")) {
     const hall = s.structures.find((st) => st.type === "townhall");
     if (hall && hallDistance(s, { x, y, w: def.w, h: def.h }) > hallRadius(hall.level)) {
@@ -332,6 +464,8 @@ export function checkTile(s: GameState, i: number, kind: "pavement" | "wall" | "
   const o = s.map.overlay[i];
   if (occ[i]) return "A building stands here.";
   if (t === Terrain.Water || t === Terrain.Forest || t === Terrain.Marsh) return t === Terrain.Marsh ? "Marsh swallows a road — fill it in first." : "Only on open ground.";
+  // The open sky between floating isles takes a bridge, and nothing else.
+  if (t === Terrain.Void && kind !== "pavement") return "Only a bridge can be laid over the open sky.";
   if (o === Overlay.Lair) return "Something old stands here.";
   if (!inSight(s, i % MAP_W, Math.floor(i / MAP_W))) return "Nobody can see there — light it first.";
   if (o === Overlay.Tree || o === Overlay.Rock || o === Overlay.Debris) return "Clear this tile first.";
@@ -462,7 +596,8 @@ export function irrigation(s: GameState, farm: Structure): number {
   for (const m of s.structures) {
     if (m.type !== "watermill" || m.buildUntil) continue;
     if (dist(center(m), c) > IRRIGATION_RANGE) continue;
-    best = Math.max(best, m.level >= farm.level ? 1 : 0.5);
+    // The mill's path (./paths) lifts more water; in a flood hour, twice as much.
+    best = Math.max(best, (m.level >= farm.level ? 1 : 0.5) * (m.pr ?? 1) * (m.flood ? 2 : 1));
   }
   if (best > 0) return best;
   if (farm.type === "waterfarm") {
@@ -547,7 +682,23 @@ export function spacingProblem(s: GameState, type: StructureType, r: Rect): stri
  * tile's meta: level × 10000 + hit points. Walls from before levels read as
  * level 1.
  */
-export const WALL_MAX_LEVEL = 30;
+export const WALL_MAX_LEVEL = 60;
+
+/**
+ * A wall's order: every ten levels it is rebuilt as something else, and it
+ * keeps what the orders below it could do.
+ */
+export const WALL_ORDERS = [
+  { from: 1, name: "Fieldstone wall", ability: "" },
+  { from: 10, name: "Spiked rampart", ability: "Whatever strikes it takes a fifth of its own blow back on the spikes." },
+  { from: 20, name: "Loopholed curtain", ability: "It shoots: whatever stands at it attacking takes a bolt every second and a half." },
+  { from: 30, name: "Rune-cut bastion", ability: "It mends itself between fights, a fiftieth of its strength an hour, and a creature of the night that strikes it is scorched." },
+  { from: 40, name: "Frostbound wall", ability: "Rime creeps up whatever strikes it: its blows come half again as slowly." },
+  { from: 50, name: "Aegis wall", ability: "It takes half of every blow." },
+] as const;
+export const wallOrder = (level: number) => WALL_ORDERS.reduce((o, w, i) => (level >= w.from ? i : o), 0);
+/** The bolt a loopholed wall looses at whatever attacks it. */
+export const wallBolt = (level: number) => Math.round(6 + 1.6 * level);
 export const wallLevel = (meta: number) => Math.max(1, Math.floor(meta / 10000));
 export const wallHp = (meta: number) => (meta >= 10000 ? meta % 10000 : meta);
 export const wallMaxHp = (level: number, gate = false) => (gate ? 80 : 60) + (gate ? 60 : 50) * (level - 1) + (gate ? 120 : 100) * grade(level);
@@ -560,6 +711,9 @@ export function wallUpgradeCost(level: number): Cost {
   if (level + 1 === 10) c.gold = 1;
   if (level + 1 === 20) c.platinum = 1;
   if (level + 1 === 30) c.diamond = 1;
+  if (level >= 30) c.ingots = (c.ingots ?? 0) + Math.ceil((level - 25) / 5);
+  if (level + 1 === 40 || level + 1 === 50) c.mithril = 1;
+  if (level + 1 === 60) c.diamond = 2;
   return c;
 }
 
@@ -638,11 +792,32 @@ function castWarmth(s: GameState, f: Structure): Warmth {
 const warmMemo = new WeakMap<GameState, { key: string; fields: Warmth[] }>();
 
 /** Every fuelled pit fire's warmth. Recast only when a fire or a wall changes. */
-export function warmFields(s: GameState): Warmth[] {
-  const fires = s.structures.filter((f) => f.type === "pitfire" && !f.buildUntil && (f.fuel ?? 0) > 0);
+/**
+ * The walls that could block a fire's heat, hashed: only the ground its rays
+ * can reach (twice its range), not the whole map — exact, and a small part of
+ * the cost of a full scan.
+ */
+function heatWalls(s: GameState, fires: Structure[]): number {
   let h = 0;
   const { overlay } = s.map;
-  for (let i = 0; i < overlay.length; i++) if (blocksHeat(overlay[i])) h = (h * 31 + i) | 0;
+  for (const f of fires) {
+    const [cx, cy] = center(f);
+    const R = warmthRange(f.level) * 2 + 1;
+    const x0 = Math.max(0, Math.floor(cx - R));
+    const x1 = Math.min(MAP_W - 1, Math.ceil(cx + R));
+    const y0 = Math.max(0, Math.floor(cy - R));
+    const y1 = Math.min(MAP_H - 1, Math.ceil(cy + R));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const i = y * MAP_W + x;
+      if (blocksHeat(overlay[i])) h = (h * 31 + i) | 0;
+    }
+  }
+  return h;
+}
+
+export function warmFields(s: GameState): Warmth[] {
+  const fires = s.structures.filter((f) => f.type === "pitfire" && !f.buildUntil && (f.fuel ?? 0) > 0);
+  const h = heatWalls(s, fires);
   const key = `${fires.map((f) => `${f.id}:${f.level}:${f.x}:${f.y}`).join(",")}|${h}`;
   const hit = warmMemo.get(s);
   if (hit && hit.key === key) return hit.fields;
@@ -749,7 +924,7 @@ export const hallCap = (level: number) => 120 + 30 * (Math.max(1, level) - 1);
 
 /** Room every finished storehouse adds, for each good it keeps. */
 export function storeRoom(s: GameState): number {
-  return s.structures.filter((st) => st.type === "storehouse" && !st.buildUntil).reduce((a, st) => a + STORE_PER_LEVEL * st.level, 0);
+  return s.structures.filter((st) => st.type === "storehouse" && !st.buildUntil).reduce((a, st) => a + STORE_PER_LEVEL * st.level * (st.pr ?? 1), 0);
 }
 
 /** How much of one good the town can hold. Treasury goods have no limit. */
@@ -828,26 +1003,62 @@ export const RARE_FINDS: { res: ResourceKey; weight: number; qty: [number, numbe
 ];
 
 /** Only potatoes grow in winter, and only in a field a fire keeps open. */
-export function growsInWinter(field: Structure): boolean {
-  return field.type === "farm" && (field.mode ?? "potato") === "potato";
+/** Whether a field grows through winter: potatoes in the green country; each map has its own hardy crops (./biomes). */
+export function growsInWinter(field: Structure, s?: Pick<GameState, "biome">): boolean {
+  if (field.type !== "farm") return false;
+  return (s ? biomeDef(s).winterCrops : ["potato"]).includes(field.mode ?? "potato");
 }
 
-/** In winter a field outside every pit fire's warmth is iced over and grows nothing. */
+/** In winter a field outside every pit fire's warmth is iced over and grows nothing — where winter ices at all. */
 export function fieldFrozen(s: GameState, field: Structure, winter: boolean): boolean {
-  return winter && !isWarm(s, center(field));
+  return iceWinter(s, winter) && !isWarm(s, center(field));
 }
 
 // ── Light ─────────────────────────────────────────────────
 
+/** Tiles an hour a hand walks out to a job in the open, and back with what it gathered. */
+export const WALK_TPH = 24;
+
+/**
+ * The walk to a tile and back, in hours: from the nearest building, out and
+ * home again laden. Gathering far out takes longer by as much.
+ */
+export function tripHours(s: GameState, tile: number): number {
+  const x = (tile % MAP_W) + 0.5;
+  const y = Math.floor(tile / MAP_W) + 0.5;
+  let d = Infinity;
+  for (const st of s.structures) {
+    const cx = Math.max(st.x, Math.min(x, st.x + st.w));
+    const cy = Math.max(st.y, Math.min(y, st.y + st.h));
+    d = Math.min(d, Math.hypot(x - cx, y - cy));
+  }
+  return Number.isFinite(d) ? (2 * d) / WALK_TPH : 0;
+}
+
 /** Types that give light, and so are never themselves haunted. */
 export const LIGHT_TYPES: StructureType[] = ["pitfire", "lamppost", "brazier"];
+
+/**
+ * A lamppost's reservoir, in fuel units — a wood is one, a coal three, as in
+ * a pit fire's grate.
+ */
+export const LAMP_CAP = 12;
+/**
+ * What a lamp burns in a night hour (20:00–06:00): a twentieth of a unit, half
+ * a unit a night — a full load lasts about twenty-four nights. A pit fire
+ * burns eight times that in a spring hour, thirty to sixty times in a winter one.
+ */
+export const LAMP_BURN = 0.05;
+/** What is left in a lamp. One from before lamps took fuel counts as full. */
+export const lampFuel = (st: Structure) => st.fuel ?? LAMP_CAP;
 
 /** Reach of a light, in tiles. A cold fire or an empty brazier gives none. */
 export function lightRange(st: Structure): number {
   if (st.buildUntil) return 0;
   if (st.type === "pitfire") return (st.fuel ?? 0) > 0 ? warmthRange(st.level) : 0;
   if (st.type === "brazier") return (st.fuel ?? 0) > 0 ? 6 : 0;
-  if (st.type === "lamppost") return 4;
+  // Its path (./paths): polished glass reaches further, and a beacon night twice as far. A dry lamp is dark.
+  if (st.type === "lamppost") return lampFuel(st) > 0 ? 4 * (st.pr ?? 1) * (st.beacon ? 2 : 1) : 0;
   return 0;
 }
 

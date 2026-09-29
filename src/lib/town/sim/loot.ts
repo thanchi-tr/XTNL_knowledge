@@ -1,9 +1,19 @@
+import { ATTR_NAME, attrsOf, growOnRise } from "./attributes";
 import { roleLabel, soldierTitle } from "./catalog";
 import type { Cost } from "./catalog";
 import { byId, log } from "./state";
+import { onDeath } from "./recognition";
 import { canAfford, costText, pay, rng } from "./world";
+import { thriftRefund, windfall } from "./paths";
 import type { GameState, MonsterKind, Role, Structure, Villager } from "./types";
 import type { SimContext } from "./tick";
+import { MONSTERS, tierOf } from "./bestiary";
+import { petrify } from "./champions";
+import { stats } from "./stats";
+import type { Element } from "./elements";
+import {
+  ITEM_SLOTS, SINGLETONS, TROPHY, itemDef, poolOf, rarityIndex, type ItemDef, type ItemFamily, type ItemSlot, type Rarity,
+} from "./items";
 
 /**
  * What monsters leave behind, and what the forge makes of it.
@@ -49,6 +59,10 @@ export const DROPS: Record<MonsterKind, PartKey[]> = {
   griffin: ["hide", "fang"], wisp: ["ectoplasm"], wendigo: ["bone", "hide"], oni: ["bone", "core"], kappa: ["scale", "ichor"],
   tengu: ["hide"], jiangshi: ["bone", "ectoplasm"], kitsune: ["hide", "ectoplasm"], yurei: ["ectoplasm"], gashadokuro: ["bone", "core"],
   jorogumo: ["ichor", "fang"], nian: ["hide", "core"],
+  phoenix: ["scale", "core"], leviathan: ["scale", "core"], behemoth: ["hide", "bone", "core"], stormroc: ["hide", "core"],
+  raiju: ["fang", "core"], seraph: ["ectoplasm", "core"], shadowcolossus: ["ectoplasm", "bone"], voidwalker: ["ectoplasm", "core"],
+  scorpion: ["scale", "fang"], jackal: ["hide", "fang"], mummy: ["bone", "ectoplasm"], sandworm: ["scale", "fang", "core"], djinn: ["ectoplasm", "core", "jewel"], sphinx: ["hide", "jewel", "core"],
+  pixie: ["ectoplasm"], skyray: ["hide", "fang"], cloudjelly: ["ichor"], thunderbird: ["hide", "core"], stormgiant: ["bone", "core"], skyserpent: ["scale", "jewel", "core"],
 };
 
 /** What one fallen monster leaves. */
@@ -71,6 +85,141 @@ export function dropsFor(kind: MonsterKind, level: number, legendary: boolean, r
   return out;
 }
 
+// ── Loot: equipment and the rest ─────────────────────────
+
+/** Weights over broken … mythic for an equipment drop, by band. */
+const DROP_WEIGHTS = [
+  [60, 40, 0, 0, 0, 0],
+  [25, 55, 20, 0, 0, 0],
+  [5, 45, 38, 12, 0, 0],
+  [0, 15, 45, 32, 8, 0],
+  [0, 0, 20, 45, 30, 5],
+  [0, 0, 0, 20, 50, 30],
+];
+const DROP_RARITY: Rarity[] = ["broken", "common", "rare", "special", "legendary", "mythic"];
+
+/** The rarity of an equipment drop: by the monster's level, a band up for legendary things, the top band for mythic ones. */
+export function dropRarity(level: number, tier: "common" | "legendary" | "mythic", r: () => number): Rarity {
+  const band = tier === "mythic" ? 5 : Math.min(4, (level < 5 ? 0 : level < 15 ? 1 : level < 30 ? 2 : level < 60 ? 3 : 4) + (tier === "legendary" ? 1 : 0));
+  const w = DROP_WEIGHTS[band];
+  let x = r() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < w.length; i++) if ((x -= w[i]) < 0) return DROP_RARITY[i];
+  return "common";
+}
+
+const GEM_NAMES = ["ruby", "sapphire", "emerald", "topaz", "amethyst", "onyx", "opal", "pearl", "garnet", "jade", "moonstone", "sunstone"];
+const SCRAP_IDS = ["scrap-iron", "scrap-cloth", "scrap-wood", "scrap-bone", "scrap-gem", "scrap-coin"];
+const CURIO_IDS = ["curio-idol", "curio-chalice", "curio-hoard", "curio-goblet", "curio-ivory", "curio-map"];
+
+/**
+ * What a fallen monster leaves beyond its parts: a piece of equipment now and
+ * then (always from a mythic thing, often from a legendary one), gems from
+ * the stronger, scrap from the weak, the essence of a legendary or mythic
+ * thing's element, its great trophy, and once in a while a curio.
+ */
+export function lootFor(kind: MonsterKind, level: number, r: () => number): Record<string, number> {
+  const out: Record<string, number> = {};
+  const add = (id: string, n = 1) => (out[id] = (out[id] ?? 0) + n);
+  const tier = tierOf(kind);
+  const def = MONSTERS[kind];
+  const pEquip = tier === "mythic" ? 1 : tier === "legendary" ? 0.6 : Math.min(0.25, 0.04 + level * 0.004);
+  for (let i = 0; i < (tier === "mythic" ? 2 : 1); i++) {
+    if (r() >= pEquip) continue;
+    const pool = poolOf(dropRarity(level, tier, r));
+    if (pool.length) add(pool[Math.floor(r() * pool.length)].id);
+  }
+  if (level < 8 && r() < 0.15) add(SCRAP_IDS[Math.floor(r() * SCRAP_IDS.length)]);
+  if (level >= 5 && r() < Math.min(0.2, 0.02 + level * 0.003)) {
+    const grade = level < 20 ? "chipped" : level < 50 ? "cut" : "radiant";
+    add(`gem-${GEM_NAMES[Math.floor(r() * GEM_NAMES.length)]}-${grade}`);
+  }
+  if (def.element && tier !== "common") {
+    const grade = tier === "mythic" ? (r() < 0.3 ? "primal" : "greater") : r() < 0.2 ? "greater" : "lesser";
+    add(`essence-${def.element}-${grade}`, tier === "mythic" ? 2 : 1);
+  }
+  const trophy = TROPHY[kind];
+  if (trophy && (tier === "mythic" || r() < 0.3)) add(trophy.id);
+  if (level >= 10 && r() < 0.02) add(CURIO_IDS[Math.floor(r() * CURIO_IDS.length)]);
+  return out;
+}
+
+/** Artifacts made, not found: the Book and the Crown come from the mythic laboratory. */
+const CRAFTED_SINGLETONS = new Set(["book-of-enlightenment", "crown-of-the-realm"]);
+
+/**
+ * One of the singular artifacts not yet in the world, of an element if one is
+ * asked for and any is left: marked found, and never dropped again.
+ */
+export function claimSingleton(s: GameState, r: () => number, element?: Element | null): string | null {
+  const found = new Set(s.singletons ?? []);
+  const left = SINGLETONS.filter((a) => !found.has(a.id) && !CRAFTED_SINGLETONS.has(a.id));
+  const of = element ? left.filter((a) => a.element === element) : [];
+  const pick = (of.length ? of : left)[Math.floor(r() * (of.length ? of : left).length)];
+  if (!pick) return null;
+  (s.singletons ??= []).push(pick.id);
+  return pick.id;
+}
+
+/** Scrap a piece of each stuff gives back. */
+const SCRAP_OF: Partial<Record<ItemFamily, string>> = {
+  sword: "scrap-iron", halberd: "scrap-iron", plate: "scrap-iron", helm: "scrap-iron", ring: "scrap-coin", amulet: "scrap-coin",
+  bow: "scrap-wood", crossbow: "scrap-wood", staff: "scrap-wood", relic: "scrap-coin", robe: "scrap-cloth", leather: "scrap-cloth", boots: "scrap-cloth",
+};
+
+/** What breaking a piece down gives back, by rarity. */
+export function salvageYield(id: string): Record<string, number> {
+  const d = itemDef(id);
+  if (!d || d.kind !== "equipment") return {};
+  const scrap = SCRAP_OF[d.family] ?? "scrap-iron";
+  const r = rarityIndex(d.rarity);
+  const out: Record<string, number> = { [scrap]: 1 + Math.min(3, r) };
+  if (r >= 1) out[["hide", "fang", "bone", "ichor"][d.n % 4]] = r;
+  if (r >= 3) out.jewel = r - 2;
+  if (r >= 5 && d.element) out[`essence-${d.element}-lesser`] = 2;
+  return out;
+}
+
+export function salvage(s: GameState, id: string): Result {
+  const d = itemDef(id);
+  if (!d || d.kind !== "equipment") return "Only equipment can be broken down.";
+  if (d.rarity === "singleton") return "A singular piece is not broken down.";
+  if (!take(s, id, 1)) return "None in the forge's store.";
+  const got = salvageYield(id);
+  const lost = Object.entries(got).reduce((a, [k, n]) => a + store(s, k, n), 0);
+  log(s, `The ${d.name.toLowerCase()} is broken down: ${Object.entries(got).map(([k, n]) => `${n} ${itemDef(k)?.name.toLowerCase() ?? k}`).join(", ")}${lost ? ` (${lost} would not fit)` : ""}.`, "info");
+  return null;
+}
+
+/** What mending a broken piece costs: two of its scrap and some coin. */
+export const REPAIR_COIN = 10;
+export function repair(s: GameState, id: string): Result {
+  const d = itemDef(id);
+  if (!d || d.rarity !== "broken") return "Only a broken piece can be mended.";
+  const scrap = SCRAP_OF[d.family] ?? "scrap-iron";
+  if (stock(s, scrap) < 2) return `Needs 2 ${itemDef(scrap)?.name.toLowerCase() ?? scrap} to mend.`;
+  if (s.res.coin < REPAIR_COIN) return `Needs ${REPAIR_COIN} coin.`;
+  if (stock(s, id) < 1) return "None in the forge's store.";
+  const mended = `${d.family}-common-${d.id.split("-").pop()}`;
+  take(s, id, 1);
+  take(s, scrap, 2);
+  s.res.coin -= REPAIR_COIN;
+  store(s, mended, 1);
+  log(s, `The forge mends the ${d.name.toLowerCase()}: a ${itemDef(mended)?.name.toLowerCase()}.`, "good");
+  return null;
+}
+
+/** Sells one piece of loot or equipment at a market, for its worth. */
+export function sellItem(s: GameState, id: string): Result {
+  const d = itemDef(id);
+  if (!d) return "Nothing to sell.";
+  if (d.rarity === "singleton") return "A singular piece is not for sale.";
+  if (!s.structures.some((m) => m.type === "market" && !m.buildUntil)) return "Build a market to sell to.";
+  if (!take(s, id, 1)) return "None in the forge's store.";
+  s.res.coin += d.value;
+  log(s, `Sold a ${d.name.toLowerCase()} for ${d.value} coin.`, "info");
+  return null;
+}
+
 // ── The forge's store ─────────────────────────────────────
 
 /** Units of one item a slot holds. */
@@ -89,6 +238,15 @@ export const stock = (s: GameState, item: string) => stash(s).filter((x) => x.it
 
 /** Puts items away, topping up existing stacks first. Returns what did not fit. */
 export function store(s: GameState, item: string, qty: number): number {
+  const left = storeInto(s, item, qty);
+  if (left < qty) {
+    const found = (stats(s).found ??= []);
+    if (!found.includes(item)) found.push(item);
+  }
+  return left;
+}
+
+function storeInto(s: GameState, item: string, qty: number): number {
   const forge = forgeOf(s);
   if (!forge) return qty;
   const slots = armorySlots(forge.level);
@@ -123,7 +281,7 @@ export function take(s: GameState, item: string, qty: number): boolean {
 
 // ── Gear ──────────────────────────────────────────────────
 
-export type GearSlot = "weapon" | "armour";
+export type GearSlot = ItemSlot;
 
 export interface GearDef {
   id: string;
@@ -176,7 +334,8 @@ export function gearRole(v: Villager): Role {
 }
 
 export const isSpecial = (v: Villager) => SPECIAL.includes(gearRole(v));
-export const gearOf = (v: Villager, slot: GearSlot) => (v.gear?.[slot] ? GEAR[v.gear[slot]!] : undefined);
+/** The piece worn in a slot, from the catalogue of eight hundred (./items). */
+export const gearOf = (v: Villager, slot: GearSlot): ItemDef | undefined => (v.gear?.[slot] ? itemDef(v.gear[slot]!) : undefined);
 
 /** How far a special troop can train on the weapon it carries. */
 export const WEAPON_CAP = [8, 12, 18, Infinity] as const;
@@ -185,12 +344,50 @@ export function gearCap(v: Villager): number {
   return WEAPON_CAP[gearOf(v, "weapon")?.tier ?? 0];
 }
 
+export interface GearStats {
+  /** Multipliers on damage, hit points and pace. */
+  dmg: number;
+  hp: number;
+  speed: number;
+  /** Share off the time between blows, at most half. */
+  haste: number;
+  /** Tiles of reach added. */
+  range: number;
+  /** The weapon's element, if it carries one. */
+  element: Element | null;
+}
+/** Everything a troop's gear adds, slot by slot. */
+export function gearStats(v: Villager): GearStats {
+  let dmg = 1;
+  let hp = 1;
+  let speed = 1;
+  let haste = 0;
+  let range = 0;
+  let element: Element | null = null;
+  for (const slot of ITEM_SLOTS) {
+    const d = gearOf(v, slot);
+    if (!d) continue;
+    dmg += d.dmg ?? 0;
+    hp += d.hp ?? 0;
+    speed += d.speed ?? 0;
+    haste += d.haste ?? 0;
+    range += d.range ?? 0;
+    if (slot === "weapon" && d.element) element = d.element;
+  }
+  return { dmg, hp, speed, haste: Math.min(0.5, haste), range, element };
+}
+
 /** Damage and hit-point multipliers from carried gear. */
 export function gearBonus(v: Villager): { dmg: number; hp: number } {
-  const w = gearOf(v, "weapon")?.tier ?? 0;
-  const a = gearOf(v, "armour")?.tier ?? 0;
-  return { dmg: 1 + [0, 0.2, 0.45, 0.9][w], hp: 1 + [0, 0.25, 0.5, 1][a] };
+  const g = gearStats(v);
+  return { dmg: g.dmg, hp: g.hp };
 }
+
+/** Every slot filled with sound gear (nothing broken): what a Master of Mythic Arts must wear. */
+export const fullSet = (v: Villager) => ITEM_SLOTS.every((slot) => {
+  const d = gearOf(v, slot);
+  return !!d && d.rarity !== "broken";
+});
 
 /** A hero able to make a legendary piece, present in town. */
 export function crafterFor(s: GameState, def: GearDef): Villager | undefined {
@@ -217,7 +414,9 @@ export function startCraft(s: GameState, ctx: SimContext, itemId: string): Resul
   if (bad) return bad;
   for (const [p, n] of Object.entries(def.parts)) take(s, p, n as number);
   pay(s.res, def.cost);
-  const haste = (1 - ctx.profile.streakHaste) / (1 + (forge!.level - 1) * 0.1);
+  thriftRefund(s, forge!, def.cost);
+  // Its path (./paths): Steady or Mastery works the anvil faster.
+  const haste = (1 - ctx.profile.streakHaste) / (1 + (forge!.level - 1) * 0.1) / (forge!.pr ?? 1);
   forge!.craft = { item: itemId, until: s.time + def.hours * 60 * haste };
   log(s, `The forge starts on a ${def.name.toLowerCase()}.`);
   return null;
@@ -228,20 +427,23 @@ export function finishCrafts(s: GameState) {
   for (const f of s.structures) {
     if (f.type !== "forge" || !f.craft || f.craft.until > s.time) continue;
     if (store(s, f.craft.item, 1) > 0) continue;
-    log(s, `The forge finishes a ${GEAR[f.craft.item]?.name.toLowerCase() ?? "piece"}.`, "good");
+    // The windfall path: now and then a second piece from the same heat.
+    const twin = windfall(s, f, rng(Math.floor(f.craft.until) * 31 + f.id)) && store(s, f.craft.item, 1) === 0;
+    if (twin) f.lucky = (f.lucky ?? 0) + 1;
+    log(s, `The forge finishes a ${GEAR[f.craft.item]?.name.toLowerCase() ?? "piece"}${twin ? " — and a second from the same heat" : ""}.`, "good");
     f.craft = null;
   }
 }
 
 export function equip(s: GameState, villagerId: number, itemId: string): Result {
   const v = s.villagers.find((x) => x.id === villagerId);
-  const def = GEAR[itemId];
-  if (!v || !def) return "Nothing to equip.";
-  if (!def.roles.includes(gearRole(v))) return `A ${def.name.toLowerCase()} is not for a ${roleLabel(v.role, v.rank).replace(/ \d+$/, "").toLowerCase()}.`;
+  const def = itemDef(itemId);
+  if (!v || !def || def.kind !== "equipment" || !def.slot) return "Nothing to equip.";
+  if (!def.roles?.includes(gearRole(v))) return `A ${def.name.toLowerCase()} is not for a ${roleLabel(v.role, v.rank).replace(/ \d+$/, "").toLowerCase()}.`;
   if (!take(s, itemId, 1)) return "None in the forge.";
   const old = v.gear?.[def.slot];
   v.gear = { ...v.gear, [def.slot]: itemId };
-  if (old && store(s, old, 1) > 0) log(s, `No room in the forge for the old ${GEAR[old].name.toLowerCase()} — it is scrapped.`, "bad");
+  if (old && store(s, old, 1) > 0) log(s, `No room in the forge for the old ${itemDef(old)?.name.toLowerCase() ?? "piece"} — it is scrapped.`, "bad");
   return null;
 }
 
@@ -268,7 +470,7 @@ export const ASCEND_FROM = 12;
 export const MAX_KNIGHT = 150;
 export const MAX_WIZARD = 500;
 /** Study for the next level: steep early, then a slow climb so 500 stays reachable. */
-export const xpToNext = (rank: number) => (rank <= 30 ? 10 * Math.max(1, rank) : 300 + 2 * (rank - 30));
+export const xpToNext = (rank: number) => (rank <= 30 ? 10 * Math.max(1, rank) : 300 + 6 * (rank - 30));
 
 /**
  * Odds a wizard survives the next step past 12. Falls with every level
@@ -279,8 +481,11 @@ export function ascensionOdds(v: Villager, ctx: SimContext, formula: boolean): n
   const stored = Math.max(0, Math.min(1, v.xp / xpToNext(v.rank) - 1)) * 0.3;
   // Harder with every level, on a log scale: 38% bare at 13, around 15% at
   // 60, below nothing at 500 — where only every aid together gets you through.
-  const base = 0.4 - 0.25 * Math.log10(1 + (v.rank - ASCEND_FROM) / 5);
-  const p = base + stored + (formula ? 0.25 : 0) + domainBonus(ctx);
+  // Hero ascension is meant to be rare (power creep, ./heroes): 30% bare at 13, falling from there.
+  const base = 0.32 - 0.25 * Math.log10(1 + (v.rank - ASCEND_FROM) / 5);
+  // Insight and Lore (./attributes): a point either side of 8 is a point of odds each.
+  const a = attrsOf(v);
+  const p = base + stored + (formula ? 0.25 : 0) + domainBonus(ctx) + 0.01 * (a.ins - 8) + 0.01 * (a.lor - 8);
   return Math.max(0.05, Math.min(0.95, p));
 }
 
@@ -305,15 +510,21 @@ export function attemptAscension(s: GameState, ctx: SimContext, villagerId: numb
   if (r() < p) {
     v.rank += 1;
     v.xp = 0;
-    log(s, v.rank === 15 ? `${v.name} ascends and becomes a Grand Wizard.` : `${v.name} ascends to Wizard ${v.rank}.`, "good");
+    const grew = growOnRise(v, Math.floor(s.time));
+    log(s, (v.rank === 15 ? `${v.name} ascends and becomes a Grand Wizard` : `${v.name} ascends to Wizard ${v.rank}`) + (grew ? ` (+1 ${ATTR_NAME[grew]}).` : "."), "good");
     return null;
   }
-  // The power slips its bounds.
+  // The power slips its bounds. A champion is not consumed by it: they turn to stone.
+  if (v.champion) {
+    petrify(s, v, "reaches too far in the ascension");
+    return `${v.name} did not hold the power (${Math.round(p * 100)}% odds): stone, until restored.`;
+  }
   const hut = byId(s, v.work);
   if (hut) hut.hp = Math.max(1, hut.hp - hut.hp * 0.5);
   if (hut) hut.workers = hut.workers.filter((id) => id !== v.id);
   s.villagers = s.villagers.filter((x) => x.id !== v.id);
   s.deaths += 1;
+  onDeath(s, "consumed by the ascension");
   s.mood = Math.max(0, s.mood - 4);
   log(s, `${v.name} reaches too far. The ascension fails, and the wizard is consumed${hut ? " — the hut is scorched" : ""}.`, "bad");
   return `${v.name} did not survive the ascension (${Math.round(p * 100)}% odds).`;
@@ -360,7 +571,8 @@ export function returnFromSortie(s: GameState, v: Villager) {
  */
 export function advanceRequirement(v: Villager) {
   const step = v.rank + 1 - 22;
-  return { battalion: 3 * step, jewels: 1 + Math.floor(step / 20), depth: Math.min(15, Math.ceil(step / 9)) };
+  // Every step asks more than the last (power creep, ./heroes): four sworn a step, a jewel more every ten.
+  return { battalion: 4 * step, jewels: 1 + Math.floor(step / 10), depth: Math.min(15, Math.ceil(step / 9)) };
 }
 /** How high a knight can advance on an emblem of this depth. */
 export const knightCapFor = (depth: number) => Math.min(MAX_KNIGHT, 22 + depth * 9);
@@ -378,6 +590,7 @@ export function advanceKnight(s: GameState, villagerId: number): Result {
   if (!take(s, "jewel", req.jewels)) return `Needs ${req.jewels} monster jewel(s) in the forge.`;
   v.rank += 1;
   v.xp = 0;
-  log(s, v.rank === 23 ? `${v.name} is raised to Emblem Knight.` : `${v.name} advances to Emblem Knight ${v.rank}.`, "good");
+  const grew = growOnRise(v, Math.floor(s.time));
+  log(s, (v.rank === 23 ? `${v.name} is raised to Emblem Knight` : `${v.name} advances to Emblem Knight ${v.rank}`) + (grew ? ` (+1 ${ATTR_NAME[grew]}).` : "."), "good");
   return null;
 }

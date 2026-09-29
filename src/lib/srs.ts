@@ -16,8 +16,9 @@ import {
 import { recalculateLeveling } from "./leveling";
 import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
 import { recordFieldActivity } from "./field-streaks";
-import { mintIdeaMasteryOp, mintReviewFractionOp, comboMasteryBonus } from "./mastery";
+import { mintIdeaMasteryOp, mintReviewFractionOp, mintReviewMissOp, comboMasteryBonus } from "./mastery";
 import { getCurrentUserId } from "./user";
+import { dueCutoff } from "./due";
 
 // MAX_LEVEL and the interval schedule now live in xp.ts (pure arithmetic,
 // no Prisma import) and are re-exported here so existing callers are
@@ -136,6 +137,37 @@ async function attemptDegradation(
 }
 
 /**
+ * Cards still due today once this one is answered: everywhere, and in this
+ * card's own Field. Every outcome moves the answered card out of today's set —
+ * a pass is scheduled a day or more out, a strike, shield or degrade a day — so
+ * leaving it out gives the counts as they stand after the answer. They go on
+ * the answer's ledger row, which is how the town tells a Field emptied by
+ * review from one emptied by the midnight degrade. One query, `dueDate` is
+ * indexed, and it runs beside the reads the review already makes.
+ *
+ * Null if the count fails. It is bookkeeping for the town and must never cost
+ * the player an answer: the row is then written without counts, and the town
+ * reads that Field from its live due count instead (town/input.ts).
+ */
+async function dueLeftAfter(ideaId: string, now: Date): Promise<{ due: number; fdue: number } | null> {
+  try {
+    const [row] = await prisma.$queryRaw<{ due: bigint; fdue: bigint }[]>`
+      SELECT COUNT(*) AS due, COUNT(*) FILTER (WHERE d."fieldId" = home."fieldId") AS fdue
+      FROM "Idea" i
+      JOIN "Domain" d ON d.id = i."domainId"
+      LEFT JOIN (
+        SELECT d2."fieldId" FROM "Idea" i2 JOIN "Domain" d2 ON d2.id = i2."domainId" WHERE i2.id = ${ideaId}
+      ) home ON TRUE
+      WHERE NOT i."isArchived" AND i."dueDate" <= ${dueCutoff(now)} AND i.id <> ${ideaId}
+    `;
+    return { due: Number(row?.due ?? 0), fdue: Number(row?.fdue ?? 0) };
+  } catch (err) {
+    console.error("Due count for the review ledger failed; recording the answer without it.", err);
+    return null;
+  }
+}
+
+/**
  * Applies the result of an attempted review (spec section 5, Reward &
  * Punishment). Correct -> advance level, credit `reviewReward` (level-scaled
  * and combo-multiplied, plus a one-time mastery bonus at level 12 — see
@@ -161,12 +193,13 @@ export async function applyReviewResult(
   const userId = getCurrentUserId();
   // Three independent reads — issued together rather than in sequence,
   // because each round trip to the database costs far more than the query.
-  const [idea, progression] = await Promise.all([
+  const [idea, progression, left] = await Promise.all([
     prisma.idea.findUniqueOrThrow({ where: { id: ideaId } }),
     // Fresh: this is a write path, and it prices real rewards off these
     // modifiers. A cached ward charge or yield multiplier could be seconds
     // stale, which is fine for display and not fine here.
     loadProgressionFresh(userId, now),
+    dueLeftAfter(ideaId, now),
   ]);
   const domainBefore = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
   const modifiers = progression.modifiers;
@@ -216,7 +249,13 @@ export async function applyReviewResult(
     // mints slightly more, capped and sub-linear so a single long session
     // cannot out-earn the economy this is meant to trickle into.
     ops.push(
-      mintReviewFractionOp(userId, ideaId, idea.level, modifiers.masteryMultiplier * comboMasteryBonus(combo))
+      mintReviewFractionOp(
+        userId,
+        ideaId,
+        idea.level,
+        modifiers.masteryMultiplier * comboMasteryBonus(combo),
+        left && { lv: newLevel, due: left.due, fdue: left.fdue }
+      )
     );
     // The whole point on top, once per Idea ever, at the mastery transition.
     if (mastered) {
@@ -254,18 +293,32 @@ export async function applyReviewResult(
   // COMBO_ANCHOR: a wrong answer no longer necessarily zeroes the run.
   const nextCombo = Math.floor(combo * modifiers.comboRetained);
 
+  // Every wrong answer leaves a zero-delta REVIEW_MISS row, so the ledger
+  // holds each answer and the town can weigh a day's right against its
+  // wrong. Written here and only here: attemptDegradation is shared with the
+  // midnight cron, and neglect must never write an answer. Issued beside the
+  // reschedule rather than after it — a round trip is the expensive part.
+  const miss = mintReviewMissOp(userId, ideaId, left);
+
   if (!shouldDegrade) {
-    await prisma.idea.update({
-      where: { id: ideaId },
-      data: { failedAttempts, dueDate: addDays(now, 1) },
-    });
+    await Promise.all([
+      prisma.idea.update({
+        where: { id: ideaId },
+        data: { failedAttempts, dueDate: addDays(now, 1) },
+      }),
+      miss,
+    ]);
     // Same as the shielded path: the Idea moved out of the due window
     // without any points changing, so nothing else will invalidate for us.
     invalidate("ideas");
     return { outcome: "strike", failedAttempts, strikeLimit, nextCombo };
   }
 
-  return attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);
+  const [outcome] = await Promise.all([
+    attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo),
+    miss,
+  ]);
+  return outcome;
 }
 
 /**

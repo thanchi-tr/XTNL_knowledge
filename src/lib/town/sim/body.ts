@@ -1,3 +1,4 @@
+import { onDeath } from "./recognition";
 import { CATALOG } from "./catalog";
 import { byId, clock, log, residents } from "./state";
 import { air } from "./weather";
@@ -5,7 +6,9 @@ import { FUEL_UNIT_KG, HEARTHS, isZone, ppm, stepZones, type Occ } from "./zones
 import { airBoost, center, fireAir, idx, inBounds, rng, warmAt, warmFields, type Warmth } from "./world";
 import { emit, noteLoss } from "./aggro";
 import { addCorpse, witnessDeath } from "./psyche";
+import { petrify } from "./champions";
 import { kmod } from "./knowledge";
+import { BIOME_KCAL, BIOME_VITC } from "./biomes";
 import { RAW_FOODS, type Affliction, type Body, type GameState, type IllnessKind, type ResourceKey, type Structure, type Villager } from "./types";
 
 /**
@@ -25,19 +28,35 @@ export const S_MAX = 350; // W, peak shivering
 export const M_BASAL = 80; // W
 export const EG_MAX = 2000; // kcal
 /** Lean tissue lost (kg) at which starvation kills: about two fifths of it. */
-export const LEAN_FATAL = 18;
+/**
+ * Lean mass lost to hunger that kills. Ten: about six days of true starvation
+ * once the fat is gone — a town that lets its stores run dry is dying within
+ * the week, not the month (the needs' base, ./needs: nothing above counts
+ * while this fails).
+ */
+export const LEAN_FATAL = 10;
 /** One meal from the kitchen: a hearty bowl of pottage and bread. */
 export const MEAL_KCAL = 1100;
+/**
+ * Lean tissue spent on a hard day is rebuilt from what is eaten past the
+ * day's fuel: up to REBUILD_MEAL (kg) a sitting, at REBUILD_EFF of the food's
+ * energy. A labourer who empties their glycogen every afternoon eats for it —
+ * the town pays in food, not in the worker — and a starving town cannot.
+ */
+export const REBUILD_MEAL = 0.9;
+export const REBUILD_EFF = 0.8;
 /** kcal in one unit (≈1 kg) of each raw food, eaten uncooked when the meals run out. */
 export const FOOD_KCAL: Partial<Record<ResourceKey, number>> = {
   potato: 770, wheat: 3400, grape: 700, herb: 300, cabbage: 250, carrot: 410, pumpkin: 260, barley: 3500,
   onion: 400, bean: 3400, turnip: 280, corn: 3600, strawberry: 320, garlic: 1500,
-  rice: 3600, taro: 1100, lotus: 740, reed: 200, watercress: 110, chestnut: 2000, fish: 1000, meat: 2000,
+  rice: 3600, taro: 1100, lotus: 740, reed: 200, watercress: 110, chestnut: 2000, fish: 1000, meat: 2000, apple: 520,
+  ...BIOME_KCAL,
 };
 /** Vitamin C, mg per unit (kg) (§3.4). */
 export const FOOD_VITC: Partial<Record<ResourceKey, number>> = {
   potato: 150, cabbage: 300, watercress: 300, herb: 300, strawberry: 400, grape: 400, onion: 70, garlic: 70,
-  carrot: 60, turnip: 200, pumpkin: 90, taro: 50, lotus: 440, chestnut: 400,
+  carrot: 60, turnip: 200, pumpkin: 90, taro: 50, lotus: 440, chestnut: 400, apple: 60,
+  ...BIOME_VITC,
 };
 
 export const WORK_TIER = { rest: 0, light: 100, moderate: 250, heavy: 400, extreme: 550 } as const;
@@ -89,6 +108,8 @@ export interface Place {
   tier: number;
   walking: boolean;
   asleep: boolean;
+  /** Asleep at home: how much better than a plain bed the house's path lets them rest. */
+  rest?: number;
   /** Underground (the mine): ground temperature, still air, dripping. */
   under?: boolean;
   working: boolean;
@@ -128,7 +149,8 @@ export function placeOf(s: GameState, v: Villager, hour: number): Place | null {
   };
   const shift = s.policy?.shift ?? 14;
   const sleeping = hour >= 22 || hour < 6;
-  if (sleeping) return at(home, 0, true);
+  // A house's path (./paths) is how well its people sleep.
+  if (sleeping) return { ...at(home, 0, true), rest: home?.pr ?? 1 };
   if (b.state === "hypoSevere" || b.state === "cardiac") return at(home, 0, true);
   if (v.broken && v.broken.until > s.time) return at(home, 0, false);
   const sick = b.ill.some((i) => i.onset <= s.time && (i.kind === "pneumonia" || i.kind === "typhus" || i.kind === "dysentery" || i.kind === "gangrene"));
@@ -172,10 +194,19 @@ const shelterMemo = new WeakMap<GameState, { key: string; map: Map<number, numbe
  * obstacle within 15 heights (§1.2), approximated by casting eight compass
  * rays and averaging what each finds.
  */
-export function shelterAt(s: GameState, x: number, y: number): number {
+const shelterKeyMemo = new WeakMap<GameState, { time: number; key: string }>();
+function shelterKey(s: GameState): string {
+  const m = shelterKeyMemo.get(s);
+  if (m && m.time === s.time) return m.key;
   let h = 0;
   for (let i = 0; i < s.map.overlay.length; i += 97) h = (h * 31 + s.map.overlay[i]) | 0;
   const key = `${h}|${s.structures.length}`;
+  shelterKeyMemo.set(s, { time: s.time, key });
+  return key;
+}
+
+export function shelterAt(s: GameState, x: number, y: number): number {
+  const key = shelterKey(s);
   let memo = shelterMemo.get(s);
   if (!memo || memo.key !== key) {
     memo = { key, map: new Map() };
@@ -304,7 +335,7 @@ export function stepBody(b: Body, v: Villager, env: Env, place: Place, cl: Cloth
   // Fatigue.
   // Twelve hours of heavy work to exhaustion; a night's warm sleep clears it, rest by day slowly.
   if (place.working && tier > 0) b.phi = clamp(b.phi + ((Mlab / (400 * 720)) * dtMin) / (1 + (place.strength ?? 0)), 0, 1);
-  else if (place.asleep) b.phi = clamp(b.phi - ((env.T >= 5 ? 1 : 0.5) / 480) * dtMin, 0, 1);
+  else if (place.asleep) b.phi = clamp(b.phi - ((env.T >= 5 ? 1 : 0.5) / 480) * dtMin * (place.rest ?? 1), 0, 1);
   else b.phi = clamp(b.phi - dtMin / 960, 0, 1);
 
   // Hands and feet (§1.5).
@@ -409,10 +440,18 @@ export const ILL_WORK: Record<IllnessKind, number> = {
  */
 export function stepBodies(s: GameState, minutes: number) {
   s.bodyAcc = (s.bodyAcc ?? 0) + minutes;
-  while (s.bodyAcc >= 1) {
+  // The clock has already moved to the end of the step: each body-minute is run at its own
+  // minute, so meals fall once at seven, noon and seven whatever the step (an hour in the
+  // headless checks, a few minutes a frame at speed) — not once per minute of the step.
+  const end = s.time;
+  const n = Math.floor(s.bodyAcc);
+  const lastEnd = end - (s.bodyAcc - n);
+  for (let k = 0; k < n; k++) {
+    s.time = lastEnd - (n - 1 - k);
     s.bodyAcc -= 1;
     bodyMinute(s);
   }
+  s.time = end;
 }
 
 function bodyMinute(s: GameState) {
@@ -493,9 +532,27 @@ function bodyMinute(s: GameState) {
   if (c.minute === 0 && (c.hour === 7 || c.hour === 12 || c.hour === 19)) for (const v of s.villagers) if (!v.scout && !(v.deployedUntil && v.deployedUntil > s.time)) eat(s, v);
 }
 
+/**
+ * Whether the town can take in another mouth: two days' food in store for
+ * everyone and the newcomer, and in autumn and winter two days of fuel a
+ * head. A starving, cold camp draws no one, so it cannot refill forever on
+ * the road's traffic — and one that has lost half its people so is no longer
+ * a town (./psyche). Returns what is lacking, or null.
+ */
+export function canTakeIn(s: GameState, season: string): string | null {
+  const mouths = s.villagers.length + 1;
+  const kcal = s.res.meals * MEAL_KCAL + RAW_FOODS.reduce((a, k) => a + s.res[k] * (FOOD_KCAL[k] ?? 600), 0);
+  if (kcal < mouths * 2 * 2500) return "no food";
+  const fuel = s.res.wood + s.res.coal + s.res.peat + s.res.charcoal;
+  if ((season === "autumn" || season === "winter") && fuel < mouths * 2) return "no fire";
+  return null;
+}
+
 /** A death in the body model: logged, the corpse left where it fell. */
 export function killBody(s: GameState, v: Villager, why: string, x?: number, y?: number) {
+  if (s.villagers.includes(v) && !v.champion) onDeath(s, why);
   if (!s.villagers.includes(v)) return;
+  if (v.champion) return petrify(s, v, why.replace(/^dies\b/, "falls"));
   const home = byId(s, v.house);
   const [hx, hy] = home ? center(home) : [x ?? 40, y ?? 30];
   const st = byId(s, v.work);
@@ -511,15 +568,16 @@ export function killBody(s: GameState, v: Villager, why: string, x?: number, y?:
 // ── Eating and drinking ───────────────────────────────────
 
 /**
- * A sitting: meals from the kitchen to top up the glycogen store (and a
- * little to fat while it is below twelve kilos), raw food uncooked when the
- * meals run out. Spoiled food cooked into the meals carries its risk; so does
+ * A sitting: meals from the kitchen to top up the glycogen store, to rebuild
+ * lean tissue a hard day spent (REBUILD_MEAL), and a little to fat while it
+ * is below twelve kilos; raw food uncooked when the meals run out. Spoiled food cooked into the meals carries its risk; so does
  * the water, and in winter water is melted snow, paid in fuel.
  */
 export function eat(s: GameState, v: Villager) {
   const b = bodyOf(v);
   const ration = s.policy?.ration ?? 1;
-  const want = (clamp(EG_MAX - b.Eg, 0, 1400) + (b.F < 12 ? 300 : 0)) * ration;
+  const rebuild = (Math.min(b.B, REBUILD_MEAL) * 1000) / REBUILD_EFF;
+  const want = (clamp(EG_MAX - b.Eg, 0, 1400) + rebuild + (b.F < 12 ? 300 : 0)) * ration;
   if (want <= 0) return;
   let got = 0;
   const stores = s.stores;
@@ -550,11 +608,17 @@ export function eat(s: GameState, v: Villager) {
       b.vitC = Math.min(1500, b.vitC + units * (FOOD_VITC[k] ?? 0));
     }
   }
-  // Excess over the store goes to fat.
+  // Excess over the store rebuilds lean tissue first, then goes to fat.
   b.Eg += got;
   if (b.Eg > EG_MAX) {
-    b.F = Math.min(20, b.F + ((b.Eg - EG_MAX) * 0.8) / 7700);
+    let surplus = b.Eg - EG_MAX;
     b.Eg = EG_MAX;
+    if (b.B > 0) {
+      const back = Math.min(b.B, REBUILD_MEAL, (surplus * REBUILD_EFF) / 1000);
+      b.B -= back;
+      surplus -= (back * 1000) / REBUILD_EFF;
+    }
+    b.F = Math.min(20, b.F + (Math.max(0, surplus) * 0.8) / 7700);
   }
   drink(s, v);
 }
@@ -564,13 +628,17 @@ function drink(s: GameState, v: Villager) {
   const b = bodyOf(v);
   const need = 2.5 / 3;
   const a = air(s);
-  // In winter the river is ice: water is melted snow, 0.09 kg of oak a litre.
+  // In winter the river is ice: water is melted snow, 0.09 kg of oak a litre —
+  // or whatever else will burn: coal, charcoal and peat melt snow as well as wood.
   if (a.T < -2 && clock(s.time).season === "winter") {
     const fuel = (need * 0.09) / FUEL_UNIT_KG;
-    if (s.res.wood >= fuel) s.res.wood -= fuel;
-    else if (s.res.peat >= fuel) s.res.peat -= fuel;
+    const kind = (["wood", "coal", "charcoal", "peat"] as const).find((k) => s.res[k] >= fuel);
+    if (kind) s.res[kind] -= fuel;
     else {
-      b.h2o += need;
+      // Nothing to melt it with: they eat snow. Half the water they need, and the chill of it —
+      // thirst comes on over a week, not in three days, so a town can find fuel before it kills.
+      b.h2o += need / 2;
+      b.Tc = Math.max(34, b.Tc - 0.1);
       return;
     }
   }

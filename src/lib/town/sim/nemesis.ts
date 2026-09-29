@@ -53,10 +53,10 @@ export const TACTIC_LABEL: Record<Tactic, string> = {
 
 /** Kinds each tactic sends, by the level they come in at (any level works; the table picks the fitting beast). */
 const TACTIC_ROSTER: Partial<Record<Tactic, { kind: MonsterKind; min: number }[]>> = {
-  flyers: [{ kind: "bat", min: 1 }, { kind: "wisp", min: 2 }, { kind: "harpy", min: 5 }, { kind: "yurei", min: 7 }, { kind: "tengu", min: 9 }, { kind: "gargoyle", min: 12 }, { kind: "griffin", min: 16 }, { kind: "wyvern", min: 24 }],
-  armoured: [{ kind: "ogre", min: 1 }, { kind: "troll", min: 5 }, { kind: "golem", min: 9 }, { kind: "cyclops", min: 15 }],
-  swarm: [{ kind: "goblin", min: 1 }, { kind: "skeleton", min: 3 }, { kind: "ghoul", min: 5 }, { kind: "jiangshi", min: 8 }],
-  night: [{ kind: "ghoul", min: 1 }, { kind: "werewolf", min: 5 }, { kind: "vampire", min: 12 }, { kind: "kitsune", min: 20 }],
+  flyers: [{ kind: "bat", min: 1 }, { kind: "wisp", min: 2 }, { kind: "harpy", min: 5 }, { kind: "yurei", min: 7 }, { kind: "tengu", min: 9 }, { kind: "gargoyle", min: 12 }, { kind: "griffin", min: 16 }, { kind: "wyvern", min: 24 }, { kind: "stormroc", min: 60 }, { kind: "phoenix", min: 66 }, { kind: "seraph", min: 82 }],
+  armoured: [{ kind: "ogre", min: 1 }, { kind: "troll", min: 5 }, { kind: "golem", min: 9 }, { kind: "cyclops", min: 15 }, { kind: "behemoth", min: 72 }],
+  swarm: [{ kind: "goblin", min: 1 }, { kind: "skeleton", min: 3 }, { kind: "ghoul", min: 5 }, { kind: "jiangshi", min: 8 }, { kind: "raiju", min: 64 }],
+  night: [{ kind: "ghoul", min: 1 }, { kind: "werewolf", min: 5 }, { kind: "vampire", min: 12 }, { kind: "kitsune", min: 20 }, { kind: "shadowcolossus", min: 80 }, { kind: "voidwalker", min: 90 }],
 };
 
 /** Which aggro channel pays for a tactic. */
@@ -117,6 +117,13 @@ export const nemesisOf = (s: GameState): Nemesis =>
 const RANGED = new Set(["archer", "wizard"]);
 
 /** Reads the town (§13.1). */
+/**
+ * The most the nemesis leans on a winning player. Enough that a clean record
+ * draws a keener answer; never so much that playing well is punished into a
+ * loss — a strategist who keeps winning should keep standing.
+ */
+export const PRESSURE_CAP = 0.15;
+
 export function readPlayer(s: GameState): PlayerModel {
   const guards = countedTroops(s);
   let rangedDps = 0;
@@ -140,7 +147,8 @@ export function readPlayer(s: GameState): PlayerModel {
   const food = s.res.meals * 1100 + ["potato", "wheat", "barley", "corn", "bean", "rice", "fish", "meat"].reduce((a, k) => a + s.res[k as keyof GameState["res"]] * 1000, 0);
   const homes = s.structures.filter((t) => t.type === "house" || t.type === "apartment").length || 1;
   const fuel = (s.res.wood + s.res.coal + s.res.peat + s.res.charcoal) * 10;
-  const leverage = Math.max(0, ...built.map((b) => frameUtil(s, b)));
+  const weather = air(s);
+  const leverage = Math.max(0, ...built.map((b) => frameUtil(s, b, weather)));
   const hallPosts = hall ? posts.filter((t) => Math.hypot(center(t)[0] - center(hall)[0], center(t)[1] - center(hall)[1]) <= alertRadius(t) + 7).length : 0;
   return {
     ranged: rangedDps / Math.max(1, rangedDps + meleeDps),
@@ -299,7 +307,7 @@ export function scoreWave(s: GameState, sacked = false) {
   if (n.history.length > 20) n.history.length = 20;
   if (reward < 0.05) {
     n.winStreak += 1;
-    n.pressure = Math.min(0.6, n.pressure + 0.08);
+    n.pressure = Math.min(PRESSURE_CAP, n.pressure + 0.05);
     if (n.winStreak === 3) log(s, "Three waves broken without loss. The land takes note of how you fight — and adjusts.", "bad");
   } else {
     n.winStreak = 0;

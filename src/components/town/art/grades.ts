@@ -290,6 +290,64 @@ export function graded(art: HTMLCanvasElement, grade: number, banner: Ramp4, lev
  * A wall tile's tenth-level steps: merlons on top at 10, an iron band and
  * brass caps at 20, a glowing rune at 30.
  */
+/**
+ * A wall tile in its order (sim/world WALL_ORDERS): fieldstone; spikes of
+ * iron along the top; a loophole and an iron band; a rune cut into the
+ * face, glowing; rime and icicles; a gilded aegis with a boss at its heart.
+ * Each order keeps the marks of the ones before it.
+ */
+export function orderedWall(art: HTMLCanvasElement, order: number): HTMLCanvasElement {
+  if (order <= 0) return art;
+  const key = `order:${order}`;
+  let per = cache.get(art);
+  if (!per) cache.set(art, (per = new Map()));
+  const hit = per.get(key);
+  if (hit) return hit;
+  const { cv, c } = makeCanvas(art.width, art.height + 5);
+  c.drawImage(art, 0, 5);
+  const S = M.STONE;
+  const w = art.width;
+  const mid = Math.floor(art.height / 2) + 5;
+  // merlons, the fieldstone's crown of every higher order
+  for (let x = 0; x < w; x += 4) {
+    px(c, x, 2, 3, 3, order >= 5 ? M.MARBLE[MID] : S[MID]);
+    px(c, x, 2, 3, 1, order >= 5 ? M.BRASS[LIT] : order >= 4 ? M.ICE[LIT] : S[LIT]);
+    px(c, x + 2, 3, 1, 2, S[SHADE]);
+  }
+  // spikes: iron points between the merlons
+  for (let x = 3; x < w; x += 4) {
+    px(c, x, 0, 1, 1, M.IRON[LIT]);
+    px(c, x, 1, 1, 4, M.IRON[MID]);
+  }
+  if (order >= 2) {
+    // an iron band and a loophole
+    px(c, 0, mid + 2, w, 1, M.IRON[MID]);
+    px(c, 0, mid + 3, w, 1, M.IRON[DEEP]);
+    px(c, Math.floor(w / 2) - 1, mid - 3, 2, 4, "#0b0a0e");
+    px(c, Math.floor(w / 2) - 1, mid - 3, 2, 1, S[DEEP]);
+  }
+  if (order >= 3) {
+    // a rune cut into the face, burning violet
+    px(c, 1, mid - 1, 1, 3, E.VOID[1]);
+    px(c, 2, mid, 1, 1, E.VOID[0]);
+    px(c, w - 2, mid - 1, 1, 3, E.VOID[1]);
+  }
+  if (order >= 4) {
+    // rime over the top, icicles under the band
+    for (let x = 0; x < w; x += 2) px(c, x, 5, 1, 1, M.ICE[LIT]);
+    for (let x = 1; x < w; x += 3) px(c, x, mid + 4, 1, 1 + (x % 2), M.ICE[MID]);
+  }
+  if (order >= 5) {
+    // the aegis: gilded edges and a boss at its heart
+    px(c, 0, 5, 1, art.height, M.BRASS[MID]);
+    px(c, w - 1, 5, 1, art.height, M.BRASS[SHADE]);
+    px(c, Math.floor(w / 2) - 1, mid - 6, 2, 2, E.GOLD[1]);
+    px(c, Math.floor(w / 2) - 1, mid - 6, 1, 1, E.GOLD[0]);
+  }
+  per.set(key, cv);
+  return cv;
+}
+
 export function gradedWall(art: HTMLCanvasElement, grade: number): HTMLCanvasElement {
   grade = Math.min(3, grade);
   if (grade <= 0) return art;

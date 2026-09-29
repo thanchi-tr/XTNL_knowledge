@@ -138,3 +138,37 @@ export function titanGate(): HTMLCanvasElement {
     return cv;
   });
 }
+
+/** A crag of dark stone broken into pieces that float, lightning running between them and down to the ground. */
+export function stormSpire(): HTMLCanvasElement {
+  return cached("lair:stormspire", () => {
+    const { cv, c } = makeCanvas(40, 44);
+    // the stump the spire broke from, scorched
+    for (let y = 34; y < 44; y++) {
+      const half = Math.round(14 - (y - 34) * -0.4);
+      for (let x = -half; x < half; x++) px(c, 20 + x, y, 1, 1, M.SLATE[x < -half / 3 ? LIT : x < half / 3 ? MID : SHADE]);
+    }
+    px(c, 12, 36, 16, 2, M.SLATE[DEEP]);
+    // the floating shards, largest low, smallest high; each lit on its left
+    const shards: [number, number, number, number][] = [[13, 22, 14, 9], [9, 12, 8, 7], [22, 10, 9, 8], [15, 2, 7, 6], [28, 0, 4, 4], [5, 3, 3, 4]];
+    for (const [x, y, w, h] of shards) {
+      for (let yy = 0; yy < h; yy++) {
+        const inset = Math.round(Math.abs(yy - h / 2) * 0.6);
+        px(c, x + inset, y + yy, w - inset * 2, 1, M.SLATE[yy === 0 ? LIT : yy < h / 2 ? MID : SHADE]);
+        px(c, x + inset, y + yy, 1, 1, M.SLATE[LIT]);
+      }
+      px(c, x + Math.floor(w / 2), y + h - 2, 1, 1, E.CYAN[1]);
+    }
+    // lightning: a jagged path from the top shard down to the stump, a white core in a cyan halo
+    let lx = 18;
+    for (let y = 8; y < 36; y += 2) {
+      lx += Math.round((hash(y, 3, 811) - 0.5) * 4);
+      lx = Math.max(12, Math.min(28, lx));
+      px(c, lx - 1, y, 3, 2, E.CYAN[1]);
+      px(c, lx, y, 1, 2, E.CYAN[0]);
+    }
+    for (let i = 0; i < 10; i++) px(c, 4 + Math.floor(hash(i, 5, 811) * 32), 30 + Math.floor(hash(i, 6, 811) * 12), 1, 1, E.CYAN[2]);
+    outline(cv);
+    return cv;
+  });
+}

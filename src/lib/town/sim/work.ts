@@ -1,3 +1,5 @@
+import { WORK_GATES, knowledgeFor, tellGate, workCapOf } from "./mastery";
+import { attrMul, attrsOf } from "./attributes";
 import { byId, clock, log } from "./state";
 import { killBody } from "./body";
 import type { GameState, Structure, StructureType, Villager } from "./types";
@@ -37,7 +39,33 @@ export const JOB_EFFORT: Partial<Record<StructureType, Effort>> = {
 export const jobEffort = (type: StructureType): Effort => JOB_EFFORT[type] ?? "none";
 
 /** A worker's level in their trade, for strength: rank 0 and 1 are both level 1. */
-export const workLevel = (v: Villager) => Math.max(1, v.rank);
+export const workLevel = (v: Villager) => Math.max(1, v.level ?? 0, v.rank);
+
+/** The most a worker's level climbs. */
+export const WORK_MAX = 30;
+/** Hours at work from one work level to the next: a day and a half at first, steeper after. */
+export const workXpToNext = (level: number) => Math.round(12 * Math.pow(Math.max(1, level), 1.4));
+
+/**
+ * An hour at work: every worker, whatever the titles of their trade, grows
+ * more able with the hours — moving buildings, leading the night shift and
+ * going on excursions all wait on it. Hard work teaches faster than easy.
+ */
+export function gainWork(s: GameState, v: Villager, hours: number) {
+  if (MILITARY_ROLES.includes(v.role)) return;
+  v.level ??= Math.max(1, v.rank);
+  if (v.level >= WORK_MAX) return;
+  // A trade teaches only so far without a master's emblem (./mastery): experience keeps, the level waits.
+  const cap = workCapOf(s, v, WORK_MAX);
+  v.wxp = Math.min((v.wxp ?? 0) + hours * attrMul(attrsOf(v).wit), v.level >= cap ? workXpToNext(v.level) : Infinity);
+  if (v.level >= cap && v.wxp >= workXpToNext(v.level)) tellGate(s, v, "worker's trade", knowledgeFor(s, v), WORK_GATES.find((g) => g.from === cap)?.depth ?? 3);
+  while (v.level < cap && v.wxp >= workXpToNext(v.level)) {
+    v.wxp -= workXpToNext(v.level);
+    v.level += 1;
+    if (v.level === 5 || v.level === 10 || v.level % 10 === 0) log(s, `${v.name} is a level-${v.level} worker now${v.level === 10 ? ": they can move buildings and go on excursions into the fog" : v.level === 5 ? ": they could lead a night shift" : ""}.`, "good");
+  }
+}
+const MILITARY_ROLES = ["infantry", "archer", "heavy", "wizard", "knight"];
 
 /** Why a worker is at half strength today, if they are. */
 export function weakness(v: Villager): { cold: boolean; hungry: boolean } {
@@ -47,7 +75,8 @@ export function weakness(v: Villager): { cold: boolean; hungry: boolean } {
 /** Effort points a worker has for the day. */
 export function capacity(v: Villager): number {
   const w = weakness(v);
-  return (1 + workLevel(v)) * (w.cold || w.hungry ? 0.5 : 1);
+  // Endurance: a point either side of 8 is 4% more (or less) strength to spend in a day.
+  return (1 + workLevel(v)) * (w.cold || w.hungry ? 0.5 : 1) * (1 + 0.04 * (attrsOf(v).end - 8));
 }
 
 export const spent = (v: Villager) => v.effort ?? 0;

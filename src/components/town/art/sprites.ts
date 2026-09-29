@@ -1,5 +1,6 @@
 import { makeCanvas, cached, px, OUTLINE } from "./core";
 import { M, E, CAVITY, GLOW_RAMPS, EMISSIVE, LIT, MID, SHADE, DEEP, lightness, type Ramp4 } from "./materials";
+import * as bb from "./biome-beasts";
 
 /**
  * Sprites, authored as material maps and shaded automatically.
@@ -218,44 +219,85 @@ export function renderSprite(rows: string[], mats: Materials, key: string): HTML
  * dragon from ellipses, membranes and tapered bones gets the anatomy right,
  * and the result still goes through the same shader and outline.
  */
+/**
+ * The scale a Grid draws at: shapes are given in the sprite's own units and
+ * rasterized this many times larger. Set only for the length of one
+ * sprite's drawing, by `atScale`.
+ */
+let GRID_SCALE = 1;
+
+/** Draws `fn`'s grids at scale `k`: a sprite re-drawn larger from its own shapes, not its pixels blown up. */
+export function atScale<T>(k: number, fn: () => T): T {
+  const was = GRID_SCALE;
+  GRID_SCALE = k;
+  try {
+    return fn();
+  } finally {
+    GRID_SCALE = was;
+  }
+}
+
 export class Grid {
   cells: string[][];
-  constructor(public w: number, public h: number) {
-    this.cells = Array.from({ length: h }, () => Array(w).fill("."));
+  /** This grid's scale (see `atScale`); every shape's coordinates and thickness are multiplied by it. */
+  readonly k: number;
+  w: number;
+  h: number;
+  constructor(w: number, h: number) {
+    this.k = GRID_SCALE;
+    this.w = Math.ceil(w * this.k);
+    this.h = Math.ceil(h * this.k);
+    this.cells = Array.from({ length: this.h }, () => Array(this.w).fill("."));
   }
-  set(x: number, y: number, ch: string) {
-    const ix = Math.round(x);
-    const iy = Math.round(y);
+  /** One cell, in the grid's own pixels. */
+  private dot(ix: number, iy: number, ch: string) {
     if (ix >= 0 && iy >= 0 && ix < this.w && iy < this.h) this.cells[iy][ix] = ch;
   }
+  /** One of the sprite's pixels: a block of cells at a larger scale, so an eye stays an eye. */
+  set(x: number, y: number, ch: string) {
+    const k = this.k;
+    if (k === 1) return this.dot(Math.round(x), Math.round(y), ch);
+    const n = Math.max(1, Math.round(k));
+    const x0 = Math.round(x * k);
+    const y0 = Math.round(y * k);
+    for (let dy = 0; dy < n; dy++) for (let dx = 0; dx < n; dx++) this.dot(x0 + dx, y0 + dy, ch);
+  }
   ellipse(cx: number, cy: number, rx: number, ry: number, ch: string) {
+    const k = this.k;
+    this.rawEllipse(cx * k, cy * k, rx * k, ry * k, ch);
+  }
+  private rawEllipse(cx: number, cy: number, rx: number, ry: number, ch: string) {
     for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++)
       for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++)
-        if (((x - cx) * (x - cx)) / (rx * rx) + ((y - cy) * (y - cy)) / (ry * ry) <= 1) this.set(x, y, ch);
+        if (((x - cx) * (x - cx)) / (rx * rx) + ((y - cy) * (y - cy)) / (ry * ry) <= 1) this.dot(x, y, ch);
   }
   poly(pts: [number, number][], ch: string) {
-    const ys = pts.map((p) => p[1]);
+    const k = this.k;
+    const P = pts.map(([x, y]) => [x * k, y * k] as [number, number]);
+    const ys = P.map((p) => p[1]);
     for (let y = Math.floor(Math.min(...ys)); y <= Math.ceil(Math.max(...ys)); y++) {
       for (let x = 0; x < this.w; x++) {
         let inside = false;
-        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-          const [xi, yi] = pts[i];
-          const [xj, yj] = pts[j];
+        for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+          const [xi, yi] = P[i];
+          const [xj, yj] = P[j];
           if (yi > y + 0.5 !== yj > y + 0.5 && x + 0.5 < ((xj - xi) * (y + 0.5 - yi)) / (yj - yi) + xi) inside = !inside;
         }
-        if (inside) this.set(x, y, ch);
+        if (inside) this.dot(x, y, ch);
       }
     }
   }
   line(x0: number, y0: number, x1: number, y1: number, ch: string, thick = 1, taper = thick) {
-    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2));
+    const k = this.k;
+    const [X0, Y0, X1, Y1] = [x0 * k, y0 * k, x1 * k, y1 * k];
+    const n = Math.max(1, Math.ceil(Math.hypot(X1 - X0, Y1 - Y0) * 2));
     for (let i = 0; i <= n; i++) {
       const u = i / n;
-      const r = (thick + (taper - thick) * u) / 2;
-      const x = x0 + (x1 - x0) * u;
-      const y = y0 + (y1 - y0) * u;
-      if (r <= 0.6) this.set(x, y, ch);
-      else this.ellipse(x, y, r, r, ch);
+      const r = ((thick + (taper - thick) * u) * k) / 2;
+      const x = X0 + (X1 - X0) * u;
+      const y = Y0 + (Y1 - Y0) * u;
+      if (r <= 0.6) this.dot(Math.round(x), Math.round(y), ch);
+      else this.rawEllipse(x, y, r, r, ch);
     }
   }
   path(pts: [number, number][], ch: string, thick: number, taper = thick) {
@@ -632,7 +674,94 @@ const ARBALESTIER = [
 
 export type TroopArt =
   | "footman" | "knight" | "ranger" | "witch" | "paladin" | "villager" | "merchant" | "heavy" | "wizard" | "grandwizard" | "militia" | "emblemknight"
-  | "squire" | "apprentice" | "archmage" | "fisher" | "sergeant" | "crossbowman" | "halberdier" | "arbalestier";
+  | "squire" | "apprentice" | "archmage" | "fisher" | "sergeant" | "crossbowman" | "halberdier" | "arbalestier"
+  /** The heavy armoury's five classes (sim/enrol HEAVY_CLASSES). */
+  | "shieldbearer" | "pikeman" | "juggernaut" | "breaker" | "ironwarden";
+
+/** Shieldbearer: a painted tower shield held before the left side, a short blade behind it. */
+const SHIELDBEARER = [
+  "....mmmmmmm.....",
+  "...mMMMMMMmm....",
+  "..mmmmmmmmmmm...",
+  "..mmkkkkkkkmm...",
+  "eeemkyykkkkmm...",
+  "eEEemmmmmmmmm...",
+  "eEgemmmmmmmm....",
+  "eEeeaTTTTTaaaw..",
+  "eEeeaTTTTTaaaW..",
+  "eEeetTTTTTt.aw..",
+  "eeee.ttttttt.g..",
+  "eee..ttttttt....",
+  ".....ddddd......",
+];
+
+/** Pikeman: an open sallet, a padded jack, and the pike standing twice his height. */
+const PIKEMAN = [
+  "...............b",
+  "..............bb",
+  "....mmmmmmm...bw",
+  "...mMMMMMMmm...w",
+  "..mmkkkkkkkmm..w",
+  "..mmkkyykkkmm..w",
+  "..mmmmmmmmmmm..w",
+  ".aaaaTTTTTaaaa.w",
+  "aaaaaTTTTTaaaagw",
+  "aaa.tTTTTTt.aa.w",
+  "aa..ttttttt....w",
+  "....ttttttt....w",
+  ".....ddddd.....w",
+];
+
+/** Juggernaut: plate on plate, a horned great helm, pauldrons like shields. */
+const JUGGERNAUT = [
+  "..h.mmmmmmm.h...",
+  "..hmMMMMMMMmh...",
+  ".mmmmmmmmmmmmm..",
+  ".mmmkkkkkkkmmm..",
+  ".mmmkkyykkkmmm..",
+  ".mmmmmmmmmmmmm..",
+  "aaaaaaMMMaaaaaa.",
+  "aAAaaMMMMMaaAaa.",
+  "aaaaaMMMMMaaaaa.",
+  "aaa.aMMMMMa.aaa.",
+  "aa..aaaaaaa..aa.",
+  "mm..aaaaaaa..mm.",
+  ".....ddddd......",
+];
+
+/** Giant-breaker: a fur-mantled bruiser with a great iron maul over the shoulder. */
+const BREAKER = [
+  "...........oooo.",
+  "....mmmmmmmoOOo.",
+  "...mMMMMMMmooo..",
+  "..mmmmmmmmmm.w..",
+  "..mmkkkkkkkmw...",
+  "..mmkkyykkkmw...",
+  "..mmmmmmmmmw....",
+  ".aaaaTTTTTaw....",
+  "aaaaaTTTTTaaa...",
+  "aaa.tTTTTTt.aa..",
+  "aa..ttttttt..aa.",
+  "....ttttttt.....",
+  ".....ddddd......",
+];
+
+/** Iron Warden: dark plate trimmed in brass, a halberd, and a lantern for the hall's long nights. */
+const IRONWARDEN = [
+  "...............q",
+  "....mmmmmmm...qq",
+  "...mMMMMMMmm..qw",
+  "..mmmmgmmmmmm..w",
+  "..mmkkkkkkkmm..w",
+  "..mmkkyykkkmm..w",
+  "..mmmmmmmmmmm..w",
+  ".aaaaTTTTTaaaa.w",
+  "aaaaaTgTgTaaaagw",
+  "nn.aTTTTTTa.aa.w",
+  "jj..ttttttt....w",
+  "nn..ttttttt....w",
+  ".....ddddd.....w",
+];
 
 const PEOPLE: Record<TroopArt, { top: string[]; mats: Materials; robe?: boolean }> = {
   knight: {
@@ -711,6 +840,26 @@ const PEOPLE: Record<TroopArt, { top: string[]; mats: Materials; robe?: boolean 
   halberdier: {
     top: HALBERDIER,
     mats: { p: M.CLOTHRED, b: M.STEEL, w: M.PINE, m: M.STEEL, h: M.STEEL, f: M.SKIN, k: [CAVITY], r: M.CLOTHRED, a: M.STEEL, g: M.BRASS, t: M.CLOTHBLU, d: M.LEATHER, l: M.STEEL, s: M.STEEL },
+  },
+  shieldbearer: {
+    top: SHIELDBEARER,
+    mats: { m: M.STEEL, k: [CAVITY], y: E.BLOOD, a: M.STEEL, t: M.CLOTHBLU, T: M.CLOTHBLU, g: M.BRASS, d: M.LEATHER, w: M.STEEL, e: M.CLOTHRED, l: M.STEEL, b: M.STEEL },
+  },
+  pikeman: {
+    top: PIKEMAN,
+    mats: { m: M.STEEL, k: [CAVITY], y: E.AMBER, a: M.WOOL, t: M.OCHRE, T: M.OCHRE, g: M.LEATHER, d: M.LEATHER, w: M.PINE, l: M.WOOL, b: M.STEEL },
+  },
+  juggernaut: {
+    top: JUGGERNAUT,
+    mats: { m: M.IRON, M: M.IRON, h: M.BONE, a: M.SLATE, k: [CAVITY], y: E.AMBER, d: M.IRON, l: M.SLATE, b: M.IRON },
+  },
+  breaker: {
+    top: BREAKER,
+    mats: { m: M.STEEL, k: [CAVITY], y: E.BLOOD, a: M.FURGREY, t: M.CLOTHRED, T: M.CLOTHRED, o: M.IRON, w: M.OAK, d: M.LEATHER, l: M.LEATHER, b: M.LEATHER },
+  },
+  ironwarden: {
+    top: IRONWARDEN,
+    mats: { m: M.SLATE, g: M.BRASS, a: M.SLATE, t: M.CLOTHGRN, T: M.CLOTHGRN, k: [CAVITY], y: E.CYAN, n: M.IRON, j: E.AMBER, q: M.STEEL, w: M.OAK, d: M.IRON, l: M.SLATE, b: M.SLATE },
   },
   arbalestier: {
     top: ARBALESTIER,
@@ -1574,7 +1723,10 @@ export type MonsterArt =
   | "minotaur" | "troll" | "lich" | "golem" | "wyvern" | "serpent" | "demon" | "dragon"
   | "elderdragon" | "harpy" | "ogre" | "mimic" | "treant" | "salamander" | "frostgiant" | "banshee" | "basilisk"
   | "ghoul" | "gargoyle" | "cyclops" | "vampire" | "hydra" | "griffin" | "wisp" | "wendigo"
-  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian";
+  | "oni" | "kappa" | "tengu" | "jiangshi" | "kitsune" | "yurei" | "gashadokuro" | "jorogumo" | "nian"
+  /** The desert's and the floating isles' own (./biome-beasts). */
+  | "scorpion" | "jackal" | "mummy" | "sandworm" | "djinn" | "sphinx"
+  | "pixie" | "skyray" | "cloudjelly" | "thunderbird" | "stormgiant" | "skyserpent";
 
 const MONSTER_DEFS: Record<MonsterArt, () => { rows: string[]; mats: Materials }> = {
   slime: () => ({ rows: slime(), mats: { g: M.SLIME, c: M.WATER, k: [CAVITY], w: M.BONE, b: M.BONE } }),
@@ -1619,6 +1771,18 @@ const MONSTER_DEFS: Record<MonsterArt, () => { rows: string[]; mats: Materials }
   gashadokuro: () => ({ rows: gashadokuro(), mats: { b: M.BONE, k: [CAVITY], y: E.BLOOD, d: M.DIRT } }),
   jorogumo: () => ({ rows: jorogumo(), mats: { l: M.CHITIN, a: M.ARCANE, m: M.OCHRE, r: M.CLOTHRED, f: M.BONE, h: M.IRON, y: E.BLOOD } }),
   nian: () => ({ rows: nian(), mats: { s: M.SCALERED, m: M.OCHRE, h: M.BONE, y: E.AMBER, t: M.BONE, k: [CAVITY], g: M.BRASS } }),
+  scorpion: () => ({ rows: bb.scorpion(), mats: { b: M.OCHRE, l: M.OAK, c: M.OCHRE, s: M.BONE, y: E.AMBER, k: [CAVITY] } }),
+  jackal: () => ({ rows: bb.jackal(), mats: { w: M.SAND, b: M.LINEN, y: E.AMBER, n: [CAVITY], t: M.BONE } }),
+  mummy: () => ({ rows: bb.mummy(), mats: { r: M.LINEN, k: [CAVITY], y: E.BILE, d: M.DIRT } }),
+  sandworm: () => ({ rows: bb.sandworm(), mats: { s: M.MESA, r: M.OCHRE, m: [CAVITY], t: M.BONE, k: E.BLOOD, d: M.DUNE } }),
+  djinn: () => ({ rows: bb.djinn(), mats: { s: M.CLOTHBLU, c: M.ARCANE, g: M.BRASS, j: E.BLOOD, y: E.GOLD, k: [CAVITY] } }),
+  sphinx: () => ({ rows: bb.sphinx(), mats: { b: M.SAND, w: M.OCHRE, f: M.SAND, h: M.BRASS, s: M.CLOTHBLU, g: E.GOLD, y: E.GOLD, k: [CAVITY] } }),
+  pixie: () => ({ rows: bb.pixie(), mats: { w: M.ICE, b: M.FOLIAGE, f: M.SKIN, h: M.CLOTHRED, y: [CAVITY], g: E.MINT } }),
+  skyray: () => ({ rows: bb.skyray(), mats: { w: M.SLATE, b: M.LINEN, y: E.CYAN, t: M.CHITIN, s: M.BONE } }),
+  cloudjelly: () => ({ rows: bb.cloudjelly(), mats: { c: M.CLOUD, t: M.ICE, g: E.SEA } }),
+  thunderbird: () => ({ rows: bb.thunderbird(), mats: { w: M.CLOTHBLU, b: M.LINEN, z: E.GOLD, k: M.BRASS, y: E.GOLD } }),
+  stormgiant: () => ({ rows: bb.stormgiant(), mats: { s: M.SLATE, a: M.STEEL, m: M.IRON, h: M.CLOUD, y: E.CYAN } }),
+  skyserpent: () => ({ rows: bb.skyserpent(), mats: { s: M.ICE, b: M.LINEN, f: M.CLOUD, h: M.BONE, y: E.CYAN } }),
 };
 
 /**
@@ -1628,15 +1792,43 @@ const MONSTER_DEFS: Record<MonsterArt, () => { rows: string[]; mats: Materials }
  * anything past level 30 burns with a faint aura. Overlays on the base art
  * rather than separate sprites, so a class stays recognisable at every level.
  */
-export function monsterAt(kind: MonsterArt, level: number): HTMLCanvasElement {
-  const tier = kind === "goblin" ? (level >= 7 ? 2 : level >= 4 ? 1 : 0)
+export function monsterAt(kind: MonsterArt, level: number, variant = 0): HTMLCanvasElement {
+  const tier = monsterTier(kind, level);
+  const v = ((variant % 3) + 3) % 3;
+  return cached(`monsterAt4:${kind}:${tier}:${v}`, () => {
+    const base = monster(kind, v);
+    const { cv, c } = makeCanvas(base.width + 6, base.height + 6);
+    c.drawImage(base, 3, 6);
+    decorateMonster(c, kind, tier, v);
+    return cv;
+  });
+}
+
+/** The tier a monster's level draws at: its variants' crowns and helms, and the aura past 30. */
+export function monsterTier(kind: MonsterArt, level: number): number {
+  return kind === "goblin" ? (level >= 7 ? 2 : level >= 4 ? 1 : 0)
     : kind === "skeleton" ? (level >= 7 ? 2 : level >= 4 ? 1 : 0)
     : kind === "golem" ? (level >= 15 ? 2 : 0)
     : level >= 60 ? 3 : level >= 30 ? 2 : 0;
-  return cached(`monsterAt2:${kind}:${tier}`, () => {
-    const base = monster(kind);
-    const { cv, c } = makeCanvas(base.width + 6, base.height + 6);
-    c.drawImage(base, 3, 6);
+}
+
+/** A monster's authored rows at its drawn scale, and its materials for a variant — for posing it (./monster-anim). */
+export function monsterRows(kind: MonsterArt, variant = 0): { rows: string[]; mats: Materials } {
+  const k = artScale(kind);
+  const d = atScale(k, () => MONSTER_DEFS[kind]());
+  const rows = TYPED.has(kind) && k !== 1 ? scaleRows(d.rows, k) : d.rows;
+  return { rows, mats: variant ? swapMats(d.mats, variant) : d.mats };
+}
+
+/**
+ * The marks on a monster drawn at (3, 6) in a canvas six larger than its
+ * sprite: rime or scars by variant, a crown or a helm or waking runes by
+ * tier, the aura past level 30, then the grim pass over all of it.
+ */
+export function decorateMonster(c: CanvasRenderingContext2D, kind: MonsterArt, tier: number, v: number) {
+  {
+    if (v === 1) rim(c, M.ICE[0], 3);
+    if (v === 2) flecks(c, kind);
     if (tier >= 2 && kind !== "goblin" && kind !== "skeleton" && kind !== "golem") aura(c, tier >= 3 ? E.AMBER : E.VOID);
     if (kind === "goblin" && tier === 2) {
       // the goblin king's crown, on the craned head
@@ -1667,8 +1859,54 @@ export function monsterAt(kind: MonsterArt, level: number): HTMLCanvasElement {
         px(c, x + 1, y, 1, 1, E.CYAN[1]);
       }
     }
-    return cv;
-  });
+    grim(c, tier);
+  }
+}
+
+/**
+ * The grim pass, over every monster: the shade side of the body sinks
+ * deeper and colder, so the thing reads hard and heavy rather than soft;
+ * a rim of blood-dark light runs along its underside, as if lit from a
+ * fire below; and the higher the tier, the deeper the dark. Eyes, fire and
+ * the outline are left as they are — they are what burns.
+ */
+export function grim(c: CanvasRenderingContext2D, tier = 0) {
+  const { width: w, height: h } = c.canvas;
+  if (!w || !h) return;
+  const img = c.getImageData(0, 0, w, h);
+  const d = img.data;
+  const sink = 0.8 - 0.05 * Math.min(3, tier);
+  for (let p = 0; p < d.length; p += 4) {
+    if (d[p + 3] === 0) continue;
+    const v = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
+    if (v === SEAL || EMISSIVE.has(v)) continue;
+    const l = (0.3 * d[p] + 0.59 * d[p + 1] + 0.11 * d[p + 2]) / 255;
+    if (l < 0.5) {
+      d[p] = Math.round(d[p] * sink);
+      d[p + 1] = Math.round(d[p + 1] * (sink - 0.04));
+      d[p + 2] = Math.round(Math.min(255, d[p + 2] * (sink + 0.06)));
+    }
+  }
+  // The underside: the lowest body pixel of every other column, blood-dark.
+  for (let x = 0; x < w; x++) {
+    if ((x & 1) === 1) continue;
+    for (let y = h - 1; y >= 0; y--) {
+      const p = (y * w + x) * 4;
+      if (d[p + 3] === 0) continue;
+      const v = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
+      if (v === SEAL) {
+        // the outline itself: the rim goes just inside it
+        const q = ((y - 1) * w + x) * 4;
+        if (y > 0 && d[q + 3] !== 0 && !EMISSIVE.has((d[q] << 16) | (d[q + 1] << 8) | d[q + 2])) {
+          d[q] = 0x6a;
+          d[q + 1] = 0x14;
+          d[q + 2] = 0x1c;
+        }
+      }
+      break;
+    }
+  }
+  c.putImageData(img, 0, 0);
 }
 
 /**
@@ -1700,11 +1938,116 @@ function aura(c: CanvasRenderingContext2D, ramp: Ramp4) {
   }
 }
 
-export function monster(kind: MonsterArt): HTMLCanvasElement {
-  return cached(`monster3:${kind}`, () => {
-    const d = MONSTER_DEFS[kind]();
-    return renderSprite(d.rows, d.mats, `m3:${kind}`);
+/**
+ * How much larger than its authored size each monster is drawn, so its
+ * bulk on the map answers to its power (its hit points at the least level it
+ * comes at). The small fry — slimes, bats, goblins, wolves — stay as drawn;
+ * brutes grow a little; giants, the legendary and the mythic grow most,
+ * until every mythic thing stands over a dragon and the elder dragon over
+ * everything. Re-drawn from the art's own shapes at the larger scale (see
+ * `atScale`), so the pixels stay square and one pixel across.
+ */
+export const MONSTER_SCALE: Partial<Record<string, number>> = {
+  // brutes and the middle of the table
+  minotaur: 1.1, tengu: 1.1, gargoyle: 1.1, jorogumo: 1.1, mummy: 1.1, thunderbird: 1.1,
+  ogre: 1.15, treant: 1.15, vampire: 1.15, salamander: 1.15,
+  golem: 1.2, oni: 1.2, wendigo: 1.2,
+  lich: 1.25, griffin: 1.25, sandworm: 1.25, werewolf: 1.25,
+  // giants and the legendary
+  basilisk: 1.3, kitsune: 1.3, cyclops: 1.35, nian: 1.35, djinn: 1.35, skyserpent: 1.35,
+  frostgiant: 1.4, stormgiant: 1.4, sphinx: 1.4, gashadokuro: 1.45,
+  troll: 1.5, demon: 1.5, hydra: 1.5, serpent: 1.6,
+  // dragons, and the mythic nine above them
+  dragon: 1.25, elderdragon: 1.35,
+  phoenix: 1.5, leviathan: 1.6, behemoth: 1.5, stormroc: 1.4, raiju: 1.8, seraph: 1.25, shadowcolossus: 1.2, voidwalker: 1.2,
+};
+
+/** Typed-out sprites, not drawn from shapes: scaled by their letters, each nearest cell to its source. */
+const TYPED = new Set<string>(["werewolf", "troll"]);
+function scaleRows(rows: string[], k: number): string[] {
+  const h = Math.round(rows.length * k);
+  const w = Math.round(rows[0].length * k);
+  return Array.from({ length: h }, (_, y) => {
+    const src = rows[Math.min(rows.length - 1, Math.floor(y / k))];
+    let out = "";
+    for (let x = 0; x < w; x++) out += src[Math.min(src.length - 1, Math.floor(x / k))];
+    return out;
   });
+}
+
+/**
+ * On top of each kind's own scale: every legendary thing is drawn a third
+ * larger again, and the elder dragon — the one mythic beast drawn here — by
+ * MYTHIC_GROW, so the tiers read at a glance: the brute, the legend, the myth.
+ */
+export const LEGEND_GROW = 1.35;
+export const MYTHIC_GROW = 1.7;
+const LEGENDARY_ART = new Set<string>(["lich", "wyvern", "serpent", "demon", "dragon", "hydra", "kitsune", "gashadokuro", "nian", "djinn", "sphinx", "skyserpent"]);
+export const artScale = (kind: string) => (MONSTER_SCALE[kind] ?? 1) * (kind === "elderdragon" ? MYTHIC_GROW : LEGENDARY_ART.has(kind) ? LEGEND_GROW : 1);
+
+export function monster(kind: MonsterArt, variant = 0): HTMLCanvasElement {
+  const k = artScale(kind);
+  return cached(`monster5:${kind}:${variant}`, () => {
+    const d = atScale(k, () => MONSTER_DEFS[kind]());
+    const rows = TYPED.has(kind) && k !== 1 ? scaleRows(d.rows, k) : d.rows;
+    return renderSprite(rows, variant ? swapMats(d.mats, variant) : d.mats, `m4:${kind}:${variant}`);
+  });
+}
+
+// ── Variants: no pack all alike ───────────────────────────
+
+/**
+ * Every kind wears three looks. The first is its own; the second and third
+ * swap its hide, skin, scale, cloth and eyes for kindred ones — a grey wolf
+ * and a brown and a black one, a green goblin and a red and a pale — and
+ * mark it: rime along the top of the second, old scars on the third.
+ */
+const SWAPS: [Mat, Mat, Mat][] = [
+  [M.FURGREY, M.FUR, M.CHITIN], [M.FUR, M.FURGREY, M.OCHRE], [M.TROLL, M.GOBLIN, M.CLAY], [M.GOBLIN, M.TROLL, M.CLOTHGRN],
+  [M.SCALEGRN, M.COPPER, M.SLATE], [M.SCALERED, M.CHITIN, M.OCHRE], [M.BONE, M.SAND, M.LINEN], [M.CLOTHRED, M.CLOTHBLU, M.CLOTHGRN],
+  [M.CLOTHBLU, M.CLOTHGRN, M.CLOTHRED], [M.CHITIN, M.SLATE, M.ARCANE], [M.STONE, M.SLATE, M.CLAY], [M.SKIN, M.CLAY, M.SAND],
+  [M.SLIME, M.ICE, M.CLOTHRED], [M.LEATHER, M.OAK, M.CHITIN], [M.WOOL, M.LINEN, M.FURGREY], [M.ICE, M.CLOTHBLU, M.LINEN],
+  [M.OCHRE, M.CLAY, M.SCALERED], [M.SAND, M.LINEN, M.OCHRE],
+  [E.AMBER, E.BLOOD, E.BILE], [E.BLOOD, E.AMBER, E.VOID], [E.CYAN, E.BILE, E.AMBER], [E.BILE, E.CYAN, E.BLOOD], [E.VOID, E.CYAN, E.BLOOD],
+];
+function swapMats(mats: Materials, v: number): Materials {
+  const out: Materials = {};
+  for (const [k, m] of Object.entries(mats)) out[k] = SWAPS.find((sw) => sw[0] === m)?.[v] ?? m;
+  return out;
+}
+
+/** Pixels along the top contour of a sprite, in one colour: rime, or a rim of light. */
+function rim(c: CanvasRenderingContext2D, colour: string, every: number) {
+  const { width: w, height: h } = c.canvas;
+  const d = c.getImageData(0, 0, w, h).data;
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] > 0;
+  for (let x = 0; x < w; x++) {
+    if ((x * 7) % every !== 0) continue;
+    for (let y = 0; y < h; y++) {
+      if (!solid(x, y)) continue;
+      if (solid(x, y + 1)) px(c, x, y + 1, 1, 1, colour);
+      break;
+    }
+  }
+}
+
+/** Old scars: a few short dark strokes across the body. */
+function flecks(c: CanvasRenderingContext2D, kind: string) {
+  const { width: w, height: h } = c.canvas;
+  const d = c.getImageData(0, 0, w, h).data;
+  const solid = (x: number, y: number) => x >= 1 && y >= 1 && x < w - 1 && y < h - 1 && d[(y * w + x) * 4 + 3] > 0 && d[((y - 1) * w + x) * 4 + 3] > 0 && d[((y + 1) * w + x) * 4 + 3] > 0;
+  let seed = 0;
+  for (const ch of kind) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
+  let made = 0;
+  for (let i = 0; i < 40 && made < 3; i++) {
+    const x = 2 + ((seed + i * 37) % (w - 4));
+    const y = 3 + ((seed * 3 + i * 53) % (h - 6));
+    if (!solid(x, y) || !solid(x + 1, y + 1)) continue;
+    px(c, x, y, 1, 1, CAVITY);
+    px(c, x + 1, y + 1, 1, 1, CAVITY);
+    px(c, x + 1, y, 1, 1, M.BONE[1]);
+    made++;
+  }
 }
 
 // ── Small props ───────────────────────────────────────────

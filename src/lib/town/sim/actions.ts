@@ -1,19 +1,22 @@
+import { FIT_HEALTH, barText, bestCandidate, programmesAt, type HeavyClass } from "./enrol";
 import { CATALOG, grade, hallMinDay, PEAT_CUT, PEAT_EFFORT, COMBINE_COST, COMBINE_FROM, COURSES, KNIGHT_RECRUIT, RECRUIT_RANK, jewelCost, upgradeHours, upgradePeople, GATE_COST, PAVEMENT_COST, TRAIN_SLOW, UTILITIES, WALL_COST, bedUpgradeCost, maxBedUpgrades, utilitySlots, type Cost } from "./catalog";
 import { assign, beds, byId, clock, log, makeStructure, residents, unassign } from "./state";
 import { buildMinutes, type SimContext } from "./tick";
-import {
-  WALL_MAX_LEVEL, isHome, canAfford, checkMove, checkPlacement, checkTile, computeLinks, costText, fuelCap, wallLevel, wallMaxHp, wallMeta, wallUpgradeCost, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES,
-} from "./world";
+import { WALL_MAX_LEVEL, isHome, canAfford, checkMove, checkPlacement, checkTile, computeLinks, costText, fuelCap, wallLevel, wallMaxHp, wallMeta, wallUpgradeCost, guardSlots, houseReachesBarracks, isGuardPost, occupancy, pay, MILITARY_TYPES, LAMP_CAP, lampFuel, capOf, storeRoom } from "./world";
 import { forgeOf, stock, store, take } from "./loot";
 import { NIGHT_SHIFT_LEVEL, workLevel } from "./work";
+import { thriftRefund } from "./paths";
+import { BIOME_PRICE } from "./biomes";
 import { inSight } from "./vision";
-import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage } from "./woods";
+import { SEEDLING, SNAG, TREE_EFFORT, TREE_LABEL, TREE_WOOD, treeStage, ripe, TREE_KINDS, treeSpecies, MATURE } from "./woods";
 import { WILD_EFFORT, wildAmount, wildCrop } from "./forage";
 import { HEARTHS, isHeated, isZone } from "./zones";
 import { FOOTING, footingOf, frameNodes, hasFrame } from "./frame";
 import { defaultPolicy } from "./psyche";
 import type { Footing, HearthKind, Policy } from "./types";
-import { MILITARY, Overlay, Terrain, YEAR_DAYS, type GameState, type Role, type Structure, type StructureType, type Villager } from "./types";
+import { tripHours } from "./world";
+export { WALK_TPH, tripHours } from "./world";
+import { MAP_H, MAP_W, MILITARY, Overlay, Terrain, YEAR_DAYS, type GameState, type ResourceKey, type Role, type Structure, type StructureType, type Villager } from "./types";
 
 /**
  * Everything the player can do, each as a checked mutation. A refusal returns
@@ -25,14 +28,25 @@ type Result = string | null;
 
 const hall = (s: GameState) => s.structures.find((st) => st.type === "townhall");
 
-export function place(s: GameState, ctx: SimContext, type: StructureType, x: number, y: number): Result {
+/** Why a building cannot be put up at x, y right now — the plot or the purse — or null if it can. */
+export function placeBlock(s: GameState, type: StructureType, x: number, y: number): Result {
   const check = checkPlacement(s, type, x, y);
   if (!check.ok) return check.reason ?? "Cannot build here.";
   const cost = CATALOG[type].cost;
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
+  return null;
+}
+
+/** Game minutes a new building of this type would take to put up, as things stand. */
+export const placeMinutes = (s: GameState, ctx: SimContext, type: StructureType) => buildMinutes(s, ctx, CATALOG[type].buildHours);
+
+export function place(s: GameState, ctx: SimContext, type: StructureType, x: number, y: number): Result {
+  const why = placeBlock(s, type, x, y);
+  if (why) return why;
+  const cost = CATALOG[type].cost;
   pay(s.res, cost);
   const st = makeStructure(s, type, x, y, false);
-  st.buildUntil = s.time + buildMinutes(s, ctx, CATALOG[type].buildHours);
+  st.buildUntil = s.time + placeMinutes(s, ctx, type);
   st.undo = { kind: "build", at: Date.now(), cost: { ...cost }, jewels: 0 };
   // Wild crops on the plot are trampled under the footings.
   trample(s, x, y, st.w, st.h);
@@ -49,6 +63,9 @@ function trample(s: GameState, x: number, y: number, w: number, h: number) {
 
 /** What relaying one tile of road in stone flags costs. */
 export const STONE_PAVING_COST: Cost = { stone: 2 };
+
+/** A tile of bridge over the open sky, on top of the road's own cost. */
+export const BRIDGE_COST: Cost = { planks: 3 };
 
 export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: number[]): Result {
   const occ = occupancy(s);
@@ -76,7 +93,17 @@ export function paint(s: GameState, kind: "pavement" | "wall" | "gate", tiles: n
       why = `Out of materials (${costText(unit)} per tile).`;
       break;
     }
+    // Over the open sky a road is a bridge: planks and rope on top of its stone.
+    const bridge = kind === "pavement" && s.map.terrain[i] === Terrain.Void;
+    if (bridge && !canAfford(s.res, { ...unit, ...BRIDGE_COST })) {
+      why = `A bridge over the sky takes ${costText({ ...unit, ...BRIDGE_COST })} a tile.`;
+      break;
+    }
     pay(s.res, unit);
+    if (bridge) {
+      pay(s.res, BRIDGE_COST);
+      (s.map.bridge ??= new Array(s.map.terrain.length).fill(0))[i] = 1;
+    }
     if (s.map.overlay[i] === Overlay.Crop) s.map.overlay[i] = s.map.meta[i] = 0;
     if (kind === "pavement") s.map.terrain[i] = Terrain.Pavement;
     else if (kind === "wall") {
@@ -130,7 +157,9 @@ export function unpaint(s: GameState, tiles: number[]): Result {
       s.map.meta[i] = 0;
     }
     if (s.map.terrain[i] === Terrain.Pavement) {
-      s.map.terrain[i] = Terrain.Grass;
+      // A bridge taken up leaves the sky it crossed.
+      s.map.terrain[i] = s.map.bridge?.[i] ? Terrain.Void : Terrain.Grass;
+      if (s.map.bridge) s.map.bridge[i] = 0;
       if (s.map.paving) s.map.paving[i] = 0;
     }
   }
@@ -155,13 +184,19 @@ export function clear(s: GameState, tiles: number[]): Result {
 }
 
 /** What harvesting a tile yields, for the tile panel. */
-export function harvestYield(s: GameState, tile: number): { label: string; verb: string; gives: string; effort: number } | null {
+export function harvestYield(s: GameState, tile: number): { label: string; verb: string; gives: string; effort: number; trip: number } | null {
+  const y0 = harvestBase(s, tile);
+  return y0 ? { ...y0, trip: tripHours(s, tile) } : null;
+}
+
+function harvestBase(s: GameState, tile: number): { label: string; verb: string; gives: string; effort: number } | null {
   const o = s.map.overlay[tile];
   if (o === Overlay.Tree) {
     const stage = treeStage(s.map.meta[tile]);
     const wood = TREE_WOOD[stage];
+    const kind = TREE_KINDS[treeSpecies(s.map.meta[tile])];
     return {
-      label: TREE_LABEL[stage], verb: stage === SNAG ? "Fell the snag" : stage <= SEEDLING ? "Pull up" : "Cut down",
+      label: kind.name === "Tree" ? TREE_LABEL[stage] : stage === MATURE ? kind.name : `${kind.name} · ${TREE_LABEL[stage].toLowerCase()}`, verb: stage === SNAG ? "Fell the snag" : stage <= SEEDLING ? "Pull up" : "Cut down",
       gives: wood ? `${wood} wood` : "nothing but a clear tile", effort: TREE_EFFORT[stage],
     };
   }
@@ -198,6 +233,51 @@ export function stokeFire(s: GameState, id: number, kind: "wood" | "coal", amoun
   s.res[kind] -= n;
   f.fuel = (f.fuel ?? 0) + n * per;
   return null;
+}
+
+/**
+ * Loads a lamp's reservoir from the stores, as a grate is loaded: a coal is
+ * three units, a wood one. Without a kind it takes wood first — a lamp needs
+ * little, and the coal is better kept for the winter's fires — then coal, and
+ * fills it. "full" if there was no room, "none" if nothing in store would do.
+ */
+function loadLamp(s: GameState, l: Structure, kind?: "wood" | "coal", amount = Infinity): "ok" | "full" | "none" {
+  let room = LAMP_CAP - lampFuel(l);
+  if (room < 0.5) return "full";
+  let loaded = 0;
+  for (const k of kind ? [kind] : (["wood", "coal"] as const)) {
+    const per = k === "coal" ? 3 : 1;
+    // Coal only into room for a whole coal, unless coal was asked for by name.
+    const n = Math.min(Math.floor(amount - loaded), Math.floor((kind ? room + per - 0.5 : room) / per), Math.floor(s.res[k]));
+    if (n <= 0) continue;
+    s.res[k] -= n;
+    l.fuel = Math.min(LAMP_CAP, lampFuel(l) + n * per);
+    room = LAMP_CAP - lampFuel(l);
+    loaded += n;
+  }
+  return loaded ? "ok" : "none";
+}
+
+/** Refills one lamp: a coal is three units of its twelve, a wood one; without a kind, wood first and filled. */
+export function fillLamp(s: GameState, id: number, kind?: "wood" | "coal", amount = Infinity): Result {
+  const l = byId(s, id);
+  if (!l || l.type !== "lamppost") return "That is not a lamp.";
+  if (l.buildUntil) return "The lamp is still going up.";
+  const r = loadLamp(s, l, kind, amount);
+  return r === "full" ? "The lamp is full." : r === "none" ? `No ${kind ?? "wood or coal"} in store.` : null;
+}
+
+/** Refills every lamp that is not full, the driest first, wood then coal, until the stores run out. */
+export function fillAllLamps(s: GameState): Result {
+  const lamps = s.structures.filter((st) => st.type === "lamppost" && !st.buildUntil && lampFuel(st) < LAMP_CAP - 0.5).sort((a, b) => lampFuel(a) - lampFuel(b));
+  if (!lamps.length) return "Every lamp is full.";
+  let filled = 0;
+  for (const l of lamps) {
+    const r = loadLamp(s, l);
+    if (r === "ok") filled++;
+    else if (r === "none") break;
+  }
+  return filled ? null : "No wood or coal in store.";
 }
 
 // ── Survival: hearths, chimneys, footings, roofs, policy (design §1, §5) ──
@@ -367,6 +447,52 @@ export function trade(s: GameState, offerId: string): Result {
   return null;
 }
 
+/**
+ * Marks fruit trees to be picked: idle hands walk out, pick what is ripe and
+ * carry it home — an hour at the tree and the walk there and back — and the
+ * tree stands, to bear again next season.
+ */
+export function pickFruit(s: GameState, tiles: number[]): Result {
+  const c = clock(s.time);
+  let n = 0;
+  let noRoom: ResourceKey | null = null;
+  for (const t of tiles) {
+    if (!ripe(s, t, c.season, c.year)) continue;
+    if (s.clearing.some((j) => j.tile === t)) continue;
+    // Fruit keeps only in a storehouse (./world keepOf): picked with nowhere to put it, it would rot on the ground.
+    const fruit = TREE_KINDS[treeSpecies(s.map.meta[t])].fruit!;
+    if (!fruitRoom(s, fruit)) {
+      noRoom = fruit;
+      continue;
+    }
+    s.clearing.push({ tile: t, progress: 0, pick: true });
+    n++;
+  }
+  if (n) return null;
+  return noRoom ? `Nowhere to keep ${noRoom}s: fruit keeps only in a storehouse${storeRoom(s) ? ", and it is full" : ""}.` : "No ripe fruit there to pick.";
+}
+
+/** Whether the storehouses have room left for this fruit. */
+export const fruitRoom = (s: GameState, fruit: ResourceKey) => capOf(s, fruit) - s.res[fruit] >= 1;
+
+/** Every ripe fruit tree the town can see, to pick at once. */
+export function ripeTrees(s: GameState): number[] {
+  const c = clock(s.time);
+  const out: number[] = [];
+  const hall = s.structures.find((x) => x.type === "townhall");
+  if (!hall) return out;
+  const R = 40;
+  const hx = hall.x + hall.w / 2;
+  const hy = hall.y + hall.h / 2;
+  for (let y = Math.max(0, Math.floor(hy - R)); y < Math.min(MAP_H, hy + R); y++) {
+    for (let x = Math.max(0, Math.floor(hx - R)); x < Math.min(MAP_W, hx + R); x++) {
+      const t = y * MAP_W + x;
+      if (s.map.overlay[t] === Overlay.Tree && ripe(s, t, c.season, c.year) && !s.clearing.some((j) => j.tile === t)) out.push(t);
+    }
+  }
+  return out;
+}
+
 /** Takes a tile off the clearing list. */
 export function cancelClear(s: GameState, tile: number): Result {
   s.clearing = s.clearing.filter((j) => j.tile !== tile);
@@ -429,7 +555,8 @@ export function cancelWork(s: GameState, id: number, now = Date.now()): Result {
   return null;
 }
 
-export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
+/** Why a building cannot be raised a level right now, or null if it can. */
+export function upgradeBlock(s: GameState, id: number): Result {
   const st = byId(s, id);
   if (!st) return "No such building.";
   const def = CATALOG[st.type];
@@ -452,11 +579,26 @@ export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
   // The highest levels are set with monster jewels from the forge's store.
   const jewels = jewelCost(st.level + 1, st.type);
   if (jewels && stock(s, "jewel") < jewels) return `Level ${st.level + 1} is set with ${jewels} monster jewel${jewels === 1 ? "" : "s"} — the forge's store has ${stock(s, "jewel")}.`;
+  return null;
+}
+
+/** Game minutes raising this building its next level would take, as things stand. */
+export const upgradeMinutes = (s: GameState, ctx: SimContext, st: Structure) =>
+  buildMinutes(s, ctx, CATALOG[st.type].buildHours * upgradeHours(st.type, st.level + 1));
+
+export function upgrade(s: GameState, ctx: SimContext, id: number): Result {
+  const why = upgradeBlock(s, id);
+  if (why) return why;
+  const st = byId(s, id)!;
+  const def = CATALOG[st.type];
+  const cost = def.upgrade(st.level);
+  const jewels = jewelCost(st.level + 1, st.type);
+  const minutes = upgradeMinutes(s, ctx, st);
   pay(s.res, cost);
   if (jewels) take(s, "jewel", jewels);
   st.undo = { kind: "upgrade", at: Date.now(), cost: { ...cost }, jewels };
   st.level += 1;
-  st.buildUntil = s.time + buildMinutes(s, ctx, def.buildHours * upgradeHours(st.type, st.level));
+  st.buildUntil = s.time + minutes;
   log(s, `Upgrading the ${def.name.toLowerCase()} to level ${st.level}.`);
   return null;
 }
@@ -519,10 +661,23 @@ export function hire(s: GameState, id: number, villagerId?: number): Result {
   return null;
 }
 
+/** Plain labour: a hand released from it is free for any job again (trained trades keep their calling). */
+export const PLAIN_LABOUR: Role[] = ["farmhand", "fisher", "lumberjack", "miner", "icer", "refiner", "trader"];
+
+/**
+ * Releases a worker. A labourer goes back to being a free hand — able to take
+ * any job — keeping their general work level but not their rank at this one:
+ * moving people where the town needs them is always possible, never free.
+ */
 export function fire(s: GameState, villagerId: number): Result {
   const v = s.villagers.find((x) => x.id === villagerId);
   if (!v) return "No such villager.";
   unassign(s, v);
+  if (PLAIN_LABOUR.includes(v.role)) {
+    v.role = "idle";
+    v.rank = 0;
+    v.xp = 0;
+  }
   return null;
 }
 
@@ -613,10 +768,12 @@ export function schoolTrain(s: GameState, id: number, role: Role): Result {
   if (st.training) return "A lesson is already underway.";
   const course = COURSES.find((c) => c.role === role);
   if (!course) return "Unknown course.";
-  const v = s.villagers.find((x) => x.role === "idle" && !x.work && x.health > 20);
-  if (!v) return "No idle villager to enrol.";
+  const prog = programmesAt("school").find((p) => p.role === role);
+  const v = prog ? bestCandidate(s, prog) : null;
+  if (!v) return `No one fit clears the bar for a ${course.name.toLowerCase()} — ${barText(prog?.bars ?? [])}, health ${FIT_HEALTH}+, idle.`;
   if (!canAfford(s.res, course.cost)) return `Needs ${costText(course.cost)}.`;
   pay(s.res, course.cost);
+  thriftRefund(s, st, course.cost);
   v.work = st.id;
   st.training = { villagerId: v.id, role, left: (course.hours * 60 * TRAIN_SLOW) / (1 + (st.level - 1) * 0.15) };
   log(s, `${v.name} begins training as a ${course.name.toLowerCase()}.`);
@@ -625,7 +782,7 @@ export function schoolTrain(s: GameState, id: number, role: Role): Result {
 
 /** What each military building recruits. Every soldier, bow or spear, is on the one soldier tree. */
 const TROOP_FOR: Partial<Record<StructureType, Role>> = {
-  barracks: "infantry", archery: "infantry", armoury: "infantry", wizardhut: "wizard", nobleyard: "knight", armyschool: "knight",
+  barracks: "infantry", archery: "infantry", armoury: "heavy", wizardhut: "wizard", nobleyard: "knight", armyschool: "knight",
 };
 
 /**
@@ -645,14 +802,14 @@ export function setOvertime(s: GameState, id: number, on: boolean): Result {
 
 /** The same for the idle hands clearing ground and digging. */
 export function setClearOvertime(s: GameState, on: boolean): Result {
-  s.policy = { heat: 12, ration: 1, freshSoil: false, coalFirst: false, shift: 14, ...s.policy, overtime: on };
+  s.policy = { heat: 10, ration: 1, freshSoil: false, coalFirst: false, shift: 14, ...s.policy, overtime: on };
   return null;
 }
 
 /** How long taking on a recruit takes: four game hours. */
 export const RECRUIT_MINUTES = 4 * 60;
 
-export function recruit(s: GameState, id: number): Result {
+export function recruit(s: GameState, id: number, progId?: string): Result {
   const st = byId(s, id);
   if (!st || !MILITARY_TYPES.includes(st.type)) return "Not a military building.";
   if (st.buildUntil) return "Finish building it first.";
@@ -660,19 +817,25 @@ export function recruit(s: GameState, id: number): Result {
   const garrison = s.villagers.filter((v) => v.work === st.id && MILITARY.includes(v.role)).length;
   if (garrison >= 4 * st.level) return "At capacity — upgrade to house more troops.";
   const links = computeLinks(s);
-  const v = s.villagers.find((x) => {
-    if (x.role !== "idle" || x.work || x.health <= 20) return false;
+  // Only the suitable are taken on (./enrol): the best-suited who clears the programme's bar.
+  const progs = programmesAt(st.type);
+  const prog = (progId ? progs.find((p) => p.id === progId) : undefined) ?? progs[0];
+  if (!prog) return "This building trains no one.";
+  const joined = (x: Villager) => {
     const home = byId(s, x.house);
     return !!home && houseReachesBarracks(links, home, st);
-  });
-  if (!v) return "No idle villager in a house connected to this building by pavement.";
+  };
+  const v = bestCandidate(s, prog, joined);
+  if (!v) return `No one fit clears the bar for ${prog.title.toLowerCase()} — ${barText(prog.bars)}, health ${FIT_HEALTH}+, from a house joined by road.`;
   const knight = TROOP_FOR[st.type] === "knight";
-  const cost: Cost = knight ? { ...KNIGHT_RECRUIT } : { coin: 15 * st.level, iron: st.type === "armoury" ? 4 : 0 };
+  const cost: Cost = knight ? { ...KNIGHT_RECRUIT } : { coin: 15 * st.level, iron: st.type === "armoury" ? (prog.id === "heavy:juggernaut" ? 10 : 6) : 0 };
   if (!canAfford(s.res, cost)) return `Needs ${costText(cost)}.`;
   pay(s.res, cost);
+  thriftRefund(s, st, cost);
   v.work = st.id;
   // Recruitment takes four hours, whatever the building.
-  st.training = { villagerId: v.id, role: TROOP_FOR[st.type]!, rank: RECRUIT_RANK[st.type] ?? 1, left: RECRUIT_MINUTES, recruit: true };
+  st.training = { villagerId: v.id, role: prog.role, rank: RECRUIT_RANK[st.type] ?? 1, left: RECRUIT_MINUTES, recruit: true, heavy: prog.id.startsWith("heavy:") ? (prog.id.slice(6) as HeavyClass) : undefined };
+  log(s, `${v.name} is taken on at the ${CATALOG[st.type].name.toLowerCase()} as a ${prog.title.toLowerCase()}.`);
   return null;
 }
 
@@ -717,8 +880,8 @@ export function sell(s: GameState, ctx: SimContext, key: keyof GameState["res"],
   if (s.res[key] < qty) return "Not enough to sell.";
   const market = s.structures.filter((m) => m.type === "market" && !m.buildUntil);
   if (!market.length) return "Build a market to trade.";
-  const values: Partial<Record<string, number>> = { onion: 1.4, bean: 1.6, turnip: 1, corn: 1.3, strawberry: 4, garlic: 5, watercress: 2, chestnut: 3.5, fish: 2, tonic: 12, fertiliser: 4, formula: 40, cabbage: 1.6, carrot: 1.3, pumpkin: 3, barley: 1.2, potato: 1, wheat: 1.4, grape: 3, herb: 6, rice: 1.2, taro: 1.6, lotus: 5, reed: 1, meals: 2, planks: 5, bricks: 6, ingots: 14, gunpowder: 20, poison: 24, ice: 3, silver: 18, gold: 40, mithril: 120, wood: 0.5, stone: 0.5, coal: 1.5, iron: 3 };
-  const unit = values[key] ?? 1;
+  const values: Partial<Record<string, number>> = { onion: 1.4, bean: 1.6, turnip: 1, corn: 1.3, strawberry: 4, garlic: 5, watercress: 2, chestnut: 3.5, apple: 2, fish: 2, tonic: 12, fertiliser: 4, formula: 40, cabbage: 1.6, carrot: 1.3, pumpkin: 3, barley: 1.2, potato: 1, wheat: 1.4, grape: 3, herb: 6, rice: 1.2, taro: 1.6, lotus: 5, reed: 1, meals: 2, planks: 5, bricks: 6, ingots: 14, gunpowder: 20, poison: 24, ice: 3, silver: 18, gold: 40, mithril: 120, wood: 0.5, stone: 0.5, coal: 1.5, iron: 3 };
+  const unit = values[key] ?? BIOME_PRICE[key] ?? 1;
   const lvl = market.reduce((a, m) => Math.max(a, m.level), 1);
   const coin = unit * qty * ctx.profile.sellScale * (1 + lvl * 0.05);
   s.res[key] -= qty;

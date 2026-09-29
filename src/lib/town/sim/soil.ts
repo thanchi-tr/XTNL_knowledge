@@ -2,6 +2,7 @@ import { clock } from "./state";
 import { air } from "./weather";
 import { storesOf } from "./stores";
 import type { GameState, Soil, Structure } from "./types";
+import { BIOME_SOIL } from "./biomes";
 
 /**
  * Soil (design §3.5). Every field carries available nitrogen and phosphorus
@@ -34,6 +35,7 @@ export const CROP_SOIL: Record<string, CropSoil> = {
   reed: { cycle: 5, N: 3, P: 0.4, O: 0.02 },
   watercress: { cycle: 3, N: 3, P: 0.4, O: 0.02 },
   chestnut: { cycle: 7, N: 3, P: 0.5, O: 0.02 },
+  ...BIOME_SOIL,
 };
 
 const K_N = 4;

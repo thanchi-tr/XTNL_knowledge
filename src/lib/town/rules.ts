@@ -48,6 +48,8 @@ export interface TownInput {
   peakDepth: number;
   /** Reviews passed today — each one shaves a little off running timers. */
   reviewsToday: number;
+  /** Answers today, right or wrong (the ledger's passes plus misses): what the land reads as effort. Falls back to `reviewsToday`. */
+  reviewsAttempted?: number;
   /** New ideas this week, per school — the currency of repelling monsters. */
   newIdeasThisWeek: Record<School, number>;
   /** The equipped emblems themselves, for binding to grand wizards and emblem knights. */
@@ -76,7 +78,11 @@ export interface FieldDaily {
   /** Ideas added to it today, and this week. */
   ideasToday: number;
   ideasWeek: number;
-  /** Its existing cards reviewed today. */
+  /**
+   * Its existing cards touched today — any update, the midnight degrade
+   * included. A display hint only, never a count of study: that is `passed`
+   * and `misses`, from the ledger, which the degrade never writes to.
+   */
   reviewedToday: number;
   /** Cards still due today, and cards left more than a day past due. */
   dueRemaining: number;
@@ -84,8 +90,124 @@ export interface FieldDaily {
   /** Consecutive days with a review in it (alive through today), and its best. */
   streak: number;
   bestStreak: number;
-  /** Today's daily is done: it was reviewed, and nothing in it is still due. */
+  /** Today's daily is done and its cart is earned. From the server this is `cleared`; see `clearedField`. */
   complete: boolean;
+  /**
+   * Reviews passed today, by how deep the card now sits: levels 1–3, 4–6,
+   * 7–9, and 10 up. Each pass sends goods to town, finer the deeper the
+   * card (./sim/knowledge "tithes"). From the mastery ledger, which records
+   * every pass exactly — unlike `reviewedToday`, which is any card touched.
+   */
+  passed?: [number, number, number, number];
+  /** Wrong answers today. From the server, the same number as `misses`; kept for its existing readers. */
+  failed?: number;
+  /** Wrong answers today: the ledger's REVIEW_MISS rows, one per strike, shield or degrade from an answer. */
+  misses?: number;
+  /** Nothing in it was left due after today's last answer, with a pass and at least half right (`clearedField`). */
+  cleared?: boolean;
+  /** Cards driven to mastery today. */
+  mastered?: number;
+  /**
+   * Today's ideas weighed by how new each was: its payout over its base
+   * (1 for a card with no close neighbour, less in a crowded topic, up to
+   * 1.5 on the daily focus). A near-duplicate strengthens the town less.
+   */
+  novelty?: number;
+  /** Domains this Field opened today: ideas that matched nothing you had. */
+  newDomains?: number;
+}
+
+// ── The study signal ──────────────────────────────────────
+
+/**
+ * What a review's ledger row remembers about the moment it was answered: the
+ * card's level after a pass (a miss has none), and how many cards were still
+ * due today once it was answered — everywhere, and in its own Field. srs.ts
+ * writes one on every answer and on nothing else; the midnight degrade
+ * writes no row at all, so neglect can never pass for study.
+ */
+export interface ReviewDetail {
+  lv?: number;
+  due: number;
+  fdue: number;
+}
+
+/** A review's ledger `detail`: `lv=5;due=12;fdue=3` for a pass, `due=12;fdue=3` for a miss. */
+export function reviewDetail(d: ReviewDetail): string {
+  return `${d.lv === undefined ? "" : `lv=${d.lv};`}due=${d.due};fdue=${d.fdue}`;
+}
+
+/**
+ * Reads `reviewDetail` back. Null for a row written before these counts were
+ * recorded (no detail, or someone else's free text), so a caller can tell a
+ * day it knows about from one it does not. The fields are found wherever they
+ * sit in the text, first one of each name winning — input.ts reads `fdue` in
+ * SQL with the same rule.
+ */
+export function parseReviewDetail(detail: string | null | undefined): ReviewDetail | null {
+  if (!detail) return null;
+  const got: { lv?: number; due?: number; fdue?: number } = {};
+  for (const token of detail.split(/[;\s]+/)) {
+    const m = /^(lv|due|fdue)=(\d+)$/.exec(token);
+    if (m) got[m[1] as "lv" | "due" | "fdue"] ??= Number(m[2]);
+  }
+  if (got.due === undefined || got.fdue === undefined) return null;
+  return got.lv === undefined ? { due: got.due, fdue: got.fdue } : { lv: got.lv, due: got.due, fdue: got.fdue };
+}
+
+/**
+ * A Field's cart is earned today: at least one right answer, nothing in the
+ * Field left due after its last answer, and at least half of today's answers
+ * in it right. Counted only from answers, never from which cards were
+ * touched: the midnight degrade touches overdue cards and pushes them a day
+ * out, which used to finish — and pay for — a Field nobody had opened.
+ */
+export function clearedField(f: { passes: number; misses: number; fdue: number }): boolean {
+  return f.passes >= 1 && f.fdue === 0 && f.passes >= f.misses;
+}
+
+/** Today's muster asks for at most this many answers: a 100-card backlog is 40 today, not 100. */
+export const MUSTER_CAP = 40;
+/** A wrong answer counts half: turning up for a card is worth something, knowing it is worth more. */
+export const MISS_WEIGHT = 0.5;
+
+/** How much of today's review is done, as the town reads it. */
+export interface Muster {
+  passes: number;
+  misses: number;
+  /** passes + misses. */
+  answered: number;
+  /** Cards still due today. */
+  due: number;
+  /** Answers today's muster asks for: everything answered or still due, capped at MUSTER_CAP. */
+  target: number;
+  /** 0–1: the target met, a miss counting MISS_WEIGHT. 1 when nothing was asked of the day. */
+  share: number;
+}
+
+/**
+ * The muster from bare counts, for any day whose answers are known. The
+ * target holds through the day: an answered card, right or wrong, leaves
+ * today's due set (srs.ts reschedules every outcome at least a day out), so
+ * it moves from `due` to `answered` and the sum stands still. Only a new
+ * idea, due the moment it is added, raises it.
+ */
+export function musterShare(passes: number, misses: number, due: number): Muster {
+  const answered = passes + misses;
+  const target = Math.min(MUSTER_CAP, answered + due);
+  const share = target === 0 ? 1 : Math.min(1, (passes + MISS_WEIGHT * misses) / target);
+  return { passes, misses, answered, due, target, share };
+}
+
+/** Today's muster, from the ledger's passes and misses across every Field and the live due count. */
+export function musterOf(input: TownInput): Muster {
+  let passes = 0;
+  let misses = 0;
+  for (const f of input.fields ?? []) {
+    for (const n of f.passed ?? []) passes += n;
+    misses += f.misses ?? 0;
+  }
+  return musterShare(passes, misses, input.dueRemaining ?? 0);
 }
 
 // ── The tree the town grows into ──────────────────────────

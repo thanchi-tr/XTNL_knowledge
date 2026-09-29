@@ -1,13 +1,27 @@
+import { inHallZone } from "./wilds";
+import { rankCapOf } from "./mastery";
+import { HEAVY_CLASSES, type HeavyClass } from "./enrol";
+import { ATTR_NAME, attrMul, attrsOf, growOnRise, warMods } from "./attributes";
+import { recognize } from "./recognition";
 import type { Attribute } from "@prisma/client";
 import { augBonus, partLabel, wizardSpire } from "./augment";
 import { stats } from "./stats";
+import { pushMoment } from "./moments";
+import { noteWave } from "./runlog";
 import { CATALOG } from "./catalog";
-import { MONSTERS, statsAt } from "./bestiary";
+import { MONSTERS, VARIANTS, localKind, partyName, statsAt } from "./bestiary";
 import { plural } from "./words";
-import { byId, clock, countedTroops, isMilitary, log } from "./state";
+import { byId, clock, countedTroops, dropLostPupils, isMilitary, log, stationedTroops } from "./state";
+import { obey, stationWatch } from "./command";
+import { rateOf, windfall } from "./paths";
+import { DESERT_BORN, SAND_SLOW, isleEdge, sandSlowed, weatherCombat } from "./habits";
+import { biomeOf } from "./biomes";
+
+/** Lightning strikes on a fight in a thunderstorm, per second. */
+const LIGHTNING_PER_SEC = 0.08;
 import {
   alertRadius, captainBonus, center, exposure, idx, inBounds, isGuardPost, lightRange, passiveRadius, rng, structureMaxHp, unlitBuildings,
-  wallHp, wallLevel, wallMeta,
+  wallHp, wallLevel, wallMeta, wallOrder, wallBolt,
 } from "./world";
 import { SOLDIER_MAX, knightTitle, roleLabel, soldierTitle } from "./catalog";
 
@@ -29,23 +43,28 @@ const scorchFactor = (c: Combatant) => (c.scorched ? SCORCH_WEAK : 1);
 /** Whether a monster is a thing of the night: firelight hurts it. */
 export const isDark = (c: Combatant) => c.side === "monster" && (!!c.haunt || !!MONSTERS[c.kind as MonsterKind]?.night);
 
+/**
+ * The things of the dark burn in any light (./menace): a fire most, a
+ * brazier nearly as much, a lamp at half — slowed, weakened and burning while
+ * they stand in it. Only a great enough fire banishes one outright.
+ */
 function firelight(s: GameState, monsters: Combatant[], dt: number) {
-  const fires = s.structures.filter((f) => f.type === "pitfire" && lightRange(f) > 0);
+  const lights = s.structures.filter((f) => (f.type === "pitfire" || f.type === "brazier" || f.type === "lamppost") && lightRange(f) > 0);
   for (const m of monsters) {
     if (!isDark(m)) continue;
-    const fire = fires.find((f) => Math.hypot(m.x - center(f)[0], m.y - center(f)[1]) <= lightRange(f));
-    if (!fire) {
+    const lit = lights.find((f) => Math.hypot(m.x - center(f)[0], m.y - center(f)[1]) <= lightRange(f));
+    if (!lit) {
       m.scorched = false;
       continue;
     }
-    if (m.level <= fire.level - FIRE_BANISH) {
+    if (lit.type === "pitfire" && m.level <= lit.level - FIRE_BANISH) {
       m.hp = 0;
       pop(s, m.x, m.y - 1, "BANISHED", "crit");
       continue;
     }
     if (!m.scorched) pop(s, m.x, m.y - 1, "SCORCHED", "crit");
     m.scorched = true;
-    m.hp -= m.maxHp * SCORCH_BURN * dt;
+    m.hp -= m.maxHp * SCORCH_BURN * dt * (lit.type === "pitfire" ? 1 : lit.type === "brazier" ? 0.8 : 0.5);
   }
 }
 import { kill } from "./tick";
@@ -55,10 +74,15 @@ import { emit, rememberDeath } from "./aggro";
 import { bodyOf, effOf } from "./body";
 import { scoreWave } from "./nemesis";
 import { kmod } from "./knowledge";
-import { dropsFor, gearBonus, isAway, store, gearCap } from "./loot";
+import { heroClassOf, heroMods, heroPower, heroesLearn, RAISED, type HeroMods } from "./heroes";
+import { ENRAGE_AT, NIGHT_PROWLERS, ROAR_S, asleepFor, hasTrait, isMythicWatcher, isNightHour, monsterAuras, otherShare, trapDamage } from "./menace";
+import { claimSingleton, dropsFor, gearBonus, gearStats, isAway, lootFor, store, gearCap } from "./loot";
+import { championElement, kingMight, petrify } from "./champions";
+import { ELEMENT_NAME, elementFactor, elementOfAttribute, type Element } from "./elements";
+import { omenCombat, raiseOmen } from "./omens";
 import {
   MAP_H, MAP_W, Overlay,
-  type Combatant, type GameState, type MonsterKind, type Structure, type Villager,
+  type Combatant, type GameState, type MonsterKind, type Projectile, type Raid, type Structure, type Villager,
 } from "./types";
 import type { SimContext } from "./tick";
 
@@ -76,8 +100,33 @@ import type { SimContext } from "./tick";
  *   - heavy infantry carry far more hit points;
  *   - wizards deal double damage to legendary monsters;
  *   - grand wizards (15+) take the field only against legendary ones;
- *   - commanders and forge levels raise every troop's damage.
+ *   - commanders and forge levels raise every troop's damage;
+ *   - a blow of the element that beats its target's lands half as hard
+ *     again, and one of the element its target beats at six tenths
+ *     (./elements); heroes strike with their weapon's element, else their
+ *     bound emblem's;
+ *   - a mythic thing takes a twentieth of any blow but a champion's;
+ *   - wizards fly, and fly faster the higher they climb.
  */
+
+/** What a mythic thing takes of a blow from anyone but a champion. */
+export const MYTHIC_WARD = 0.05;
+
+/** A champion's multipliers in the field. The King's blows grow with the player's real emblems. */
+export function championMods(s: GameState, v: Villager): { dmg: number; hp: number; range: number; interval: number; speed: number } {
+  if (v.champion === "master") return { dmg: 3 + v.rank / 100, hp: 3, range: 3, interval: 0.8, speed: 3.2 };
+  if (v.champion === "king") return { dmg: 2 * kingMight(s), hp: 4, range: 0.4, interval: 0.9, speed: 2.9 };
+  return { dmg: 1, hp: 1, range: 0, interval: 1, speed: 0 };
+}
+
+/** The element a troop strikes with: its weapon's; a hero's bound emblem's if the weapon has none. */
+export function troopElement(v: Villager): Element | null {
+  const heroic = v.champion || (v.role === "wizard" && v.rank >= 15) || (v.role === "knight" && v.rank >= 22);
+  return v.champion ? championElement(v) : gearStats(v).element ?? (heroic ? elementOfAttribute(v.emblem?.attribute ?? null) : null);
+}
+
+/** Wizards fly: faster than anything on foot, and faster the higher they climb. */
+export const wizardSpeed = (rank: number) => Math.min(3, 2.2 + rank * 0.003);
 
 
 type Stats = { hp: number; dmg: number; interval: number; range: number; speed: number };
@@ -103,19 +152,31 @@ const KNIGHT_MOD: Record<string, { hp: number; dmg: number; speed: number }> = {
 };
 
 /** A troop's fighting kind, stats and level multiplier, by title. */
+/**
+ * Power by rank. Up the ladders it is linear; past the hero thresholds —
+ * a knight past 22, a wizard past 15 — it grows by the log of the rank, so
+ * a hundred more levels are worth about double, not twenty-fold (power creep:
+ * what a hero brings is their skills, ./heroes). A raised hero fights at
+ * the soldier's top rank times heroPower(level).
+ */
+export const rankPower = (lvl: number, threshold: number, spread: number) =>
+  lvl <= threshold ? 1 + 0.15 * (lvl - 1) : (1 + 0.15 * (threshold - 1)) * (1 + 0.45 * Math.log(1 + (lvl - threshold) / spread));
+
 export function troopStats(v: Villager): { kind: string; st: Stats; k: number } {
   const lvl = Math.max(1, v.rank);
   if (v.role === "knight") {
     const m = KNIGHT_MOD[knightTitle(lvl).id];
     const b = TROOP_STATS.knight;
-    return { kind: "knight", st: { ...b, hp: b.hp * m.hp, dmg: b.dmg * m.dmg, speed: m.speed }, k: 1 + 0.15 * (lvl - 1) };
+    return { kind: "knight", st: { ...b, hp: b.hp * m.hp, dmg: b.dmg * m.dmg, speed: m.speed }, k: rankPower(lvl, 22, 12) };
   }
   if (v.role === "infantry" || v.role === "archer" || v.role === "heavy") {
     const t = soldierTitle(lvl);
     // Ranged titles shoot as archers (double against fliers); armoured ones fight as heavies.
     const kind = t.ranged ? "archer" : lvl >= 7 ? "heavy" : "infantry";
-    return { kind, st: SOLDIER_STATS[t.id], k: 1 + 0.06 * (lvl - 1) };
+    const hero = v.hero && RAISED.includes(v.hero.cls) ? heroPower(v.hero.level) : 1;
+    return { kind, st: SOLDIER_STATS[t.id], k: (1 + 0.06 * (lvl - 1)) * hero };
   }
+  if (v.role === "wizard") return { kind: v.role, st: TROOP_STATS[v.role], k: rankPower(lvl, 15, 30) };
   return { kind: v.role, st: TROOP_STATS[v.role], k: 1 + 0.15 * (lvl - 1) };
 }
 
@@ -127,6 +188,99 @@ const TROOP_STATS: Record<string, Stats> = {
   knight: { hp: 115, dmg: 16, interval: 1.0, range: 1.2, speed: 1.9 },
 };
 
+/** A posted guard's hp and damage a second, as the square law counts them (./combat defencePower). */
+function guardStrength(s: GameState, v: Villager, bonus: number, vsFlying: boolean, vsMythic: boolean) {
+  const { st, k: rankK } = troopStats(v);
+  const hm = heroClassOf(v) ? heroMods(v) : null;
+  const wm = warMods(v);
+  const k = rankK * captainBonus(s, byId(s, v.guard)) * (hm ? Math.sqrt(hm.hp * hm.dmg) : 1) * Math.sqrt(wm.hp * wm.dmg / wm.haste);
+  const gear = gearBonus(v);
+  const fit = v.body ? Math.max(0.2, effOf(v)) : 1;
+  // Against fliers a sword reaches badly and a bow is twice the weapon (the combat rules).
+  const air = !vsFlying ? 1 : st.range > 2 || v.role === "wizard" ? (v.role === "archer" || v.role === "infantry" ? 2 : 1) : 0.5;
+  const ch = championMods(s, v);
+  const ward = vsMythic && !v.champion ? MYTHIC_WARD : 1;
+  return {
+    hp: st.hp * k * gear.hp * ch.hp,
+    dps: ((st.dmg * k * bonus * gear.dmg * ch.dmg) / (st.interval * ch.interval)) * fit * air * ward,
+  };
+}
+
+/** The troops at their posts, not away: each with its post's centre and outer circle. */
+function postedGuards(s: GameState) {
+  const out: { v: Villager; x: number; y: number; r: number }[] = [];
+  for (const v of countedTroops(s)) {
+    if (isAway(s, v)) continue;
+    const post = byId(s, v.guard);
+    if (!post) continue;
+    const [x, y] = center(post);
+    out.push({ v, x, y, r: passiveRadius(post) });
+  }
+  return out;
+}
+
+/**
+ * The share of a building's walls a shooter at cx,cy with range r covers,
+ * sampled at twelve points around it: the fight may be on the far side.
+ */
+function coverShare(target: Structure, tx: number, ty: number, cx: number, cy: number, r: number) {
+  let n = 0;
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    if (Math.hypot(cx - (tx + Math.cos(a) * (target.w / 2 + 0.5)), cy - (ty + Math.sin(a) * (target.h / 2 + 0.5))) <= r) n++;
+  }
+  return n / 12;
+}
+
+const shooterRange = (t: Structure) => (t.type === "armypoint" ? 8 : 7);
+
+/** What does not depend on the target: every posted guard's strength, the damage bonus and the militia. */
+function defenceTable(s: GameState, vsFlying: boolean, vsMythic: boolean) {
+  const bonus = damageBonus(s);
+  const guards = postedGuards(s).map((g) => ({ ...g, ...guardStrength(s, g.v, bonus, vsFlying, vsMythic) }));
+  const militia = countedTroops(s).length < 3 ? Math.min(6, s.villagers.filter((v) => !isMilitary(v)).length) : 0;
+  // Only towers and the hall shoot; the rest of the town is walls to soak blows.
+  const shooters = s.structures.filter((t) => !t.buildUntil && (isGuardPost(t) || t.type === "townhall")).map((t) => ({ t, c: center(t) }));
+  return { bonus, guards, militia, shooters };
+}
+
+function powerWith(s: GameState, table: ReturnType<typeof defenceTable>, target: Structure | undefined, vsFlying: boolean, vsMythic: boolean) {
+  const { bonus } = table;
+  // Lanchester's square law for mixed forces: (Σ dps) × (Σ hp that can absorb blows).
+  let dps = 0;
+  let hp = 0;
+  const [tx, ty] = target ? center(target) : [0, 0];
+  const half = target ? Math.max(target.w, target.h) / 2 : 0;
+  for (const g of table.guards) {
+    if (target && Math.hypot(g.x - tx, g.y - ty) > g.r + half) continue;
+    hp += g.hp;
+    dps += g.dps;
+  }
+  let byHall = !target;
+  for (const { t, c: [cx, cy] } of table.shooters) {
+    // Towers and the hall shoot at whatever comes within their range of the fight; only the objective's own walls soak blows.
+    // A static shooter counts for the share of the objective's walls its range covers: the fight may be on the far side.
+    const covers = (r: number) => (target ? coverShare(target, tx, ty, cx, cy, r) : 1);
+    if (isGuardPost(t)) {
+      const share = covers(shooterRange(t)) * (vsMythic ? MYTHIC_WARD : 1);
+      dps += (((t.type === "armypoint" ? 18 : 14) * t.level * bonus) / 1.1) * share;
+      if (!target) hp += t.hp;
+    }
+    if (t.type === "townhall") {
+      const share = (t === target ? 1 : covers(6)) * (vsMythic ? MYTHIC_WARD : 1);
+      dps += ((10 * t.level * bonus) / 1.2) * share;
+      if (share > 0.5) byHall = true;
+      if (!target) hp += t.hp;
+    }
+  }
+  if (target) hp += target.hp;
+  if (byHall && table.militia) {
+    hp += table.militia * 30;
+    dps += ((table.militia * 4 * bonus) / 1.2) * (vsFlying ? 0.5 : 1);
+  }
+  return dps * hp;
+}
+
 /**
  * The town's defence as Lanchester strength (design §2.3): Σ hp × dps of
  * every posted guard, tower and the hall, and a militia when guards are few.
@@ -134,65 +288,18 @@ const TROOP_STATS: Record<string, Stats> = {
  * post's outer circle covers it, towers within range, the hall and its
  * militia if it is by the hall.
  */
-export function defencePower(s: GameState, target?: Structure, vsFlying = false): number {
-  const bonus = damageBonus(s);
-  // Lanchester's square law for mixed forces: (Σ dps) × (Σ hp that can absorb blows).
-  let dps = 0;
-  let hp = 0;
-  const [tx, ty] = target ? center(target) : [0, 0];
-  const half = target ? Math.max(target.w, target.h) / 2 : 0;
-  const reaches = (x: number, y: number, r: number) => !target || Math.hypot(x - tx, y - ty) <= r + half;
-  const guards = countedTroops(s).filter((v) => {
-    if (isAway(s, v)) return false;
-    const post = byId(s, v.guard);
-    return !!post && reaches(center(post)[0], center(post)[1], passiveRadius(post));
-  });
-  for (const v of guards) {
-    const { st, k: rankK } = troopStats(v);
-    const k = rankK * captainBonus(s, byId(s, v.guard));
-    const gear = gearBonus(v);
-    const fit = v.body ? Math.max(0.2, effOf(v)) : 1;
-    // Against fliers a sword reaches badly and a bow is twice the weapon (the combat rules).
-    const air = !vsFlying ? 1 : st.range > 2 ? (v.role === "archer" || v.role === "infantry" ? 2 : 1) : 0.5;
-    hp += st.hp * k * gear.hp;
-    dps += ((st.dmg * k * bonus * gear.dmg) / st.interval) * fit * air;
-  }
-  let byHall = !target;
-  for (const t of s.structures) {
-    if (t.buildUntil) continue;
-    const [cx, cy] = center(t);
-    // Towers and the hall shoot at whatever comes within their range of the fight; only the objective's own walls soak blows.
-    // A static shooter counts for the share of the objective's walls its range covers: the fight may be on the far side.
-    const covers = (r: number) => {
-      if (!target) return 1;
-      let n = 0;
-      const pts: [number, number][] = [];
-      for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2;
-        pts.push([tx + Math.cos(a) * (target.w / 2 + 0.5), ty + Math.sin(a) * (target.h / 2 + 0.5)]);
-      }
-      for (const [px, py] of pts) if (Math.hypot(cx - px, cy - py) <= r) n++;
-      return n / pts.length;
-    };
-    if (isGuardPost(t)) {
-      const share = covers(t.type === "armypoint" ? 8 : 7);
-      dps += (((t.type === "armypoint" ? 18 : 14) * t.level * bonus) / 1.1) * share;
-      if (!target) hp += t.hp;
-    }
-    if (t.type === "townhall") {
-      const share = t === target ? 1 : covers(6);
-      dps += ((10 * t.level * bonus) / 1.2) * share;
-      if (share > 0.5) byHall = true;
-      if (!target) hp += t.hp;
-    }
-  }
-  if (target) hp += target.hp;
-  if (byHall && countedTroops(s).length < 3) {
-    const n = Math.min(6, s.villagers.filter((v) => !isMilitary(v)).length);
-    hp += n * 30;
-    dps += ((n * 4 * bonus) / 1.2) * (vsFlying ? 0.5 : 1);
-  }
-  return dps * hp;
+export function defencePower(s: GameState, target?: Structure, vsFlying = false, vsMythic = false): number {
+  return powerWith(s, defenceTable(s, vsFlying, vsMythic), target, vsFlying, vsMythic);
+}
+
+/**
+ * Whether anything defends each building — `defencePower(s, b) > 0` — with
+ * the guards weighed once for the whole town rather than once a building.
+ * The land asks this of every building every hour (./needs unguarded).
+ */
+export function defendedTest(s: GameState): (b: Structure) => boolean {
+  const table = defenceTable(s, false, false);
+  return (b) => powerWith(s, table, b, false, false) > 0;
 }
 
 // ── Repel rites ───────────────────────────────────────────
@@ -206,6 +313,11 @@ const REPEL_ATTR: Record<MonsterKind, Attribute> = {
   ghoul: "FAITH", gargoyle: "ABSTRACT", cyclops: "REASON", vampire: "FAITH", hydra: "CRITICAL_THINKING", griffin: "COMPASSION",
   wisp: "LOGIC", wendigo: "SELF_RESPECT", oni: "STUBBORNNESS", kappa: "REASON", tengu: "CRITICAL_THINKING", jiangshi: "MIND",
   kitsune: "CREATIVITY", yurei: "SELF_RESPECT", gashadokuro: "FAITH", jorogumo: "REASON", nian: "CREATIVITY",
+  // Mythic things are never turned away; the attribute is only what they answer to.
+  phoenix: "CREATIVITY", leviathan: "COMPASSION", behemoth: "PHYSICAL", stormroc: "CRITICAL_THINKING", raiju: "LOGIC",
+  seraph: "FAITH", shadowcolossus: "MIND", voidwalker: "ABSTRACT",
+  scorpion: "STUBBORNNESS", jackal: "PHYSICAL", mummy: "FAITH", sandworm: "STUBBORNNESS", djinn: "REASON", sphinx: "LOGIC",
+  pixie: "CRITICAL_THINKING", skyray: "STATISTIC", cloudjelly: "LOGIC", thunderbird: "REBUTTAL", stormgiant: "PHYSICAL", skyserpent: "ABSTRACT",
 };
 const SCHOOLS = ["commerce", "science", "mind"] as const;
 
@@ -270,7 +382,7 @@ export function summonHaunt(s: GameState): number {
   // The further out a dark building stands, the worse what comes for it.
   const haunt = dark.map((st) => {
     const h = hauntFor(st.level);
-    return { structId: st.id, kind: h.kind, level: h.level + exposure(s, st) };
+    return { structId: st.id, kind: localKind(s, h.kind), level: h.level + exposure(s, st) };
   });
   const party = new Map<MonsterKind, { kind: MonsterKind; level: number; count: number }>();
   for (const h of haunt) {
@@ -304,10 +416,16 @@ export function summonProwlers(s: GameState, r: () => number): number {
   if (s.raid) return 0;
   const targets = s.structures.filter((st) => !st.buildUntil && st.type !== "townhall" && st.type !== "farm" && st.type !== "waterfarm" && st.type !== "lamppost");
   if (!targets.length) return 0;
-  const st = targets[Math.floor(r() * targets.length)];
-  const kind = PROWLERS[Math.floor(r() * PROWLERS.length)];
-  const def = MONSTERS[kind];
   const day = Math.floor(s.time / (24 * 60));
+  // In the opening only the things of the dark prowl, and they make for what the light does not reach
+  // (./menace); after it, more and more of what comes is anything at all.
+  const ofDark = r() >= otherShare(day + 1);
+  const unlit = ofDark ? targets.filter((t) => unlitBuildings(s).includes(t)) : [];
+  const pool = unlit.length ? unlit : targets;
+  const st = pool[Math.floor(r() * pool.length)];
+  const list = ofDark ? NIGHT_PROWLERS : PROWLERS;
+  const kind = localKind(s, list[Math.floor(r() * list.length)]);
+  const def = MONSTERS[kind];
   const level = Math.max(def.min, Math.min(def.max, 1 + Math.floor(day / 4) + Math.floor(exposure(s, st) / 2)));
   const count = r() < 0.35 ? 2 : 1;
   const haunt = Array.from({ length: count }, () => ({ structId: st.id, kind, level }));
@@ -352,6 +470,12 @@ function start(s: GameState) {
   const raid = s.raid!;
   const r = rng(Math.floor(s.time) + 7);
   const legendary = !raid.haunt && raid.party.some((p) => MONSTERS[p.kind].legendary);
+  // A legendary or mythic thing turns the air as it comes (./omens).
+  if (legendary) raiseOmen(s, raid.party);
+  const om = omenCombat(s);
+  // The weather takes sides (./habits): reach and aim, the pace of what flies, the heat, the thunder.
+  const wc = weatherCombat(s);
+  const biome = biomeOf(s);
 
   // A haunt rises around its buildings rather than marching in from an edge.
   for (const h of raid.haunt ?? []) {
@@ -368,6 +492,7 @@ function start(s: GameState) {
       x: Math.max(1, Math.min(MAP_W - 2, cx + Math.cos(a) * d)), y: Math.max(1, Math.min(MAP_H - 2, cy + Math.sin(a) * d)),
       hp, maxHp: hp, dmg, interval: def.interval, cooldown: r() * def.interval,
       range: def.range, speed: def.speed, flying: !!def.flying, legendary: false, targetStruct: st.id, haunt: true,
+      variant: Math.floor(r() * VARIANTS),
     });
   }
 
@@ -379,51 +504,98 @@ function start(s: GameState) {
     for (let i = 0; i < p.count; i++) {
       const { hp, dmg } = statsAt(def, p.level);
       // A split party sends every other member round the second side.
-      const base = i % 2 ? flank : main;
+      // On the isles a walker climbs out of the clouds at the edge of the town's island (./habits).
+      const edge = !def.flying && !def.burrows && !raid.origin ? isleEdge(s, aim, i % 2 && raid.flank ? raid.flank : raid.side, (r() - 0.5) * 12) : null;
+      const base = edge ?? (i % 2 ? flank : main);
       raid.combatants.push({
         id: raid.nextId++, side: "monster", kind: p.kind, level: p.level,
         x: base[0] + (r() - 0.5) * 4, y: base[1] + (r() - 0.5) * 4,
-        hp, maxHp: hp, dmg, interval: def.interval, cooldown: r() * def.interval,
-        range: def.range, speed: def.speed, flying: !!def.flying, legendary: !!def.legendary,
-        targetStruct: aim?.id ?? null,
+        hp, maxHp: hp, dmg: Math.round(dmg * (def.element === "thunder" ? wc.thunder : 1)),
+        interval: def.interval * (DESERT_BORN.has(p.kind) ? 1 : wc.heat), cooldown: r() * def.interval,
+        range: def.range, speed: def.speed * (def.flying ? wc.flyerSpeed : 1) * (sandSlowed(biome, p.kind, !!def.flying) ? SAND_SLOW : 1),
+        flying: !!def.flying, legendary: !!def.legendary,
+        targetStruct: aim?.id ?? null, element: def.element ?? null, mythic: !!def.mythic, variant: Math.floor(r() * VARIANTS), burrow: def.burrows || undefined,
+        roarUntil: def.legendary ? ROAR_S : undefined,
       });
+
     }
   }
 
-  // Only posted guards defend, and they start inside their tower: they come
-  // out when something enters its radius (see wakeGuards).
+  // Posted guards defend, and start inside their tower: they come out when
+  // something enters its radius (see wakeGuards). Troops the player has
+  // stationed out on the map (./command) stand where they were put, and hold
+  // the ground around it.
   const bonus = damageBonus(s);
-  for (const v of countedTroops(s)) {
-    // Grand wizards stay in the hut unless something legendary comes.
-    if (v.role === "wizard" && v.rank >= 15 && !legendary) continue;
+  const troops = [...new Set([...countedTroops(s), ...stationedTroops(s)])];
+  // By night only the night watch answers; by day the watch sleeps from nine to five (./menace).
+  const hour = clock(s.time).hour;
+  const sleeping = (v: Villager) => asleepFor(v, hour);
+  if (isNightHour(hour) && !raid.haunt && !s.villagers.some((v) => v.nightWatch)) log(s, "No one keeps the night watch: only the towers and the hall answer the alarm.", "bad");
+  else if (isNightHour(hour) && raid.haunt && !s.villagers.some((v) => v.nightWatch)) log(s, "No one keeps the night watch: the town sleeps through it, and only the towers answer.", "bad");
+  // The mythic watch: anything mythic, and the town's grand wizards, emblem knights and champions
+  // ride out to meet it themselves — posted or not, awake or not — from wherever they are in town.
+  const mythicComes = !raid.haunt && raid.party.some((p) => MONSTERS[p.kind]?.mythic);
+  const watchers = mythicComes ? s.villagers.filter((v) => isMythicWatcher(v) && !v.scout && !(v.awayUntil && v.awayUntil > s.time) && !isAway(s, v)) : [];
+  if (watchers.length) {
+    const names = watchers.slice(0, 3).map((v) => v.name).join(", ") + (watchers.length > 3 ? ` and ${watchers.length - 3} more` : "");
+    log(s, `Something mythic comes — ${names} ${watchers.length === 1 ? "rides" : "ride"} out to meet it, unbidden.`, "good");
+  }
+  for (const v of [...new Set([...troops, ...watchers])]) {
+    const called = watchers.includes(v);
+    if (sleeping(v) && !called) continue;
+    // Grand wizards stay in the hut unless something legendary comes — or they were sent out.
+    if (v.role === "wizard" && v.rank >= 15 && !legendary && !v.stand && !called) continue;
     // A knight out on a sortie is not here to fight.
     if (isAway(s, v)) continue;
-    const tower = byId(s, v.guard)!;
-    const [x, y] = center(tower);
+    const tower = byId(s, v.guard);
+    const from = called && !tower && !v.stand ? byId(s, v.work) ?? s.structures.find((st) => st.type === "townhall") : undefined;
+    const at = v.stand ?? (tower ? center(tower) : from ? center(from) : null);
+    if (!at) continue;
+    const [x, y] = at;
+    const field = v.stand ? { anchor: [v.stand[0], v.stand[1]] as [number, number], inside: false } : called ? { inside: false } : { inside: true };
     const { kind: fightAs, st, k: rankK } = troopStats(v);
     const lvl = Math.max(1, v.rank);
     // An army point's knight leads its guards: harder hitting, harder to kill.
     const k = rankK * captainBonus(s, tower);
-    const gear = gearBonus(v);
-    const hp = Math.round(st.hp * k * gear.hp);
+    const gs = gearStats(v);
+    const ch = championMods(s, v);
+    // A hero's skills (./heroes): on themselves here; their auras each tick of the fight.
+    const hm0: HeroMods | undefined = heroClassOf(v) ? heroMods(v) : undefined;
+    // Their attributes (./attributes): blows, speed, hit points and valor; a healer's Spirit, a wizard's Insight.
+    const wm = warMods(v);
+    const va = attrsOf(v);
+    const hm: HeroMods | undefined = hm0 ? { ...hm0, heal: hm0.heal * attrMul(va.spi) } : undefined;
+    // A heavy soldier's class (./enrol): the shieldbearer's bulk, the juggernaut's plate, the pike's reach.
+    const hc = v.role === "heavy" && v.heavy ? HEAVY_CLASSES[v.heavy] : undefined;
+    const hp = Math.round(st.hp * k * gs.hp * ch.hp * (hm?.hp ?? 1) * wm.hp * (hc?.hp ?? 1));
     // Wizards fight with the parts set into the town's best mage spire: its jewels, and its eyes and heart for reach.
     const spire = v.role === "wizard" ? wizardSpire(s) : undefined;
     const sb = augBonus(spire);
+    const reach = st.range + (spire ? sb.eye + sb.heart / 3 : 0) + gs.range + ch.range + (hm?.range ?? 0) + (wm.arcane ? 0.1 * (va.ins - 8) : 0) + (hc?.reach ?? 0);
+    // Bows and spells see short in fog, rain and blown sand.
+    const range = reach > 2 ? reach * wc.range : reach;
+    const flies = v.role === "wizard";
+    const pace = (v.champion ? ch.speed : flies ? wizardSpeed(v.rank) : st.speed) * gs.speed * om.speed * (hc?.pace ?? 1);
     raid.combatants.push({
       id: raid.nextId++, side: "defender", kind: fightAs, level: lvl,
-      x, y, hp, maxHp: hp, dmg: Math.round(st.dmg * k * bonus * gear.dmg * (1 + sb.jewel)),
-      interval: st.interval, cooldown: 0, range: st.range + (spire ? sb.eye + sb.heart / 3 : 0), speed: st.speed, augFrom: spire?.id,
-      flying: false, legendary: v.role === "wizard" && v.rank >= 15, villagerId: v.id, post: tower.id, inside: true,
+      x, y, hp, maxHp: hp, dmg: Math.round(st.dmg * k * bonus * gs.dmg * (1 + sb.jewel) * ch.dmg * om.dmg * (range > 2 ? om.ranged * wc.rangedDmg : 1) * rateOf(tower) * (hm?.dmg ?? 1) * wm.dmg * (hc?.dmg ?? 1)),
+      interval: st.interval * (1 - gs.haste) * ch.interval * wc.heat * (hm?.haste ?? 1) * wm.haste, cooldown: 0, range, speed: pace, augFrom: spire?.id,
+      valor: wm.valor,
+      flying: flies, legendary: v.role === "wizard" && v.rank >= 15, villagerId: v.id, post: called ? undefined : tower?.id, ...field,
+      mythicWatch: called || undefined,
+      heavyCls: hc ? v.heavy : undefined,
+      element: troopElement(v), champion: v.champion ?? undefined,
+      hm, heroCls: v.hero && RAISED.includes(v.hero.cls) ? v.hero.cls : undefined,
     });
     // An emblem knight's battalion rides with them: sworn soldiers, not villagers.
-    for (let i = 0; i < Math.min(8, v.battalion ?? 0); i++) {
+    for (let i = 0; i < Math.min(8 + (hm?.battalion ?? 0), (v.battalion ?? 0) + (hm?.battalion ?? 0)); i++) {
       const bl = Math.max(1, Math.floor(lvl / 2));
       const bk = 1 + 0.15 * (bl - 1);
       raid.combatants.push({
         id: raid.nextId++, side: "defender", kind: "battalion", level: bl,
         x: x + (r() - 0.5) * 3, y: y + 0.5 + r(), hp: Math.round(60 * bk), maxHp: Math.round(60 * bk),
-        dmg: Math.round(9 * bk * bonus), interval: 1, cooldown: r(), range: 1, speed: 1.7,
-        flying: false, legendary: false, post: tower.id, inside: true,
+        dmg: Math.round(9 * bk * bonus * om.dmg), interval: 1, cooldown: r(), range: 1, speed: 1.5 * om.speed,
+        flying: false, legendary: false, post: tower?.id, leader: v.id, ...field,
       });
     }
   }
@@ -435,12 +607,12 @@ function start(s: GameState) {
   const hall = s.structures.find((st) => st.type === "townhall");
   if (troopCount < 3 && hall) {
     const [hx, hy] = center(hall);
-    const levies = s.villagers.filter((v) => !isMilitary(v) && v.health > 30).slice(0, 6);
+    const levies = s.villagers.filter((v) => !isMilitary(v) && v.health > 30 && !sleeping(v)).slice(0, 6);
     for (const v of levies) {
       raid.combatants.push({
         id: raid.nextId++, side: "defender", kind: "militia", level: 1,
         x: hx + (r() - 0.5) * 6, y: hy + 4 + r() * 2,
-        hp: 30, maxHp: 30, dmg: Math.round(4 * bonus), interval: 1.2, cooldown: r(), range: 1, speed: 1.5,
+        hp: 30, maxHp: 30, dmg: Math.round(4 * bonus * rateOf(hall)), interval: 1.2, cooldown: r(), range: 1, speed: 1.5,
         flying: false, legendary: false, villagerId: v.id, post: hall.id, inside: true,
       });
     }
@@ -453,7 +625,7 @@ function start(s: GameState) {
     raid.combatants.push({
       id: raid.nextId++, side: "defender", kind: "hall", level: hallSt.level,
       x: cx, y: cy, hp: hallSt.hp, maxHp: structureMaxHp(hallSt),
-      dmg: Math.round(10 * hallSt.level * bonus), interval: 1.2, cooldown: 0, range: 6, speed: 0,
+      dmg: Math.round(10 * hallSt.level * bonus * rateOf(hallSt)), interval: 1.2, cooldown: 0, range: 6, speed: 0,
       flying: false, legendary: false, structId: hallSt.id,
     });
   }
@@ -464,12 +636,14 @@ function start(s: GameState) {
     raid.combatants.push({
       id: raid.nextId++, side: "defender", kind: "tower", level: t.level,
       x: cx, y: cy - 1, hp: t.hp, maxHp: structureMaxHp(t),
-      dmg: Math.round((camp ? 18 : 14) * t.level * bonus * (1 + augBonus(t).jewel)), interval: 1.1, cooldown: 0, range: (camp ? 8 : 7) + augBonus(t).eye, speed: 0,
+      dmg: Math.round((camp ? 18 : 14) * t.level * bonus * (1 + augBonus(t).jewel) * om.towers * om.ranged * om.dmg * rateOf(t) * wc.rangedDmg), interval: 1.1, cooldown: 0, range: ((camp ? 8 : 7) + augBonus(t).eye) * wc.range, speed: 0,
       flying: false, legendary: false, structId: t.id, augFrom: t.aug ? t.id : undefined,
     });
   }
   raid.started = true;
   raid.pops = [];
+  // Every legend announces itself (./menace): the roar that makes the defenders near it falter.
+  for (const m of raid.combatants) if (m.side === "monster" && m.legendary) pop(s, m.x, m.y - 2, m.mythic ? "IT ROARS" : "ROAR", "crit");
   raid.spoils = { kept: {}, lost: 0 };
   if (!raid.haunt) log(s, "They are here. To arms!", "bad");
 }
@@ -478,10 +652,27 @@ function start(s: GameState) {
 function spoil(s: GameState, m: Combatant) {
   const raid = s.raid!;
   const r = rng(m.id * 7919 + Math.floor(s.time));
-  for (const [item, n] of Object.entries(dropsFor(m.kind as MonsterKind, m.level, m.legendary, r))) {
+  const kind = m.kind as MonsterKind;
+  const drops: Record<string, number> = { ...dropsFor(kind, m.level, m.legendary, r) };
+  for (const [id, n] of Object.entries(lootFor(kind, m.level, r))) drops[id] = (drops[id] ?? 0) + n;
+  for (const [item, n] of Object.entries(drops)) {
     const lost = store(s, item, n);
     raid.spoils!.lost += lost;
     if (n > lost) raid.spoils!.kept[item] = (raid.spoils!.kept[item] ?? 0) + n - lost;
+  }
+  // A mythic thing's first fall gives up one of the singular artifacts of its element; later ones, now and then.
+  if (m.mythic) {
+    const first = s.kills.filter((k) => k.kind === kind).length <= 1;
+    if (first || r() < 0.15) {
+      const id = claimSingleton(s, r, MONSTERS[kind].element);
+      if (id) {
+        if (store(s, id, 1) > 0) s.singletons = (s.singletons ?? []).filter((x) => x !== id);
+        else {
+          raid.spoils!.kept[id] = 1;
+          log(s, `Among what the ${MONSTERS[kind].name.toLowerCase()} leaves is something singular.`, "good");
+        }
+      }
+    }
   }
 }
 
@@ -525,11 +716,60 @@ export function destroyStructure(s: GameState, st: Structure) {
   log(s, `The ${CATALOG[st.type].name.toLowerCase()} is destroyed.`, "bad");
 }
 
+/** A town this small or smaller is finished when its hall falls; a larger one is looted and lives. */
+export const HALL_FALL_FINAL = 3;
+/** What the raiders carry off when the hall falls: this share of every store. */
+export const HALL_FALL_LOOT = 0.35;
+
+/**
+ * The hall falls. A heavy blow, not the end: the raiders loot the stores,
+ * cut down a quarter of the town — those who stood nearest the hall first —
+ * and grief and ruin hang over it for days. Whether it recovers is the work
+ * of the days after, not of the one fight (./needs): a town whose needs are
+ * met rebuilds; one already failing does not. Only a town down to a handful
+ * is finished outright.
+ */
+function sack(s: GameState) {
+  if (s.villagers.length <= HALL_FALL_FINAL) return sackAll(s);
+  const hall = s.structures.find((st) => st.type === "townhall");
+  const [hx, hy] = hall ? center(hall) : [40, 30];
+  const at = (v: Villager) => {
+    const post = byId(s, v.guard) ?? byId(s, v.work) ?? byId(s, v.house);
+    return post ? Math.hypot(center(post)[0] - hx, center(post)[1] - hy) : 99;
+  };
+  const toll = Math.ceil(s.villagers.length / 4);
+  const fallen = s.villagers.filter((v) => !v.champion).sort((a, b) => at(a) - at(b)).slice(0, toll);
+  for (const v of fallen) kill(s, v, "cut down when the hall fell");
+  let carried = 0;
+  for (const k of Object.keys(s.res) as (keyof typeof s.res)[]) {
+    const take = Math.floor(s.res[k] * HALL_FALL_LOOT);
+    if (take <= 0) continue;
+    s.res[k] -= take;
+    carried += take;
+  }
+  if (hall) hall.hp = Math.round(structureMaxHp(hall) * 0.3);
+  s.debuffs.push({ id: "sacked", label: "The hall fell — grief and ruin", until: s.time + 2 * 24 * 60, moodPerHour: -0.3, production: 0.8 });
+  s.mood = Math.max(0, s.mood - 8);
+  s.hallFalls = (s.hallFalls ?? 0) + 1;
+  recognize(s, -15, "the hall fell");
+  // The next wave gives the town time to pick itself up.
+  s.nextRaidAt = s.time + 3 * 24 * 60;
+  log(s, `The hall falls. The raiders loot the stores — ${carried} goods carried off — and ${fallen.length} ${fallen.length === 1 ? "is" : "are"} killed before they go. The town reels, but it stands.`, "bad");
+  scoreWave(s, true);
+  if (s.raid) noteWave(s, partyName(s.raid.party), "hall", 0, fellFighting(s.raid) + fallen.length, s.villagers.length);
+  s.raid = null;
+}
+
+/** Townsfolk who fell in the fight itself, before the hall did (for the run's log). */
+const fellFighting = (raid: Raid) => raid.combatants.filter((c) => c.side === "defender" && c.villagerId && c.hp <= 0).length;
+
 /**
  * The town is sacked: every villager dies, every specialty with them, and a
  * grief that lingers. The hall itself survives as a shell to rebuild from.
  */
-function sack(s: GameState) {
+function sackAll(s: GameState) {
+  const people = s.villagers.length;
+  for (const v of s.villagers.filter((x) => x.champion)) petrify(s, v, "is overwhelmed as the town falls");
   s.villagers = [];
   for (const st of s.structures) {
     st.workers = [];
@@ -543,12 +783,21 @@ function sack(s: GameState) {
   s.nextRaidAt = s.time + 4 * 24 * 60;
   log(s, "The monsters broke through. The town is sacked; everyone is gone.", "bad");
   scoreWave(s, true);
-  // The run is over. The ruins can be rebuilt, but the tally stops here.
-  s.fallen ??= { at: s.time, day: clock(s.time).day };
+  if (s.raid) noteWave(s, partyName(s.raid.party), "sacked", 0, fellFighting(s.raid) + people, 0);
+  // The run is over. The ruins can be rebuilt, but the tally stops here: a town already fallen keeps the first cause.
+  if (!s.fallen) {
+    s.fallCause = "sacked";
+    s.fallen = { at: s.time, day: clock(s.time).day };
+  }
   s.raid = null;
 }
 
 export function stepCombat(s: GameState, dt: number) {
+  fightStep(s, dt);
+  dropLostPupils(s);
+}
+
+function fightStep(s: GameState, dt: number) {
   const raid = s.raid;
   if (!raid || raid.phase !== "fighting") return;
   if (!raid.started) start(s);
@@ -559,7 +808,20 @@ export function stepCombat(s: GameState, dt: number) {
   const defenders = alive.filter((c) => c.side === "defender");
 
   wakeGuards(s, monsters, defenders);
+  heroAuras(defenders, monsters, dt);
+  monsterAuras(defenders, monsters, raid.clock, dt);
   firelight(s, monsters, dt);
+  // A thunderstorm's lightning falls on the field, on either side (./habits).
+  if (weatherCombat(s).lightning && rng(Math.floor(raid.clock * 10) * 7 + raid.nextId)() < LIGHTNING_PER_SEC * dt) {
+    const field = alive.filter((c) => !c.structId && !c.inside);
+    if (field.length) {
+      const hit = field[Math.floor(rng(Math.floor(raid.clock * 100))() * field.length)];
+      const burn = Math.max(1, Math.round(hit.maxHp * 0.12));
+      hit.hp -= burn;
+      raid.flashAt = raid.clock;
+      pop(s, hit.x, hit.y - 1.5, `LIGHTNING -${burn}`, "crit");
+    }
+  }
 
   // A sack ends the raid mid-step; nobody may act on a raid that is over.
   for (const m of monsters) {
@@ -571,12 +833,19 @@ export function stepCombat(s: GameState, dt: number) {
     moveDefender(s, d, monsters, dt);
   }
 
-  // Projectiles in flight.
-  raid.projectiles = raid.projectiles.filter((p) => (p.t += dt * 3) < 1);
+  // Projectiles in flight: each at its own pace.
+  raid.projectiles = raid.projectiles.filter((p) => (p.t += dt * 3 * (p.v ?? 1)) < 1);
 
   // Deaths.
   for (const c of raid.combatants) {
     if (c.hp > 0 || (c as { dead?: boolean }).dead) continue;
+    // The phoenix burns down and rises from its ashes, once.
+    if (c.side === "monster" && c.kind === "phoenix" && !c.reborn && !(c as { faded?: boolean }).faded) {
+      c.reborn = true;
+      c.hp = Math.round(c.maxHp * 0.5);
+      pop(s, c.x, c.y - 1, "REBORN", "crit");
+      continue;
+    }
     (c as { dead?: boolean }).dead = true;
     if (c.side === "monster" && (c as { faded?: boolean }).faded) continue;
     if (c.side === "monster") {
@@ -588,8 +857,12 @@ export function stepCombat(s: GameState, dt: number) {
       rememberDeath(s, c.x, c.y);
     } else if (c.villagerId) {
       const v = s.villagers.find((x) => x.id === c.villagerId);
-      if (v) {
-        kill(s, v);
+      if (v?.champion) {
+        pop(s, c.x, c.y - 1, "TURNED TO STONE", "crit");
+        petrify(s, v, "falls in the fight");
+      } else if (v) {
+        // The dead are dead: whoever falls in the fight is gone, with all they were (./recognition counts it).
+        kill(s, v, "fell defending the town");
         log(s, `${v.name} falls defending the town.`, "bad");
       }
     } else if (c.structId) {
@@ -604,6 +877,7 @@ export function stepCombat(s: GameState, dt: number) {
     const slain = raid.combatants.filter((c) => c.side === "monster" && !(c as { faded?: boolean }).faded);
     const levels = slain.reduce((a, c) => a + c.level, 0);
     const spoils = spoilsText(raid.spoils);
+    const purse = levels * 4;
     if (slain.length) {
       const t = stats(s);
       if (raid.prowl) t.prowlsWon += 1;
@@ -613,12 +887,31 @@ export function stepCombat(s: GameState, dt: number) {
     if (raid.prowl) log(s, slain.length ? `The prowlers are driven off. ${levels * 4} coin.${spoils}` : "The prowlers slink back into the dark, their work done.", slain.length ? "good" : "bad");
     else if (raid.haunt) log(s, slain.length ? `The night haunt is driven off. ${levels * 4} coin.${spoils}` : "The haunt fades, its work done.", slain.length ? "good" : "bad");
     else if (raid.retreated) log(s, `Having brought down the ${raid.retreated}, they drag off into the fog.${slain.length ? ` ${slain.length} did not make it: ${levels * 4} coin.${spoils}` : ""}`, "bad");
-    else log(s, `The raid is broken. ${levels * 4} coin taken from the fallen.${spoils}`, "good");
+    else log(s, `The raid is broken.${purse > 0 ? ` ${purse} coin taken from the fallen.` : ""}${spoils}`, "good");
+    const lost = raid.combatants.filter((c) => c.side === "defender" && c.villagerId && c.hp <= 0).length;
+    // A wave broken is a moment the screen shows (./moments); the night's skirmishes are only logged.
+    if (!raid.prowl && !raid.haunt && !raid.retreated && slain.length) {
+      pushMoment(s, { kind: "wave", title: `Wave broken · ${slain.length} slain · ${lost} lost${purse > 0 ? ` · +${purse} coin` : ""}`, lines: spoils ? [spoils.trim()] : [], goods: purse > 0 ? { coin: purse } : undefined });
+    }
     if (!raid.haunt && !raid.retreated && slain.length) s.hopeEvents = (s.hopeEvents ?? 0) + 5;
+    // The town's name (./recognition): a raid broken, a night held, a legend slain.
+    if (slain.length && !raid.retreated) recognize(s, raid.haunt ? 1 : 3, raid.haunt ? "a night held" : "a raid broken");
+    if (slain.some((c) => c.legendary)) recognize(s, 10, "a legend slain");
     // Time served: everyone who fought and lived has a chance to be promoted
     // in the field. It is the only way past what the barracks and the army
     // school can teach.
+    // The land scores the wave; the run's log keeps it with its grade (./runlog). A band out of the fog was never scored.
+    const scored = !raid.haunt && !!s.nemesis?.before;
     if (!raid.haunt) scoreWave(s);
+    if (!raid.prowl && !raid.haunt) noteWave(s, partyName(raid.party), raid.retreated ? "withdrew" : "broken", slain.length, lost, undefined, scored ? s.nemesis?.history[0]?.reward : undefined);
+    // The heroes who stood in it and lived learn from it (./heroes): by the levels slain, squared.
+    if (!raid.haunt) {
+      const stood = raid.combatants
+        .filter((c) => c.side === "defender" && c.villagerId && c.fought && c.hp > 0)
+        .map((c) => s.villagers.find((v) => v.id === c.villagerId))
+        .filter((v): v is Villager => !!v);
+      heroesLearn(s, stood, slain.map((c) => c.level));
+    }
     const pr = rng(Math.floor(s.time) * 13 + raid.nextId);
     for (const c of raid.combatants) {
       if (c.side !== "defender" || !c.villagerId || !c.fought || c.hp <= 0) continue;
@@ -626,16 +919,18 @@ export function stepCombat(s: GameState, dt: number) {
       if (!v) continue;
       const soldier = v.role === "infantry" || v.role === "archer" || v.role === "heavy";
       const knight = v.role === "knight";
-      if (!(soldier && v.rank < SOLDIER_MAX) && !(knight && v.rank < 22)) continue;
+      if (!(soldier && v.rank < Math.min(SOLDIER_MAX, rankCapOf(s, v, SOLDIER_MAX))) && !(knight && v.rank < 22)) continue;
       if (v.rank >= gearCap(v)) continue; // past level 8, rank needs a weapon to match
       // A scuffle with a prowler in the dark teaches little: a tenth of a battle's chance.
       if (pr() >= FIELD_PROMOTION * (raid.prowl ? 0.1 : 1)) continue;
       const before = roleLabel(v.role, v.rank);
       v.rank += 1;
       v.xp = 0;
+      const grew = growOnRise(v, Math.floor(s.time) + raid.nextId);
       const now = roleLabel(v.role, v.rank);
       const newTitle = before.replace(/ \d+$/, "") !== now.replace(/ \d+$/, "");
-      log(s, newTitle ? `${v.name} is promoted in the field: now ${now}.` : `${v.name} rises to ${now} for service in the fight.`, "good");
+      const plus = grew ? ` (+1 ${ATTR_NAME[grew]})` : "";
+      log(s, newTitle ? `${v.name} is promoted in the field: now ${now}${plus}.` : `${v.name} rises to ${now} for service in the fight${plus}.`, "good");
     }
     // Survivors carry their wounds home; towers keep theirs.
     for (const c of raid.combatants) {
@@ -662,8 +957,10 @@ function wakeGuards(s: GameState, monsters: Combatant[], defenders: Combatant[])
       continue;
     }
     const [cx, cy] = center(post);
-    const R = alertRadius(post);
-    const P = passiveRadius(post);
+    // The omen, and the weather: guards see late in fog and blown sand (./habits).
+    const warp = omenCombat(s).alert * weatherCombat(s).alert;
+    const R = alertRadius(post) * warp;
+    const P = passiveRadius(post) * warp;
     // Inner circle: anything that comes in. Outer circle: anything that
     // attacks a building or the wall out there.
     const clock = s.raid!.clock;
@@ -673,6 +970,33 @@ function wakeGuards(s: GameState, monsters: Combatant[], defenders: Combatant[])
         called.add(post.id);
         pop(s, cx, cy - 2, post.type === "townhall" ? "RISE" : "TO ARMS", "crit");
       }
+    }
+  }
+}
+
+/**
+ * The heroes' auras, this tick (./heroes): every ally within a hero's reach
+ * strikes harder and faster, takes less and is mended; every foe within it
+ * strikes weaker; and the dark's terror is shrugged off. Buffs are recomputed
+ * each tick from where everyone stands.
+ */
+function heroAuras(defenders: Combatant[], monsters: Combatant[], dt: number) {
+  for (const c of defenders) c.buff = { dmg: 1, haste: 1, guard: 1, weaken: 0, ward: 0 };
+  for (const m of monsters) m.buff = { dmg: 1, haste: 1, guard: 1, weaken: 0, ward: 0 };
+  for (const h of defenders) {
+    const a = h.hm;
+    if (!a || a.auraR <= 0 || h.hp <= 0 || h.inside || h.structId) continue;
+    for (const o of defenders) {
+      if (o.hp <= 0 || o.inside || o.structId || Math.hypot(o.x - h.x, o.y - h.y) > a.auraR) continue;
+      const b = o.buff!;
+      b.dmg *= a.allyDmg;
+      b.haste *= a.allyHaste;
+      b.guard *= a.allyGuard;
+      b.ward = Math.max(b.ward, a.ward);
+      if (a.heal > 0 && o.hp < o.maxHp) o.hp = Math.min(o.maxHp, o.hp + a.heal * dt);
+    }
+    if (a.weaken > 0) for (const m of monsters) {
+      if (m.hp > 0 && Math.hypot(m.x - h.x, m.y - h.y) <= a.auraR) m.buff!.weaken = Math.max(m.buff!.weaken, a.weaken);
     }
   }
 }
@@ -732,7 +1056,7 @@ function moveMonster(s: GameState, m: Combatant, defenders: Combatant[], dt: num
     m.swingAt = s.raid!.clock;
     const [hx, hy] = center(target);
     m.hitAt = [hx, hy, s.raid!.clock];
-    target.hp -= Math.round(m.dmg * scorchFactor(m));
+    target.hp -= Math.round(m.dmg * scorchFactor(m) * (m.buff?.dmg ?? 1) * (1 - (m.buff?.weaken ?? 0)) * (hasTrait(m, "breath") ? 1.5 : 1));
     // Siege beasts go for the posts that hold the roof up (§2.5).
     if (s.raid!.archetype === "K") {
       strikeFrame(s, target, m.x, m.y, m.dmg * 4);
@@ -755,7 +1079,7 @@ function moveMonster(s: GameState, m: Combatant, defenders: Combatant[], dt: num
     pop(s, m.x, m.y - 1, `-${m.dmg}`);
     if (MONSTERS[m.kind as MonsterKind].range > 2) {
       const [cx, cy] = center(target);
-      s.raid!.projectiles.push({ x: m.x, y: m.y, tx: cx, ty: cy, kind: "fire", t: 0 });
+      s.raid!.projectiles.push({ x: m.x, y: m.y, tx: cx, ty: cy, t: 0, ...projectileFor(m) });
     }
     if (target.hp <= 0) {
       m.targetStruct = null;
@@ -833,16 +1157,48 @@ function step(s: GameState, c: Combatant, x: number, y: number, dt: number) {
   const dx = x - c.x;
   const dy = y - c.y;
   const len = Math.hypot(dx, dy) || 1;
-  const pace = c.speed * dt * (c.scorched ? SCORCH_SLOW : 1);
+  // Never past the point: at speed a whole step can be longer than what is left.
+  const snared = c.slowUntil !== undefined && !!s.raid && s.raid.clock < c.slowUntil;
+  const enraged = c.side === "monster" && c.legendary && c.hp < c.maxHp * ENRAGE_AT;
+  const pace = Math.min(len, c.speed * dt * (c.scorched ? SCORCH_SLOW : 1) * (snared ? 0.6 : 1) * (enraged ? 1.3 : 1));
   const nx = c.x + (dx / len) * pace;
   const ny = c.y + (dy / len) * pace;
-  if (!c.flying && c.side === "monster") {
+  // A spike pit under a walking monster's foot: it falls in, and the pit is spent (./menace).
+  if (c.side === "monster" && !c.flying && s.traps?.length) {
+    const tile = idx(Math.floor(nx), Math.floor(ny));
+    const at = s.traps.indexOf(tile);
+    if (at >= 0) {
+      s.traps.splice(at, 1);
+      c.hp -= trapDamage(c.level);
+      c.slowUntil = (s.raid?.clock ?? 0) + 3;
+      pop(s, nx, ny - 1, "SPIKES", "crit");
+    }
+  }
+  // Walls stop anything that walks — not what flies, and not what tunnels under them.
+  if (!c.flying && !c.burrow && c.side === "monster") {
     const tile = idx(Math.floor(nx), Math.floor(ny));
     if (inBounds(Math.floor(nx), Math.floor(ny)) && s.map.overlay[tile] === Overlay.Wall) {
+      const lvl = wallLevel(s.map.meta[tile]);
+      const order = wallOrder(lvl);
+      // A loopholed curtain shoots whatever stands at it (./world WALL_ORDERS).
+      if (order >= 2 && s.raid && s.raid.clock - (c.boltAt ?? -9) >= 1.5) {
+        c.boltAt = s.raid.clock;
+        c.hp -= wallBolt(lvl);
+        pop(s, nx, ny - 1, `-${wallBolt(lvl)}`);
+      }
       if (c.cooldown <= 0) {
-        c.cooldown = c.interval;
+        // Frostbound: the blows come half again as slowly.
+        c.cooldown = c.interval * (order >= 4 ? 1.5 : 1);
         c.swingAt = s.raid!.clock;
-        const dmg = Math.round(c.dmg * scorchFactor(c));
+        const blow = Math.round(c.dmg * scorchFactor(c));
+        // The aegis takes half of every blow.
+        const dmg = order >= 5 ? Math.round(blow / 2) : blow;
+        // Spikes give back a fifth of it; runes scorch a thing of the night.
+        if (order >= 1) c.hp -= Math.round(blow * 0.2);
+        if (order >= 3 && isDark(c)) {
+          c.scorched = true;
+          c.hp -= c.maxHp * 0.02;
+        }
         const left = wallHp(s.map.meta[tile]) - dmg;
         c.hitAt = [nx, ny, s.raid!.clock];
         pop(s, nx, ny, `-${dmg}`);
@@ -862,9 +1218,21 @@ function step(s: GameState, c: Combatant, x: number, y: number, dt: number) {
 function moveDefender(s: GameState, d: Combatant, monsters: Combatant[], dt: number) {
   d.cooldown -= dt;
   if (d.inside) return;
-  // A guard fights inside its post's circle (with a little room to chase),
-  // and walks back in when the circle is clear.
-  if (d.post !== undefined && !d.structId) {
+  // The player's order comes first (./command); a stationed troop holds its circle.
+  const stepTo = (x: number, y: number) => step(s, d, x, y, dt);
+  if (obey(s, d, monsters, dt, stepTo, (foe) => strike(s, d, foe), (m) => d2(d, m))) return;
+  // The mythic watch goes for the mythic thing first, wherever it is.
+  if (d.mythicWatch) {
+    const myth = monsters.filter((m) => m.mythic);
+    if (myth.length) monsters = myth;
+  }
+  const watch = d.mythicWatch ? null : stationWatch(d, monsters, stepTo);
+  if (watch) {
+    if (!watch.length) return;
+    monsters = watch;
+  } else if (d.post !== undefined && !d.structId) {
+    // A guard fights inside its post's circle (with a little room to chase),
+    // and walks back in when the circle is clear.
     const post = byId(s, d.post);
     if (post) {
       const [cx, cy] = center(post);
@@ -906,15 +1274,37 @@ function moveDefender(s: GameState, d: Combatant, monsters: Combatant[], dt: num
 
 function strike(s: GameState, a: Combatant, b: Combatant) {
   // A foot of the same kind set into the tower or spire: strikes at that kind come faster.
-  a.cooldown = a.augFrom ? a.interval / (1 + augBonus(byId(s, a.augFrom)).foot(b.kind)) : a.interval;
+  a.cooldown = (a.augFrom ? a.interval / (1 + augBonus(byId(s, a.augFrom)).foot(b.kind)) : a.interval) * (a.buff?.haste ?? 1);
   if (a.side === "defender") a.fought = true;
   if (a.side === "monster" && b.structId) {
     const st = byId(s, b.structId);
     if (st) a.hitAt = [center(st)[0], center(st)[1], s.raid!.clock];
   }
   a.swingAt = s.raid!.clock;
-  let dmg = a.dmg * scorchFactor(a);
+  let dmg = a.dmg * scorchFactor(a) * (a.buff?.dmg ?? 1) * (a.side === "monster" ? 1 - (a.buff?.weaken ?? 0) : 1);
   let crit = false;
+  // A heavy class's blow (./enrol): the giant-breaker against the great, the iron warden inside the hall's circle.
+  if (a.heavyCls) {
+    const hc = HEAVY_CLASSES[a.heavyCls as HeavyClass];
+    if (hc && (b.legendary || b.mythic)) dmg *= hc.vsGreat;
+    if (hc && hc.atHall !== 1 && inHallZone(s, b.x, b.y)) dmg *= hc.atHall;
+  }
+  // A hero's skills on the blow itself (./heroes).
+  const hm = a.hm;
+  if (hm) {
+    if (b.legendary) dmg *= hm.vsLegend;
+    if (b.element === "dark") dmg *= hm.vsDark;
+    if (hm.crit > 0 && rng(Math.floor(s.raid!.clock * 1000) * 13 + a.id)() < hm.crit) {
+      dmg *= 2;
+      crit = true;
+    }
+  }
+  // A post on the windfall path (./paths): it and the guards it holds strike double three times in ten.
+  const keep = a.side === "defender" ? byId(s, a.structId ?? a.post) : undefined;
+  if (keep?.path === "windfall" && windfall(s, keep, rng(Math.floor(s.raid!.clock * 1000) * 7 + a.id))) {
+    dmg *= 2;
+    crit = true;
+  }
   if (a.kind === "archer" && b.flying) {
     dmg *= 2;
     crit = true;
@@ -923,9 +1313,64 @@ function strike(s: GameState, a: Combatant, b: Combatant) {
     dmg *= 2;
     crit = true;
   }
-  if (a.side === "defender" && a.range <= 1.5 && b.flying) dmg *= 0.5; // swords reach a low flyer, badly
+  if (a.side === "defender" && a.range <= 1.5 && b.flying && !a.champion) dmg *= 0.5; // swords reach a low flyer, badly
+  // The elements: a blow that beats its target's element bites deep; one it beats, shallow.
+  const ef = elementFactor(a.element, b.element);
+  dmg *= ef;
+  if (ef > 1 && a.side === "defender") {
+    crit = true;
+    pop(s, b.x, b.y - 1.8, `${ELEMENT_NAME[a.element!].toUpperCase()} COUNTERS`, "crit");
+  } else if (ef < 1 && a.side === "defender") pop(s, b.x, b.y - 1.8, "RESISTED", "hit");
+  // A mythic thing shrugs off all but a champion's blows — a hero's skill pierces some of that ward.
+  if (b.mythic && a.side === "defender" && !a.champion) dmg *= MYTHIC_WARD + (1 - MYTHIC_WARD) * (hm?.pierce ?? 0);
+  // Guarded allies take less.
+  if (b.side === "defender") dmg *= b.buff?.guard ?? 1;
   dmg = Math.round(dmg);
   b.hp -= dmg;
+  // A hero's volleys and cleaves: more foes struck by the one blow.
+  if (hm && s.raid && (hm.volley > 0 || hm.cleave > 0)) {
+    const near = s.raid.combatants
+      .filter((o) => o !== b && o.side === b.side && o.hp > 0 && !o.inside && !o.structId)
+      .map((o) => ({ o, d: Math.hypot(o.x - b.x, o.y - b.y) }))
+      .sort((p, q) => p.d - q.d);
+    let n = 0;
+    for (const { o, d } of near) {
+      if (n >= hm.volley || d > 3.5) break;
+      o.hp -= Math.round(dmg * hm.volleyShare);
+      n++;
+    }
+    if (hm.cleave > 0) for (const { o, d } of near.filter((x) => x.d <= hm.cleaveR).slice(0, 4)) o.hp -= Math.round(dmg * hm.cleave * (d <= hm.cleaveR ? 1 : 0));
+  }
+  if (hm?.snare && s.raid) b.slowUntil = s.raid.clock + 2;
+  // A monster's blow (./menace): a brute's cleave, a dragon's fire round the target, a vampire's drink.
+  if (a.side === "monster" && s.raid) {
+    const cleave = hasTrait(a, "cleave");
+    const breath = hasTrait(a, "breath");
+    if (cleave || breath) {
+      const r = breath ? 1.6 : 1.3;
+      const share = breath ? 0.4 : 0.5;
+      let n = 0;
+      for (const o of s.raid.combatants) {
+        if (o === b || o.side !== "defender" || o.hp <= 0 || o.inside || o.structId || n >= (breath ? 4 : 3)) continue;
+        if (Math.hypot(o.x - b.x, o.y - b.y) > r) continue;
+        o.hp -= Math.round(dmg * share * (o.buff?.guard ?? 1));
+        n++;
+      }
+      if (n && breath) pop(s, b.x, b.y - 1.6, "BURNING", "crit");
+    }
+    if (hasTrait(a, "lifesteal")) a.hp = Math.min(a.maxHp, a.hp + dmg * 0.3);
+  }
+  // A Master's spells burst on those around the target; the King's blade cleaves the ones beside it.
+  if (a.champion && s.raid) {
+    const splash = a.champion === "master" ? { r: 2, share: 0.5, n: 6 } : { r: 1.6, share: 0.6, n: 2 };
+    let n = 0;
+    for (const o of s.raid.combatants) {
+      if (o === b || o.side !== b.side || o.hp <= 0 || o.inside || o.structId || n >= splash.n) continue;
+      if (Math.hypot(o.x - b.x, o.y - b.y) > splash.r) continue;
+      o.hp -= Math.round(a.dmg * splash.share * elementFactor(a.element, o.element));
+      n++;
+    }
+  }
   // A villager hit bleeds: minor, major or an artery (design §7).
   if (b.villagerId && a.side === "monster") {
     const v = s.villagers.find((x) => x.id === b.villagerId);
@@ -938,13 +1383,40 @@ function strike(s: GameState, a: Combatant, b: Combatant) {
     }
   }
   pop(s, b.x, b.y - 1, `-${dmg}`, crit ? "crit" : "hit");
-  if (a.range > 2) {
-    const kind = a.kind === "archer" || a.kind === "tower" || a.kind === "hall" ? "arrow" : a.kind === "wizard" ? "bolt" : "fire";
-    s.raid!.projectiles.push({ x: a.x, y: a.y - 0.6, tx: b.x, ty: b.y - 0.4, kind, t: 0 });
+  // Shots and spells fly; a great knight's blade throws a wave of light at what it strikes.
+  if (a.range > 2 || (a.kind === "knight" && (a.level >= 40 || a.champion))) {
+    s.raid!.projectiles.push({ x: a.x, y: a.y - 0.6, tx: b.x, ty: b.y - 0.4, t: 0, ...projectileFor(a) });
   }
   if (b.structId) {
     const t = byId(s, b.structId);
     if (t) t.hp = b.hp;
+  }
+}
+
+/**
+ * What a shooter throws, and how fancy: the higher the level, the finer the
+ * shot. Bowmen loose arrows (quarrels from crossbowmen and arbalestiers),
+ * wizards cast spells, great knights throw a wave off the blade, towers and
+ * the hall a ballista bolt; legendary and mythic things breathe their element.
+ */
+export function projectileFor(a: Combatant): Pick<Projectile, "kind" | "tier" | "element" | "v"> {
+  const lv = a.level;
+  if (a.side === "monster") return { kind: a.element ? "breath" : "rock", tier: a.mythic ? 5 : a.legendary ? 3 : Math.min(2, Math.floor(lv / 15)), element: a.element ?? null, v: a.element ? 1.1 : 0.8 };
+  switch (a.kind) {
+    case "archer": {
+      // Bowmen loose arrows; crossbowmen (10) and arbalestiers (17) quarrels.
+      const quarrel = lv >= 10;
+      return { kind: quarrel ? "quarrel" : "arrow", tier: Math.min(4, (lv >= 17 ? 3 : lv >= 10 ? 2 : lv >= 5 ? 1 : 0) + (a.element ? 1 : 0)), element: a.element ?? null, v: quarrel ? 1.5 : 1.3 };
+    }
+    case "wizard":
+      return { kind: "spell", tier: a.champion ? 5 : lv < 5 ? 0 : lv < 15 ? 1 : lv < 50 ? 2 : lv < 150 ? 3 : 4, element: a.element ?? null, v: 1.6 };
+    case "knight":
+      return { kind: "slash", tier: a.champion ? 5 : lv >= 110 ? 4 : lv >= 80 ? 3 : 2, element: a.element ?? null, v: 2 };
+    case "tower":
+    case "hall":
+      return { kind: "ballista", tier: Math.min(4, Math.floor(lv / 10)), element: null, v: 1.2 };
+    default:
+      return { kind: "arrow", tier: 0, element: null, v: 1.3 };
   }
 }
 

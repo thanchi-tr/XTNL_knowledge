@@ -1,7 +1,9 @@
+import type { QuestionType } from "@prisma/client";
 import { prisma } from "./prisma";
 import { embedText, synthesizeNodeData, synthesizeEnrichment, type SynthesizedNodeData } from "./gemini";
 import { toVectorLiteral } from "./vector";
-import { SIMILARITY_MERGE_MIN, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN } from "./xp";
+import { SIMILARITY_MERGE_MIN, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN, SIMILARITY_NOVELTY_MAX } from "./xp";
+import { cardTextFromStored, judge, type CardText, type Neighbour, type NoveltyVerdict, type Relation } from "./novelty";
 
 /**
  * Memory-engineering deduplication.
@@ -13,12 +15,17 @@ import { SIMILARITY_MERGE_MIN, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_M
  * write goes to an existing row instead.
  *
  * Division of labour, and the reason this module is mostly arithmetic:
- * cosine distance decides the branch, the LLM only writes prose. A model
- * asked to emit its own `action` and `confidence_score` would be restating
- * a number pgvector already computed exactly, with the added failure mode
- * of contradicting it. So `action`, `target_node_id` and `confidence_score`
- * below are all derived from the vector search; Gemini is called only to
- * fill `node_data`, and only after the branch is settled.
+ * the vector search and a lexical reading decide the branch, the LLM only
+ * writes prose. Cosine distance says how close two cards are in meaning;
+ * novelty.ts reads both cards to say *how* they differ — a changed figure,
+ * an inserted "not", a different answer to the same question, the same
+ * template about another subject — which cosine cannot see and which call
+ * for opposite outcomes. A model asked to emit its own `action` and
+ * `confidence_score` would be restating numbers already computed exactly,
+ * with the added failure mode of contradicting them. So `action`,
+ * `target_node_id`, `confidence_score` and the verdict's label are all
+ * derived without a model; Gemini is called only to fill `node_data`, and
+ * only after the branch is settled.
  *
  * Field naming follows the deduplication contract rather than the
  * surrounding camelCase house style — this object is a documented wire
@@ -42,6 +49,11 @@ export interface DedupDecision {
   confidence_score: number;
   node_data: DedupNodeData | null;
   deduplication_reasoning: string;
+  /** What the matched card is to this one (novelty.ts), and its human label. */
+  relation: Relation;
+  label: string;
+  /** The full verdict: summary, evidence, the match itself and anything else worth knowing. */
+  verdict: NoveltyVerdict;
 }
 
 /**
@@ -67,6 +79,36 @@ export interface NeighbourNode {
   corePremise: string | null;
   tags: string[];
   similarity: number;
+  /** The drill itself, so the candidate can be read against it (novelty.ts). */
+  question: string;
+  answer: string;
+  questionType: QuestionType;
+  domainName: string;
+  fieldName: string;
+}
+
+/** The cosine bands for a given merge line (the DEDUP_PRECISION skill moves only that one). */
+export const bandsFor = (mergeThreshold: number) => ({
+  merge: mergeThreshold,
+  saturation: SIMILARITY_SATURATION_MIN,
+  related: SIMILARITY_NOVELTY_MAX,
+});
+
+const asNeighbour = (n: NeighbourNode): Neighbour => ({
+  id: n.id,
+  title: n.title,
+  similarity: n.similarity,
+  card: cardTextFromStored(n.questionType, n.question, n.answer),
+  domainName: n.domainName,
+  fieldName: n.fieldName,
+});
+
+/** The verdict on a candidate against its Field's neighbours and its nearest cards elsewhere. */
+function verdictFor(card: CardText, neighbours: NeighbourNode[], elsewhere: NeighbourNode[], mergeThreshold: number): NoveltyVerdict {
+  return judge(card, neighbours.map(asNeighbour), bandsFor(mergeThreshold), {
+    crowdLine: SIMILARITY_N_SIMILAR_MIN,
+    elsewhere: elsewhere.map(asNeighbour),
+  });
 }
 
 /**
@@ -82,14 +124,17 @@ export interface NeighbourNode {
 export async function findNearestNodes(
   fieldId: string,
   embedding: number[],
-  limit = 5
+  limit = 6
 ): Promise<NeighbourNode[]> {
   const literal = toVectorLiteral(embedding);
   return prisma.$queryRaw<NeighbourNode[]>`
     SELECT i.id, i."domainId", i.title, i."corePremise", i.tags,
+           i.question, i.answer, i."questionType",
+           d.name AS "domainName", f.name AS "fieldName",
            1 - (i.embedding <=> ${literal}::vector) AS similarity
     FROM "Idea" i
     JOIN "Domain" d ON d.id = i."domainId"
+    JOIN "Field" f ON f.id = d."fieldId"
     WHERE d."fieldId" = ${fieldId}
       AND i.embedding IS NOT NULL
       AND i."isArchived" = false
@@ -98,21 +143,57 @@ export async function findNearestNodes(
   `;
 }
 
+/**
+ * The closest cards in *other* Fields. Only reported, never acted on — the
+ * user chose this Field — but a card already filed under Chemistry is worth
+ * mentioning when the same one is being added to Biology. Issued alongside
+ * the Field query, so it costs no extra round trip.
+ */
+async function findNearestElsewhere(fieldId: string, embedding: number[], limit = 3): Promise<NeighbourNode[]> {
+  const literal = toVectorLiteral(embedding);
+  return prisma.$queryRaw<NeighbourNode[]>`
+    SELECT i.id, i."domainId", i.title, i."corePremise", i.tags,
+           i.question, i.answer, i."questionType",
+           d.name AS "domainName", f.name AS "fieldName",
+           1 - (i.embedding <=> ${literal}::vector) AS similarity
+    FROM "Idea" i
+    JOIN "Domain" d ON d.id = i."domainId"
+    JOIN "Field" f ON f.id = d."fieldId"
+    WHERE d."fieldId" <> ${fieldId}
+      AND i.embedding IS NOT NULL
+      AND i."isArchived" = false
+    ORDER BY i.embedding <=> ${literal}::vector
+    LIMIT ${limit}
+  `;
+}
+
+/** Both neighbour searches at once: the Field's own, and the nearest anywhere else. */
+async function neighbourhood(fieldId: string, embedding: number[]) {
+  const [neighbours, elsewhere] = await Promise.all([
+    findNearestNodes(fieldId, embedding),
+    findNearestElsewhere(fieldId, embedding),
+  ]);
+  return { neighbours, elsewhere };
+}
+
 export interface AnalysisResult {
   decision: DedupDecision;
   embedding: number[];
   neighbours: NeighbourNode[];
+  /** The Domain of the card the decision names, for a stopped submission's "Link" to file beside. */
+  targetDomainId: string | null;
 }
 
 export interface CandidatePreview {
-  /** The band this submission would land in, decided purely by cosine distance. */
+  /** What would happen: decided by cosine distance and the lexical reading together (novelty.ts). */
   action: DedupAction;
   /** Similarity to the closest existing node, or null when the Field is empty. */
   topSimilarity: number | null;
-  /** Nearest existing nodes, closest first — what the submission is competing with. */
-  neighbours: { id: string; title: string | null; similarity: number }[];
+  /** Nearest existing nodes, closest first — what the submission is competing with — each with what it is to this one. */
+  neighbours: { id: string; title: string | null; similarity: number; relation: Relation | null; label: string | null }[];
   /** How many neighbours clear the N_similar line, which is what decays the payout. */
   nSimilar: number;
+  verdict: NoveltyVerdict;
 }
 
 /**
@@ -126,25 +207,35 @@ export interface CandidatePreview {
  * header — so a preview needs the embedding and the neighbour search, and
  * nothing else.
  */
-export async function previewCandidate(fieldId: string, contentText: string): Promise<CandidatePreview> {
+export async function previewCandidate(
+  fieldId: string,
+  card: CardText,
+  contentText: string,
+  mergeThreshold = SIMILARITY_MERGE_MIN
+): Promise<CandidatePreview> {
   const embedding = await embedText(contentText);
-  const neighbours = await findNearestNodes(fieldId, embedding);
-  const nearest = neighbours[0];
-
-  const action: DedupAction = !nearest
-    ? "CREATE_NEW_NODE"
-    : nearest.similarity >= SIMILARITY_MERGE_MIN
-      ? "MERGE_EXACT"
-      : nearest.similarity > SIMILARITY_SATURATION_MIN
-        ? "SATURATION"
-        : "CREATE_NEW_NODE";
+  const { neighbours, elsewhere } = await neighbourhood(fieldId, embedding);
+  const verdict = verdictFor(card, neighbours, elsewhere, mergeThreshold);
+  const named = new Map([...(verdict.match ? [verdict.match] : []), ...verdict.also].map((m) => [m.id, m]));
 
   return {
-    action,
-    topSimilarity: nearest?.similarity ?? null,
-    neighbours: neighbours.slice(0, 3).map((n) => ({ id: n.id, title: n.title, similarity: n.similarity })),
+    action: verdict.action,
+    topSimilarity: neighbours[0]?.similarity ?? null,
+    neighbours: neighbours.slice(0, 3).map((n) => ({
+      id: n.id,
+      title: n.title,
+      similarity: n.similarity,
+      relation: named.get(n.id)?.relation ?? null,
+      label: named.get(n.id)?.label ?? null,
+    })),
     nSimilar: neighbours.filter((n) => n.similarity >= SIMILARITY_N_SIMILAR_MIN).length,
+    verdict,
   };
+}
+
+/** The reasoning string logged with every decision: the verdict in one line, then its evidence. */
+function reasoning(v: NoveltyVerdict): string {
+  return `${v.label}. ${v.summary} [${v.evidence.join("; ")}]`;
 }
 
 /**
@@ -164,6 +255,8 @@ export async function analyzeCandidate(
   fieldId: string,
   fieldName: string,
   contentText: string,
+  /** The candidate as prompt and answer text, for the lexical half of the verdict. */
+  card: CardText,
   mergeThreshold = SIMILARITY_MERGE_MIN,
   /**
    * Reuses a vector the caller already paid for. Field routing needs the
@@ -174,73 +267,35 @@ export async function analyzeCandidate(
   precomputed?: number[]
 ): Promise<AnalysisResult> {
   const embedding = precomputed ?? (await embedText(contentText));
-  const neighbours = await findNearestNodes(fieldId, embedding);
-  const nearest = neighbours[0];
+  const { neighbours, elsewhere } = await neighbourhood(fieldId, embedding);
+  const verdict = verdictFor(card, neighbours, elsewhere, mergeThreshold);
+  const target = verdict.match ? neighbours.find((n) => n.id === verdict.match!.id) ?? null : null;
+  const base = {
+    relation: verdict.relation,
+    label: verdict.label,
+    verdict,
+    deduplication_reasoning: reasoning(verdict),
+    confidence_score: verdict.confidence,
+  };
 
-  // An empty Field has nothing to duplicate against.
-  if (!nearest) {
+  if (verdict.action === "CREATE_NEW_NODE" || !target) {
     const node = await synthesizeNodeData(fieldName, contentText);
     return {
       embedding,
       neighbours,
-      decision: {
-        action: "CREATE_NEW_NODE",
-        target_node_id: null,
-        confidence_score: 1,
-        node_data: toNodeData(node),
-        deduplication_reasoning: "Field contains no embedded Ideas; nothing to compare against.",
-      },
+      targetDomainId: null,
+      decision: { ...base, action: "CREATE_NEW_NODE", target_node_id: null, node_data: toNodeData(node) },
     };
   }
 
-  if (nearest.similarity >= mergeThreshold) {
-    // No synthesis call: nothing is being written that needs prose, and the
-    // existing node's own wording is what survives a merge.
-    return {
-      embedding,
-      neighbours,
-      decision: {
-        action: "MERGE_EXACT",
-        target_node_id: nearest.id,
-        confidence_score: nearest.similarity,
-        node_data: null,
-        deduplication_reasoning:
-          `Cosine similarity ${nearest.similarity.toFixed(4)} >= ${mergeThreshold.toFixed(4)} against ` +
-          `"${nearest.title ?? nearest.id}". Semantically identical; new node creation aborted.`,
-      },
-    };
-  }
-
-  if (nearest.similarity > SIMILARITY_SATURATION_MIN) {
-    return {
-      embedding,
-      neighbours,
-      decision: {
-        action: "SATURATION",
-        target_node_id: nearest.id,
-        confidence_score: nearest.similarity,
-        node_data: null,
-        deduplication_reasoning:
-          `Cosine similarity ${nearest.similarity.toFixed(4)} falls between ${SIMILARITY_SATURATION_MIN} and ` +
-          `${mergeThreshold.toFixed(4)} against "${nearest.title ?? nearest.id}". Too close to stand alone, too ` +
-          `distinct to discard — user resolves by linking or enriching.`,
-      },
-    };
-  }
-
-  const node = await synthesizeNodeData(fieldName, contentText);
+  // No synthesis call on either stopping branch: a merge keeps the existing
+  // node's wording, and a stopped submission writes nothing until the user
+  // chooses Link or Enrich — both of which do their own.
   return {
     embedding,
     neighbours,
-    decision: {
-      action: "CREATE_NEW_NODE",
-      target_node_id: null,
-      confidence_score: 1 - nearest.similarity,
-      node_data: toNodeData(node),
-      deduplication_reasoning:
-        `Nearest match "${nearest.title ?? nearest.id}" at ${nearest.similarity.toFixed(4)}, below the ` +
-        `${SIMILARITY_SATURATION_MIN} saturation line. Distinct standalone premise.`,
-    },
+    targetDomainId: target.domainId,
+    decision: { ...base, action: verdict.action, target_node_id: target.id, node_data: null },
   };
 }
 

@@ -1,6 +1,8 @@
 import { px, hash, type Ctx } from "./core";
 import { E, type Ramp4 } from "./materials";
-import { heroAura, heroLevel, isHeroLook, type Look } from "./heroes";
+import { heroAura, heroLevel, isChampionLook, isHeroLook, type Look } from "./heroes";
+import { kingAura, masterAura } from "./fx";
+import type { Element } from "@/lib/town/sim/elements";
 
 /**
  * Live effects for heroes past their ladder's threshold, drawn each frame
@@ -51,8 +53,11 @@ function embers(c: Ctx, x: number, feet: number, t: number, seed: number, ramp: 
  * Draws a hero's effect. `x` is the sprite's centre, `top` its top edge and
  * `feet` the ground line, in world pixels.
  */
-export function heroEffect(c: Ctx, look: Look, x: number, top: number, feet: number, t: number, seed: number) {
-  if (isHeroLook(look)) {
+export function heroEffect(c: Ctx, look: Look, x: number, top: number, feet: number, t: number, seed: number, element: Element | null = null) {
+  if (look === "champion-king") kingAura(c, x, top, feet, t, seed, element);
+  else if (look === "champion-master") masterAura(c, x, top, feet, t, seed, element);
+  else if (look === "seer") orbit(c, x, top + 3, t, seed, E.SAND, 2);
+  else if (isHeroLook(look)) {
     const lv = heroLevel(look);
     if (look.startsWith("hero-wizard")) orbit(c, x, top + 5, t, seed, heroAura(look), 3 + Math.min(5, Math.floor(lv / 100)));
     else embers(c, x, feet, t, seed, heroAura(look), 5 + Math.min(6, Math.floor(lv / 25)));
@@ -61,7 +66,7 @@ export function heroEffect(c: Ctx, look: Look, x: number, top: number, feet: num
 }
 
 /** Whether a look carries a live effect. */
-export const hasAura = (look: Look) => isHeroLook(look) || look === "grandwizard" || look === "emblemknight";
+export const hasAura = (look: Look) => isHeroLook(look) || isChampionLook(look) || look === "seer" || look === "grandwizard" || look === "emblemknight";
 
 // ── Building radiance ────────────────────────────────────
 

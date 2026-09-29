@@ -3,7 +3,7 @@ import { M, E, GLOW, VOID, LIT, MID, SHADE, DEEP, sag, type Ramp4 } from "./mate
 import { masonry, halfTimber, casement, doorway, boards, cobbles } from "./textures";
 import { obliqueHouse } from "./oblique";
 import { stall, ROOF, type RoofStyle } from "./buildings";
-import { oak, pine, sprout, seedling, youngTree, snag, hemisphere, ORE_COLORS } from "./nature";
+import { oak, pine, sprout, seedling, youngTree, snag, hemisphere, ORE_COLORS, birch, maple, willow, cherry, cypress, appleTree, chestnutTree, palm, starfruitTree } from "./nature";
 
 /**
  * Art for the second wave of buildings. Same grammar as the first: oblique
@@ -119,9 +119,9 @@ export function pitfire(level = 1): HTMLCanvasElement {
 
 // ── Lights ────────────────────────────────────────────────
 
-/** A lamp on an iron post: stone foot, the post, a glazed lantern that glows. */
-export function lamppost(): HTMLCanvasElement {
-  return cached("lamppost", () => {
+/** A lamp on an iron post: stone foot, the post, a glazed lantern that glows — or, burnt dry, sits dark. */
+export function lamppost(lit = true): HTMLCanvasElement {
+  return cached(lit ? "lamppost" : "lamppost-dry", () => {
     const { cv, c } = makeCanvas(9, 22);
     px(c, 2, 18, 5, 3, M.STONE[MID]);
     px(c, 2, 18, 4, 1, M.STONE[LIT]);
@@ -132,8 +132,8 @@ export function lamppost(): HTMLCanvasElement {
     // lantern
     px(c, 2, 1, 5, 1, M.IRON[SHADE]);
     px(c, 1, 2, 7, 1, M.IRON[MID]);
-    px(c, 2, 3, 5, 4, GLOW[MID]);
-    px(c, 3, 4, 2, 2, GLOW[LIT]);
+    px(c, 2, 3, 5, 4, lit ? GLOW[MID] : M.SLATE[DEEP]);
+    px(c, 3, 4, 2, 2, lit ? GLOW[LIT] : M.SLATE[SHADE]);
     px(c, 4, 3, 1, 4, M.IRON[SHADE]);
     px(c, 2, 7, 5, 1, M.IRON[DEEP]);
     outline(cv);
@@ -423,14 +423,29 @@ export function debris(variant: number): HTMLCanvasElement {
  * nearest-neighbour shrinking a pixel-art sprite throws away half its
  * pixels at random. The crown simply rises above its one tile, as trees do.
  */
-/** A loose tree by its packed meta: look in the low three bits, stage above. */
-export function tileTree(meta: number): HTMLCanvasElement {
+/**
+ * A loose tree by its packed meta — look in the low three bits, stage above,
+ * species above that (sim/woods) — and what it shows this season: 1 in
+ * blossom, 2 bearing ripe fruit, 3 in autumn colour.
+ */
+export function tileTree(meta: number, face = 0): HTMLCanvasElement {
   const look = meta % 8;
-  switch (Math.min(4, Math.floor(meta / 8))) {
+  switch (Math.min(4, Math.floor((meta % 40) / 8))) {
     case 0: return sprout(look);
     case 1: return seedling(look);
     case 2: return youngTree(look);
     case 4: return snag(look);
+  }
+  switch (Math.floor(meta / 40)) {
+    case 1: return birch(look);
+    case 2: return maple(look % 4, face === 3);
+    case 3: return willow(look % 3);
+    case 4: return cherry(look % 4, face === 1);
+    case 5: return cypress(look % 3);
+    case 6: return appleTree(look % 4, face);
+    case 7: return chestnutTree(look % 3, face === 2);
+    case 8: return palm(look, face === 2);
+    case 9: return starfruitTree(look % 3, face === 2);
     default: return look % 3 === 0 ? oak(look % 4) : pine(look % 3);
   }
 }

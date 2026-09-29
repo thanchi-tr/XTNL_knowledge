@@ -1,4 +1,6 @@
-import type { IncomingMonster, MonsterKind, Season } from "./types";
+import type { GameState, IncomingMonster, MonsterKind, Season } from "./types";
+import type { Element } from "./elements";
+import { biomeOf, localize, native, type Biome } from "./biomes";
 
 /**
  * Every monster class: its level range, stats at level 1, and the conditions
@@ -15,6 +17,11 @@ import type { IncomingMonster, MonsterKind, Season } from "./types";
  *   - Liches never come alone: they raise skeletons and golems as escort.
  *   - Goblins come in packs, led by a king at level 7.
  *   - Werewolves, wraiths, minotaurs and demons come only at night.
+ *
+ * Legendary things are each of an element (./elements), and so are the
+ * mythic ones: the elder dragon and the eight that came after it. A mythic
+ * thing shrugs off all but a champion's blows, bends the air when it comes
+ * (./omens), and moves in more than one pose.
  */
 
 export interface MonsterDef {
@@ -32,12 +39,18 @@ export interface MonsterDef {
   speed: number;
   flying?: boolean;
   legendary?: boolean;
+  /** Mythic: only champions' blows land full on it (./combat). Mythic things are legendary too. */
+  mythic?: boolean;
+  /** Legendary and mythic things: the element of their hide and their blows. */
+  element?: Element;
   night?: boolean;
   seasons?: Season[];
   /** How many come together. */
   pack?: [number, number];
   /** Relative frequency among the eligible. */
   weight: number;
+  /** Tunnels under the ground: walls do not stop it (./combat). */
+  burrows?: boolean;
   blurb: string;
 }
 
@@ -52,13 +65,13 @@ export const MONSTERS: Record<MonsterKind, MonsterDef> = {
   wraith: { kind: "wraith", name: "Barrow Wraith", min: 4, max: 12, hp: 120, dmg: 16, interval: 1.2, range: 1.2, speed: 1.2, flying: true, night: true, weight: 5, blurb: "Drifts over walls by night." },
   minotaur: { kind: "minotaur", name: "Minotaur", min: 7, max: 20, hp: 320, dmg: 30, interval: 1.4, range: 1.2, speed: 1.2, night: true, weight: 4, blurb: "A night charger that tramples walls." },
   troll: { kind: "troll", name: "Bridge Troll", min: 7, max: 16, hp: 420, dmg: 28, interval: 1.6, range: 1.2, speed: 0.9, weight: 4, blurb: "Heals nothing, fears nothing, hits very hard." },
-  lich: { kind: "lich", name: "Lich", min: 11, max: 16, hp: 380, dmg: 34, interval: 1.8, range: 4, speed: 0.9, legendary: true, weight: 2, blurb: "Comes with an escort of the dead and of stone." },
+  lich: { kind: "lich", name: "Lich", min: 11, max: 16, hp: 380, dmg: 34, interval: 1.8, range: 4, speed: 0.9, legendary: true, element: "dark", weight: 2, blurb: "Comes with an escort of the dead and of stone." },
   golem: { kind: "golem", name: "Golem", min: 8, max: 22, hp: 600, dmg: 26, interval: 2, range: 1.2, speed: 0.6, weight: 3, blurb: "Past level 15 its runes wake: a rune golem." },
-  wyvern: { kind: "wyvern", name: "Wyvern", min: 22, max: 30, hp: 900, dmg: 60, interval: 1.4, range: 2, speed: 1.8, flying: true, legendary: true, weight: 2, blurb: "Kill too many, and something larger notices." },
-  serpent: { kind: "serpent", name: "Deep Serpent", min: 30, max: 38, hp: 1500, dmg: 80, interval: 1.6, range: 2, speed: 1, legendary: true, weight: 1.5, blurb: "Rises from the river." },
-  demon: { kind: "demon", name: "Pit Demon", min: 35, max: 120, hp: 2000, dmg: 110, interval: 1.3, range: 1.5, speed: 1.4, flying: true, legendary: true, night: true, weight: 1, blurb: "Drawn only to towns of more than 120 souls." },
-  dragon: { kind: "dragon", name: "Dragon", min: 40, max: 80, hp: 3500, dmg: 160, interval: 1.6, range: 3, speed: 1.6, flying: true, legendary: true, weight: 0, blurb: "Comes when too many wyverns have died too quickly." },
-  elderdragon: { kind: "elderdragon", name: "Elder Dragon", min: 100, max: 1000, hp: 12000, dmg: 420, interval: 1.8, range: 4, speed: 1.5, flying: true, legendary: true, weight: 0, blurb: "Comes only after dragons have fallen." },
+  wyvern: { kind: "wyvern", name: "Wyvern", min: 22, max: 30, hp: 900, dmg: 60, interval: 1.4, range: 2, speed: 1.8, flying: true, legendary: true, element: "thunder", weight: 2, blurb: "A storm-drake. Kill too many, and something larger notices." },
+  serpent: { kind: "serpent", name: "Deep Serpent", min: 30, max: 38, hp: 1500, dmg: 80, interval: 1.6, range: 2, speed: 1, legendary: true, element: "water", weight: 1.5, blurb: "Rises from the river." },
+  demon: { kind: "demon", name: "Pit Demon", min: 35, max: 120, hp: 2000, dmg: 110, interval: 1.3, range: 1.5, speed: 1.4, flying: true, legendary: true, element: "fire", night: true, weight: 1, blurb: "Drawn only to towns of more than 120 souls." },
+  dragon: { kind: "dragon", name: "Dragon", min: 40, max: 80, hp: 3500, dmg: 160, interval: 1.6, range: 3, speed: 1.6, flying: true, legendary: true, element: "fire", weight: 0, blurb: "Comes when too many wyverns have died too quickly." },
+  elderdragon: { kind: "elderdragon", name: "Elder Dragon", min: 100, max: 1000, hp: 12000, dmg: 420, interval: 1.8, range: 4, speed: 1.5, flying: true, legendary: true, mythic: true, element: "time", weight: 0, blurb: "Older than the hills, and it comes only after dragons have fallen. Only a champion's blows reach it." },
   // ── Additional classes ──
   harpy: { kind: "harpy", name: "Harpy", min: 6, max: 14, hp: 110, dmg: 14, interval: 0.9, range: 1, speed: 2.4, flying: true, weight: 4, pack: [2, 4], blurb: "Screaming raiders from the cliffs." },
   ogre: { kind: "ogre", name: "Ogre", min: 10, max: 24, hp: 520, dmg: 36, interval: 1.7, range: 1.3, speed: 0.9, weight: 3, blurb: "Big, slow, and entirely interested in your granary." },
@@ -72,7 +85,7 @@ export const MONSTERS: Record<MonsterKind, MonsterDef> = {
   gargoyle: { kind: "gargoyle", name: "Gargoyle", min: 8, max: 20, hp: 300, dmg: 22, interval: 1.3, range: 1, speed: 1.6, flying: true, weight: 3, blurb: "A roof-spout come alive: stone wings, stone claws." },
   cyclops: { kind: "cyclops", name: "Cyclops", min: 15, max: 32, hp: 1000, dmg: 60, interval: 2, range: 1.4, speed: 0.8, weight: 2, blurb: "One eye, one club, no mercy. Walls fold under it." },
   vampire: { kind: "vampire", name: "Vampire", min: 12, max: 30, hp: 420, dmg: 34, interval: 1, range: 1.2, speed: 2, night: true, weight: 2, blurb: "Old blood in an old cloak. Firelight galls it." },
-  hydra: { kind: "hydra", name: "Hydra", min: 25, max: 50, hp: 2200, dmg: 70, interval: 1.2, range: 2, speed: 0.8, legendary: true, seasons: ["summer", "autumn"], weight: 1, blurb: "Five heads from the marsh; strikes with all of them." },
+  hydra: { kind: "hydra", name: "Hydra", min: 25, max: 50, hp: 2200, dmg: 70, interval: 1.2, range: 2, speed: 0.8, legendary: true, element: "earth", seasons: ["summer", "autumn"], weight: 1, blurb: "Five heads from the marsh mud; strikes with all of them." },
   griffin: { kind: "griffin", name: "Griffin", min: 16, max: 30, hp: 600, dmg: 40, interval: 1.1, range: 1.2, speed: 2.4, flying: true, weight: 2, blurb: "Eagle before, lion behind, and it takes livestock." },
   wisp: { kind: "wisp", name: "Will-o'-the-wisp", min: 2, max: 10, hp: 40, dmg: 8, interval: 1, range: 3, speed: 1.8, flying: true, night: true, pack: [3, 6], weight: 5, blurb: "A marsh-light spirit that leads the lost astray, and burns." },
   wendigo: { kind: "wendigo", name: "Wendigo", min: 14, max: 30, hp: 700, dmg: 45, interval: 1.1, range: 1.2, speed: 2, night: true, seasons: ["winter"], weight: 3, blurb: "The hunger spirit of the frozen woods: antlers and bone." },
@@ -81,13 +94,44 @@ export const MONSTERS: Record<MonsterKind, MonsterDef> = {
   kappa: { kind: "kappa", name: "Kappa", min: 4, max: 14, hp: 140, dmg: 14, interval: 1, range: 1, speed: 1.3, seasons: ["spring", "summer"], pack: [2, 3], weight: 4, blurb: "A river imp with a shell and a water-dish crown. Keep off the banks." },
   tengu: { kind: "tengu", name: "Tengu", min: 9, max: 22, hp: 240, dmg: 24, interval: 0.9, range: 1.2, speed: 2.4, flying: true, weight: 3, blurb: "A long-nosed mountain spirit, a swordsman on wings." },
   jiangshi: { kind: "jiangshi", name: "Jiangshi", min: 5, max: 16, hp: 200, dmg: 18, interval: 1.2, range: 1, speed: 1.1, night: true, pack: [2, 4], weight: 4, blurb: "A stiff, hopping corpse in court robes, a talisman on its brow." },
-  kitsune: { kind: "kitsune", name: "Nine-tailed Fox", min: 18, max: 40, hp: 800, dmg: 50, interval: 1, range: 3, speed: 2.2, night: true, legendary: true, weight: 2, blurb: "A fox spirit of nine tails, trailing foxfire." },
+  kitsune: { kind: "kitsune", name: "Nine-tailed Fox", min: 18, max: 40, hp: 800, dmg: 50, interval: 1, range: 3, speed: 2.2, night: true, legendary: true, element: "light", weight: 2, blurb: "A fox spirit of nine tails, trailing foxfire." },
   yurei: { kind: "yurei", name: "Yūrei", min: 6, max: 18, hp: 130, dmg: 20, interval: 1.3, range: 2.5, speed: 1.3, flying: true, night: true, weight: 4, blurb: "A grieving ghost in white burial robes. It has no feet." },
-  gashadokuro: { kind: "gashadokuro", name: "Gashadokuro", min: 30, max: 60, hp: 3000, dmg: 120, interval: 2.2, range: 2, speed: 0.7, night: true, legendary: true, weight: 1, blurb: "A giant skeleton made of the bones of the starved." },
+  gashadokuro: { kind: "gashadokuro", name: "Gashadokuro", min: 30, max: 60, hp: 3000, dmg: 120, interval: 2.2, range: 2, speed: 0.7, night: true, legendary: true, element: "dark", weight: 1, blurb: "A giant skeleton made of the bones of the starved." },
   jorogumo: { kind: "jorogumo", name: "Jorōgumo", min: 10, max: 24, hp: 380, dmg: 30, interval: 1.1, range: 1.2, speed: 1.6, night: true, weight: 3, blurb: "A spider that wears a woman's face." },
-  nian: { kind: "nian", name: "Nian", min: 20, max: 40, hp: 1400, dmg: 65, interval: 1.6, range: 1.4, speed: 1.4, legendary: true, seasons: ["winter", "spring"], weight: 2, blurb: "The year-beast of the new year. It fears red and fire." },
+  nian: { kind: "nian", name: "Nian", min: 20, max: 40, hp: 1400, dmg: 65, interval: 1.6, range: 1.4, speed: 1.4, legendary: true, element: "air", seasons: ["winter", "spring"], weight: 2, blurb: "The year-beast of the new year, riding the winter wind. It fears red and fire." },
   basilisk: { kind: "basilisk", name: "Basilisk", min: 14, max: 26, hp: 700, dmg: 40, interval: 1.5, range: 1.5, speed: 1, weight: 2, blurb: "Its gaze turns troops to stone for a moment." },
+  // The mythic: out of the deepest gates, and only for the strongest towns.
+  phoenix: { kind: "phoenix", name: "Phoenix", min: 60, max: 400, hp: 4000, dmg: 260, interval: 1.4, range: 4, speed: 2.4, flying: true, legendary: true, mythic: true, element: "fire", weight: 0, blurb: "Burns, falls, and rises from its ashes once before it stays down." },
+  leviathan: { kind: "leviathan", name: "Leviathan", min: 70, max: 400, hp: 9000, dmg: 300, interval: 2, range: 3, speed: 1, legendary: true, mythic: true, element: "water", weight: 0, blurb: "The river's own monster. Where it passes, the banks drown." },
+  behemoth: { kind: "behemoth", name: "Behemoth", min: 70, max: 400, hp: 11000, dmg: 280, interval: 2.2, range: 1.8, speed: 0.8, legendary: true, mythic: true, element: "earth", weight: 0, blurb: "The earth, walking. Walls are pebbles to it." },
+  stormroc: { kind: "stormroc", name: "Storm Roc", min: 60, max: 400, hp: 5000, dmg: 240, interval: 1.2, range: 2, speed: 2.8, flying: true, legendary: true, mythic: true, element: "air", weight: 0, blurb: "A bird the size of the hall; its wingbeat is a gale." },
+  raiju: { kind: "raiju", name: "Raiju", min: 60, max: 400, hp: 4500, dmg: 280, interval: 0.9, range: 2.5, speed: 2.6, legendary: true, mythic: true, element: "thunder", weight: 0, blurb: "The thunder-beast: a wolf of lightning that leaps from roof to roof." },
+  seraph: { kind: "seraph", name: "Seraph", min: 80, max: 400, hp: 6000, dmg: 320, interval: 1.3, range: 5, speed: 2, flying: true, legendary: true, mythic: true, element: "light", weight: 0, blurb: "Six burning wings. It judges, and it is not merciful." },
+  shadowcolossus: { kind: "shadowcolossus", name: "Shadow Colossus", min: 80, max: 400, hp: 12000, dmg: 340, interval: 2.4, range: 2, speed: 0.7, night: true, legendary: true, mythic: true, element: "dark", weight: 0, blurb: "A giant of darkness that blots out the stars as it comes." },
+  voidwalker: { kind: "voidwalker", name: "Void Walker", min: 90, max: 400, hp: 7000, dmg: 360, interval: 1.5, range: 3, speed: 1.8, legendary: true, mythic: true, element: "space", weight: 0, blurb: "It steps between places. Where it walks, space tears." },
+  // ── The desert's own (./biomes) ──
+  scorpion: { kind: "scorpion", name: "Giant Scorpion", min: 1, max: 6, hp: 34, dmg: 5, interval: 1.1, range: 1, speed: 1.3, weight: 10, pack: [2, 4], blurb: "Armoured, patient, and quick with the tail. They come out of the dunes in twos and threes." },
+  jackal: { kind: "jackal", name: "Jackal Pack", min: 1, max: 5, hp: 26, dmg: 4, interval: 0.8, range: 0.9, speed: 2.1, weight: 9, pack: [3, 5], blurb: "Lean dogs of the sand that run the stragglers down." },
+  mummy: { kind: "mummy", name: "Mummy", min: 5, max: 14, hp: 190, dmg: 17, interval: 1.3, range: 1, speed: 0.9, night: true, weight: 5, pack: [1, 3], blurb: "Wrapped dead out of the old tombs, walking by moonlight. Fire takes them well." },
+  sandworm: { kind: "sandworm", name: "Sandworm", min: 12, max: 30, hp: 800, dmg: 46, interval: 1.8, range: 1.6, speed: 1.1, weight: 3, burrows: true, blurb: "It swims under the dunes and rises inside the walls." },
+  djinn: { kind: "djinn", name: "Djinn", min: 22, max: 45, hp: 1300, dmg: 70, interval: 1.2, range: 3.5, speed: 2, flying: true, legendary: true, element: "air", weight: 1.5, blurb: "A spirit of smokeless fire and wind, bound to no lamp now." },
+  sphinx: { kind: "sphinx", name: "Sphinx", min: 28, max: 55, hp: 2400, dmg: 90, interval: 1.6, range: 2, speed: 1.3, legendary: true, element: "light", weight: 1, blurb: "The riddler of the sands: a lion's body and stone patience. It has never needed to ask twice." },
+  // ── The floating isles' own ──
+  pixie: { kind: "pixie", name: "Pixie Swarm", min: 1, max: 4, hp: 16, dmg: 3, interval: 0.7, range: 1.5, speed: 2.4, flying: true, weight: 9, pack: [3, 6], blurb: "Bright, mean little things that nip and scatter. Archers make short work of them." },
+  skyray: { kind: "skyray", name: "Sky Ray", min: 2, max: 8, hp: 60, dmg: 8, interval: 1, range: 1, speed: 2, flying: true, weight: 7, pack: [2, 3], blurb: "A manta of the open air, gliding in low with a barbed tail." },
+  cloudjelly: { kind: "cloudjelly", name: "Cloud Jelly", min: 1, max: 5, hp: 44, dmg: 4, interval: 1.4, range: 1.2, speed: 0.7, flying: true, weight: 8, pack: [1, 3], blurb: "A drifting jelly of mist, trailing stinging threads." },
+  thunderbird: { kind: "thunderbird", name: "Thunderbird", min: 10, max: 24, hp: 360, dmg: 30, interval: 1, range: 2.5, speed: 2.4, flying: true, weight: 3, blurb: "Its wingbeat is thunder; its eyes throw lightning at whatever it hunts." },
+  stormgiant: { kind: "stormgiant", name: "Storm Giant", min: 18, max: 36, hp: 1150, dmg: 68, interval: 1.9, range: 1.6, speed: 0.9, weight: 2, burrows: true, blurb: "A giant who walks the cloud-roads between islands. It steps over walls." },
+  skyserpent: { kind: "skyserpent", name: "Sky Serpent", min: 28, max: 55, hp: 2200, dmg: 85, interval: 1.3, range: 2.5, speed: 2.2, flying: true, legendary: true, element: "thunder", weight: 1, blurb: "A serpent as long as the isle, coiling through the clouds on the storm." },
 };
+
+/** Monster kinds, and their tiers. */
+export const MONSTER_KINDS = Object.keys(MONSTERS) as MonsterKind[];
+export const isMythic = (kind: MonsterKind) => !!MONSTERS[kind]?.mythic;
+export const isLegendary = (kind: MonsterKind) => !!MONSTERS[kind]?.legendary;
+export const tierOf = (kind: MonsterKind): "mythic" | "legendary" | "common" => (isMythic(kind) ? "mythic" : isLegendary(kind) ? "legendary" : "common");
+/** How many looks each kind wears: a pack is never all alike (art/variants). */
+export const VARIANTS = 3;
 
 export interface SpawnContext {
   season: Season;
@@ -98,6 +142,19 @@ export interface SpawnContext {
   avgTroopLevel: number;
   /** Kills in the recent past, by kind. */
   recentKills: (kind: MonsterKind, withinDays: number) => number;
+  /** The map (./biomes): only what belongs there comes. The green country when absent. */
+  biome?: Biome;
+  /** Each kind's habits now, on this map and in this weather (./habits): a multiplier on its weight. */
+  weightBy?: (def: MonsterDef) => number;
+}
+
+/** A kind as this map would send it: itself if it belongs here, else its local stand-in (./biomes). */
+export const localKind = (s: Pick<GameState, "biome">, kind: MonsterKind): MonsterKind => localize(biomeOf(s), kind, MONSTERS) as MonsterKind;
+
+/** A whole party made local, in place. */
+export function localizeParty(s: Pick<GameState, "biome">, party: IncomingMonster[]): IncomingMonster[] {
+  for (const p of party) p.kind = localKind(s, p.kind);
+  return party;
 }
 
 /** Stats at a level. Everything grows from its level-1 base. */
@@ -175,6 +232,7 @@ export function raidTable(ctx: SpawnContext): { def: MonsterDef; weight: number 
   return Object.values(MONSTERS)
     .filter((d) => {
       if (d.weight <= 0) return false;
+      if (!native(ctx.biome ?? "temperate", d.kind)) return false;
       if (d.night && !ctx.night) return false;
       if (d.seasons && !d.seasons.includes(ctx.season)) return false;
       if (d.kind === "demon" && ctx.villagers <= 120) return false;
@@ -182,7 +240,7 @@ export function raidTable(ctx: SpawnContext): { def: MonsterDef; weight: number 
       return d.min <= ctx.power * 0.75 + 2;
     })
     .map((def) => {
-      let w = def.weight / Math.sqrt(def.min);
+      let w = (def.weight / Math.sqrt(def.min)) * (ctx.weightBy?.(def) ?? 1);
       if (def.kind === "skeleton" && ctx.season === "autumn") w *= 5; // the skeleton army
       return { def, weight: w };
     });

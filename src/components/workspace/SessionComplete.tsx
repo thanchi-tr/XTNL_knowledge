@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "framer-motion";
+import { goodsList, goodsPlus, type RunTown } from "@/lib/town/pulse-core";
 
 interface Props {
   correct: number;
@@ -13,6 +15,8 @@ interface Props {
   /** Longest consecutive-correct run. */
   bestCombo: number;
   onDone: () => void;
+  /** What the run sends the player's town (lib/town/pulse-core runTown); null when there is no town to speak for. */
+  town?: RunTown | null;
 }
 
 /**
@@ -31,8 +35,11 @@ export function SessionComplete({
   mastered,
   bestCombo,
   onDone,
+  town = null,
 }: Props) {
   const total = correct + incorrect;
+  // Something to take to town: then the town is where the session sends you.
+  const deliver = !!town && (town.passes > 0 || town.carts.length > 0 || town.reqs.length > 0);
   const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
   const perfect = total > 0 && incorrect === 0;
 
@@ -119,9 +126,59 @@ export function SessionComplete({
         </div>
       )}
 
-      <button type="button" onClick={onDone} className="btn-primary mt-8">
-        Back to Review
-      </button>
+      {deliver && (
+        <div
+          className="mt-5 w-full max-w-sm px-3 py-2.5 text-left"
+          style={{ borderRadius: 10, background: "var(--sub)", border: "1px solid var(--line)", fontSize: 12, lineHeight: 1.55, color: "var(--ink-1)" }}
+        >
+          <p className="label-xs mb-1">For your town</p>
+          {town.passes > 0 && (
+            <p>
+              <span style={{ color: "var(--ink-0)" }}>
+                {town.approx ? "≈ " : ""}
+                {goodsPlus(town.goods)}
+              </span>{" "}
+              <span style={{ color: "var(--ink-2)" }}>
+                from {town.passes} right answer{town.passes === 1 ? "" : "s"}
+              </span>
+            </p>
+          )}
+          {town.carts.map((c) => (
+            <p key={c.field}>
+              {c.field} cleared → {c.rarity} cart ({c.streak}-day streak): {goodsList(c.goods)}
+            </p>
+          ))}
+          {town.reqs.map((r) => (
+            <p key={r.field}>
+              Requisition filled: {r.field} {r.need}/{r.need} → {goodsList(r.reward)}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {deliver ? (
+        <>
+          <Link href="/town" className="btn-primary mt-8">
+            Deliver to your town →
+          </Link>
+          <button type="button" onClick={onDone} className="btn-secondary mt-3">
+            Back to Review
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={onDone} className="btn-primary mt-8">
+            Back to Review
+          </button>
+          {/* No pulse on this device: the answers still count, and a town
+              founded here today is paid for them when it first reads. */}
+          {!town && correct > 0 && (
+            <Link href="/town" className="mt-3 no-underline" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+              Right answers send goods to a town. Found your town to receive them →
+            </Link>
+          )}
+        </>
+      )}
     </motion.div>
   );
 }
