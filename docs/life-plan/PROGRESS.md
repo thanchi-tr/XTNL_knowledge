@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T03:05+1000 — interactive session: M1 committed; starting the UI/UX redesign
+    HEARTBEAT: 2026-10-01T03:06+1000 — interactive session: redesign design workflow running (map → 3 directions with mockups → 3 judges → synthesis; ~1.5-2.5 h)
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -67,3 +67,5 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — M1 lanes A–D built; reviews found 46 issues (≈15 major); fix workflow `life-m1-fix` launched (core / UI / glue lanes).
 - 2026-10-01 — M1 fixed (49 review findings, 3 fixer lanes), verified: life:check 110 PASS, tsc, lint, next build, novelty-check, skills:stats; browser on the rehearsal server (capture → chips → toast, tick pays the projection with receipt, undo nets zero, review writes REVIEW/DOMAIN, 375/768/932/1024 px no overflow). life_core applied to Supabase (ref xvlkujmtdcpaoxdftgpl checked); the already-applied idea_difficulty migration was also marked applied; streak backfill applied (1 LEGACY_DAY, rerun inserts 0).
 - 2026-10-01 — Note: the user committed a mid-build snapshot as `a` (2f72f0d) at 02:15, before life_core existed in production; the fix commit follows.
+- 2026-10-01 — Redesign: design workflow `redesign-design` launched. Its spec and mockups will be copied to docs/life-plan/redesign.md and docs/life-plan/redesign/.
+- RESUME NOTE (redesign): the design workflow's results land in C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_62a96a5f-71d/journal.jsonl (one "result" line per agent; the last is the synthesised spec) and its HTML mockups in C:/Users/Thanc/AppData/Local/Temp/claude/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/scratchpad/redesign/. If the journal has the synthesis result, copy the spec to docs/life-plan/redesign.md and the final-*.html mockups to docs/life-plan/redesign/, then build it in lanes (foundation lane first). If not, rerun the workflow from its script: C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/workflows/scripts/redesign-design-wf_62a96a5f-71d.js (change its OUTDIR to docs/life-plan/redesign).
