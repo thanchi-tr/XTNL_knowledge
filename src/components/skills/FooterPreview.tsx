@@ -85,10 +85,10 @@ export function FooterPreview({ bench, slotCount }: Props) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+            <span className="mono t-meta" >
               {nonce} fired
             </span>
-            <button type="button" className="btn-secondary" style={{ fontSize: 11, padding: "5px 11px" }} onClick={reset}>
+            <button type="button" className="btn-secondary" style={{ fontSize: 12, padding: "5px 11px" }} onClick={reset}>
               Reset
             </button>
           </div>
@@ -105,9 +105,9 @@ export function FooterPreview({ bench, slotCount }: Props) {
                 style={{
                   padding: "5px 10px",
                   borderRadius: 8,
-                  fontSize: 10.5,
-                  border: "1px solid var(--line-hi)",
-                  background: "var(--sub)",
+                  fontSize: 12,
+                  border: "1px solid var(--line-2)",
+                  background: "var(--sunken)",
                   color: "var(--ink-1)",
                   cursor: "pointer",
                 }}
@@ -153,19 +153,19 @@ export function FooterPreview({ bench, slotCount }: Props) {
                   "--atmos-rarity": "0.8",
                   padding: "9px 10px",
                   borderRadius: 9,
-                  border: "1px solid var(--line)",
-                  background: "var(--sub)",
+                  border: "1px solid var(--line-1)",
+                  background: "var(--sunken)",
                 } as React.CSSProperties
               }
             >
-              <span className="btn-primary nav-new-idea" style={{ padding: "8px 16px", fontSize: 11 }}>
+              <span className="btn-primary nav-new-idea" style={{ padding: "8px 16px", fontSize: 12 }}>
                 New Idea
               </span>
               <span className="nav-title flex items-baseline gap-1.5" style={{ flex: 1 }}>
-                <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".04em", color: "var(--ink-1)" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", color: "var(--ink-1)" }}>
                   Novice
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+                <span className="mono t-meta" >
                   {sky.depth}
                 </span>
               </span>

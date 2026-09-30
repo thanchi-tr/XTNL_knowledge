@@ -2,32 +2,36 @@
 
 import { useState, useTransition } from "react";
 import { setFieldFocus } from "@/app/actions/focus";
-import { fieldColor } from "@/lib/palette";
 import type { FieldFocus } from "@/lib/field-focus";
+import { Switch } from "@/components/ui/Tabs";
+import "@/components/settings/settings.css";
 
 /**
- * Which subjects are getting active attention right now.
+ * Which subjects are getting active attention right now (Settings › Study).
  *
- * Framed as a per-Field toggle rather than a multi-select list, because the
- * decision is genuinely made one subject at a time — you put *this* one down
- * for a while — and because a list you have to re-confirm makes changing your
- * mind about a single Field feel like an edit to a settings page.
+ * A per-Field switch rather than a multi-select list: the decision is made one
+ * subject at a time (you put *this* one down for a while), and a list you have
+ * to re-confirm makes changing your mind about one Field feel like an edit.
  *
- * The consequence of each state is printed on the row instead of being
- * explained once at the top. Maintenance is easy to misread as "archived" or
- * "paused", and it is neither: the Ideas keep coming due exactly as before.
+ * Each row prints its consequence. Maintenance is easy to misread as
+ * "archived" or "paused", and it is neither: the Ideas keep coming due
+ * exactly as before; the Field just owes no new ideas and raises no
+ * encounters.
+ *
+ * `variant="card"` (default) is the standalone panel; `"bare"` drops the card
+ * and heading for a sheet that already has its own.
  */
 
 interface Props {
   fields: FieldFocus[];
+  variant?: "card" | "bare";
 }
 
-export function FieldFocusPanel({ fields }: Props) {
+export function FieldFocusPanel({ fields, variant = "card" }: Props) {
   const [isPending, startTransition] = useTransition();
   const [local, setLocal] = useState(fields);
   const [error, setError] = useState<string | null>(null);
-  // Reconcile when the server sends a fresh list, the same render-time
-  // adjustment the loadout bar uses rather than an effect.
+  // Reconcile when the server sends a fresh list (a render-time adjustment, not an effect).
   const [lastProps, setLastProps] = useState(fields);
   if (lastProps !== fields) {
     setLastProps(fields);
@@ -47,104 +51,60 @@ export function FieldFocusPanel({ fields }: Props) {
   }
 
   const focused = local.filter((f) => f.interested).length;
+  const level = (l: number) => {
+    const r = Math.round(l * 10) / 10;
+    return `L${Number.isInteger(r) ? r : r.toFixed(1)}`;
+  };
 
-  return (
-    <section className="card" style={{ padding: 16 }}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <p className="panel-title">Fields of interest</p>
-          <p className="panel-sub mt-0.5">
-            {focused} of {local.length} active · the rest keep reviewing, but owe nothing new
-          </p>
-        </div>
-        {isPending && (
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
-            saving…
-          </span>
-        )}
-      </div>
-
+  const body = (
+    <>
+      <p className="t-meta" aria-live="polite">
+        {focused} of {local.length} active. The rest keep reviewing, but owe nothing new.
+        {isPending ? " Saving…" : ""}
+      </p>
       {error && (
-        <p role="alert" className="mt-2" style={{ fontSize: 11, color: "var(--red)" }}>
+        <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 6 }}>
           {error}
         </p>
       )}
-
-      <ul className="mt-3 space-y-1.5">
-        {local.map((f) => {
-          const accent = fieldColor(f.fieldName);
-          return (
-            <li key={f.fieldId}>
-              <button
-                type="button"
-                onClick={() => toggle(f.fieldId, !f.interested)}
+      <ul className="foc-list" style={{ marginTop: 8 }}>
+        {local.map((f) => (
+          <li key={f.fieldId}>
+            <div className="foc-row" data-on={f.interested}>
+              <div className="n">
+                <b>{f.fieldName}</b>
+                <span>
+                  {level(f.fieldLevel)} · {f.ideaCount.toLocaleString("en-GB")} idea{f.ideaCount === 1 ? "" : "s"} ·{" "}
+                  {f.interested ? "weekly quota and encounters on" : "maintenance: reviews continue, no quota, no encounters"}
+                </span>
+              </div>
+              <Switch
+                checked={f.interested}
+                onChange={(next) => toggle(f.fieldId, next)}
                 disabled={isPending}
-                aria-pressed={f.interested}
-                className="flex w-full items-center gap-3 px-3 py-2.5 text-left"
-                style={{
-                  borderRadius: 10,
-                  cursor: "pointer",
-                  background: f.interested ? "var(--green-10)" : "var(--sub)",
-                  border: `1px solid ${f.interested ? "rgba(0,204,122,.28)" : "var(--line)"}`,
-                  opacity: f.interested ? 1 : 0.72,
-                  transition: "background .15s ease, border-color .15s ease, opacity .15s ease",
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    background: accent,
-                    flexShrink: 0,
-                    boxShadow: f.interested ? `0 0 7px ${accent}` : "none",
-                  }}
-                />
-
-                <span className="min-w-0 flex-1">
-                  <span
-                    className="block truncate"
-                    style={{ fontSize: 12.5, fontWeight: 600, color: f.interested ? "var(--ink-0)" : "var(--ink-1)" }}
-                  >
-                    {f.fieldName}
-                  </span>
-                  <span className="block" style={{ fontSize: 10, color: "var(--ink-3)", marginTop: 1 }}>
-                    {f.interested
-                      ? "Weekly quota · encounters enabled"
-                      : "Maintenance — reviews continue, no quota, no encounters"}
-                  </span>
-                </span>
-
-                <span className="mono shrink-0" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-                  L{f.fieldLevel.toFixed(1)} · {f.ideaCount}
-                </span>
-
-                <span
-                  aria-hidden
-                  className="shrink-0"
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    color: f.interested ? "var(--green)" : "var(--ink-3)",
-                  }}
-                >
-                  {f.interested ? "Active" : "Paused"}
-                </span>
-              </button>
-            </li>
-          );
-        })}
+                label={`${f.fieldName} active`}
+              />
+            </div>
+          </li>
+        ))}
       </ul>
-
       {focused === 0 && local.length > 0 && (
-        <p className="mt-2.5" style={{ fontSize: 10.5, color: "var(--amber)", lineHeight: 1.5 }}>
-          Every field is in maintenance. Reviews carry on as normal, but nothing will ask for new ideas and no
-          encounters will appear until you mark one active.
+        <p className="t-meta ink-1" style={{ marginTop: 10 }}>
+          Every field is in maintenance. Reviews carry on as normal, but nothing will ask for new ideas and no encounters will
+          appear until you switch one on.
         </p>
       )}
+    </>
+  );
+
+  if (variant === "bare") return <div>{body}</div>;
+
+  return (
+    <section className="card pad-l" aria-labelledby="foc-h">
+      <h2 id="foc-h" className="t-display-s" style={{ margin: "0 0 4px" }}>
+        Fields of interest
+      </h2>
+      {body}
     </section>
   );
 }

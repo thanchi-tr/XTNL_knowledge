@@ -4,7 +4,6 @@ import "./today.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
-  BOARD_COLUMNS,
   applyOps,
   buildBoard,
   canUndo,
@@ -15,10 +14,13 @@ import {
   type BoardData,
   type BoardOp,
   type BoardRow,
-  type BoardSection,
   type InboxChoice,
 } from "@/lib/today-board";
 import type { DailyStreak } from "@/lib/streak-curve";
+import { fullDayInputOf, fullDayOf, type FullDayRingKind } from "@/lib/full-day";
+import { isTypingTarget } from "@/lib/capture-parse";
+import { announce, chime, mark } from "@/lib/celebrate";
+import type { T1Kind } from "@/lib/celebration-types";
 import {
   againTask,
   archiveTask,
@@ -34,28 +36,48 @@ import {
   unarchiveTask,
   undoCompletion,
 } from "@/app/actions/tasks";
-import { StatTile } from "@/components/dashboard/StatTile";
-import { openCapture } from "@/components/capture/CaptureFab";
+import { openCapture } from "@/components/capture/events";
+import { Button } from "@/components/ui/Button";
+import { Icon, Sigil } from "@/components/ui/Icon";
+import { Sheet } from "@/components/ui/Sheet";
+import { dismissToast, pushToast } from "@/components/ui/toast-store";
+import { cx } from "@/components/ui/cx";
 import { TaskRow } from "./TaskRow";
 import { TaskDrawer, type DrawerWork } from "./TaskDrawer";
-import { QuestCard } from "./QuestCard";
+import { NextUp } from "./NextUp";
 import { GoalsStrip } from "./GoalsStrip";
 import { InboxSheet } from "./InboxSheet";
-import { CapacityTile } from "./CapacityTile";
-import { ReceiptPopover } from "./ReceiptPopover";
-import { UndoToast } from "./UndoToast";
+import { CapacityPanel } from "./CapacityTile";
+import { ReceiptSheet } from "./ReceiptSheet";
+import { UndoToast, focusUndoOnce } from "./UndoToast";
+import { DayLedger } from "./DayLedger";
+import { Lane } from "./Lane";
+import { AskCard } from "./AskCard";
+import { CloseDaySheet, type CloseItem } from "./CloseDaySheet";
 import { fmtXp } from "./format";
+import { holdLedger, useAfterFlight } from "./ledger-gate";
 import {
   REMOVE_UNDO_MS,
   boardDayEnded,
   capacityChosen,
+  closeDayProminent,
+  dayMomentsOf,
+  laneTally,
   mergeSkew,
+  momentText,
   nextBoardTick,
+  nextUpOf,
   receiptIdOf,
   recordByLabel,
   rowMinutes,
+  splitTodayLane,
+  todayAsksOf,
   todayLaneNote,
+  tomorrowOffer,
   upcomingOf,
+  type AskNotice,
+  type DayMoment,
+  type DaySnapshot,
 } from "./board-ui";
 
 interface Props {
@@ -63,8 +85,14 @@ interface Props {
   streak: DailyStreak;
   /** When the server rendered this board (ISO): the clock for the undo window until the next tap. */
   nowIso: string;
-  quota: { line: string; met: boolean } | null;
-  bossReady: number;
+  /** The notification feed's notices (Asks read the same feed as the bell). */
+  notices: AskNotice[];
+  /** Today's focus field line ("Statistics pays +32% today"), or null. */
+  focus: string | null;
+  /** Encounters ready, by name. */
+  bosses: string[];
+  /** The clock line under the board (LiveClock, the zone, the rules link). */
+  footer?: ReactNode;
 }
 
 interface Pending {
@@ -85,6 +113,8 @@ interface Removal {
   verb: "Archived" | "Dropped";
   title: string;
   timer: number;
+  /** When its Undo expires (Date.now clock). */
+  until: number;
 }
 
 const REFRESH = { refresh: true } as const;
@@ -100,6 +130,10 @@ const freshKey = (): string => `${nextOpId()}-${Math.random().toString(36).slice
 let clockSkew: number | null = null;
 /** Now, on the server's clock: what undo windows, cooldowns and the day edge are judged against. */
 const serverNow = (): number => Date.now() + (clockSkew ?? 0);
+/** Tier 1 moments already shown in this tab: an undo and a re-tick never chime twice. */
+const firedMoments = new Set<string>();
+/** A day moment only follows a tap made this recently (never a refresh, never arrival). */
+const MOMENT_WINDOW_MS = 4000;
 
 function without<V>(record: Record<string, V>, key: string): Record<string, V> {
   const next = { ...record };
@@ -108,25 +142,28 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
 }
 
 /**
- * The Today board: what the day asks for, in the order it is worth doing.
+ * The Today board: what the day asks for, in the order it is worth doing
+ * (redesign "Sigil & Slate": one DOM, three orders by container width).
  *
- * The board holds its own optimistic copy of the day, the LoadoutBar
- * pattern (LoadoutBar.tsx): a tick lands on the tap, every other row
- * re-prices against the new knee base straight away (the same
- * `planCompletion` the server pays with), and the view reconciles from
- * props when the action's refreshed page arrives. Pending operations that
- * the fresh props already show are dropped without a flash; a failed one
- * snaps back and says why.
+ * The board holds its own optimistic copy of the day: a tick lands on the
+ * tap, every other row re-prices against the new knee base straight away
+ * (the same `planCompletion` the server pays with), and the view reconciles
+ * from props when the action's refreshed page arrives. Pending operations
+ * that the fresh props already show are dropped without a flash; a failed
+ * one snaps back and says why.
  *
- * Archive and Drop are held for ten seconds with an Undo on screen before
- * they are sent, so taking one back costs nothing. The board keeps its own
- * clock honest without polling: one timer to the next moment something on
- * screen changes by itself (an Undo expiring, midnight, the 04:00 day edge).
+ * Archive and Drop keep an Undo on screen for ten seconds (the ToastDock,
+ * or a line inside the inbox sheet). The board keeps its own clock honest
+ * without polling: one timer to the next moment something on screen
+ * changes by itself (an Undo expiring, midnight, the 04:00 day edge).
  *
- * Deliberately no celebration: a tick fills and draws its check in under
- * 300 ms and that is all. The day is not a slot machine.
+ * Rewards are the redesign's ladder and nothing louder: a tick is Tier 0
+ * (the check draws, the "+N" token flies to the life-XP cell, the figure
+ * counts up); the first deed of the day, a closed ring, a kept Must lane
+ * and a Full day are Tier 1, once, after a tap, never on arrival. Every
+ * number is the real one.
  */
-export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footer }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<Pending[]>([]);
@@ -138,18 +175,24 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
   /** Minutes picked in the open drawer. They belong to that drawer: closing it forgets them. */
   const [drawerMinutes, setDrawerMinutes] = useState<number | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [yesterdayOpen, setYesterdayOpen] = useState(false);
+  const [capacityOpen, setCapacityOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [anytimeOpen, setAnytimeOpen] = useState(false);
   const [busyGoals, setBusyGoals] = useState(false);
   /** Resizes, self-ratings and renames in flight, by template. */
   const [working, setWorking] = useState<Record<string, DrawerWork>>({});
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [capacityBusy, setCapacityBusy] = useState(false);
+  /** Visual beats of a Tier 1 moment, cleared once they have played. */
+  const [beat, setBeat] = useState<{ glint: Set<FullDayRingKind>; full: boolean; lane: boolean } | null>(null);
   // The undo window's clock, on the server's time: its render time, then the
   // time of the last tap or timer (serverNow). Never read during render, so
   // hydration matches.
   const [clock, setClock] = useState(() => Date.parse(nowIso));
 
-  // Reconcile with fresh props during render, as LoadoutBar does: an effect
-  // would paint the stale board once, then flash to the new one.
+  // Reconcile with fresh props during render: an effect would paint the
+  // stale board once, then flash to the new one.
   const [seen, setSeen] = useState({ data, nowIso });
   if (seen.data !== data || seen.nowIso !== nowIso) {
     // A new day's board: yesterday's notices ('a new day started…') are done.
@@ -170,16 +213,32 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
   }, [nowIso]);
   /** The removal whose Undo is on screen, for its timer. Written only by handlers. */
   const removalRef = useRef<Removal | null>(null);
+  /** When the player last ticked: a day moment only follows a tap. */
+  const actedAt = useRef(0);
+
+  // Elements the Tier 1 moments light.
+  const dayTileRef = useRef<HTMLElement | null>(null);
+  const sealRef = useRef<HTMLDivElement | null>(null);
+  const fullStampRef = useRef<HTMLSpanElement | null>(null);
+  const mustRingRef = useRef<HTMLDivElement | null>(null);
+  const questRingRef = useRef<HTMLDivElement | null>(null);
+  const lifeRingRef = useRef<HTMLDivElement | null>(null);
+  const mustBodyRef = useRef<HTMLDivElement | null>(null);
 
   const ops = useMemo(() => pending.map((p) => p.op), [pending]);
   const current = useMemo(() => applyOps(data, ops), [data, ops]);
   const board = useMemo(() => buildBoard(current), [current]);
-  const quest = questOf({
-    dayOpenQty: current.ledger.today.dayOpenQty,
-    reviews: current.ledger.today.reviews,
-    dueNow: current.dueNow ?? 0,
-    reviewXp: current.ledger.today.reviewXp,
-  });
+  const quest = useMemo(
+    () =>
+      questOf({
+        dayOpenQty: current.ledger.today.dayOpenQty,
+        reviews: current.ledger.today.reviews,
+        dueNow: current.dueNow ?? 0,
+        reviewXp: current.ledger.today.reviewXp,
+      }),
+    [current]
+  );
+  const fullDay = useMemo(() => fullDayOf(fullDayInputOf(current, board, quest)), [current, board, quest]);
   // The removed row is gone from the board, so its in-flight write blocks
   // nothing else: the inbox's other items stay usable while a Drop lands.
   const removedId = removal?.opId ?? null;
@@ -287,7 +346,14 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
       if (!res.ok) dropUndo();
       return res;
     });
-    const next: Removal = { opId: op.id, templateId: row.id, verb, title: row.title, timer: window.setTimeout(dropUndo, REMOVE_UNDO_MS) };
+    const next: Removal = {
+      opId: op.id,
+      templateId: row.id,
+      verb,
+      title: row.title,
+      timer: window.setTimeout(dropUndo, REMOVE_UNDO_MS),
+      until: tapTime() + REMOVE_UNDO_MS,
+    };
     removalRef.current = next;
     setRemoval(next);
   }
@@ -309,6 +375,32 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
 
   // No timer outlives the board.
   useEffect(() => () => window.clearTimeout(removalRef.current?.timer), []);
+
+  // The Undo lives in the ToastDock while no sheet covers it (inside the
+  // inbox sheet it is a line of the sheet: the dock sits under the scrim).
+  const undoRemovalRef = useRef(undoRemoval);
+  useEffect(() => {
+    undoRemovalRef.current = undoRemoval;
+  });
+  useEffect(() => {
+    if (!removal || inboxOpen) return;
+    const id = pushToast({
+      key: "today-removal",
+      title: removal.verb,
+      body: removal.title,
+      action: { label: "Undo", onAction: () => undoRemovalRef.current() },
+      holdMs: Math.max(0, removal.until - Date.now()),
+    });
+    // The row that held focus has gone: focus moves to Undo, once per removal.
+    const t = window.setTimeout(() => {
+      const toasts = document.querySelectorAll<HTMLElement>(".dock .toast");
+      focusUndoOnce(removal.opId, toasts[toasts.length - 1]?.querySelector<HTMLElement>("button"));
+    }, 60);
+    return () => {
+      window.clearTimeout(t);
+      dismissToast(id);
+    };
+  }, [removal, inboxOpen]);
 
   // ── The board's clock ───────────────────────────────────────────────────
 
@@ -348,9 +440,24 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
     return true;
   }
 
+  // ── Tier 0: the tick's own feedback ─────────────────────────────────────
+
+  /** Marks a completion in place and flies its "+N" to the life-XP cell (or the MiniLedger). */
+  function markTick(row: BoardRow, xp: number, from: Element | null | undefined) {
+    actedAt.current = tapTime();
+    const flight = mark({
+      kind: "tick",
+      id: `tick:${row.key}:${row.slot}`,
+      text: `Kept ${row.template.title} · paid ${fmtXp(xp)} exactly`,
+      amount: xp > 0 ? { kind: "xp", value: xp } : undefined,
+      from: from ?? null,
+    });
+    if (xp > 0) holdLedger("xp", flight);
+  }
+
   // ── Writes ──────────────────────────────────────────────────────────────
 
-  function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}) {
+  function complete(row: BoardRow, opts: { minutes?: number | null; mvv?: boolean } = {}, from?: Element | null) {
     if (staleDay()) return;
     const id = nextOpId();
     // What the row said this tick would pay. The server's price is the
@@ -369,6 +476,7 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
     };
     setOpenKey(null);
     setDrawerMinutes(null);
+    markTick(row, shown.xp, from);
     dispatch(
       op,
       // The row's own day: the server books only today or yesterday by its
@@ -397,13 +505,16 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
     };
     setOpenKey(null);
     setDrawerMinutes(null);
+    markTick(row, projectRow(current, row, { minutes }).xp, null);
     dispatch(op, () => againTask(row.template.id, { minutes }, REFRESH), (v) => ({ instanceId: v.instanceId, receipt: v.receipt, slot: v.slot }));
   }
 
   function undo(row: BoardRow) {
     const instanceId = row.instanceId;
     if (!instanceId || instanceId.startsWith("opt:")) return;
+    const xp = row.paid?.xp ?? 0;
     dispatch({ id: nextOpId(), kind: "undo", instanceId }, () => undoCompletion(instanceId, REFRESH));
+    announce(`Undone. ${fmtXp(xp)} life XP taken back; nothing else changed.`);
   }
 
   function skip(row: BoardRow) {
@@ -479,6 +590,120 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
     });
   }
 
+  // ── The day: streak, Full-day rings, and its Tier 1 moments ─────────────
+
+  // The seal and the streak move with the first tick of the day, before the
+  // round trip: a day with any live completion is an active day.
+  const todayActive = streak.last7Days[streak.last7Days.length - 1] ?? false;
+  const keptToday = todayActive || board.activeToday;
+  const streakNow = streak.current + (!todayActive && board.activeToday ? 1 : 0);
+  const mustTally = laneTally(board.must);
+  const mustLaneKept = mustTally.total > 0 && mustTally.kept === mustTally.total;
+
+  const snapshot: DaySnapshot = {
+    kept: keptToday,
+    rings: { musts: fullDay.rings[0].met, quest: fullDay.rings[1].met, life: fullDay.rings[2].met },
+    full: fullDay.full,
+    mustLane: mustLaneKept,
+  };
+  const dayKey = `${keptToday}|${streakNow}|${mustLaneKept}|${fullDay.rings.map((r) => `${r.value}/${r.target}/${r.met}`).join(",")}`;
+  // Held back while a tick's token is in the air: the seal, the numeral and
+  // the rings move when it lands, not before (ledger-gate.ts).
+  const shown = useAfterFlight({ snapshot, fullDay, streakNow, mustLaneKept }, dayKey);
+
+  const prevSnapshot = useRef<DaySnapshot>(shown.snapshot);
+  const shownKey = `${shown.snapshot.kept}|${shown.snapshot.rings.musts}|${shown.snapshot.rings.quest}|${shown.snapshot.rings.life}|${shown.snapshot.full}|${shown.snapshot.mustLane}`;
+  const momentCtx = useRef({ streak: shown.streakNow, musts: mustTally.total, today: data.today });
+  useEffect(() => {
+    momentCtx.current = { streak: shown.streakNow, musts: mustTally.total, today: data.today };
+  });
+  function playMoments(moments: DayMoment[]) {
+    const ctx = momentCtx.current;
+    // One chime per tap, the loudest meaning first; the others ride along in its sentence and glints.
+    const primary: DayMoment = moments.includes("full-day")
+      ? "full-day"
+      : moments.includes("lane-kept")
+        ? "lane-kept"
+        : moments.includes("day-kept")
+          ? "day-kept"
+          : moments[0];
+    const id = `${primary}:${ctx.today}`;
+    if (firedMoments.has(id)) return;
+    firedMoments.add(id);
+
+    const glint = new Set<FullDayRingKind>();
+    if (moments.includes("ring-musts")) glint.add("musts");
+    if (moments.includes("ring-quest")) glint.add("quest");
+    if (moments.includes("ring-life")) glint.add("life");
+    setBeat({ glint, full: moments.includes("full-day"), lane: moments.includes("lane-kept") });
+    window.setTimeout(() => setBeat(null), 1000);
+
+    const say = moments
+      .filter((m) => !(m === "ring-musts" && moments.includes("lane-kept")))
+      .map((m) => momentText(m, ctx))
+      .join(" ");
+    const kind: T1Kind = primary === "full-day" ? "full-day" : primary === "lane-kept" ? "lane-kept" : primary === "day-kept" ? "day-kept" : "ring-closed";
+    const ringRef = primary === "ring-quest" ? questRingRef : primary === "ring-life" ? lifeRingRef : mustRingRef;
+    const text =
+      primary === "full-day"
+        ? "Full day"
+        : primary === "lane-kept"
+          ? `Musts kept, ${ctx.musts} of ${ctx.musts}`
+          : primary === "day-kept"
+            ? `Day ${ctx.streak} kept`
+            : primary === "ring-quest"
+              ? "Quest ring closed"
+              : "Life ring closed";
+    chime({
+      kind,
+      id,
+      text,
+      say,
+      sweepEl: primary === "lane-kept" ? mustBodyRef.current : dayTileRef.current,
+      burstEl: primary === "full-day" ? fullStampRef.current : primary === "day-kept" ? sealRef.current : ringRef.current,
+      ringEl: primary === "day-kept" ? null : primary === "full-day" ? dayTileRef.current : ringRef.current,
+    });
+  }
+
+  useEffect(() => {
+    const prev = prevSnapshot.current;
+    const next = shown.snapshot;
+    prevSnapshot.current = next;
+    // Only after a tap: never on arrival, never on a refresh or another tab's work.
+    if (Date.now() - actedAt.current > MOMENT_WINDOW_MS) return;
+    const moments = dayMomentsOf(prev, next);
+    if (moments.length === 0) return;
+    playMoments(moments);
+    // `shown` travels with its key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownKey]);
+
+  // ── R starts the review quest (the Next up card's key hint) ─────────────
+
+  const next = nextUpOf({
+    quest: {
+      reviews: quest.progress,
+      target: quest.target,
+      dueNow: quest.dueNow,
+      met: fullDay.rings[1].met,
+      cap: fullDay.rings[1].target,
+    },
+    must: board.must,
+  });
+  const questNext = next.kind === "quest";
+  useEffect(() => {
+    if (!questNext) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key.toLowerCase() !== "r" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat || e.defaultPrevented) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (isTypingTarget(target) || document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      router.push("/review");
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [questNext, router]);
+
   // ── Rows ────────────────────────────────────────────────────────────────
 
   const renderRow = (row: BoardRow) => {
@@ -496,9 +721,6 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
       !paid.undone &&
       !row.auto &&
       canUndo(new Date(paid.occurredAt), new Date(clock));
-    const receipt = row.state === "done" && paid?.receipt ? paid.receipt : projection;
-    const receiptOpen = receiptKey === key;
-    const receiptId = receiptIdOf(key);
     const w = working[row.template.id] ?? null;
 
     return (
@@ -509,28 +731,17 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
         drawerOpen={drawerOpen}
         undoable={undoable}
         busy={busy}
-        receiptOpen={receiptOpen}
-        receiptId={receiptId}
+        receiptOpen={receiptKey === key}
+        receiptId={receiptIdOf(key)}
         pendingTitle={w?.kind === "rename" ? w.title : null}
-        onTick={() => complete(row, { minutes })}
+        onTick={(from) => complete(row, { minutes }, from)}
         onUndo={() => undo(row)}
         onToggleDrawer={() => {
           setOpenKey((k) => (k === key ? null : key));
           setDrawerMinutes(null);
         }}
         onToggleReceipt={() => setReceiptKey((k) => (k === key ? null : key))}
-        onMinimum={row.lane === "must" && row.template.mvv ? () => complete(row, { mvv: true }) : undefined}
-        receipt={
-          receiptOpen ? (
-            <ReceiptPopover
-              id={receiptId}
-              receipt={receipt}
-              paid={row.state === "done" && !!paid?.receipt}
-              title={row.template.title}
-              onClose={closeReceipt}
-            />
-          ) : null
-        }
+        onMinimum={row.lane === "must" && row.template.mvv ? (from) => complete(row, { mvv: true }, from) : undefined}
       >
         <TaskDrawer
           row={row}
@@ -567,214 +778,310 @@ export function TodayBoard({ data, streak, nowIso, quota, bossReady }: Props) {
   );
   const chosenCapacity = capacityChosen(current);
   const laneNote = todayLaneNote({ templates: current.templates.length, clear: board.clear, todayRows: board.todayRows.length });
+  const { planned, habits } = splitTodayLane(board.todayRows);
+  const plannedTally = laneTally(planned);
+  const habitTally = laneTally(habits);
+  const yesterdayOpenCount = openCount(board.yesterdayRows);
+  const recordBy = recordByLabel(data.today, clock);
+  const asks = todayAsksOf({ yesterdayOpen: yesterdayOpenCount, recordBy, notices });
+  const receiptRow = receiptKey ? (lanes.find((r) => r.key === receiptKey) ?? null) : null;
+  const receiptMinutes = receiptRow ? rowMinutes(receiptRow.key, openKey, drawerMinutes) : null;
+  const receiptPaid = !!receiptRow && receiptRow.state === "done" && !!receiptRow.paid?.receipt;
+  const receipt = receiptRow
+    ? receiptPaid
+      ? receiptRow.paid!.receipt
+      : receiptMinutes != null
+        ? projectRow(current, receiptRow, { minutes: receiptMinutes })
+        : receiptRow.projection
+    : null;
 
-  // The streak tile moves with the first tick of the day, before the round
-  // trip: a day with any live completion is an active day.
-  const todayActive = streak.last7Days[streak.last7Days.length - 1] ?? false;
-  const streakNow = streak.current + (!todayActive && board.activeToday ? 1 : 0);
-  const aliveToday = todayActive || board.activeToday;
+  const streakCaption: ReactNode = keptToday ? (
+    <>
+      <b>Kept today.</b> Safe until 04:00.
+    </>
+  ) : streakNow > 0 ? (
+    "Not kept yet. Any tick or review keeps it."
+  ) : (
+    "Any tick or review starts a streak."
+  );
 
-  const sections: Record<BoardSection, ReactNode> = {
-    quest: <QuestCard key="quest" quest={quest} quota={quota} bossReady={bossReady} />,
-    must:
-      board.must.length > 0 ? (
-        <section key="must" className="card today-lane" data-lane="must" aria-labelledby="lane-must">
-          <div className="today-lane-head">
-            <h2 id="lane-must" className="panel-title today-lane-title">
-              Must
-            </h2>
-            <span className="today-lane-count">{openCount(board.must)} open</span>
-          </div>
-          <div className="today-rows">{board.must.map(renderRow)}</div>
-        </section>
-      ) : null,
-    today: (
-      <section key="today" className="card today-lane" data-lane="today" aria-labelledby="lane-today">
-        <div className="today-lane-head">
-          <h2 id="lane-today" className="panel-title">
-            Today
-          </h2>
-          <span className="today-lane-count">{openCount(board.todayRows)} open</span>
-        </div>
-        {laneNote === "first-run" ? (
-          <p className="today-empty">
-            Nothing planned yet.{" "}
-            <span className="sm:hidden">Tap the green + at the bottom left</span>
-            <span className="hidden sm:inline">
-              Press <span className="mono">c</span> or <span className="mono">+ Capture</span>
-            </span>{" "}
-            and type one line, e.g. <span className="mono">gym legs 60m every mon,thu !</span>{" "}
-            <button type="button" className="today-inline-link" onClick={() => openCapture()}>
-              Capture one now
-            </button>
-          </p>
-        ) : laneNote === "clear" ? (
-          <p className="today-empty" style={{ color: "var(--green)" }}>
-            Board clear. Anything else is extra.
-          </p>
-        ) : laneNote === "only-musts" ? (
-          <p className="today-empty">Nothing else due today. The Must list is what is left.</p>
-        ) : null}
-        {board.todayRows.length > 0 && <div className="today-rows">{board.todayRows.map(renderRow)}</div>}
-      </section>
-    ),
-    yesterday:
-      board.yesterdayRows.length > 0 ? (
-        <section key="yesterday" className="card today-lane" data-lane="yesterday">
-          <details>
-            <summary>
-              <span className="panel-title">Yesterday</span>
-              <span className="today-lane-count" style={{ marginLeft: "auto" }}>
-                {openCount(board.yesterdayRows)} open · {recordByLabel(data.today, clock)}
-              </span>
-            </summary>
-            <div className="today-rows">{board.yesterdayRows.map(renderRow)}</div>
-          </details>
-        </section>
-      ) : null,
-    goals: <GoalsStrip key="goals" goals={board.goals} busy={busyGoals} onProgress={progressGoal} />,
-    anytime:
-      board.anytime.length > 0 || board.later > 0 || upcoming.length > 0 ? (
-        <section key="anytime" className="card today-lane" data-lane="anytime">
-          <details open>
-            <summary>
-              <span className="panel-title">Anytime</span>
-              <span className="today-lane-count" style={{ marginLeft: "auto" }}>
-                {openCount(board.anytime)} open
-                {board.later > 0 ? ` · ${board.later} planned later` : ""}
-                {upcoming.length > 0 ? ` · ${upcoming.length} repeating later` : ""}
-              </span>
-            </summary>
-            {board.anytime.length > 0 && <div className="today-rows">{board.anytime.map(renderRow)}</div>}
-            {upcoming.length > 0 && (
-              <div className="today-upcoming">
-                <p className="label-xs">Coming up</p>
-                <ul>
-                  {upcoming.map((u) => (
-                    <li key={u.templateId}>
-                      <span className="today-upcoming-title">{u.title}</span>
-                      <span className="today-upcoming-day">{u.label}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </details>
-        </section>
-      ) : null,
-    inbox: (
-      <section key="inbox" className="card flex items-center justify-between gap-3" style={{ padding: "10px 14px" }}>
-        <span style={{ fontSize: 12, color: board.inbox.length > 0 ? "var(--ink-1)" : "var(--ink-3)" }}>
-          {board.inbox.length > 0 ? "Captured, not yet sorted" : "Inbox empty"}
-        </span>
-        <button
-          type="button"
-          className={`chip ${board.inbox.length > 0 ? "chip-blue" : "chip-muted"}`}
-          style={{ minHeight: 40, padding: "0 12px", cursor: "pointer" }}
-          onClick={() => setInboxOpen(true)}
-          aria-haspopup="dialog"
-        >
-          Inbox {board.inbox.length}
-        </button>
-      </section>
-    ),
+  // Close the day: what is still open, with the moves the server accepts.
+  const closeItems: CloseItem[] = [
+    ...board.must
+      .filter((r) => r.state === "open" && r.template.mvv)
+      .map<CloseItem>((r) => ({
+        key: r.key,
+        title: r.template.title,
+        meta: `Must${r.dueLabel ? ` · ${r.dueLabel}` : ""} · still open`,
+        choices: [{ id: "minimum", label: `Do the minimum · ${r.template.mvv}` }],
+      })),
+    ...planned
+      .filter((r) => r.state === "open" && tomorrowOffer(r.template, current.today).show)
+      .map<CloseItem>((r) => ({
+        key: r.key,
+        title: r.template.title,
+        meta: r.template.dueKind === "DEADLINE" ? `${r.dueLabel ?? "deadline"} · keeps its deadline` : "Planned · carries forward, never late",
+        choices: [{ id: "tomorrow", label: "Tomorrow" }],
+      })),
+  ];
+  const rowByKey = new Map(lanes.map((r) => [r.key, r]));
+  const onCloseChoice = (key: string, choice: string) => {
+    const r = rowByKey.get(key);
+    if (!r) return;
+    if (choice === "minimum") complete(r, { mvv: true });
+    else if (choice === "tomorrow") moveToTomorrow(r);
   };
+  const rollAll = () => {
+    for (const item of closeItems) if (item.choices.some((c) => c.id === "tomorrow")) onCloseChoice(item.key, "tomorrow");
+  };
+  const prominent = closeDayProminent(clock);
 
-  const undoToast = removal ? (
-    <UndoToast id={removal.opId} verb={removal.verb} title={removal.title} onUndo={undoRemoval} inline={inboxOpen} />
-  ) : null;
+  const firstRunHint = (
+    <p className="lane-note">
+      Nothing planned yet. <span className="hint-compact">Tap + in the tab bar</span>
+      <span className="hint-wide">Press c or Capture</span> and type one line, e.g. <span className="t-mono">gym legs 60m every mon,thu !</span>{" "}
+      <button type="button" className="lane-note-link" onClick={() => openCapture()}>
+        Capture one now
+      </button>
+    </p>
+  );
+  const plannedNote =
+    laneNote === "first-run" ? (
+      firstRunHint
+    ) : laneNote === "clear" && planned.length === 0 ? (
+      <p className="lane-note">Board clear. Anything else is extra.</p>
+    ) : laneNote === "only-musts" ? (
+      <p className="lane-note">Nothing else due today. The Must lane is what is left.</p>
+    ) : null;
 
   return (
-    <>
-      {dayEnded && !notice && (
-        <div role="status" className="card mb-3 flex items-start justify-between gap-3" style={{ padding: "10px 14px", borderColor: "rgba(77,156,245,0.3)" }}>
-          <span style={{ fontSize: 12.5, color: "var(--blue)" }}>A new day started at 04:00. This board is yesterday&apos;s.</span>
-          <button type="button" className="btn-ghost" style={{ minHeight: 40, padding: "0 12px" }} onClick={() => router.refresh()}>
-            Load today
-          </button>
-        </div>
-      )}
-      {notice && !error && (
-        <div role="status" className="card mb-3 flex items-start justify-between gap-3" style={{ padding: "10px 14px", borderColor: "rgba(77,156,245,0.3)" }}>
-          <span style={{ fontSize: 12.5, color: "var(--blue)" }}>{notice}</span>
-          <button type="button" className="btn-ghost" style={{ minHeight: 40, padding: "0 12px" }} onClick={() => setNotice(null)}>
-            OK
-          </button>
-        </div>
-      )}
-      {error && (
-        <div role="alert" className="card mb-3 flex items-start justify-between gap-3" style={{ padding: "10px 14px", borderColor: "rgba(240,58,87,0.3)" }}>
-          <span style={{ fontSize: 12.5, color: "var(--red)" }}>{error}</span>
-          <button type="button" className="btn-ghost" style={{ minHeight: 40, padding: "0 12px" }} onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
+    <div className="page today-board cq-main">
+      <div className="board">
+        <div className="c1">
+          {dayEnded && !notice && (
+            <div role="status" className="card today-note o1">
+              <span>A new day started at 04:00. This board is yesterday&apos;s.</span>
+              <Button variant="secondary" onClick={() => router.refresh()}>
+                Load today
+              </Button>
+            </div>
+          )}
+          {notice && !error && (
+            <div role="status" className="card today-note o1">
+              <span>{notice}</span>
+              <Button variant="quiet" onClick={() => setNotice(null)}>
+                OK
+              </Button>
+            </div>
+          )}
+          {error && (
+            <div role="alert" className="card today-note o1" data-kind="error">
+              <span>{error}</span>
+              <Button variant="quiet" onClick={() => setError(null)}>
+                Dismiss
+              </Button>
+            </div>
+          )}
 
-      <section className="fade-up fade-up-1 mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatTile
-          label="Day streak"
-          value={String(streakNow)}
-          unit={streakNow === 1 ? "day" : "days"}
-          tone={streakNow > 0 ? "green" : undefined}
-          sub={
-            board.habits.total > 0
-              ? `${board.habits.done} of ${board.habits.total} habits kept today`
-              : aliveToday
-                ? "Today counts"
-                : "Any tick or review keeps it"
-          }
-        />
-        <div className="card flex min-w-0 flex-col gap-2" style={{ padding: "18px 16px" }}>
-          <span className="label-xs">Today</span>
-          <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="mono" style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, color: board.lifeXpToday > 0 ? "var(--green)" : "var(--ink-0)" }}>
-              {fmtXp(board.lifeXpToday)}
-              <span style={{ fontSize: 10, fontWeight: 600, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}> life XP</span>
-            </span>
-            <span className="mono" style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.1, color: "var(--ink-1)" }}>
-              {fmtXp(board.reviewXpToday)}
-              <span style={{ fontSize: 10, fontWeight: 600, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}> review pts</span>
-            </span>
-          </span>
-          <span style={{ fontSize: 11, color: "var(--ink-3)", lineHeight: 1.5 }}>Two ledgers, never added together</span>
-        </div>
-        <div className="col-span-2 sm:col-span-1">
-          <CapacityTile
-            planned={board.planned}
-            capacity={board.capacity}
-            over={board.over}
-            chosen={chosenCapacity}
-            suggestion={board.suggestion}
-            today={current.today}
-            busy={board.suggestion ? busyTemplates.has(board.suggestion.template.id) : false}
-            settingBusy={capacityBusy}
-            onMove={moveToTomorrow}
-            onSetCapacity={setCapacity}
-          />
-        </div>
-      </section>
-
-      <div className="fade-up fade-up-2 grid items-start gap-3 fold:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-        {BOARD_COLUMNS.map((column, i) => (
-          <div key={i} className="grid min-w-0 gap-3">
-            {column.map((s) => sections[s])}
+          <div className="o2">
+            <DayLedger
+              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept }}
+              caption={streakCaption}
+              freezes={streak.bankedFreezes > 0 ? { banked: streak.bankedFreezes } : null}
+              fullDay={shown.fullDay}
+              settles={false}
+              glint={beat?.glint}
+              stampLanding={beat?.full}
+              xp={board.lifeXpToday}
+              pts={board.reviewXpToday}
+              planned={{ minutes: board.planned, capacity: board.capacity, chosen: chosenCapacity, over: board.over }}
+              onCapacity={() => setCapacityOpen(true)}
+              refs={{
+                tile: dayTileRef,
+                seal: sealRef,
+                fullStamp: fullStampRef,
+                rings: { musts: mustRingRef, quest: questRingRef, life: lifeRingRef },
+              }}
+            />
           </div>
-        ))}
+
+          <div className="o3">
+            <NextUp
+              next={next}
+              focus={focus}
+              bosses={bosses}
+              quota={null}
+              mustPrice={next.kind === "must" ? next.row.projection.xp : undefined}
+              busy={next.kind === "must" ? busyTemplates.has(next.row.template.id) : false}
+              onKeepMust={next.kind === "must" ? () => complete(next.row, {}, null) : undefined}
+            />
+          </div>
+
+          {asks.map((a) => (
+            <AskCard
+              key={a.id}
+              className="o4"
+              title={a.title}
+              detail={a.detail}
+              action={a.action}
+              href={a.href}
+              tone={a.tone}
+              onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
+            />
+          ))}
+        </div>
+
+        <div className="c2">
+          {board.must.length > 0 && (
+            <Lane
+              id="must"
+              title="Must"
+              must
+              kept={shown.mustLaneKept}
+              landing={beat?.lane}
+              bodyRef={mustBodyRef}
+              count={`${mustTally.kept} of ${mustTally.total} kept`}
+              className="o5"
+            >
+              {board.must.map(renderRow)}
+            </Lane>
+          )}
+          {(planned.length > 0 || habits.length === 0) && (
+            <Lane id="planned" title="Planned" count={planned.length > 0 ? `${plannedTally.kept} of ${plannedTally.total}` : undefined} className="o6" note={plannedNote}>
+              {planned.map(renderRow)}
+            </Lane>
+          )}
+          {habits.length > 0 && (
+            <Lane id="habits" title="Habits" count={`${habitTally.kept} of ${habitTally.total}`} className="o7" note={habits.length > 0 && planned.length === 0 ? plannedNote : null}>
+              {habits.map(renderRow)}
+            </Lane>
+          )}
+        </div>
+
+        <div className="c3">
+          <div className="o9">
+            <GoalsStrip goals={board.goals} busy={busyGoals} onProgress={progressGoal} />
+          </div>
+
+          <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
+            <button type="button" className="collapsed" onClick={() => setInboxOpen(true)} aria-haspopup="dialog">
+              <Icon name="inbox" className="ink-1" />
+              <b>Inbox</b>
+              <span>{board.inbox.length > 0 ? `${board.inbox.length} to sort` : "empty"}</span>
+              <Icon name="chev" size={16} className="ink-2" />
+            </button>
+            {(board.anytime.length > 0 || board.later > 0 || upcoming.length > 0) && (
+              <>
+                <button type="button" className="collapsed" aria-expanded={anytimeOpen} aria-controls="anytime-rows" onClick={() => setAnytimeOpen((o) => !o)}>
+                  <Sigil track="craft" className="ink-1" />
+                  <b>Anytime</b>
+                  <span>
+                    {openCount(board.anytime)}
+                    {board.later > 0 ? ` · ${board.later} planned later` : ""}
+                    {upcoming.length > 0 ? ` · ${upcoming.length} repeating later` : ""}
+                  </span>
+                  <Icon name="chev" size={16} className={cx("ink-2 chev", anytimeOpen && "open")} />
+                </button>
+                {anytimeOpen && (
+                  <div id="anytime-rows" className="anytime-rows">
+                    {board.anytime.map(renderRow)}
+                    {upcoming.length > 0 && (
+                      <div className="today-upcoming">
+                        <p className="t-eyebrow">Coming up</p>
+                        <ul>
+                          {upcoming.map((u) => (
+                            <li key={u.templateId}>
+                              <span className="today-upcoming-title">{u.title}</span>
+                              <span className="today-upcoming-day">{u.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="card today-close o11" data-prominent={prominent ? "1" : undefined}>
+            <button type="button" className="close-day" onClick={() => setCloseOpen(true)} aria-haspopup="dialog">
+              <span className="ic">
+                <Icon name="moon" />
+              </span>
+              <span className="close-txt">
+                <b>Close the day</b>
+                <span>{closeItems.length > 0 ? `${closeItems.length} still open: move it, or do a must's minimum.` : "Nothing left open. Rest well."}</span>
+              </span>
+              <Icon name="chev" size={16} className="ink-2" />
+            </button>
+          </section>
+
+          <div className="foot-note o11">
+            <p>Life XP and review points are two ledgers. They are never added together.</p>
+            {footer}
+          </div>
+        </div>
       </div>
 
-      {!inboxOpen && undoToast}
+      <ReceiptSheet
+        open={!!receiptRow}
+        onClose={closeReceipt}
+        id={receiptIdOf(receiptKey ?? "none")}
+        title={receiptRow?.template.title ?? "Receipt"}
+        receipt={receipt}
+        paid={receiptPaid}
+      />
 
-      {inboxOpen && (
-        <InboxSheet
-          items={board.inbox}
-          goals={goalsForInbox}
-          busy={busyTemplates.size > 0}
-          onClarify={clarify}
-          onClose={closeInbox}
-          undo={undoToast}
+      <InboxSheet
+        open={inboxOpen}
+        items={board.inbox}
+        goals={goalsForInbox}
+        busy={busyTemplates.size > 0}
+        onClarify={clarify}
+        onClose={closeInbox}
+        undo={removal && inboxOpen ? <UndoToast id={removal.opId} verb={removal.verb} title={removal.title} onUndo={undoRemoval} /> : null}
+      />
+
+      <Sheet
+        open={yesterdayOpen}
+        onClose={() => setYesterdayOpen(false)}
+        title="Record yesterday"
+        description={`Anything you tick pays at the full rate, ${recordBy}.`}
+      >
+        {board.yesterdayRows.length === 0 ? (
+          <p className="t-meta">Nothing from yesterday is left to record.</p>
+        ) : (
+          <div className="card lane-body sheet-rows">{board.yesterdayRows.map(renderRow)}</div>
+        )}
+      </Sheet>
+
+      <Sheet open={capacityOpen} onClose={() => setCapacityOpen(false)} title="Capacity" description="Planned time against the day you have.">
+        <CapacityPanel
+          planned={board.planned}
+          capacity={board.capacity}
+          over={board.over}
+          chosen={chosenCapacity}
+          suggestion={board.suggestion}
+          today={current.today}
+          busy={board.suggestion ? busyTemplates.has(board.suggestion.template.id) : false}
+          settingBusy={capacityBusy}
+          onMove={moveToTomorrow}
+          onSetCapacity={setCapacity}
         />
-      )}
-    </>
+      </Sheet>
+
+      <CloseDaySheet
+        open={closeOpen}
+        onClose={() => setCloseOpen(false)}
+        description="Optional. Move what is left, or do a must's minimum. Moving changes nothing already paid."
+        items={closeItems}
+        onChoose={onCloseChoice}
+        onRollAll={closeItems.some((i) => i.choices.some((c) => c.id === "tomorrow")) ? rollAll : undefined}
+        busy={busyTemplates.size > 0}
+        doneLabel="Done"
+        onDone={() => setCloseOpen(false)}
+      />
+    </div>
   );
 }

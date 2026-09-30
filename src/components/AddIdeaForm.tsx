@@ -1,6 +1,23 @@
 "use client";
 
-import { useRef, useState, useTransition, type FormEvent } from "react";
+/**
+ * Study › New idea, the Form template (redesign L5).
+ *
+ *   Question first (the content fields for the chosen format), then Field and
+ *   Domain, which default to a guess made from the content (field-routing.ts
+ *   on Create; "Check first" shows the guess). Advanced holds the format and
+ *   the collection, and the auto-correct switch.
+ *   A sticky bar: Check first · Create.
+ *   Checked first: Yours vs Already have with a similarity meter, the verdict
+ *   in a sentence, and the estimated payout (≈, filing decides the exact one).
+ *   Created: the exact review points it credited and today's focus, as a
+ *   banner that stays until the next submission. T0 mark; a new domain is a
+ *   T1 chime (celebrate.ts). Nothing random: every figure comes from the action.
+ *
+ * Capture keeps going: after a create the form stays, the content clears, and
+ * the Field, Domain and format carry over to the next idea.
+ */
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Attribute, CollectionLabel } from "@prisma/client";
@@ -9,23 +26,32 @@ import {
   linkIdea,
   enrichIdea,
   previewIdea,
+  suggestDistractors,
   type SubmitIdeaResult,
   type PreviewIdeaResult,
 } from "@/app/actions/ideas";
+import type { FieldBasis } from "@/lib/field-routing";
 import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
+import { ATTRIBUTE_META } from "@/lib/attributes";
+import { latexToMathjs } from "@/lib/latex";
+import { XP_BASE } from "@/lib/xp";
+import { chime, mark, signedFigure } from "@/lib/celebrate";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
-import { suggestDistractors } from "@/app/actions/ideas";
-import { ATTRIBUTE_META } from "@/lib/attributes";
-import { themeFor } from "@/lib/attribute-themes";
 import { EquationField } from "@/components/math/EquationField";
 import { AnswerExpressionField } from "@/components/math/AnswerExpressionField";
-import { latexToMathjs } from "@/lib/latex";
-import { VerdictDetail, relationChip } from "@/components/NoveltyVerdictView";
+import { VerdictCompare, VerdictDetail, relationTone } from "@/components/NoveltyVerdictView";
+import { Amount } from "@/components/ui/Amount";
+import { Button } from "@/components/ui/Button";
+import { Chip } from "@/components/ui/Chip";
+import { CurrencyGlyph, Icon } from "@/components/ui/Icon";
+import { SectionHeader, Segmented, Switch } from "@/components/ui/Tabs";
+import { approx, formatNumber } from "@/components/ui/format";
+import "@/components/library/study.css";
 
 /** What a stopped submission's buttons say, by what the verdict suggests. */
 const SUGGESTION_NOTE = {
-  discard: "Nothing here the existing card lacks — keeping it is usually right.",
+  discard: "Nothing here the existing card lacks: keeping it is usually right.",
   enrich: "Enrich folds the new detail into the existing card.",
   link: "Both deserve to exist: Link keeps yours as its own card, connected to the other.",
   merge: "",
@@ -36,129 +62,81 @@ export interface AddFormField {
   id: string;
   name: string;
   domains: { id: string; name: string }[];
-  /** Top attribute weights this Field trains — shows what a submission here actually feeds. */
+  /** Top attribute weights this Field trains: what a submission here actually feeds. */
   composition: { attribute: Attribute; weight: number }[];
 }
 
 interface Props {
   fields: AddFormField[];
-  /**
-   * The player's own words, most frequent first — see `src/lib/vocabulary.ts`.
-   * Passed down rather than fetched here so capture stays a single render
-   * with no request in the typing path.
-   */
+  /** The player's own words, most frequent first (src/lib/vocabulary.ts). */
   vocabulary: string[];
+  /** A draft carried over from quick capture (/add?draft=<id>), into the default Short fields. */
+  initialQuestion?: string;
+  initialAnswer?: string;
+  /** Today's focus Field (daily-focus.ts): new ideas there pay this multiplier. */
+  focus?: { fieldId: string; fieldName: string; multiplier: number } | null;
 }
 
-/** Glyphs already used on review cards elsewhere — same vocabulary, so a type is recognisable across screens. */
-const TYPE_META = {
-  SHORT: { glyph: "◆", label: "Short", hint: "Free text, graded on similarity", points: 10 },
-  CLOZE: { glyph: "▭", label: "Cloze", hint: "Wrap answers in {{…}} to blank them", points: 12 },
-  NUMERIC: { glyph: "#", label: "Numeric", hint: "A value, graded within a tolerance", points: 15 },
-  MULTI: { glyph: "▣", label: "Multi", hint: "Pick one option", points: 20 },
-  LIST: { glyph: "☰", label: "List", hint: "Name every item; order ignored", points: 25 },
-  ORDER: { glyph: "↕", label: "Order", hint: "Arrange the steps in sequence", points: 28 },
-  FORMULA: { glyph: "∑", label: "Formula", hint: "Proved by algebraic equivalence", points: 30 },
-} as const;
-
-// Sentinel for the Domain <select>. "" would collide with a real empty
-// value; this makes "let discovery decide" an explicit choice.
-const AUTO_DOMAIN = "__auto__";
-
-// DIAGRAM isn't offered here — authoring hotspot coordinates over an image
-// needs a real editor (upload + click-to-place), which is out of scope for
-// a first form. DIAGRAM Ideas can still be reviewed (SessionCard handles
-// them); they just can't be created through this UI yet.
+// DIAGRAM isn't offered: authoring hotspots over an image needs a real editor.
 type CreatableQuestionType = "SHORT" | "CLOZE" | "NUMERIC" | "MULTI" | "LIST" | "ORDER" | "FORMULA";
 
-// Control styling lives in globals.css (`.label-xs`, `.input`) so this form
-// and the taxonomy manager stay identical.
-const LABEL_CLASS = "label-xs mb-1.5 block";
-const FIELD_CLASS = "input";
+const TYPE_META: Record<CreatableQuestionType, { label: string; hint: string }> = {
+  SHORT: { label: "Short", hint: "Free text, graded on similarity" },
+  CLOZE: { label: "Cloze", hint: "Wrap answers in {{…}} to blank them" },
+  NUMERIC: { label: "Numeric", hint: "A value, graded within a tolerance" },
+  MULTI: { label: "Multiple choice", hint: "Pick the one right option" },
+  LIST: { label: "List", hint: "Name every item; order ignored" },
+  ORDER: { label: "Order", hint: "Arrange the steps in sequence" },
+  FORMULA: { label: "Formula", hint: "Proved by algebraic equivalence" },
+};
+const TYPES = Object.keys(TYPE_META) as CreatableQuestionType[];
 
-export function AddIdeaForm({ fields, vocabulary }: Props) {
-  /**
-   * One completer, shared by every prose field on the form.
-   *
-   * Shared rather than one per field because only one field can hold the
-   * caret at a time: the hook keys off whichever element is currently bound
-   * to its ref, so wiring it into another textarea is `{...completeBind}` and a
-   * ref, with no extra state anywhere.
-   */
-  /**
-   * Which option rows came from the model, so they can be marked as needing
-   * a read. Cleared per-row the moment the author edits it — an option they
-   * have looked at and changed is theirs, not a suggestion any more.
-   */
-  const [generatedIndices, setGeneratedIndices] = useState<Set<number>>(new Set());
-  const [distractorError, setDistractorError] = useState<string | null>(null);
-  const [distractorsPending, startDistractors] = useTransition();
+const COLLECTIONS: { value: CollectionLabel; label: string }[] = [
+  { value: "BOOK", label: "Book" },
+  { value: "ACTIONABLE", label: "Actionable" },
+  { value: "PROPOSAL", label: "Proposal" },
+];
 
-  /**
-   * Fills every option *except* the correct one, then marks them.
-   *
-   * Overwrites rather than appends: the author has usually left the other
-   * rows blank or half-written, and appending would leave those stubs in the
-   * list as free eliminations. If there are fewer than four rows it grows the
-   * list, so this always yields one right answer and three wrong ones.
-   */
-  function fillDistractors() {
-    const correct = options[correctIndex]?.trim();
-    if (!correct) return;
-    setDistractorError(null);
-    startDistractors(async () => {
-      const field = fields.find((f) => f.id === fieldId);
-      const res = await suggestDistractors({
-        correctAnswer: correct,
-        fieldName: field?.name,
-        // MULTI has no separate prompt field in this schema, so the other
-        // options are the only context there is — often enough to pin the
-        // subject when the answer alone is ambiguous.
-        prompt: options.filter((_, i) => i !== correctIndex).map((o) => o.trim()).filter(Boolean).join(" / ") || undefined,
-      });
-      if (!res.ok) {
-        setDistractorError(res.error);
-        return;
-      }
-      const wrong = [...res.distractors];
-      const filled: string[] = [];
-      const marked = new Set<number>();
-      for (let i = 0; i < Math.max(options.length, wrong.length + 1); i++) {
-        if (i === correctIndex) {
-          filled.push(correct);
-          continue;
-        }
-        const next = wrong.shift();
-        if (next === undefined) {
-          // Keep any surplus rows the author had already written.
-          filled.push(options[i] ?? "");
-          continue;
-        }
-        filled.push(next);
-        marked.add(i);
-      }
-      setOptions(filled);
-      setGeneratedIndices(marked);
-    });
-  }
+/** "" in the Field select: let routing guess from the content. */
+const AUTO_FIELD = "";
+/** The Domain select's "let discovery decide". */
+const AUTO_DOMAIN = "__auto__";
 
-  const {
-    registerField: completeRef,
-    suggestions: wordHints,
-    accept: acceptWord,
-    bind: completeBind,
-    visible: hintsVisible,
-  } = useWordComplete(vocabulary);
+const BASIS_NOTE: Record<FieldBasis, string> = {
+  SEMANTIC: "Guessed from the ideas it sits closest to.",
+  ATTRIBUTE: "Guessed from what it trains.",
+  ONLY: "Your only field.",
+  WEAK: "Nothing fitted well; this is the least bad guess. A new field may suit it better.",
+};
+
+interface CreatedInfo {
+  ideaId: string;
+  domainId: string;
+  points: number;
+  focus: { fieldName: string; multiplier: number } | null;
+  fieldName: string;
+  domainName: string;
+  newDomain: boolean;
+  /** "Distinct", "Linked", … */
+  label: string;
+  placement: string;
+  basis: FieldBasis | null;
+}
+
+export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialAnswer = "", focus = null }: Props) {
+  const ids = { q: useId(), a: useId(), field: useId(), domain: useId(), cloze: useId() };
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [isPreviewing, startPreview] = useTransition();
+  const [distractorsPending, startDistractors] = useTransition();
 
-  const [fieldId, setFieldId] = useState(fields[0]?.id ?? "");
+  const [fieldId, setFieldId] = useState<string>(AUTO_FIELD);
   const [domainId, setDomainId] = useState<string>(AUTO_DOMAIN);
   const [collectionLabel, setCollectionLabel] = useState<CollectionLabel>("BOOK");
   const [questionType, setQuestionType] = useState<CreatableQuestionType>("SHORT");
 
-  const [shortQuestion, setShortQuestion] = useState("");
-  const [shortAnswer, setShortAnswer] = useState("");
+  const [shortQuestion, setShortQuestion] = useState(initialQuestion);
+  const [shortAnswer, setShortAnswer] = useState(initialAnswer);
   const [formulaQuestion, setFormulaQuestion] = useState("");
   const [formulaAnswer, setFormulaAnswer] = useState("");
   const [clozeText, setClozeText] = useState("");
@@ -170,50 +148,69 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
   const [numericValue, setNumericValue] = useState("");
   const [numericTolerance, setNumericTolerance] = useState("0");
   const [numericUnit, setNumericUnit] = useState("");
-  const [autocorrectOn, setAutocorrectOn] = useState(true);
   const [options, setOptions] = useState(["", ""]);
   const [correctIndex, setCorrectIndex] = useState(0);
+  /** Option rows the model wrote, marked until the author edits them. */
+  const [generatedIndices, setGeneratedIndices] = useState<Set<number>>(new Set());
+  const [distractorError, setDistractorError] = useState<string | null>(null);
+  const [autocorrectOn, setAutocorrectOn] = useState(true);
 
   const [result, setResult] = useState<SubmitIdeaResult | null>(null);
   const [pendingContent, setPendingContent] = useState<IdeaContent | null>(null);
   const [addedCount, setAddedCount] = useState(0);
-  /** Transient confirmation shown above the form after a create, instead of replacing it. */
-  const [justCreated, setJustCreated] = useState<string | null>(null);
-  const formRef = useRef<HTMLFormElement | null>(null);
+  const [created, setCreated] = useState<CreatedInfo | null>(null);
   const [enrichOutcome, setEnrichOutcome] = useState<"enriched" | "no_new_information" | null>(null);
-
   const [preview, setPreview] = useState<PreviewIdeaResult | null>(null);
-  const [isPreviewing, startPreview] = useTransition();
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const selectedField = fields.find((f) => f.id === fieldId);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const createRef = useRef<HTMLButtonElement | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const badgeRef = useRef<HTMLSpanElement | null>(null);
+  const celebrated = useRef<string | null>(null);
 
-  function handlePreview() {
-    const content = buildContent();
-    if (!content || !fieldId) return;
-    setPreview(null);
-    startPreview(async () => {
-      setPreview(await previewIdea({ fieldId, content }));
-    });
-  }
+  const selectedField = fields.find((f) => f.id === fieldId) ?? null;
+  const suggestedField = !selectedField && preview?.routedField ? (fields.find((f) => f.id === preview.routedField!.fieldId) ?? null) : null;
+  const feedsField = selectedField ?? suggestedField;
 
-  /**
-   * Auto-correct is attached only to prose fields. FORMULA is excluded
-   * outright — its content is a mathjs expression where "correcting"
-   * anything is corruption — and the heuristics in `autocorrect.ts` guard
-   * the rest.
-   *
-   * A single hook is shared: it reports what it changed, and the caller
-   * passes whichever setter owns the field being edited.
-   */
+  // ── Word completion and auto-correct (one of each, shared by the prose fields) ──
+  const { registerField: completeRef, suggestions: wordHints, accept: acceptWord, bind: completeBind, visible: hintsVisible } =
+    useWordComplete(vocabulary);
   const [lastEdited, setLastEdited] = useState<(v: string) => void>(() => () => {});
   const autocorrect = useAutocorrect((next) => lastEdited(next), autocorrectOn);
 
-  /** Binds the shared hook to one field's setter. */
-  function typing(setter: (v: string) => void) {
+  /**
+   * Word completion on one field. The completer follows focus: the field that
+   * takes focus becomes the one it reads and writes, so several fields can
+   * share it without one shadowing another.
+   */
+  function complete() {
     return {
-      onKeyUp: autocorrect.onKeyUp,
-      onFocus: () => setLastEdited(() => setter),
+      ...completeBind,
+      onFocus: (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+        completeRef(e.currentTarget);
+        completeBind.onFocus();
+      },
     };
+  }
+  /** Auto-correct plus completion on one prose field. FORMULA never gets auto-correct (it would corrupt maths). */
+  function prose(setter: (v: string) => void) {
+    return {
+      ...completeBind,
+      onKeyUp: (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+        autocorrect.onKeyUp(e);
+        completeBind.onKeyUp();
+      },
+      onFocus: (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+        completeRef(e.currentTarget);
+        setLastEdited(() => setter);
+        completeBind.onFocus();
+      },
+    };
+  }
+  /** Auto-correct alone (fields without completion). */
+  function typing(setter: (v: string) => void) {
+    return { onKeyUp: autocorrect.onKeyUp, onFocus: () => setLastEdited(() => setter) };
   }
 
   function buildContent(): IdeaContent | null {
@@ -223,14 +220,11 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
     }
     if (questionType === "FORMULA") {
       if (!formulaQuestion.trim() || !formulaAnswer.trim()) return null;
-      // Normalised to mathjs on the way out: the author may have typed
-      // LaTeX, but `verifyFormula` evaluates the stored string as an
-      // expression, so LaTeX reaching the database would fail every grade.
+      // Normalised to mathjs on the way out: verifyFormula evaluates the stored string.
       return { type: "FORMULA", question: formulaQuestion.trim(), answer: latexToMathjs(formulaAnswer) };
     }
     if (questionType === "CLOZE") {
       const text = clozeText.trim();
-      // A cloze with no blanks is just a sentence — nothing to recall.
       if (!text || countClozeBlanks(text) === 0) return null;
       return { type: "CLOZE", text };
     }
@@ -248,104 +242,214 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
       const value = Number.parseFloat(numericValue);
       const tolerance = Number.parseFloat(numericTolerance || "0");
       if (!numericPrompt.trim() || !Number.isFinite(value) || !Number.isFinite(tolerance)) return null;
-      return {
-        type: "NUMERIC",
-        prompt: numericPrompt.trim(),
-        value,
-        tolerance: Math.abs(tolerance),
-        unit: numericUnit.trim() || undefined,
-      };
+      return { type: "NUMERIC", prompt: numericPrompt.trim(), value, tolerance: Math.abs(tolerance), unit: numericUnit.trim() || undefined };
     }
     const cleaned = options.map((o) => o.trim()).filter(Boolean);
     if (cleaned.length < 2 || !cleaned[correctIndex]) return null;
     return { type: "MULTI", options: cleaned, correct: cleaned[correctIndex] };
   }
+  const ready = buildContent() !== null;
+
+  function handlePreview() {
+    const content = buildContent();
+    if (!content) return;
+    setPreview(null);
+    setFormError(null);
+    startPreview(async () => {
+      try {
+        setPreview(await previewIdea({ fieldId: fieldId || undefined, content }));
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "The check didn't finish. Try again.");
+      }
+    });
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const content = buildContent();
-    if (!content || !fieldId) return;
+    if (!content) return;
     setPendingContent(content);
-    setJustCreated(null);
+    setCreated(null);
+    setFormError(null);
     startTransition(async () => {
-      const res = await submitIdea({
-        fieldId,
-        collectionLabel,
-        content,
-        domainId: domainId === AUTO_DOMAIN ? undefined : domainId,
-      });
+      let res: SubmitIdeaResult;
+      try {
+        res = await submitIdea({
+          fieldId: fieldId || undefined,
+          collectionLabel,
+          content,
+          domainId: fieldId && domainId !== AUTO_DOMAIN ? domainId : undefined,
+        });
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "Couldn't file that. Try again.");
+        return;
+      }
       if (res.status === "created") {
-        // Straight back to an empty form rather than a success screen with an
-        // "Add another" button on it. Capturing several ideas in one sitting
-        // is the normal case, and that button was a mandatory click between
-        // every one of them — while the Field, Domain and question type you
-        // had chosen are exactly what you want to keep for the next.
         setAddedCount((c) => c + 1);
         setResult(null);
         setPendingContent(null);
+        setPreview(null);
         clearContentFields();
-        // The verdict's label says what the card is to what you had; the
-        // classification says where it went.
-        setJustCreated(
-          `Created · ${res.decision.label}. ${
+        setCreated({
+          ideaId: res.ideaId,
+          domainId: res.domainId,
+          points: res.points,
+          focus: res.focus,
+          fieldName: res.fieldName,
+          domainName: res.domainName,
+          newDomain: res.classification === "NOVELTY",
+          label: res.decision.label,
+          placement:
             res.classification === "NOVELTY"
-              ? "Opened a new domain."
+              ? `Opened a new domain, ${res.domainName}, in ${res.fieldName}.`
               : res.classification === "MANUAL"
-                ? "Filed in the domain you selected."
-                : `Filed beside ${res.decision.verdict.match?.domainName ? `its neighbours in ${res.decision.verdict.match.domainName}` : "its nearest neighbours"}.`
-          }`
-        );
+                ? `Filed in ${res.domainName}, as you chose.`
+                : `Filed beside its neighbours in ${res.domainName} (${res.fieldName}).`,
+          basis: res.routedField?.basis ?? null,
+        });
         router.refresh();
-        // Focus returns to the first content field so the next idea can be
-        // typed without touching the mouse. Everything above it in the form
-        // is a <select> or a button, so the first text control in DOM order
-        // is that field whatever question type is selected.
+        // Focus returns to the first content field, so the next idea types straight in.
         requestAnimationFrame(() => {
-          formRef.current?.querySelector<HTMLElement>('textarea, input[type="text"]')?.focus();
+          formRef.current?.querySelector<HTMLElement>('[data-first-field], textarea, input[type="text"]')?.focus();
         });
       } else {
-        // Merge, enrich and duplicate all need reading and a decision, so
-        // they still take over the form.
+        // Merge and saturation need reading and a decision, so they take over the form.
         setResult(res);
       }
     });
   }
 
+  // The celebration, once per created idea: a T0 mark always; a new domain adds a T1 chime.
+  useEffect(() => {
+    if (!created || celebrated.current === created.ideaId) return;
+    celebrated.current = created.ideaId;
+    const paid = `${signedFigure(created.points)} review points`;
+    const text = `Created. ${paid}${created.focus ? `, with today's focus on ${created.focus.fieldName}` : ""}.`;
+    void mark({
+      kind: "idea-created",
+      id: `idea:${created.ideaId}`,
+      text,
+      amount: { kind: "pts", value: created.points },
+      from: createRef.current,
+      say: !created.newDomain,
+    });
+    if (created.newDomain) {
+      chime({
+        kind: "domain-created",
+        id: `domain:${created.domainId}`,
+        text: `New domain · ${created.domainName}`,
+        say: `${text} It opened a new domain, ${created.domainName}.`,
+        sweepEl: bannerRef.current,
+        burstEl: badgeRef.current,
+      });
+    }
+  }, [created]);
+
   function handleLink(existingIdeaId: string) {
     if (!pendingContent) return;
+    setFormError(null);
     startTransition(async () => {
-      await linkIdea({ content: pendingContent, collectionLabel, existingIdeaId });
-      setResult(null);
-      setPendingContent(null);
-      router.refresh();
+      try {
+        const res = await linkIdea({ content: pendingContent, collectionLabel, existingIdeaId });
+        setResult(null);
+        setPendingContent(null);
+        setPreview(null);
+        clearContentFields();
+        setAddedCount((c) => c + 1);
+        setCreated({
+          ideaId: res.ideaId,
+          domainId: res.domainId,
+          points: res.points,
+          focus: null,
+          fieldName: res.fieldName,
+          domainName: res.domainName,
+          newDomain: false,
+          label: "Linked",
+          placement: `Filed beside the card it resembles, in ${res.domainName} (${res.fieldName}), with a link between them.`,
+          basis: null,
+        });
+        router.refresh();
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "Couldn't link that. Try again.");
+      }
     });
   }
 
   function handleEnrich(targetIdeaId: string, similarity: number) {
     if (!pendingContent) return;
+    setFormError(null);
     startTransition(async () => {
-      const res = await enrichIdea({ targetIdeaId, content: pendingContent, similarity });
-      // "no_new_information" means the synthesis call found nothing the
-      // existing node doesn't already say. Surfacing that rather than
-      // silently succeeding — otherwise the user is left believing they
-      // added something they didn't.
-      setEnrichOutcome(res.status);
-      if (res.status === "enriched") {
-        setResult(null);
-        setPendingContent(null);
-        router.refresh();
+      try {
+        const res = await enrichIdea({ targetIdeaId, content: pendingContent, similarity });
+        // "no_new_information": the synthesis found nothing the node lacks. Said, not hidden.
+        setEnrichOutcome(res.status);
+        if (res.status === "enriched") {
+          setResult(null);
+          setPendingContent(null);
+          clearContentFields();
+          router.refresh();
+        }
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "Couldn't enrich that. Try again.");
       }
     });
   }
 
-  /** Content only — Field, Domain and question type deliberately survive, since the next idea is usually a sibling of the last. */
+  function fillDistractors() {
+    const correct = options[correctIndex]?.trim();
+    if (!correct) return;
+    setDistractorError(null);
+    startDistractors(async () => {
+      const field = fields.find((f) => f.id === (fieldId || preview?.fieldId));
+      const res = await suggestDistractors({
+        correctAnswer: correct,
+        fieldName: field?.name,
+        prompt: options.filter((_, i) => i !== correctIndex).map((o) => o.trim()).filter(Boolean).join(" / ") || undefined,
+      });
+      if (!res.ok) {
+        setDistractorError(res.error);
+        return;
+      }
+      // Overwrites every row but the right one, growing to four: stubs left in the list are free eliminations.
+      const wrong = [...res.distractors];
+      const filled: string[] = [];
+      const marked = new Set<number>();
+      for (let i = 0; i < Math.max(options.length, wrong.length + 1); i++) {
+        if (i === correctIndex) {
+          filled.push(correct);
+          continue;
+        }
+        const next = wrong.shift();
+        if (next === undefined) {
+          filled.push(options[i] ?? "");
+          continue;
+        }
+        filled.push(next);
+        marked.add(i);
+      }
+      setOptions(filled);
+      setGeneratedIndices(marked);
+    });
+  }
+
+  /** Content only: Field, Domain and format survive, since the next idea is usually a sibling. */
   function clearContentFields() {
     setShortQuestion("");
     setShortAnswer("");
     setFormulaQuestion("");
     setFormulaAnswer("");
+    setClozeText("");
+    setListPrompt("");
+    setListItems(["", ""]);
+    setOrderPrompt("");
+    setOrderItems(["", ""]);
+    setNumericPrompt("");
+    setNumericValue("");
+    setNumericTolerance("0");
+    setNumericUnit("");
     setOptions(["", ""]);
     setCorrectIndex(0);
+    setGeneratedIndices(new Set());
   }
 
   function reset() {
@@ -355,32 +459,40 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
     clearContentFields();
   }
 
-  // There is deliberately no `status === "created"` branch here: a plain
-  // create keeps the form on screen and reports through `justCreated`
-  // instead. See `handleSubmit`.
-  //
-  // Above the merge line the submission was folded into an existing node and
-  // no Idea was created — deliberately styled as information rather than
-  // success, since nothing new entered the knowledge base.
+  // Every Idea needs a Field: with none, the form cannot be used, so say where to make one.
+  if (fields.length === 0) {
+    return (
+      <div className="card lib-empty">
+        <p className="ink-1">You need at least one field before adding an idea.</p>
+        <Button variant="primary" href="/structure">
+          Create a field
+        </Button>
+      </div>
+    );
+  }
+
+  // Above the merge line the submission was folded into an existing node: information, not success.
   if (result?.status === "merged") {
     return (
-      <div className="card fade-up p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="chip chip-muted">Merged</span>
-          <span className={`chip ${relationChip(result.decision.relation)}`}>{result.decision.label}</span>
-          <span className="mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-            {(result.similarity * 100).toFixed(1)}% in meaning
-          </span>
-        </div>
-        <p className="mt-2.5" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-          Folded into the existing idea rather than duplicated; it gains an endorsement.
-        </p>
-        <div className="mt-2.5">
+      <div className="add-form">
+        <section className="card pad-l add-decide" aria-labelledby="add-merged-h">
+          <div className="st-row">
+            <Chip>Merged</Chip>
+            <Chip tone={relationTone(result.decision.relation)}>{result.decision.label}</Chip>
+            <span className="t-meta">{formatPercentText(result.similarity)} in meaning</span>
+          </div>
+          <h2 id="add-merged-h" className="t-display-m">
+            You already have this one
+          </h2>
+          <p className="t-meta">It was folded into the existing idea, which gains an endorsement. Nothing new was created, so nothing is paid.</p>
+          <VerdictCompare verdict={result.decision.verdict} />
           <VerdictDetail verdict={result.decision.verdict} />
-        </div>
-        <button type="button" className="btn-secondary mt-4" onClick={reset}>
-          Add another
-        </button>
+          <div className="st-row">
+            <Button variant="primary" onClick={reset}>
+              Add another
+            </Button>
+          </div>
+        </section>
       </div>
     );
   }
@@ -388,683 +500,545 @@ export function AddIdeaForm({ fields, vocabulary }: Props) {
   if (result?.status === "saturated") {
     const v = result.decision.verdict;
     return (
-      <div className="card fade-up p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`chip ${relationChip(result.decision.relation)}`}>{result.decision.label}</span>
-          <span className="mono" style={{ fontSize: 12, color: "var(--ink-1)" }}>
-            {(result.similarity * 100).toFixed(1)}% in meaning
-          </span>
-        </div>
-
-        <div className="mt-3">
+      <div className="add-form">
+        <section className="card pad-l add-decide" aria-labelledby="add-sat-h">
+          <div className="st-row">
+            <Chip tone={relationTone(result.decision.relation)}>{result.decision.label}</Chip>
+            <span className="t-meta">{formatPercentText(result.similarity)} in meaning</span>
+          </div>
+          <h2 id="add-sat-h" className="t-display-m">
+            Something close is already here
+          </h2>
+          <VerdictCompare verdict={v} />
           <VerdictDetail verdict={v} />
-        </div>
-        {SUGGESTION_NOTE[v.suggest] && (
-          <p className="mt-3" style={{ fontSize: 12, color: "var(--ink-1)" }}>
-            {SUGGESTION_NOTE[v.suggest]}
-          </p>
-        )}
-
-        <dl className="mt-3 space-y-1.5" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-          <div className="flex gap-2">
-            <dt style={{ color: "var(--ink-1)", fontWeight: 600, minWidth: 52 }}>Link</dt>
-            <dd>Keeps this as its own idea and records the connection. Earns points.</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt style={{ color: "var(--ink-1)", fontWeight: 600, minWidth: 52 }}>Enrich</dt>
+          {SUGGESTION_NOTE[v.suggest] && <p className="ink-1">{SUGGESTION_NOTE[v.suggest]}</p>}
+          <dl>
+            <dt>Link</dt>
+            <dd>Keeps yours as its own idea and records the connection. Earns review points.</dd>
+            <dt>Enrich</dt>
             <dd>Folds the new detail into the existing idea. No new idea, no points.</dd>
-          </div>
-        </dl>
-
-        {enrichOutcome === "no_new_information" && (
-          <p
-            className="mt-3 px-3 py-2"
-            style={{
-              fontSize: 12,
-              borderRadius: 10,
-              background: "var(--amber-10)",
-              border: "1px solid rgba(240,160,48,0.20)",
-              color: "var(--amber)",
-            }}
-          >
-            Nothing added — the existing idea already covers this. Try Link, or rewrite to sharpen the
-            difference.
-          </p>
-        )}
-
-        {/* The suggested resolution leads; the others stay one click away. */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {v.suggest === "discard" && (
-            <button type="button" disabled={isPending} onClick={reset} className="btn-primary">
-              Keep existing
-            </button>
+          </dl>
+          {enrichOutcome === "no_new_information" && (
+            <p className="ink-0" role="status">
+              Nothing added: the existing idea already covers this. Try Link, or rewrite to sharpen the difference.
+            </p>
           )}
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => handleLink(result.matchedIdeaId)}
-            className={v.suggest === "link" ? "btn-primary" : "btn-secondary"}
-          >
-            Link Idea
-          </button>
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => handleEnrich(result.matchedIdeaId, result.similarity)}
-            className={v.suggest === "enrich" ? "btn-primary" : "btn-secondary"}
-          >
-            {isPending ? "Working…" : "Enrich Existing"}
-          </button>
-          <button type="button" className="btn-ghost" onClick={() => setResult(null)}>
-            Rewrite
-          </button>
-        </div>
+          {formError && (
+            <p className="st-error" role="alert">
+              {formError}
+            </p>
+          )}
+          <div className="st-row">
+            {v.suggest === "discard" && (
+              <Button variant="primary" disabled={isPending} onClick={reset}>
+                Keep existing
+              </Button>
+            )}
+            <Button variant={v.suggest === "link" ? "primary" : "secondary"} disabled={isPending} onClick={() => handleLink(result.matchedIdeaId)}>
+              Link idea
+            </Button>
+            <Button
+              variant={v.suggest === "enrich" ? "primary" : "secondary"}
+              disabled={isPending}
+              onClick={() => handleEnrich(result.matchedIdeaId, result.similarity)}
+            >
+              {isPending ? "Working…" : "Enrich existing"}
+            </Button>
+            <Button variant="quiet" onClick={() => setResult(null)}>
+              Rewrite
+            </Button>
+          </div>
+        </section>
       </div>
     );
   }
 
-  // Every Idea needs a Field, and until the Taxonomy page existed there was
-  // no way to make one outside the seed script — so an empty database left
-  // this form permanently unusable with no explanation.
-  if (fields.length === 0) {
-    return (
-      <div className="card px-4 py-10 text-center">
-        <p style={{ fontSize: 13, color: "var(--ink-1)" }}>You need at least one field before adding an idea.</p>
-        <Link href="/taxonomy" className="btn-primary mt-4 inline-flex no-underline">
-          Create a Field
-        </Link>
-      </div>
-    );
-  }
+  const addRow = (setItems: (v: string[]) => void, items: string[]) => setItems([...items, ""]);
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="card space-y-5 p-5" style={{ fontSize: 13 }}>
-      {/* Sits above the form rather than replacing it, so the next idea can be
-          typed straight away. Dismissed by the next submission, not a timer —
-          it should still be readable if you paused to think. */}
-      {justCreated && (
-        <div
-          className="fade-up flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
-          style={{
-            borderRadius: 10,
-            background: "var(--green-06, rgba(0,204,122,0.06))",
-            border: "1px solid rgba(0,204,122,0.22)",
-          }}
-          role="status"
-        >
-          <span style={{ fontSize: 12, color: "var(--green)" }}>{justCreated}</span>
-          <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-            {addedCount} added this session
-          </span>
-        </div>
-      )}
+    <form ref={formRef} onSubmit={handleSubmit} className="add-form" aria-describedby="add-intro">
+      <p className="t-meta add-intro" id="add-intro">
+        Question first. Field and Domain are guessed from it unless you pick them.
+        {focus && (
+          <>
+            {" "}
+            Today&apos;s focus is {focus.fieldName}: new ideas there pay ×{formatNumber(focus.multiplier, 2)}.
+          </>
+        )}
+      </p>
 
-      <div className="grid grid-cols-2 gap-4">
-        <label className="block">
-          <span className={LABEL_CLASS}>Field</span>
-          <select
-            value={fieldId}
-            onChange={(e) => {
-              setFieldId(e.target.value);
-              // Domains are scoped to a Field, so a carried-over selection
-              // would point at a Domain the new Field doesn't own.
-              setDomainId(AUTO_DOMAIN);
-            }}
-            className={FIELD_CLASS}
-          >
-            {fields.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={LABEL_CLASS}>Collection</span>
-          <select
-            value={collectionLabel}
-            onChange={(e) => setCollectionLabel(e.target.value as CollectionLabel)}
-            className={FIELD_CLASS}
-          >
-            <option value="BOOK">Book</option>
-            <option value="ACTIONABLE">Actionable</option>
-            <option value="PROPOSAL">Proposal</option>
-          </select>
-        </label>
-      </div>
-
-      <label className="block">
-        <span className={LABEL_CLASS}>Domain</span>
-        <select value={domainId} onChange={(e) => setDomainId(e.target.value)} className={FIELD_CLASS}>
-          <option value={AUTO_DOMAIN}>Auto — discover from content</option>
-          {selectedField?.domains.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-        <span className="mt-1.5 block" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {domainId === AUTO_DOMAIN
-            ? "Routed by similarity to what this Field already contains; a new Domain is created if nothing matches."
-            : "Filed here directly. Duplicate checking still runs."}
-        </span>
-      </label>
-
-      {/* Segmented rather than a <select>: three options that each carry a
-          glyph, a payout and a one-line explanation is a choice worth
-          seeing all of at once. The point values are the real `XP_BASE`
-          figures, so the harder format visibly pays more. */}
-      <div>
-        <span className={LABEL_CLASS}>Question type</span>
-        <div className="grid grid-cols-3 gap-2">
-          {(Object.keys(TYPE_META) as CreatableQuestionType[]).map((type) => {
-            const meta = TYPE_META[type];
-            const on = questionType === type;
-            return (
-              <button
-                key={type}
-                type="button"
-                onClick={() => {
-                  setQuestionType(type);
-                  setPreview(null);
-                }}
-                className="card card-hover text-left"
-                style={{
-                  padding: "9px 11px",
-                  cursor: "pointer",
-                  borderColor: on ? "rgba(0,204,122,0.45)" : "var(--line)",
-                  background: on ? "var(--green-06)" : undefined,
-                }}
-              >
-                <div className="flex items-baseline justify-between gap-1">
-                  <span style={{ fontSize: 13, color: on ? "var(--green)" : "var(--ink-2)" }}>{meta.glyph}</span>
-                  <span className="mono" style={{ fontSize: 10, color: on ? "var(--green)" : "var(--ink-3)" }}>
-                    {meta.points}
-                  </span>
-                </div>
-                <p style={{ fontSize: 11.5, fontWeight: 600, color: on ? "var(--ink-0)" : "var(--ink-1)", marginTop: 2 }}>
-                  {meta.label}
-                </p>
-                <p style={{ fontSize: 9.5, color: "var(--ink-3)", lineHeight: 1.35, marginTop: 1 }}>{meta.hint}</p>
-              </button>
-            );
-          })}
-        </div>
-        <span className="mt-1.5 block" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          Diagram Ideas aren&apos;t supported by this form yet — needs image/hotspot authoring.
-        </span>
-      </div>
-
-      {/* What this submission feeds. Adding an idea has always quietly moved
-          attribute scores through the Field's composition; this is the first
-          place that connection is visible at the moment of capture. */}
-      {selectedField && selectedField.composition.length > 0 && (
-        <div className="px-3 py-2.5" style={{ borderRadius: 10, background: "var(--sub)", border: "1px solid var(--line)" }}>
-          <p className="label-xs" style={{ fontSize: 9.5 }}>
-            Feeds
-          </p>
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-            {selectedField.composition.map(({ attribute, weight }) => {
-              const theme = themeFor(attribute);
-              return (
-                <span key={attribute} className="flex items-center gap-1.5" style={{ fontSize: 10.5 }}>
-                  <span
-                    style={{ width: 6, height: 6, borderRadius: 999, background: theme.color, display: "inline-block" }}
-                  />
-                  <span style={{ color: "var(--ink-1)" }}>{ATTRIBUTE_META[attribute].label}</span>
-                  <span className="mono" style={{ color: "var(--ink-3)" }}>
-                    {weight}%
-                  </span>
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {questionType === "CLOZE" && (
-        <label className="block">
-          <span className={LABEL_CLASS}>Sentence</span>
-          <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
-          <textarea
-            ref={completeRef}
-            value={clozeText}
-            onChange={(e) => setClozeText(e.target.value)}
-            {...typing(setClozeText)}
-            {...completeBind}
-            rows={3}
-            placeholder="The capital of France is {{Paris}}, founded in {{3rd century BC}}."
-            className={FIELD_CLASS}
-          />
-          {/* Live preview of exactly what the review card will show, so it
-              is obvious before saving which spans become blanks. */}
-          {clozeText.trim() && (
-            <span className="mt-2 block">
-              {countClozeBlanks(clozeText) === 0 ? (
-                <span style={{ fontSize: 11, color: "var(--amber)" }}>
-                  No blanks yet — wrap the part to recall in {"{{"}double braces{"}}"}.
-                </span>
-              ) : (
-                <>
-                  <span className="label-xs">Reviewer sees</span>
-                  <span
-                    className="mt-1 block px-3 py-2"
-                    style={{
-                      fontSize: 13,
-                      borderRadius: 8,
-                      background: "var(--sub)",
-                      border: "1px solid var(--line)",
-                      color: "var(--ink-1)",
-                    }}
-                  >
-                    {parseCloze(clozeText).blanked}
-                  </span>
-                </>
-              )}
-            </span>
-          )}
-        </label>
-      )}
-
-      {questionType === "NUMERIC" && (
-        <>
-          <label className="block">
-            <span className={LABEL_CLASS}>Question</span>
-            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
-            <textarea
-              ref={completeRef}
-              value={numericPrompt}
-              onChange={(e) => setNumericPrompt(e.target.value)}
-              {...typing(setNumericPrompt)}
-              {...completeBind}
-              rows={2}
-              placeholder="Acceleration due to gravity at sea level?"
-              className={FIELD_CLASS}
-            />
-          </label>
-          <div className="grid grid-cols-3 gap-3">
-            <label className="block">
-              <span className={LABEL_CLASS}>Value</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={numericValue}
-                onChange={(e) => setNumericValue(e.target.value)}
-                placeholder="9.81"
-                className={`${FIELD_CLASS} mono`}
+      <div className="card pad-l add-card">
+        {/* ── Content first ── */}
+        {questionType === "SHORT" && (
+          <>
+            <div>
+              <label className="st-label" htmlFor={ids.q}>
+                Question
+              </label>
+              <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+              <textarea
+                id={ids.q}
+                data-first-field
+                className="st-input"
+                rows={2}
+                value={shortQuestion}
+                onChange={(e) => setShortQuestion(e.target.value)}
+                {...prose(setShortQuestion)}
               />
-            </label>
-            <label className="block">
-              <span className={LABEL_CLASS}>Tolerance ±</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={numericTolerance}
-                onChange={(e) => setNumericTolerance(e.target.value)}
-                placeholder="0.05"
-                className={`${FIELD_CLASS} mono`}
-              />
-            </label>
-            <label className="block">
-              <span className={LABEL_CLASS}>Unit</span>
-              <input
-                type="text"
-                value={numericUnit}
-                onChange={(e) => setNumericUnit(e.target.value)}
-                placeholder="m/s²"
-                className={FIELD_CLASS}
-              />
-            </label>
-          </div>
-        </>
-      )}
-
-      {(questionType === "LIST" || questionType === "ORDER") && (
-        <>
-          <label className="block">
-            <span className={LABEL_CLASS}>Question</span>
-            <textarea
-              value={questionType === "LIST" ? listPrompt : orderPrompt}
-              onChange={(e) => (questionType === "LIST" ? setListPrompt : setOrderPrompt)(e.target.value)}
-              {...typing(questionType === "LIST" ? setListPrompt : setOrderPrompt)}
-              rows={2}
-              placeholder={
-                questionType === "LIST"
-                  ? "Name the four bases in DNA"
-                  : "Order the stages of mitosis"
-              }
-              className={FIELD_CLASS}
-            />
-          </label>
-
-          <div className="space-y-2">
-            <span className={LABEL_CLASS}>
-              {questionType === "LIST" ? "Items — order ignored when grading" : "Steps — enter in the CORRECT order"}
-            </span>
-            {(questionType === "LIST" ? listItems : orderItems).map((item, i) => {
-              const setItems = questionType === "LIST" ? setListItems : setOrderItems;
-              const items = questionType === "LIST" ? listItems : orderItems;
-              return (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="mono w-4 shrink-0 text-right" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                    {i + 1}
-                  </span>
-                  <input
-                    type="text"
-                    value={item}
-                    onChange={(e) => setItems(items.map((v, j) => (j === i ? e.target.value : v)))}
-                    className={`flex-1 ${FIELD_CLASS}`}
-                  />
-                  {items.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setItems(items.filter((_, j) => j !== i))}
-                      style={{ fontSize: 11, color: "var(--ink-2)" }}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() =>
-                questionType === "LIST"
-                  ? setListItems([...listItems, ""])
-                  : setOrderItems([...orderItems, ""])
-              }
-              style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}
-            >
-              + Add {questionType === "LIST" ? "item" : "step"}
-            </button>
-            {questionType === "ORDER" && (
-              <p style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                Stored scrambled and re-shuffled for review — the reviewer never sees this order.
-              </p>
-            )}
-          </div>
-        </>
-      )}
-
-      {questionType === "SHORT" && (
-        <>
-          <label className="block">
-            <span className={LABEL_CLASS}>Question</span>
-            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
-            <textarea
-              ref={completeRef}
-              value={shortQuestion}
-              onChange={(e) => setShortQuestion(e.target.value)}
-              {...typing(setShortQuestion)}
-              {...completeBind}
-              rows={2}
-              className={FIELD_CLASS}
-            />
-          </label>
-          <label className="block">
-            <span className={LABEL_CLASS}>Answer</span>
-            <input
-              ref={completeRef}
-              type="text"
-              value={shortAnswer}
-              onChange={(e) => setShortAnswer(e.target.value)}
-              {...completeBind}
-              className={FIELD_CLASS}
-            />
-          </label>
-        </>
-      )}
-
-      {questionType === "FORMULA" && (
-        <>
-          <label className="block">
-            <span className={LABEL_CLASS}>Prompt</span>
-            <EquationField value={formulaQuestion} onChange={setFormulaQuestion} />
-          </label>
-          <label className="mt-3 block">
-            <span className={LABEL_CLASS}>Answer expression — LaTeX or plain mathjs</span>
-            <AnswerExpressionField value={formulaAnswer} onChange={setFormulaAnswer} />
-          </label>
-        </>
-      )}
-
-      {questionType === "MULTI" && (
-        <div className="space-y-2">
-          <span className={LABEL_CLASS}>
-            Options (select the correct one) — note this schema has no separate prompt field for MULTI, only
-            the option list itself
-          </span>
-          {options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="correct-option"
-                checked={correctIndex === i}
-                onChange={() => setCorrectIndex(i)}
-                style={{ accentColor: "var(--green)" }}
-              />
-              <input
-                ref={completeRef}
-                type="text"
-                value={opt}
-                onChange={(e) => {
-                  setOptions((prev) => prev.map((o, idx) => (idx === i ? e.target.value : o)));
-                  setGeneratedIndices((prev) => {
-                    if (!prev.has(i)) return prev;
-                    const next = new Set(prev);
-                    next.delete(i);
-                    return next;
-                  });
-                }}
-                {...completeBind}
-                className={`flex-1 ${FIELD_CLASS}`}
-                data-generated={generatedIndices.has(i) ? "1" : undefined}
-                style={
-                  generatedIndices.has(i)
-                    ? { borderColor: "rgba(240,160,48,0.35)" }
-                    : undefined
-                }
-              />
-              {options.length > 2 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOptions((prev) => prev.filter((_, idx) => idx !== i));
-                    setCorrectIndex((c) => (c >= i && c > 0 ? c - 1 : c));
-                  }}
-                  style={{ fontSize: 11, color: "var(--ink-2)" }}
-                >
-                  Remove
-                </button>
-              )}
             </div>
-          ))}
-          <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+            <div>
+              <label className="st-label" htmlFor={ids.a}>
+                Answer
+              </label>
+              <textarea
+                id={ids.a}
+                className="st-input"
+                rows={3}
+                value={shortAnswer}
+                onChange={(e) => setShortAnswer(e.target.value)}
+                {...complete()}
+              />
+            </div>
+          </>
+        )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setOptions((prev) => [...prev, ""])}
-              style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}
-            >
-              + Add option
-            </button>
-
-            {/* Writing distractors is the part of multiple choice people do
-                worst, and the failure is invisible to the author: knowing the
-                answer makes it impossible to see that the other three are
-                obviously wrong. Everything it returns lands in these same
-                editable fields — nothing reaches the database unread. */}
-            <button
-              type="button"
-              onClick={fillDistractors}
-              disabled={distractorsPending || !options[correctIndex]?.trim()}
-              className="btn-secondary"
-              style={{ fontSize: 11, padding: "5px 11px" }}
-              title={
-                options[correctIndex]?.trim()
-                  ? "Generate three wrong options that look right"
-                  : "Fill in the correct option first"
-              }
-            >
-              {distractorsPending ? "Writing options…" : "Suggest 3 wrong options"}
-            </button>
-
-            {distractorError && (
-              <span style={{ fontSize: 11, color: "var(--amber)" }}>{distractorError}</span>
-            )}
-            {generatedIndices.size > 0 && !distractorError && (
-              <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                {generatedIndices.size} suggested — edit any word before submitting.
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Pre-commit check. `previewIdea` writes nothing, so a near-duplicate
-          can be found *before* submitting rather than reported afterwards. */}
-      {preview && (
-        <div
-          className="fade-up px-3 py-3"
-          style={{
-            borderRadius: 10,
-            background: preview.action === "CREATE_NEW_NODE" ? "var(--green-06)" : "var(--amber-10)",
-            border: `1px solid ${preview.action === "CREATE_NEW_NODE" ? "rgba(0,204,122,0.22)" : "rgba(240,160,48,0.24)"}`,
-          }}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="flex flex-wrap items-center gap-1.5">
-              <span className={`chip ${relationChip(preview.verdict.relation)}`}>{preview.verdict.label}</span>
-              <span style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
-                {preview.action === "CREATE_NEW_NODE"
-                  ? "will create"
-                  : preview.action === "SATURATION"
-                    ? "will stop for you to choose"
-                    : "will merge into the existing card"}
-              </span>
-            </span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-              worth {preview.projectedPoints.toFixed(1)}
-              {preview.projectedPoints < preview.basePoints && (
-                <span style={{ color: "var(--ink-3)" }}> of {preview.basePoints}</span>
-              )}
-            </span>
-          </div>
-
-          <div className="mt-2.5">
-            <VerdictDetail verdict={preview.verdict} />
-          </div>
-
-          {preview.neighbours.length > 0 ? (
-            <div className="mt-2.5 space-y-1.5">
-              {preview.neighbours.map((n) => (
-                <div key={n.id} className="flex items-center gap-2">
-                  <div className="h-1 flex-1 overflow-hidden" style={{ borderRadius: 2, background: "var(--sub)" }}>
-                    <div
-                      style={{
-                        // The model's cosine floor is ~0.52, never 0 — see the
-                        // calibration note in xp.ts — so the bar is scaled
-                        // across the range that actually occurs.
-                        width: `${Math.max(0, Math.min(1, (n.similarity - 0.5) / 0.5)) * 100}%`,
-                        height: "100%",
-                        borderRadius: 2,
-                        background: n.similarity > 0.85 ? "var(--amber)" : "var(--ink-3)",
-                      }}
-                    />
-                  </div>
-                  <span className="mono shrink-0" style={{ fontSize: 10, color: "var(--ink-2)", width: 42, textAlign: "right" }}>
-                    {(n.similarity * 100).toFixed(0)}%
-                  </span>
-                  <span className="min-w-0 flex-[2] truncate" style={{ fontSize: 10.5, color: "var(--ink-2)" }} title={n.title ?? n.id}>
-                    {n.title ?? "untitled node"}
-                  </span>
-                  {n.label && (
-                    <span className={`chip ${relationChip(n.relation!)} shrink-0`} style={{ fontSize: 9 }}>
-                      {n.label}
-                    </span>
-                  )}
+        {questionType === "CLOZE" && (
+          <div>
+            <label className="st-label" htmlFor={ids.cloze}>
+              Sentence
+            </label>
+            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+            <textarea
+              id={ids.cloze}
+              data-first-field
+              className="st-input"
+              rows={3}
+              value={clozeText}
+              onChange={(e) => setClozeText(e.target.value)}
+              {...prose(setClozeText)}
+              placeholder="The capital of France is {{Paris}}."
+            />
+            {clozeText.trim() &&
+              (countClozeBlanks(clozeText) === 0 ? (
+                <p className="st-hint">No blanks yet: wrap the part to recall in {"{{double braces}}"}.</p>
+              ) : (
+                <div className="add-preview">
+                  <span className="t-eyebrow">Reviewer sees</span>
+                  {parseCloze(clozeText).blanked}
                 </div>
               ))}
-              {preview.nSimilar > 0 && (
-                <p style={{ fontSize: 9.5, color: "var(--ink-3)", marginTop: 4 }}>
-                  {preview.nSimilar} close neighbour{preview.nSimilar === 1 ? "" : "s"} — payout decays with
-                  saturation.
-                </p>
-              )}
+          </div>
+        )}
+
+        {questionType === "NUMERIC" && (
+          <>
+            <div>
+              <label className="st-label" htmlFor={ids.q}>
+                Question
+              </label>
+              <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+              <textarea
+                id={ids.q}
+                data-first-field
+                className="st-input"
+                rows={2}
+                value={numericPrompt}
+                onChange={(e) => setNumericPrompt(e.target.value)}
+                {...prose(setNumericPrompt)}
+                placeholder="Acceleration due to gravity at sea level?"
+              />
             </div>
-          ) : (
-            <p className="mt-2" style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
-              Nothing comparable in this field yet — it will open a new domain.
+            <div className="add-three">
+              <LabelledInput label="Value" mono inputMode="decimal" value={numericValue} onChange={setNumericValue} placeholder="9.81" />
+              <LabelledInput label="Tolerance ±" mono inputMode="decimal" value={numericTolerance} onChange={setNumericTolerance} placeholder="0.05" />
+              <LabelledInput label="Unit" value={numericUnit} onChange={setNumericUnit} placeholder="m/s²" />
+            </div>
+          </>
+        )}
+
+        {(questionType === "LIST" || questionType === "ORDER") && (
+          <>
+            <div>
+              <label className="st-label" htmlFor={ids.q}>
+                Question
+              </label>
+              <textarea
+                id={ids.q}
+                data-first-field
+                className="st-input"
+                rows={2}
+                value={questionType === "LIST" ? listPrompt : orderPrompt}
+                onChange={(e) => (questionType === "LIST" ? setListPrompt : setOrderPrompt)(e.target.value)}
+                {...typing(questionType === "LIST" ? setListPrompt : setOrderPrompt)}
+                placeholder={questionType === "LIST" ? "Name the four bases in DNA" : "Order the stages of mitosis"}
+              />
+            </div>
+            <fieldset className="add-items" style={{ border: 0, margin: 0, padding: 0 }}>
+              <legend className="st-label">{questionType === "LIST" ? "Items, in any order" : "Steps, in the correct order"}</legend>
+              {(questionType === "LIST" ? listItems : orderItems).map((item, i) => {
+                const setItems = questionType === "LIST" ? setListItems : setOrderItems;
+                const items = questionType === "LIST" ? listItems : orderItems;
+                return (
+                  <div key={i} className="add-item">
+                    <span className="n" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <input
+                      type="text"
+                      className="st-input"
+                      aria-label={`${questionType === "LIST" ? "Item" : "Step"} ${i + 1}`}
+                      value={item}
+                      onChange={(e) => setItems(items.map((v, j) => (j === i ? e.target.value : v)))}
+                    />
+                    {items.length > 2 && (
+                      <Button variant="quiet" aria-label={`Remove ${questionType === "LIST" ? "item" : "step"} ${i + 1}`} onClick={() => setItems(items.filter((_, j) => j !== i))}>
+                        <Icon name="x" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="st-row">
+                <Button variant="quiet" icon="plus" onClick={() => addRow(questionType === "LIST" ? setListItems : setOrderItems, questionType === "LIST" ? listItems : orderItems)}>
+                  Add {questionType === "LIST" ? "item" : "step"}
+                </Button>
+              </div>
+              {questionType === "ORDER" && <p className="st-hint">Stored scrambled and re-shuffled for review: the reviewer never sees this order.</p>}
+            </fieldset>
+          </>
+        )}
+
+        {questionType === "FORMULA" && (
+          <>
+            <div>
+              <span className="st-label">Prompt</span>
+              <EquationField value={formulaQuestion} onChange={setFormulaQuestion} />
+            </div>
+            <div>
+              <span className="st-label">Answer expression (LaTeX or plain mathjs)</span>
+              <AnswerExpressionField value={formulaAnswer} onChange={setFormulaAnswer} />
+            </div>
+          </>
+        )}
+
+        {questionType === "MULTI" && (
+          <fieldset className="add-items" style={{ border: 0, margin: 0, padding: 0 }}>
+            <legend className="st-label">Options: mark the right one. Multiple choice has no separate prompt; the options are the card.</legend>
+            {options.map((opt, i) => (
+              <div key={i} className="add-item">
+                <label className="add-pick">
+                  <input type="radio" name="correct-option" checked={correctIndex === i} onChange={() => setCorrectIndex(i)} />
+                  <span className="sr-only">Option {i + 1} is the right one</span>
+                </label>
+                <input
+                  type="text"
+                    data-first-field={i === 0 ? true : undefined}
+                  className="st-input"
+                  aria-label={`Option ${i + 1}${correctIndex === i ? " (right)" : ""}`}
+                  value={opt}
+                  onChange={(e) => {
+                    setOptions((prev) => prev.map((o, idx) => (idx === i ? e.target.value : o)));
+                    setGeneratedIndices((prev) => {
+                      if (!prev.has(i)) return prev;
+                      const next = new Set(prev);
+                      next.delete(i);
+                      return next;
+                    });
+                  }}
+                  {...complete()}
+                  data-generated={generatedIndices.has(i) ? "1" : undefined}
+                />
+                {options.length > 2 && (
+                  <Button
+                    variant="quiet"
+                    aria-label={`Remove option ${i + 1}`}
+                    onClick={() => {
+                      setOptions((prev) => prev.filter((_, idx) => idx !== i));
+                      setCorrectIndex((c) => (c >= i && c > 0 ? c - 1 : c));
+                    }}
+                  >
+                    <Icon name="x" />
+                  </Button>
+                )}
+              </div>
+            ))}
+            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+            <div className="st-row">
+              <Button variant="quiet" icon="plus" onClick={() => setOptions((prev) => [...prev, ""])}>
+                Add option
+              </Button>
+              {/* The model is better than the author at wrong options that look right. Everything it
+                  returns lands in these editable rows (dashed until edited); nothing is written unread. */}
+              <Button
+                variant="secondary"
+                onClick={fillDistractors}
+                disabled={distractorsPending || !options[correctIndex]?.trim()}
+                title={options[correctIndex]?.trim() ? "Write three wrong options that look right" : "Fill in the right option first"}
+              >
+                {distractorsPending ? "Writing options…" : "Suggest 3 wrong options"}
+              </Button>
+            </div>
+            {distractorError && <p className="st-error">{distractorError}</p>}
+            {generatedIndices.size > 0 && !distractorError && (
+              <p className="st-hint">{generatedIndices.size} suggested (dashed): read and edit them before creating.</p>
+            )}
+          </fieldset>
+        )}
+
+        {autocorrect.recent.length > 0 && (
+          <div className="add-fixes" aria-live="polite">
+            <span className="t-meta">Corrected</span>
+            {autocorrect.recent.map((c, i) => (
+              <Chip key={`${c.from}-${i}`} title={c.kind === "typo" ? "Corrected a typo" : "Expanded shorthand"}>
+                {c.from} → {c.to}
+              </Chip>
+            ))}
+            <span className="t-meta">Ctrl+Z undoes it</span>
+          </div>
+        )}
+
+        {/* ── Where it goes ── */}
+        <div className="add-two">
+          <div>
+            <label className="st-label" htmlFor={ids.field}>
+              Field
+            </label>
+            <select
+              id={ids.field}
+              className="st-input"
+              value={fieldId}
+              onChange={(e) => {
+                setFieldId(e.target.value);
+                // Domains belong to a Field: a carried-over choice would point at one it doesn't own.
+                setDomainId(AUTO_DOMAIN);
+                setPreview(null);
+              }}
+            >
+              <option value={AUTO_FIELD}>{preview?.routedField ? `${preview.routedField.fieldName} (suggested)` : "Guess from the question"}</option>
+              {fields.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="st-label" htmlFor={ids.domain}>
+              Domain
+            </label>
+            <select id={ids.domain} className="st-input" value={domainId} onChange={(e) => setDomainId(e.target.value)} disabled={!selectedField}>
+              <option value={AUTO_DOMAIN}>Found when it&apos;s filed</option>
+              {selectedField?.domains.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div>
+          <p className="st-hint" style={{ marginTop: -6 }}>
+            {!selectedField
+              ? preview?.routedField
+                ? BASIS_NOTE[preview.routedField.basis]
+                : "Check first shows the guess; Create files it."
+              : domainId === AUTO_DOMAIN
+                ? "The domain is found from its nearest ideas; a new one opens if nothing matches."
+                : "Filed here directly. Duplicate checking still runs."}
+            {!selectedField && preview?.routedField?.basis === "WEAK" && (
+              <>
+                {" "}
+                <Link className="link" href="/structure">
+                  Fields &amp; Domains
+                </Link>
+              </>
+            )}
+          </p>
+          {feedsField && feedsField.composition.length > 0 && (
+            <p className="add-feeds">
+              {feedsField.name} feeds{" "}
+              {feedsField.composition.map(({ attribute, weight }, i) => (
+                <span key={attribute}>
+                  {i > 0 && " · "}
+                  <b>{ATTRIBUTE_META[attribute].label}</b> {weight}%
+                </span>
+              ))}
             </p>
           )}
         </div>
+
+        {/* ── Advanced: format, collection, auto-correct ── */}
+        <details className="add-adv">
+          <summary>
+            <Icon name="chev" />
+            Advanced
+            <span className="aside">
+              {TYPE_META[questionType].label} · {COLLECTIONS.find((c) => c.value === collectionLabel)?.label}
+            </span>
+          </summary>
+          <div className="add-adv-body">
+            <div role="group" aria-label="Format">
+              <span className="st-label">Format</span>
+              <div className="add-types">
+                {TYPES.map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    className="add-type"
+                    aria-pressed={questionType === type}
+                    onClick={() => {
+                      setQuestionType(type);
+                      setPreview(null);
+                    }}
+                  >
+                    <b>
+                      {TYPE_META[type].label}
+                      <span className="cur" title="Base review points before crowding">
+                        <CurrencyGlyph kind="pts" />
+                        {XP_BASE[type]}
+                      </span>
+                    </b>
+                    <span className="t-meta">{TYPE_META[type].hint}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="st-hint">Harder formats pay more. Diagram ideas can&apos;t be written here yet (they need an image editor).</p>
+            </div>
+            <div>
+              <span className="st-label">Collection</span>
+              <Segmented value={collectionLabel} options={COLLECTIONS} onChange={setCollectionLabel} label="Collection" />
+            </div>
+            <div className="add-autocorrect">
+              <div className="n">
+                <b>Auto-correct</b>
+                <span className="t-meta">Typos, shorthand (w/, thm, approx) and → ≥ ±. Ctrl+Z undoes any of it.</span>
+              </div>
+              <Switch
+                checked={autocorrectOn}
+                onChange={(next) => {
+                  setAutocorrectOn(next);
+                  autocorrect.clearRecent();
+                }}
+                label="Auto-correct"
+              />
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {/* ── Checked first (previewIdea writes nothing) ── */}
+      {preview && (
+        <section aria-labelledby="add-check-h">
+          <SectionHeader id="add-check-h" title="Checked first" aside={preview.verdict.label} />
+          <VerdictCompare verdict={preview.verdict} fieldName={preview.fieldName} />
+          <VerdictDetail verdict={preview.verdict} />
+          <p className="t-meta" style={{ marginTop: 10 }}>
+            In {preview.fieldName}
+            {preview.routedField ? " (guessed)" : ""}:{" "}
+            {preview.action === "CREATE_NEW_NODE"
+              ? "Create will file it"
+              : preview.action === "SATURATION"
+                ? "Create will stop and ask you"
+                : "Create will merge it into the existing card"}
+            {preview.action !== "MERGE_EXACT" && (
+              <>
+                {" · worth "}
+                <span className="cur">
+                  <CurrencyGlyph kind="pts" />
+                  {approx(preview.projectedPoints)} review pts
+                </span>
+                {preview.focusMultiplier ? ` (today's focus ×${formatNumber(preview.focusMultiplier, 2)})` : ""}
+              </>
+            )}
+            {preview.nSimilar > 0 && ` · ${preview.nSimilar} close neighbour${preview.nSimilar === 1 ? "" : "s"} lower the payout`}
+          </p>
+        </section>
       )}
 
-      {/* Auto-correct, and what it just did.
-          Reporting each change is the point: a correction you did not
-          notice is one you cannot reject, and this text is going onto a
-          card you may review for months. */}
-      <div
-        className="flex flex-wrap items-center justify-between gap-3 px-3 py-2"
-        style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}
-      >
-        <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={autocorrectOn}
-            onChange={(e) => {
-              setAutocorrectOn(e.target.checked);
-              autocorrect.clearRecent();
-            }}
-            style={{ accentColor: "var(--green)" }}
-          />
-          <span className="label-xs" style={{ marginBottom: 0 }}>
-            Auto-correct
+      {/* ── Created (the exact figures from the action) ── */}
+      {created && (
+        <div ref={bannerRef} className="card pad add-created">
+          <span ref={badgeRef} className="add-badge" aria-hidden="true">
+            <Icon name="check" />
           </span>
-          <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-            typos, shorthand (w/, thm, approx) and → ≥ ±. Ctrl+Z undoes any of it.
-          </span>
-        </label>
+          <div style={{ minWidth: 0 }}>
+            <b>Created</b> <span className="t-meta">· {created.label}</span>
+            <div className="t-meta">
+              <Amount kind="pts" value={created.points} label="review pts" />
+              {created.focus && ` · focus ×${formatNumber(created.focus.multiplier, 2)} on ${created.focus.fieldName}`} · first review is due now
+            </div>
+            <div className="t-meta">
+              {created.placement}
+              {created.basis && created.basis !== "ONLY" && ` ${BASIS_NOTE[created.basis]}`}
+            </div>
+            <div className="t-meta">
+              {addedCount} added this session ·{" "}
+              <Link className="link" href={`/library/${created.ideaId}`}>
+                Open it
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
-        {autocorrect.recent.length > 0 && (
-          <span className="flex flex-wrap items-center gap-1.5">
-            {autocorrect.recent.map((c, i) => (
-              <span
-                key={`${c.from}-${i}`}
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  background: "var(--green-10)",
-                  border: "1px solid rgba(0,204,122,0.2)",
-                  color: "var(--green)",
-                }}
-                title={c.kind === "typo" ? "Corrected a typo" : "Expanded shorthand"}
-              >
-                {c.from} → {c.to}
-              </span>
-            ))}
-          </span>
-        )}
-      </div>
+      {enrichOutcome === "enriched" && !result && (
+        <p className="card pad t-meta" role="status">
+          Enriched: the existing idea gained the new detail. No new idea was created, so nothing is paid.
+        </p>
+      )}
 
-      <div className="flex flex-wrap items-center gap-3 pt-1">
-        <button type="submit" disabled={isPending || !fieldId} className="btn-primary">
-          {isPending ? "Checking…" : "Submit"}
-        </button>
-        <button
-          type="button"
-          onClick={handlePreview}
-          disabled={isPreviewing || isPending || !fieldId || !buildContent()}
-          className="btn-secondary"
-        >
+      {formError && (
+        <p className="st-error" role="alert">
+          {formError}
+        </p>
+      )}
+
+      <div className="add-sticky">
+        <Button variant="secondary" size="lg" onClick={handlePreview} disabled={isPreviewing || isPending || !ready}>
           {isPreviewing ? "Checking…" : "Check first"}
-        </button>
-        <span style={{ fontSize: 11, color: "var(--ink-3)" }}>Embedded and deduplicated before write.</span>
+        </Button>
+        <Button ref={createRef} type="submit" variant="primary" size="lg" className="grow" disabled={isPending || !ready}>
+          {isPending ? "Filing…" : "Create"}
+        </Button>
       </div>
     </form>
+  );
+}
+
+function formatPercentText(x: number): string {
+  return `${formatNumber(x * 100, 1)}%`;
+}
+
+function LabelledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  mono,
+  inputMode,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  mono?: boolean;
+  inputMode?: "decimal" | "text";
+}): ReactNode {
+  const id = useId();
+  return (
+    <div>
+      <label className="st-label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="text"
+        inputMode={inputMode}
+        className={mono ? "st-input num" : "st-input"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
   );
 }

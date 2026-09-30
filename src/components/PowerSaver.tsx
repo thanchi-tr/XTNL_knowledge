@@ -3,25 +3,15 @@
 import { useEffect } from "react";
 
 /**
- * Stops decorative animation costing battery when nobody is looking.
+ * Stops ambient animation costing battery when nobody is looking.
  *
- * Every ambient effect in this app loops forever — emblem orbits, twinkles,
- * shockwaves, embers, the corona pulse. CSS animations do not stop when a
- * tab is backgrounded on Android Chrome the way you might hope: compositor-
- * driven transforms keep ticking, and on a 120Hz OLED that holds the
- * display pipeline awake while the phone sits in a pocket.
- *
- * Two switches, both purely presentational:
- *
- *   `data-idle`   — the document is hidden. Set on `visibilitychange`.
- *   `.no-motion`  — the battery is low or discharging under 20%, read from
- *                   the Battery Status API where the browser exposes it
- *                   (Chrome on Android does; Firefox and Safari do not, and
- *                   the absence is handled as "no opinion", not "low").
- *
- * Both resolve to `animation-play-state: paused` in globals.css rather than
- * `display: none` or a state change, so nothing unmounts, nothing re-renders
- * and no layout shifts — the emblems simply hold still.
+ * Writes html[data-power="save"] while the document is hidden or the battery
+ * is at or under 20% and not charging (Battery Status API, where the browser
+ * exposes it; absent means "no opinion", not "low"). tokens.css maps that to
+ * --ambient-play: paused, which the only two loops in the app (the ready
+ * orbit and the ceremony rays) read. Nothing unmounts and nothing moves; the
+ * loops simply hold still. One-shot animations are left alone: they are over
+ * within a second.
  *
  * Renders nothing.
  */
@@ -38,48 +28,49 @@ const LOW_BATTERY = 0.2;
 export function PowerSaver() {
   useEffect(() => {
     const root = document.documentElement;
+    let hidden = document.hidden;
+    let low = false;
 
-    const syncVisibility = () => {
-      if (document.hidden) root.setAttribute("data-idle", "");
-      else root.removeAttribute("data-idle");
+    const sync = () => {
+      if (hidden || low) root.setAttribute("data-power", "save");
+      else root.removeAttribute("data-power");
     };
 
-    syncVisibility();
-    document.addEventListener("visibilitychange", syncVisibility);
+    const onVisibility = () => {
+      hidden = document.hidden;
+      sync();
+    };
+    sync();
+    document.addEventListener("visibilitychange", onVisibility);
 
     let battery: BatteryLike | undefined;
-    const syncBattery = () => {
+    const onBattery = () => {
       if (!battery) return;
-      const low = !battery.charging && battery.level <= LOW_BATTERY;
-      root.classList.toggle("no-motion", low);
+      low = !battery.charging && battery.level <= LOW_BATTERY;
+      sync();
     };
 
     // Non-standard and absent in several browsers; treated as optional.
-    const getBattery = (
-      navigator as Navigator & { getBattery?: () => Promise<BatteryLike> }
-    ).getBattery;
-
+    const getBattery = (navigator as Navigator & { getBattery?: () => Promise<BatteryLike> }).getBattery;
     if (typeof getBattery === "function") {
       getBattery
         .call(navigator)
         .then((b) => {
           battery = b;
-          syncBattery();
-          b.addEventListener("levelchange", syncBattery);
-          b.addEventListener("chargingchange", syncBattery);
+          onBattery();
+          b.addEventListener("levelchange", onBattery);
+          b.addEventListener("chargingchange", onBattery);
         })
         .catch(() => {
-          // Permissions policy can reject this; no opinion is the right
-          // outcome, not "assume low".
+          // Permissions policy can reject this; no opinion is the right outcome.
         });
     }
 
     return () => {
-      document.removeEventListener("visibilitychange", syncVisibility);
-      battery?.removeEventListener("levelchange", syncBattery);
-      battery?.removeEventListener("chargingchange", syncBattery);
-      root.removeAttribute("data-idle");
-      root.classList.remove("no-motion");
+      document.removeEventListener("visibilitychange", onVisibility);
+      battery?.removeEventListener("levelchange", onBattery);
+      battery?.removeEventListener("chargingchange", onBattery);
+      root.removeAttribute("data-power");
     };
   }, []);
 

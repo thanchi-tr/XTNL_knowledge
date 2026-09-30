@@ -1,0 +1,23 @@
+@layer theme, base, components, art, effects, utilities;
+/* /dev/style layout only (the primitives style themselves). */
+@layer components {
+  .sg { display: flex; flex-direction: column; gap: 22px; padding-top: 12px; }
+  .sg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .sg-grid.sg-wide { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .sg-tok { display: flex; gap: 10px; align-items: center; padding: 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line-1); min-width: 0; }
+  .sg-tok b { font: 600 13px var(--font-ui); display: block; }
+  .sg-tok .t-mono { font-size: 12px; }
+  .sg-sw { width: 36px; height: 36px; border-radius: 10px; flex: none; border: 1px solid var(--line-2); }
+  .sg-scroll { overflow-x: auto; }
+  .sg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .sg-table th { font: 600 12px/16px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  .sg-table td { padding: 7px 6px; border-bottom: 1px solid var(--line-1); font-variant-numeric: tabular-nums; vertical-align: top; }
+  .sg-table tr:last-child td { border-bottom: 0; }
+  .sg-table td.ok { color: var(--kept); }
+  .sg-table td.bad { color: var(--owed); font-weight: 700; }
+  .sg-spec { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .sg-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .sg-col { display: flex; flex-direction: column; gap: 10px; }
+  .sg-ledger { display: flex; gap: 14px; align-items: center; padding: 14px; flex-wrap: wrap; }
+  .sg-log { font: 500 12px/1.5 var(--font-mono); color: var(--ink-1); background: var(--sunken); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin: 0; }
+}

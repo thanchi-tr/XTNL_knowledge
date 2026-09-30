@@ -28,6 +28,8 @@ import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
 import { invalidate } from "@/lib/cache";
 import { recordActivity } from "@/lib/activity";
+import { countClozeBlanks } from "@/lib/idea-payload";
+import { EDITABLE_TYPES, type HistoryRow } from "@/components/library/library-model";
 
 /** Same discriminated-result shape the taxonomy and skill actions use. */
 export type SkillFreeResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -71,6 +73,12 @@ export type SubmitIdeaResult =
        * nothing fitted well and the user should be offered a new Field.
        */
       routedField?: FieldChoice;
+      /** The exact review points this creation credited to the Domain (its yield, focus included). */
+      points: number;
+      /** Set when today's focus Field paid more for it: the multiplier actually applied. */
+      focus: { fieldName: string; multiplier: number } | null;
+      fieldName: string;
+      domainName: string;
     }
   | { status: "merged"; targetIdeaId: string; similarity: number; decision: DedupDecision }
   | {
@@ -285,19 +293,34 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
     classification,
     decision,
     ...(routedField ? { routedField } : {}),
+    points: yieldPoints,
+    focus: focusMultiplier > 1 && focus ? { fieldName: focus.fieldName, multiplier: focusMultiplier } : null,
+    fieldName: field.name,
+    domainName: domain.name,
   };
 }
 
 export interface PreviewIdeaInput {
-  fieldId: string;
+  /** Omit to have the Field guessed from the content, exactly as submitIdea would (field-routing.ts). */
+  fieldId?: string;
   content: IdeaContent;
 }
 
 export interface PreviewIdeaResult extends CandidatePreview {
   /** Base points for this question type, before saturation decay. */
   basePoints: number;
-  /** What the submission would actually be worth given the neighbours found. */
+  /**
+   * What the submission would be worth given the neighbours found, today's
+   * focus included. An estimate: filing can land it beside other neighbours.
+   */
   projectedPoints: number;
+  /** The Field the check ran against. */
+  fieldId: string;
+  fieldName: string;
+  /** Present when the Field was guessed: how, and how sure. */
+  routedField?: FieldChoice;
+  /** Today's focus multiplier when this Field is today's focus, else null. */
+  focusMultiplier: number | null;
 }
 
 /**
@@ -314,21 +337,39 @@ export async function previewIdea(input: PreviewIdeaInput): Promise<PreviewIdeaR
   const card = cardTextFromStored(questionType, question, answer);
 
   const userId = getCurrentUserId();
-  // Modifiers first: the DEDUP_PRECISION skill moves the merge line, and the
-  // preview must draw it where the submission will.
-  const modifiers = await loadModifiers(userId);
-  const preview = await previewCandidate(
-    input.fieldId,
-    card,
-    contentText,
-    SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta
-  );
+  // Progression first: the DEDUP_PRECISION skill moves the merge line, and the
+  // preview must draw it where the submission will; the loadout also skews
+  // today's focus, which the projected payout includes.
+  const progression = await loadProgression(userId);
+  const modifiers = progression.modifiers;
+
+  // The same guess submitIdea makes when no Field is named. The embedding is
+  // cached (gemini.ts), so previewCandidate's own embed below costs nothing.
+  let fieldId = input.fieldId;
+  let routedField: FieldChoice | null = null;
+  if (!fieldId) {
+    routedField = await pickField(await embedText(contentText), contentText);
+    if (!routedField) throw new Error("Create a Field before adding ideas — there is nowhere to file this yet.");
+    fieldId = routedField.fieldId;
+  }
+  const field = await prisma.field.findUniqueOrThrow({ where: { id: fieldId }, select: { name: true } });
+
+  const [preview, focus] = await Promise.all([
+    previewCandidate(fieldId, card, contentText, SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta),
+    loadDailyFocus(userId, progression.activeSkills),
+  ]);
+  const focusMultiplier = focus && focus.fieldId === fieldId && focus.multiplier > 1 ? focus.multiplier : null;
 
   const basePoints = XP_BASE[questionType];
   return {
     ...preview,
     basePoints,
-    projectedPoints: yieldXp(basePoints, preview.nSimilar, modifiers.lambda, modifiers.yieldFloorFraction),
+    projectedPoints:
+      yieldXp(basePoints, preview.nSimilar, modifiers.lambda, modifiers.yieldFloorFraction) * (focusMultiplier ?? 1),
+    fieldId,
+    fieldName: field.name,
+    ...(routedField ? { routedField } : {}),
+    focusMultiplier,
   };
 }
 
@@ -363,6 +404,10 @@ export interface LinkIdeaInput {
 export interface LinkIdeaResult {
   ideaId: string;
   domainId: string;
+  /** The exact review points this creation credited to the Domain. */
+  points: number;
+  fieldName: string;
+  domainName: string;
 }
 
 /**
@@ -435,7 +480,13 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
     await recordIdeaCreated(userId, idea.id, yieldPoints, idea.createdAt);
   });
 
-  return { ideaId: idea.id, domainId: existing.domainId };
+  return {
+    ideaId: idea.id,
+    domainId: existing.domainId,
+    points: yieldPoints,
+    fieldName: domain.field.name,
+    domainName: domain.name,
+  };
 }
 
 // ============================================================================
@@ -499,6 +550,89 @@ export async function deleteIdea(ideaId: string): Promise<SkillFreeResult<Delete
   invalidate("ideas", "fields", "progress");
 
   return { ok: true, value: { ideaId, domainId: idea.domainId, pointsRemoved, domainLevel } };
+}
+
+// ============================================================================
+// Editing and history (the idea page)
+// ============================================================================
+
+export interface EditIdeaInput {
+  ideaId: string;
+  /** Must be the Idea's own format; only EDITABLE_TYPES (the text formats) are accepted. */
+  content: IdeaContent;
+}
+
+/**
+ * Corrects an Idea's wording in place.
+ *
+ * A correction, not a new submission: no deduplication, no points, no ledger
+ * row; level, due date and history are untouched. Difficulty is re-scored
+ * from the new wording (it is a property of the question), and the embedding
+ * is refreshed after the response so later duplicate checks read what the
+ * card now says. A failed re-embed never loses the edit.
+ */
+export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ ideaId: string }>> {
+  const existing = await prisma.idea.findUnique({
+    where: { id: input.ideaId },
+    select: { id: true, questionType: true },
+  });
+  if (!existing) return { ok: false, error: "That idea no longer exists." };
+  if (input.content.type !== existing.questionType) return { ok: false, error: "The format can't change on edit." };
+  if (!EDITABLE_TYPES.includes(existing.questionType)) {
+    return { ok: false, error: "This format can't be edited here yet. Delete it and add it again." };
+  }
+
+  let content: IdeaContent;
+  if (input.content.type === "SHORT") {
+    const q = input.content.question.trim();
+    const a = input.content.answer.trim();
+    if (!q || !a) return { ok: false, error: "Both the question and the answer are needed." };
+    content = { type: "SHORT", question: q, answer: a };
+  } else if (input.content.type === "CLOZE") {
+    const text = input.content.text.trim();
+    if (!text || countClozeBlanks(text) === 0) return { ok: false, error: "Wrap at least one part in {{double braces}} to blank it." };
+    content = { type: "CLOZE", text };
+  } else {
+    return { ok: false, error: "This format can't be edited here yet. Delete it and add it again." };
+  }
+
+  const { question, answer, questionType } = encodeIdeaContent(content);
+  await prisma.idea.update({
+    where: { id: existing.id },
+    data: { question, answer, difficulty: estimateDifficulty(questionType, question, answer).score },
+  });
+  invalidate("ideas");
+
+  after(async () => {
+    try {
+      const embedding = await embedText(embeddingTextFromStored(questionType, question, answer));
+      const literal = toVectorLiteral(embedding);
+      await prisma.$executeRaw`UPDATE "Idea" SET embedding = ${literal}::vector WHERE id = ${existing.id}`;
+    } catch (err) {
+      console.error("editIdea: re-embed failed (the edit is saved):", err);
+    }
+  });
+
+  return { ok: true, value: { ideaId: existing.id } };
+}
+
+/**
+ * An Idea's review history from the life ledger (its REVIEW rows, oldest
+ * first), for the history strip. Read-only. Rows the backfill wrote are
+ * flagged: it recorded passed reviews only, so the page says so rather than
+ * implying there were no misses before the ledger existed.
+ */
+export async function ideaHistory(ideaId: string): Promise<HistoryRow[]> {
+  if (typeof ideaId !== "string" || ideaId.length === 0 || ideaId.length > 64) return [];
+  const rows = await prisma.activityEvent.findMany({
+    where: { userId: getCurrentUserId(), source: "REVIEW", sourceId: ideaId },
+    orderBy: { occurredAt: "desc" },
+    take: 200,
+    select: { detail: true, occurredAt: true, dedupeKey: true },
+  });
+  return rows
+    .reverse()
+    .map((r) => ({ detail: r.detail, at: r.occurredAt.getTime(), backfill: (r.dedupeKey ?? "").startsWith("bf:") }));
 }
 
 export interface DistractorsInput {

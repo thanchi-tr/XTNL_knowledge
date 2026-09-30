@@ -44,3 +44,13 @@ export function isUndoCaptureKey(e: KeyLike, target: TargetLike | null | undefin
   if (e.ctrlKey === e.metaKey) return false;
   return !isTypingTarget(target);
 }
+
+/**
+ * "To Inbox": the line with the parser's own inbox mark closing it (a
+ * trailing " ?", rule 10 in capture-parse.ts), so the save goes through the
+ * same grammar as a typed '?'. The space keeps it apart from a '?' the
+ * player chose to keep as text.
+ */
+export function toInboxLine(text: string): string {
+  return `${text.trimEnd()} ?`;
+}

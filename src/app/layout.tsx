@@ -1,55 +1,56 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
-import { Inter, JetBrains_Mono } from "next/font/google";
-import { AppNav } from "@/components/AppNav";
-import { NavTitleBadge } from "@/components/NavTitleBadge";
-import { NavReviewLink } from "@/components/NavReviewLink";
-import { NavTodayLink } from "@/components/NavTodayLink";
-import { LoadoutBarSlot } from "@/components/skills/LoadoutBarSlot";
-import { NotificationSlot } from "@/components/notifications/NotificationSlot";
+import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
+import { CelebrationHost } from "@/components/celebrate/CelebrationHost";
+import { AppShell } from "@/components/shell/AppShell";
+import { ShellDataSlot } from "@/components/shell/ShellDataSlot";
+import { PREPAINT_SCRIPT } from "@/components/shell/prepaint";
+import { IconSprite } from "@/components/ui/Icon";
 import { QuickCapture } from "@/components/capture/QuickCapture";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
-// Loaded after globals so the arcane layer can refine it. A trailing
-// `@import` inside globals.css cannot do this: `@import` must precede all
-// other rules, which put every globals declaration *after* it and let
-// same-specificity selectors there win on source order.
+// Separate global sheets, each starting with the layer order statement, so
+// import order no longer decides who wins: the layer does. skies.css and
+// cataclysm*.css are not global any more (L4 imports them where the sky and
+// the ceremony render).
 import "./arcane.css";
-import "./skies.css";
 import "./powerbar.css";
 import "./insignia.css";
-import "./cataclysm.css";
-import "./cataclysm-extra.css";
 import "./capture.css";
 
-// Inter + JetBrains Mono, matching XTNL_thesis. Was Geist/Geist Mono — the
-// ecosystem's typographic identity is set by the thesis app, and the CSS
-// variable names (--font-inter / --font-mono) are what globals.css expects.
+// Type: Inter for the UI (preloaded), Fraunces for named or earned things
+// (roman preloaded, italic on demand), JetBrains Mono for formulas and
+// receipts only (on demand). No SOFT axis.
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
+const fraunces = Fraunces({ subsets: ["latin"], axes: ["opsz"], variable: "--font-fraunces", display: "swap" });
+const frauncesItalic = Fraunces({
+  subsets: ["latin"],
+  style: "italic",
+  axes: ["opsz"],
+  variable: "--font-fraunces-italic",
+  display: "swap",
+  preload: false,
+});
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", display: "swap", preload: false });
 
 export const viewport: Viewport = {
-  themeColor: "#04080f",
+  // The opaque bar colour (--bar), so the browser's own chrome continues the top bar.
+  themeColor: "#0c0f15",
   colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
-  // The Fold's cover screen has a camera cutout punched into the status bar
-  // area. `cover` lets the app paint the full panel edge to edge; the
-  // `safe-area-inset-*` padding in globals.css is what keeps content out
-  // from under the cutout and the rounded corners.
+  // The Fold's cover screen has a camera cutout; `cover` paints edge to edge
+  // and the safe-area insets keep content out from under it. Zoom stays enabled.
   viewportFit: "cover",
-  // Zoom is left enabled on purpose. Locking it is the most common
-  // accessibility regression in a "mobile-optimised" build, and nothing
-  // here breaks when the page is scaled.
 };
 
 export const metadata: Metadata = {
   title: {
-    default: "XTNL Knowledge Engine",
+    default: "XTNL",
     template: "%s | XTNL",
   },
-  description: "Spaced-repetition knowledge engine with vector deduplication and automated taxonomy.",
+  description: "A character sheet for a real life: today's board, spaced review, and one honest ledger.",
 };
 
 export default function RootLayout({
@@ -58,56 +59,40 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${mono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
+    <html
+      lang="en"
+      className={`${inter.variable} ${fraunces.variable} ${frauncesItalic.variable} ${mono.variable}`}
+      data-theme="night"
+      data-motion="full"
+      // The pre-paint script rewrites data-theme and data-motion before React hydrates.
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Runs during parsing, before first paint: theme and motion from the
+            prefs mirror, motion defaulting to prefers-reduced-motion. */}
+        <script dangerouslySetInnerHTML={{ __html: PREPAINT_SCRIPT }} />
+      </head>
+      <body>
+        <IconSprite />
         <PowerSaver />
-        <StreakProvider
-          // The loadout is part of the shell, not of /skills — what you are
-          // carrying matters most while reviewing, which is where the effects
-          // actually fire.
-          //
-          // Deliberately NOT wrapped in <Suspense>, unlike the title badge
-          // below. Inside a boundary its markup rendered but the client
-          // component never hydrated, leaving every slot button inert —
-          // verified by checking for React's props key on a slot. Rendering
-          // it directly blocks the shell on `loadProgression`, which is
-          // request-deduped and cross-request cached, so a warm load pays
-          // nothing for it.
-          bottomSlot={
-            <>
-              <LoadoutBarSlot />
-              {/* Same rule as above — a prop, never inside <Suspense>, or the
-                  bubble renders but its button never hydrates. */}
-              <NotificationSlot />
-              {/* The capture sheet, on every page: the header button, the
-                  phone's corner button and the 'c' / Ctrl+K hotkey all open
-                  this one instance. Same rule again, and it needs no server
-                  data to render — its word list loads on first open. */}
-              <QuickCapture />
-            </>
+        {/* The shell's data is a prop slot inside Suspense: the layout never
+            awaits it, so loading.tsx fallbacks show and the chrome paints at
+            once, filling in counts when the one cached query resolves. */}
+        <AppShell
+          dataSlot={
+            <Suspense fallback={null}>
+              <ShellDataSlot />
+            </Suspense>
           }
         >
-          {/* The title badge streams in — the nav renders immediately and the
-              badge fills once its query resolves, so no route waits on it. */}
-          <AppNav
-            titleSlot={
-              <Suspense fallback={null}>
-                <NavTitleBadge />
-              </Suspense>
-            }
-            todaySlot={
-              <Suspense fallback={null}>
-                <NavTodayLink />
-              </Suspense>
-            }
-            reviewSlot={
-              <Suspense fallback={null}>
-                <NavReviewLink />
-              </Suspense>
-            }
-          />
-          {children}
-        </StreakProvider>
+          <StreakProvider>{children}</StreakProvider>
+        </AppShell>
+        {/* The one capture sheet (L1). Outside <main>: its fixed layers must
+            not sit under the @container. The tab bar's +, the rail and
+            sidebar Capture, 'c' and Ctrl+K all open this instance. */}
+        <QuickCapture />
+        {/* L3's host for T2 Seals and T3 Ascensions (a stub until L3 lands). */}
+        <CelebrationHost />
       </body>
     </html>
   );

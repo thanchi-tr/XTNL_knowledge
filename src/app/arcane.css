@@ -1,26 +1,15 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ ARCANE ═════════════════════════════════════════════
-   The magician layer.
-
-   globals.css records that an earlier "Arcane Terminal" direction — violet
-   cast, gold metal, glow rings — was replaced by the current instrument
-   palette. This does not undo that. The instrument reading is what makes the
-   app legible: green still means "you did the work", the ink ramp still
-   carries hierarchy, and every panel is still built from the same tokens.
-
-   What this adds is *character* on top of that discipline. The conceit is a
-   practitioner's workbench rather than a wizard's cartoon: arcane violet and
-   old gold as light sources, sigil marks where a heading begins, a faint
-   ruled circle behind the surfaces that matter. Nothing here changes a
-   colour that carries meaning — rank hues, the green/amber/red state ramp
-   and every chip stay exactly as they were, because those are data.
-
-   Layered last so it can be removed by deleting one import.
+   The magician layer, reduced for the Sigil & Slate layer PR (L0):
+   removed the body light sources, the :root .card and :root
+   .section-eyebrow specificity patches, the btn-primary sheen, the
+   arcane conic behind the review card, and the Fold media blocks that set
+   html { font-size: 17px } and --nav-h (html stays 16 px; the shell owns
+   --topbar-h). What is left is art, owned by L4 after this PR.
    ═══════════════════════════════════════════════════════ */
 
+@layer art {
 :root {
-  /* Two new light sources. Violet is the arcane one, gold is what it
-     leaves behind — chosen to sit beside the existing green rather than
-     compete with it, so nothing already coloured has to move. */
   --arcane:     #9b6bff;
   --arcane-hi:  #c4a2ff;
   --arcane-10:  rgba(155, 107, 255, 0.10);
@@ -29,23 +18,7 @@
   --gold-10:    rgba(232, 179, 74, 0.10);
 }
 
-/* ── The workbench ───────────────────────────────────────
-   A third light source on the page ground, violet and very low, so the
-   void reads as lit from somewhere rather than as flat black. Same
-   intensity discipline as the two gradients it joins in globals.css:
-   under the threshold where it would make two identical cards look like
-   different weights. */
-body {
-  background-image:
-    radial-gradient(ellipse 130% 50% at 50% -6%, rgba(0, 204, 122, 0.034) 0%, transparent 62%),
-    radial-gradient(ellipse 70% 40% at 12% 4%, rgba(155, 107, 255, 0.030) 0%, transparent 60%),
-    radial-gradient(ellipse 46% 34% at 92% 94%, rgba(0, 130, 255, 0.014) 0%, transparent 50%);
-}
-
-/* ── Sigil headings ──────────────────────────────────────
-   A small arcane tick before a panel title. Rendered from a pseudo-element
-   rather than added to markup, so every existing `.panel-title` in the app
-   gains it without touching a component. */
+/* ── Sigil headings: a small diamond before a legacy panel title. */
 .panel-title {
   position: relative;
   padding-left: 13px;
@@ -60,201 +33,27 @@ body {
   height: 6px;
   margin-top: -3px;
   border-radius: 1px;
-  /* A diamond, not a dot — a bullet reads as a list, a rotated square reads
-     as a mark someone struck. */
   transform: rotate(45deg);
-  background: var(--arcane);
-  box-shadow: 0 0 7px var(--arcane-hi);
-  opacity: 0.85;
+  background: var(--ink-2);
 }
 
-/* The eyebrow above a page title takes the gold, so the two heading levels
-   are told apart by hue as well as size. */
-/* `:root` prefix only to raise specificity. A plain `.section-eyebrow` here
-   matched — its `opacity` applied — but lost the colour to a later
-   equal-specificity declaration, so the eyebrow stayed muted. */
-:root .section-eyebrow {
-  color: var(--gold);
-  opacity: 0.85;
-  text-shadow: 0 0 14px rgba(232, 179, 74, 0.18);
-}
-
-/* ── Inscribed surfaces ──────────────────────────────────
-   Cards gain a hairline inner rule inset from the border — the ruled margin
-   of a page in a working notebook. One inset shadow, no extra element and
-   no layout cost, so it applies to hundreds of cards for free. */
-:root .card {
-  position: relative;
-  /* globals.css sets `.card` inside `@layer components`, and unlayered rules
-     beat layered ones — so this declaration replaces the card's shadow
-     outright rather than adding to it. The original top highlight is
-     restated first; dropping it would flatten every card in the app. */
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.055),
-    inset 0 0 0 1px rgba(155, 107, 255, 0.045),
-    0 1px 2px rgba(0, 0, 0, 0.28);
-}
-
-/* ── The circle ──────────────────────────────────────────
-   A faint conic sweep behind the review card, the one surface the player
-   actually looks at for minutes at a time. Opt-in by class so it stays on
-   the screen that earns it rather than becoming wallpaper. */
+/* The review card keeps its positioning context; the rotating conic is gone. */
 .arcane-circle {
   position: relative;
   isolation: isolate;
 }
-
-.arcane-circle::before {
-  content: "";
-  position: absolute;
-  inset: -30% -10%;
-  z-index: -1;
-  pointer-events: none;
-  /* Wide stops instead of a wide blur.
-     This rotated a `blur(26px)` conic forever, on the review session card --
-     the screen this app is used on more than every other screen combined.
-     Blur cost scales with radius, and rotating a blurred surface re-rasters
-     it rather than reusing a cached layer, so the most-visited screen in the
-     app was paying the most expensive paint in it on every frame.
-     A conic already interpolates smoothly between stops; the blur was really
-     only hiding the hard seam where 360deg meets 0deg, which spreading the
-     stops out and closing the loop on the same colour does for free. */
-  background:
-    conic-gradient(
-      from 210deg at 50% 50%,
-      transparent 0deg,
-      rgba(155, 107, 255, 0.10) 70deg,
-      transparent 150deg,
-      rgba(232, 179, 74, 0.07) 230deg,
-      transparent 320deg,
-      transparent 360deg
-    );
-  filter: blur(8px);
-  opacity: 0.75;
-  animation: arcane-turn 44s linear infinite;
-  animation-play-state: var(--ambient-play, running);
 }
 
-@keyframes arcane-turn {
-  to { transform: rotate(360deg); }
-}
+@layer effects {
+/* ═══ PAGE SURGE (art previews only) ═════════════════════
+   The equip reaction at page scale, as it was designed: the edges of the
+   viewport take the emblem's colour and a wash crosses the page from the
+   slot outward. The redesign makes equip Tier 0 (one slot glint), so this
+   now plays only in the /dev/style/art loadout previews.
 
-/* ── Enchanted controls ──────────────────────────────────
-   The primary button gets a slow sheen crossing it. Long period on purpose:
-   it should read as a surface catching light occasionally, not as something
-   demanding to be pressed. */
-.btn-primary {
-  position: relative;
-  overflow: hidden;
-}
-
-.btn-primary::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    105deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.22) 50%,
-    transparent 62%
-  );
-  transform: translateX(-120%);
-  animation: arcane-sheen 7s ease-in-out infinite;
-  animation-play-state: var(--ambient-play, running);
-}
-
-@keyframes arcane-sheen {
-  0%, 72% { transform: translateX(-120%); }
-  86%     { transform: translateX(120%); }
-  100%    { transform: translateX(120%); }
-}
-
-/* ── Fold: the cover screen ──────────────────────────────
-   ~344 CSS px. Everything already fits without horizontal overflow; what
-   fails there is touch. Any control that renders under 32px on the narrow
-   screen is lifted to a thumb-sized target, without changing its desktop
-   size — measured on the live site, where the Boss cards' "Lore" toggles
-   came out 45x31. */
-@media (max-width: 420px) {
-  .btn-ghost,
-  .chip {
-    min-height: 34px;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  /* ── Type, one size up ────────────────────────────────
-     The previous pass here shrank type to buy back vertical space, which
-     was the wrong trade on a screen you hold at arm's length in one hand.
-     A 344px-wide phone is not a small desktop; it is a device read at a
-     greater distance than a laptop, and 10.5px body copy on it is a squint.
-
-     Everything goes up roughly one step. The space that costs is taken back
-     from padding and margins instead, which is the right place to take it
-     from — whitespace scales down without becoming unreadable, and text
-     does not. */
-  html { font-size: 17px; }
-
-  .section-eyebrow { font-size: 10.5px; }
-  .panel-sub { font-size: 12px; }
-  .panel-title { font-size: 13.5px; }
-  .label-xs { font-size: 10.5px; }
-  .mono { font-size: 12px; }
-  .btn, .btn-primary, .btn-secondary, .btn-ghost { font-size: 13px; }
-  body { font-size: 14.5px; }
-
-  /* Paid for out of spacing, not out of legibility. */
-  .card, .panel { padding: 12px; }
-  main > header { margin-bottom: 14px; }
-}
-
-/* ── Fold: the unfolded main screen ──────────────────────
-   932x704 measured on the device. Wide but *short*, which is the unusual
-   part: nav plus loadout bar were taking 124px, 18% of the viewport, before
-   any content. Both shrink on short screens so the reading area keeps the
-   space the extra width was supposed to buy. */
-@media (min-width: 900px) and (max-height: 780px) {
-  :root { --nav-h: 48px; }
-
-  .loadout-bar .site-container { padding-top: 5px; padding-bottom: 5px; }
-  .slot { width: 34px; height: 34px; }
-
-  /* Page headers are the other easy win — a 32px bottom margin on a 704px
-     screen is a line of content. */
-  main > header { margin-bottom: 14px; }
-
-  /* Type goes up here too. The main display is *wider* than a laptop's
-     content column but read at phone distance, so the line lengths are
-     already generous — spending some of that width on larger glyphs costs
-     nothing but a few characters per line. Chrome stays compact; only the
-     things you actually read grow. */
-  html { font-size: 17px; }
-  body { font-size: 14.5px; }
-  .panel-sub { font-size: 12.5px; }
-  .panel-title { font-size: 14px; }
-  .section-eyebrow { font-size: 10.5px; }
-  .mono { font-size: 12.5px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arcane-circle::before,
-  .btn-primary::after { animation: none; }
-  .btn-primary::after { opacity: 0; }
-}
-
-/* ═══ PAGE SURGE ═════════════════════════════════════════
-   The equip reaction, escalated from the footer to the whole document.
-
-   `BarCharge` reacts inside the loadout bar, which is correct for the bar
-   but means the most consequential action in the app happens in a strip at
-   the bottom of the screen. This is the same event read at page scale: the
-   edges of the viewport take the emblem's colour and a wash crosses the
-   page from the slot outward.
-
-   Fixed and pointer-events:none, above the atmosphere but below the bar
-   itself (z 20) — a full-screen flourish must never intercept the click
-   that follows it, or swallow the picker the player just used. */
+   Rewritten to the motion rule: transform and opacity only (the wash used
+   to animate `bottom`), and no filter blur (soft edges come from the
+   gradient itself). Fixed and pointer-events:none, below the bar (z 20). */
 .page-surge {
   position: fixed;
   inset: 0;
@@ -263,8 +62,7 @@ body {
   overflow: hidden;
 }
 
-/* The vignette: colour crawls in from every edge and drains away. This is
-   what makes the moment read as "the whole app noticed". */
+/* The vignette: colour crawls in from every edge and drains away. */
 .page-surge::before {
   content: "";
   position: absolute;
@@ -285,33 +83,29 @@ body {
   100% { opacity: 0; }
 }
 
-/* A single band of light crossing the page, rising from the slot. Skewed so
-   it reads as a sweep rather than a horizontal bar sliding up. */
+/* A single band of light crossing the page, rising from the slot: it starts
+   just below the viewport and translates up past the top. */
 .page-surge::after {
   content: "";
   position: absolute;
   left: -20%;
   right: -20%;
+  top: 100%;
   height: 42vh;
-  bottom: -42vh;
-  transform: skewY(-4deg);
   background: linear-gradient(
     to top,
-    color-mix(in srgb, var(--ps-color, #00cc7a) 22%, transparent),
-    transparent 72%
+    transparent 0%,
+    color-mix(in srgb, var(--ps-color, #00cc7a) 22%, transparent) 30%,
+    transparent 100%
   );
-  filter: blur(18px);
   opacity: 0;
+  transform: translateY(0) skewY(-4deg);
   animation: page-surge-wash var(--ps-dur, 900ms) cubic-bezier(.16, 1, .3, 1) both;
 }
 
 @keyframes page-surge-wash {
-  0%   { opacity: 0;                        bottom: -42vh; }
+  0%   { opacity: 0;                        transform: translateY(0) skewY(-4deg); }
   26%  { opacity: var(--ps-intensity, .8); }
-  100% { opacity: 0;                        bottom: 108vh; }
+  100% { opacity: 0;                        transform: translateY(-150vh) skewY(-4deg); }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .page-surge::before,
-  .page-surge::after { animation: none; opacity: 0; }
 }

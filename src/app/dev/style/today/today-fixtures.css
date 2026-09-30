@@ -1,0 +1,12 @@
+@layer theme, base, components, art, effects, utilities;
+/* /dev/style/today (L1 fixtures): layout only. */
+@layer components {
+  .dev-today .dev-banner { padding: 8px 4px 16px; }
+  .dev-today .dev-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 28px; align-items: start; }
+  @container main (min-width: 760px) {
+    .dev-today .dev-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .dev-today .dev-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+  .dev-today .dev-runner { margin-bottom: 28px; overflow: hidden; }
+  .dev-today .dev-runner .wr { min-height: 0; padding-bottom: 12px; }
+}

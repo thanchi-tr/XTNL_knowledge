@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ CATACLYSM ══════════════════════════════════════════
    One-shot, page-wide attach events for the two terminal ranks.
 
@@ -12,6 +13,7 @@
    (15), below the loadout bar (20) and far below the picker and modals. A
    full-screen event must never eat the click after it.
    ═══════════════════════════════════════════════════════ */
+@layer effects {
 
 .cataclysm {
   position: fixed;
@@ -856,4 +858,5 @@
   .cat-comet, .cat-ember, .cat-mote,
   .cat-nova, .cat-shell,
   .cat-rift, .cat-rift-glow { animation: none; opacity: 0; }
+}
 }

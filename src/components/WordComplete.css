@@ -1,0 +1,29 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   WORD COMPLETION STRIP (components/WordComplete.tsx, L5). Two positions,
+   one component: in flow above the field on desktop; fixed and pushed up
+   by the virtual keyboard's height on a phone (the component measures it
+   with visualViewport). Chips are 40 px tall: a mis-tap against the
+   keyboard costs a wrong word. Ink only; no sky tint.
+   ===================================================================== */
+@layer components {
+  .wc-bar { margin-bottom: 6px; }
+  .wc-bar[data-floating="1"] {
+    position: fixed; left: 0; right: 0; z-index: 40; margin: 0; padding: 6px 10px;
+    background: var(--overlay); border-top: 1px solid var(--line-2); box-shadow: var(--shadow-pop);
+  }
+  .wc-list { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0; padding: 0 0 2px; list-style: none; }
+  .wc-list::-webkit-scrollbar { display: none; }
+  .wc-hint {
+    display: inline-flex; align-items: center; gap: 1px; white-space: nowrap; min-height: 40px; padding: 0 12px;
+    border-radius: var(--r-chip); border: 1px solid var(--line-ctl); background: var(--sunken);
+    font: 400 14px var(--font-ui); color: var(--ink-1); cursor: pointer;
+  }
+  .wc-hint:hover { border-color: var(--ink-2); }
+  .wc-hint[data-primary="1"] { border-color: var(--ink-0); background: var(--raised); }
+  /* The typed half is dimmed, so the chip reads as a completion: what Tab adds, not what it replaces. */
+  .wc-typed { color: var(--ink-2); }
+  .wc-rest { color: var(--ink-0); font-weight: 600; }
+  .wc-key { margin-left: 6px; padding: 3px 5px; border-radius: 5px; border: 1px solid currentColor; font: 600 12px/1 var(--font-mono); color: var(--ink-2); }
+  @media (hover: none), (max-width: 420px) { .wc-key { display: none; } }
+}

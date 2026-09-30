@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./WordComplete.css";
 
 /**
  * Word completion for the capture form.
@@ -180,18 +181,18 @@ export function WordHintBar({ suggestions, onPick, visible }: BarProps) {
 
   return (
     <div
-      className="word-hints"
+      className="wc-bar"
       data-floating={keyboardInset > 120 ? "1" : undefined}
       style={keyboardInset > 120 ? { bottom: keyboardInset } : undefined}
       role="listbox"
       aria-label="Word suggestions"
     >
-      <ul className="word-hints-list">
+      <ul className="wc-list">
         {suggestions.map((s, i) => (
           <li key={s.word}>
             <button
               type="button"
-              className="word-hint"
+              className="wc-hint"
               data-primary={i === 0 ? "1" : undefined}
               // `onMouseDown` rather than `onClick`: mousedown fires before
               // the field's blur, so the caret position the completion needs
@@ -201,9 +202,9 @@ export function WordHintBar({ suggestions, onPick, visible }: BarProps) {
                 onPick(s.word);
               }}
             >
-              <span className="word-hint-typed">{s.word.slice(0, s.prefixLength)}</span>
-              <span className="word-hint-rest">{s.word.slice(s.prefixLength)}</span>
-              {i === 0 && <kbd className="word-hint-key">tab</kbd>}
+              <span className="wc-typed">{s.word.slice(0, s.prefixLength)}</span>
+              <span className="wc-rest">{s.word.slice(s.prefixLength)}</span>
+              {i === 0 && <kbd className="wc-key">tab</kbd>}
             </button>
           </li>
         ))}

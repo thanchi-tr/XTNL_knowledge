@@ -69,17 +69,17 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
 
   return (
     <div>
-      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        <button type="button" style={CHIP_BUTTON} onClick={() => wrapMath(false)} title="Wrap the selection in $...$ (inline math)">
+      <div className="m-tools">
+        <button type="button" className="chip btn-chip" onClick={() => wrapMath(false)} title="Wrap the selection in $...$ (inline math)">
           $ inline
         </button>
-        <button type="button" style={CHIP_BUTTON} onClick={() => wrapMath(true)} title="Wrap the selection in $$...$$ (block math)">
+        <button type="button" className="chip btn-chip" onClick={() => wrapMath(true)} title="Wrap the selection in $$...$$ (block math)">
           $$ block
         </button>
-        {/* States where the caret is what decides insertion behaviour should
-            say so, rather than leaving it to be inferred from the result. */}
-        <span style={{ fontSize: 10, color: inSpan ? "var(--green)" : "var(--ink-3)" }}>
-          {inSpan ? "Caret is inside a math span — symbols insert directly." : "Caret is in prose — symbols insert wrapped in $…$."}
+        {/* Where the caret is decides how a symbol inserts: say so, rather
+            than leaving it to be inferred from the result. */}
+        <span className={inSpan ? "t-meta ink-0" : "t-meta"} aria-live="polite">
+          {inSpan ? "Caret is inside a math span: symbols insert directly." : "Caret is in prose: symbols insert wrapped in $…$."}
         </span>
       </div>
 
@@ -93,37 +93,20 @@ export function EquationField({ value, onChange, rows = 3 }: Props) {
         placeholder="e.g. Simplify $\frac{x^2-1}{x-1}$ for $x \neq 1$."
       />
 
-      <div className="mt-2">
+      <div style={{ marginTop: 8 }}>
         <LatexPalette onInsert={insert} />
       </div>
 
-      {/* Preview — the same component SessionCard and the Library render with. */}
-      <div className="mt-2 p-3" style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}>
-        <p className="label-xs">Preview</p>
-        <div className="mt-1" style={{ fontSize: 15, color: "var(--ink-0)", lineHeight: 1.6, minHeight: 22 }}>
-          {value.trim() ? (
-            <MathText text={value} />
-          ) : (
-            <span style={{ color: "var(--ink-3)", fontSize: 13 }}>Nothing to preview yet.</span>
-          )}
-        </div>
+      {/* Preview: the same component the runner and the Library render with. */}
+      <div className="m-preview">
+        <span className="t-eyebrow">Preview</span>
+        <div className="m-out">{value.trim() ? <MathText text={value} /> : <span className="t-meta">Nothing to preview yet.</span>}</div>
         {value.trim() && !value.includes("$") && (
-          <p className="mt-1" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-            No $…$ span yet — this shows exactly as typed, with no math rendering.
+          <p className="t-meta" style={{ marginTop: 4 }}>
+            No $…$ span yet: this shows exactly as typed, with no math rendering.
           </p>
         )}
       </div>
     </div>
   );
 }
-
-const CHIP_BUTTON: React.CSSProperties = {
-  padding: "3px 10px",
-  borderRadius: 8,
-  fontSize: 11,
-  fontWeight: 600,
-  cursor: "pointer",
-  border: "1px solid var(--line)",
-  background: "var(--sub)",
-  color: "var(--ink-1)",
-};

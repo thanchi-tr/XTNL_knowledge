@@ -3,11 +3,11 @@
 import { useMemo } from "react";
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTE_META } from "@/lib/attributes";
-import { themeFor } from "@/lib/attribute-themes";
 import { formatMinutes, formatXp, matchParentGoal } from "@/lib/capture-parse";
 import { BAND_META, TRACK_LABEL, priceTask } from "@/lib/life-grade";
 import { sizeLexically } from "@/lib/life-lexicon";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
+import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
 
 /**
  * What the line was understood as, one chip per token, plus the grade it
@@ -15,9 +15,10 @@ import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-ty
  *
  * Every token chip is a button that turns its words back into title text —
  * the parse is a suggestion the user can refuse in one tap, which is what
- * lets the grammar be generous. Colour follows the app's grammar: green for
- * done, amber for anything due (a date, a deadline, a duty), blue for
- * information, muted for tags.
+ * lets the grammar be generous. One dialect, all quiet (the kit's 40 px
+ * interactive chip): the chips report what was read, they are not states,
+ * so none of them takes a signal colour. A date or deadline carries the
+ * clock glyph (due is ink plus a clock, never a hue).
  *
  * The grade chip is the lexical grade, priced by the same pure function
  * that pays (life-grade.ts), against today's knee as it stood when the
@@ -26,21 +27,12 @@ import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-ty
  * shown here.
  */
 
-const TOKEN_TONE: Record<CaptureToken["field"], string> = {
-  done: "chip-green",
-  date: "chip-amber",
-  deadline: "chip-amber",
-  compulsory: "chip-amber",
-  mode: "chip-blue",
-  recurrence: "chip-blue",
-  duration: "chip-blue",
-  study: "chip-blue",
-  horizon: "chip-blue",
-  parent: "chip-blue",
-  tag: "chip-muted",
-  play: "chip-muted",
-  mvv: "chip-muted",
-  inbox: "chip-muted",
+const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
+  date: "clock",
+  deadline: "clock",
+  done: "check",
+  inbox: "inbox",
+  parent: "flag",
 };
 
 const FEEDS_SHOWN = 3;
@@ -124,26 +116,24 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
           {parsed.tokens.map((t) => {
             const words = text.slice(t.start, t.end);
             let label = t.label;
-            let tone = TOKEN_TONE[t.field];
+            let miss = false;
             if (t.field === "parent" && parsed.parentHint && goals) {
               // The goal it will attach to, or an honest miss: the server
               // matches the same way (matchParentGoal), so this is what lands.
               if (parent) label = `^ ${parent.title}`;
               else {
                 label = `^ ${parsed.parentHint} · no open goal`;
-                tone = "chip-amber";
+                miss = true;
               }
             }
+            const icon = TOKEN_ICON[t.field];
             // A study link cannot be undone: in-app reviews and ideas are paid by
             // the knowledge game, so the parser keeps this span linked either way.
             if (t.field === "study") {
               return (
                 <li key={t.id}>
-                  <span
-                    className={`chip ${tone} capture-chip`}
-                    title="Paid by your reviews and ideas, never twice"
-                    aria-label={`${label}. Paid by your reviews and ideas, never twice.`}
-                  >
+                  <span className="chip capture-chip" title="Paid by your reviews and ideas, never twice" aria-label={`${label}. Paid by your reviews and ideas, never twice.`}>
+                    <Icon name="study" />
                     {label}
                   </span>
                 </li>
@@ -153,8 +143,8 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
               <li key={t.id}>
                 <button
                   type="button"
-                  className={`chip ${tone} capture-chip`}
-                  data-warn={t.field === "compulsory" && parsed.compulsoryWarning ? "1" : undefined}
+                  className="chip btn-chip capture-chip"
+                  data-warn={(t.field === "compulsory" && parsed.compulsoryWarning) || miss ? "1" : undefined}
                   onClick={() => onRevert(t)}
                   // The line keeps focus through the tap, so a phone's
                   // keyboard does not drop and rise again for every chip.
@@ -162,10 +152,9 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
                   title={`Tap to keep “${words}” as text`}
                   aria-label={`${label}. Tap to keep “${words}” as text.`}
                 >
+                  {t.field === "compulsory" ? <span className="capture-must" aria-hidden="true" /> : icon ? <Icon name={icon} /> : null}
                   {label}
-                  <span aria-hidden className="capture-chip-x">
-                    ×
-                  </span>
+                  <Icon name="x" className="capture-chip-x" />
                 </button>
               </li>
             );
@@ -173,31 +162,33 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
           {grade && (
             <li>
               <span
-                className="chip chip-muted capture-chip capture-grade"
+                className="chip capture-chip capture-grade"
                 title={`${BAND_META[grade.sizing.band].blurb}. lexical · ${Math.round(grade.sizing.confidence * 100)}% · ${grade.sizing.basis}`}
               >
                 {BAND_META[grade.sizing.band].label} · ~{formatMinutes(grade.minutes)} ·{" "}
-                <span className="mono">
-                  {parsed.intrinsic
-                    ? "play, 0 XP"
-                    : parsed.autoMetric
-                      ? "paid by reviews"
-                      : grade.xp === null
-                        ? "XP after saving"
-                        : `≈${formatXp(grade.xp)} XP`}
-                </span>
-                <span className="capture-grade-basis">lexical · {Math.round(grade.sizing.confidence * 100)}%</span>
+                {parsed.intrinsic ? (
+                  "play, pays 0"
+                ) : parsed.autoMetric ? (
+                  "paid by reviews"
+                ) : grade.xp === null ? (
+                  "priced after saving"
+                ) : (
+                  <span className="cur">
+                    <CurrencyGlyph kind="xp" />
+                    <span className="num">≈ {formatXp(grade.xp)}</span>
+                  </span>
+                )}
               </span>
             </li>
           )}
           {parsed.kind === "GOAL" && (
             <li>
-              <span className="chip chip-muted capture-chip capture-grade">Pays through its steps</span>
+              <span className="chip capture-chip capture-grade">Pays through its steps</span>
             </li>
           )}
           {parsed.kind === "IDEA_DRAFT" && (
             <li>
-              <span className="chip chip-muted capture-chip capture-grade">Filed to Inbox · finish it in the full form</span>
+              <span className="chip capture-chip capture-grade">Filed to Inbox · finish it in the full form</span>
             </li>
           )}
         </ul>
@@ -205,26 +196,20 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
 
       {parsed.compulsoryWarning && (
         <p className="capture-warning" role="note">
-          {parsed.compulsoryWarning}.{" "}
-          <span style={{ color: "var(--ink-2)" }}>Add a schedule (every mon) or a deadline (by fri).</span>
+          {parsed.compulsoryWarning}. <span className="ink-2">Add a schedule (every mon) or a deadline (by fri).</span>
         </p>
       )}
 
       {grade && track && feeds.length > 0 && (
-        <div className="capture-feeds">
-          <span className="label-xs" style={{ fontSize: 9.5 }}>
-            Feeds · {TRACK_LABEL[track]}
-          </span>
+        <p className="capture-feeds">
+          <span className="t-eyebrow">Feeds · {TRACK_LABEL[track]}</span>
           {feeds.map(([attribute, weight]) => (
             <span key={attribute} className="capture-feed">
-              <span aria-hidden className="capture-feed-dot" style={{ background: themeFor(attribute).color }} />
-              <span style={{ color: "var(--ink-1)" }}>{ATTRIBUTE_META[attribute].label}</span>
-              <span className="mono" style={{ color: "var(--ink-3)" }}>
-                {weight}%
-              </span>
+              {ATTRIBUTE_META[attribute].label} <span className="num ink-2">{weight}%</span>
             </span>
           ))}
-        </div>
+          <span className="capture-grade-basis">lexical · {Math.round(grade.sizing.confidence * 100)}% sure</span>
+        </p>
       )}
     </div>
   );

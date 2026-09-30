@@ -44,27 +44,27 @@ export function ComboPopup({ queue, onDismiss }: Props) {
     >
       <div
         className="card w-[min(94vw,420px)] p-5 boss-rise"
-        style={{ borderColor: "rgba(0,204,122,.4)", background: "linear-gradient(160deg, rgba(0,204,122,.08), var(--card) 55%)" }}
+        style={{ borderColor: "color-mix(in srgb, var(--kept) 40%, transparent)", background: "linear-gradient(160deg, color-mix(in srgb, var(--kept) 8%, transparent), var(--card) 55%)" }}
       >
-        <p className="label-xs" style={{ color: "var(--green)" }}>
+        <p className="label-xs" style={{ color: "var(--kept)" }}>
           Combination discovered
         </p>
         <h2 id="combo-popup-title" className="mt-1" style={{ fontSize: 20, fontWeight: 700, color: "var(--ink-0)" }}>
           {current.name}
         </h2>
-        <p className="mt-1.5" style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        <p className="mt-1.5 t-meta" >
           {current.blurb}
         </p>
 
-        <div className="mt-3 p-3" style={{ borderRadius: 10, background: "var(--sub)", border: "1px solid var(--line)" }}>
+        <div className="mt-3 p-3" style={{ borderRadius: 10, background: "var(--sunken)", border: "1px solid var(--line-1)" }}>
           <p className="label-xs">Grants</p>
-          <p className="mt-1" style={{ fontSize: 13, fontWeight: 600, color: "var(--green)", lineHeight: 1.4 }}>
+          <p className="mt-1" style={{ fontSize: 13, fontWeight: 600, color: "var(--kept)", lineHeight: 1.4 }}>
             {current.grant.effectText}
           </p>
         </div>
 
         <div className="mt-2.5 p-3" style={{ borderRadius: 10, background: "rgba(240,160,48,.08)", border: "1px solid rgba(240,160,48,.2)" }}>
-          <p className="label-xs" style={{ color: "var(--amber)" }}>
+          <p className="label-xs" style={{ color: "var(--ink-0)" }}>
             When to use it
           </p>
           <p className="mt-1" style={{ fontSize: 12, color: "var(--ink-1)", lineHeight: 1.5 }}>
@@ -72,7 +72,7 @@ export function ComboPopup({ queue, onDismiss }: Props) {
           </p>
         </div>
 
-        <p className="mt-3" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+        <p className="mt-3 t-meta" >
           Saved to your combo codex — triple-click the Loadout label in the footer any time to review it.
         </p>
 

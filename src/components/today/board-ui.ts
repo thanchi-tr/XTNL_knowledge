@@ -259,3 +259,199 @@ export function rowMinutes(rowKey: string, openKey: string | null, picked: numbe
 
 /** Archive and Drop wait this long before they are sent, so Undo costs nothing. */
 export const REMOVE_UNDO_MS = 10_000;
+
+// ── The redesign's board (Sigil & Slate): pure rules the new components read ──
+
+/**
+ * The Tick's accessible name. The Tick is a checkbox (aria-checked carries
+ * done), so its name is the task itself: "Morning meds, checkbox, checked";
+ * unchecking a done row inside its window is the undo. A locked study row
+ * says what completes it; a skipped one says so.
+ */
+export function tickNameOf(row: Pick<BoardRow, "state" | "progress"> & { template: { title: string } }): string {
+  const title = row.template.title;
+  if (row.state === "locked") return `${title}, completes itself at ${row.progress?.label ?? "its target"}`;
+  if (row.state === "skipped") return `${title}, skipped today`;
+  return title;
+}
+
+/** 'HH:MM' of an instant in the life zone ("Kept 08:05"). */
+export function hhmmOf(ms: number, tz: string = LIFE_TZ): string {
+  if (!Number.isFinite(ms)) return "";
+  return clockTime(ms, tz);
+}
+
+/** The hour (0–23) of an instant in the life zone. */
+export function hourOf(ms: number, tz: string = LIFE_TZ): number {
+  const h = Number(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(new Date(ms)));
+  return Number.isFinite(h) ? h : 0;
+}
+
+/** The Close-the-day end-cap stands out from this hour (18:00) until the 04:00 day edge. */
+export const CLOSE_DAY_HOUR = 18;
+
+export function closeDayProminent(clockMs: number, tz: string = LIFE_TZ): boolean {
+  const h = hourOf(clockMs, tz);
+  // After midnight is still the same life day, until 04:00.
+  return h >= CLOSE_DAY_HOUR || h < 4;
+}
+
+/**
+ * The Today lane split into the redesign's two lanes: Planned (one-offs)
+ * and Habits (anything with a rule). Order within each is the board's own.
+ */
+export function splitTodayLane<R extends { template: { recurrence: string | null } }>(rows: readonly R[]): { planned: R[]; habits: R[] } {
+  const planned: R[] = [];
+  const habits: R[] = [];
+  for (const r of rows) (ruleOf(r.template) ? habits : planned).push(r);
+  return { planned, habits };
+}
+
+/** "n of m kept" for a lane: done (the minimum included) against every row that still asks. */
+export function laneTally(rows: readonly Pick<BoardRow, "state">[]): { kept: number; total: number } {
+  const counted = rows.filter((r) => r.state !== "skipped");
+  return { kept: counted.filter((r) => r.state === "done").length, total: counted.length };
+}
+
+// ── Next up: one priority, one primary action ─────────────────────────────
+
+export type NextUp =
+  /** The review quest, while its Full-day ring is open. */
+  | { kind: "quest"; cards: number; dueAtOpen: number; reviews: number; dueNow: number }
+  /** The oldest open Must. */
+  | { kind: "must"; row: BoardRow }
+  /** Nothing asks: the quest is met and no Must is open. `dueNow` > 0 offers optional review. */
+  | { kind: "clear"; dueNow: number };
+
+/**
+ * What the Next up card leads with: the review quest (15 cards of N due)
+ * while its ring is open, then the oldest open Must, then nothing. (A
+ * workout to rate joins at M4.) Oldest is the earliest day it was due or
+ * carried from, then capture order: the one that has waited longest.
+ */
+export function nextUpOf(input: {
+  quest: { reviews: number; target: number; dueNow: number; met: boolean; cap: number };
+  must: readonly BoardRow[];
+}): NextUp {
+  const { quest } = input;
+  if (!quest.met) return { kind: "quest", cards: quest.cap, dueAtOpen: quest.target, reviews: quest.reviews, dueNow: quest.dueNow };
+  const open = input.must.filter((r) => r.state === "open");
+  if (open.length > 0) {
+    const since = (r: BoardRow) => r.carriedFrom ?? r.template.dueDay ?? r.day;
+    const oldest = [...open].sort(
+      (a, b) =>
+        since(a).localeCompare(since(b)) ||
+        a.template.createdAt.localeCompare(b.template.createdAt) ||
+        a.template.id.localeCompare(b.template.id)
+    )[0];
+    return { kind: "must", row: oldest };
+  }
+  return { kind: "clear", dueNow: quest.dueNow };
+}
+
+// ── Asks: what waits on you that the board does not already show ──────────
+
+/** The feed's notice, as Today reads it (lib/notifications.ts, Notice). */
+export interface AskNotice {
+  id: string;
+  group: string;
+  tone: "good" | "warn" | "bad" | "info";
+  title: string;
+  detail: string;
+  href?: string;
+  action?: string;
+}
+
+export interface TodayAsk {
+  id: string;
+  title: string;
+  detail: string;
+  /** "Record", "Review", "Add idea". */
+  action: string;
+  /** A link, or (no href) an in-page sheet the board opens by id. */
+  href?: string;
+  tone: "ask" | "owed";
+}
+
+/**
+ * The Asks cards on Today. Yesterday's open occurrences come first (they
+ * expire at the day edge); then the feed's notices that the board does not
+ * already carry: cards past grace, the weekly new-idea quota, and any
+ * active penalty (announced with the way to clear it). Due cards, the
+ * focus field and ready bosses live in Next up; musts and the inbox are
+ * the board itself. Good news never nags.
+ */
+export function todayAsksOf(input: { yesterdayOpen: number; recordBy: string; notices: readonly AskNotice[] }): TodayAsk[] {
+  const out: TodayAsk[] = [];
+  if (input.yesterdayOpen > 0) {
+    const n = input.yesterdayOpen;
+    out.push({
+      id: "yesterday",
+      title: `Yesterday: ${n} to record`,
+      detail: `Tick what you did at the full rate, ${input.recordBy}.`,
+      action: "Record",
+      tone: "ask",
+    });
+  }
+  for (const n of input.notices) {
+    const penalty = n.group === "Active effects" && n.tone === "bad";
+    if (n.id !== "overdue" && n.id !== "quota" && !penalty) continue;
+    out.push({
+      id: n.id,
+      title: n.title,
+      detail: n.detail,
+      action: n.action ?? (penalty ? "See why" : "Open"),
+      href: n.href ?? (penalty ? "/review" : undefined),
+      tone: n.tone === "bad" ? "owed" : "ask",
+    });
+  }
+  return out;
+}
+
+// ── The day's moments (T1), fired only on a change the player made ─────────
+
+export interface DaySnapshot {
+  /** The day counts for the streak (any tick or review). */
+  kept: boolean;
+  rings: { musts: boolean; quest: boolean; life: boolean };
+  full: boolean;
+  /** Every Must row kept (and there is at least one). */
+  mustLane: boolean;
+}
+
+export type DayMoment = "day-kept" | "ring-musts" | "ring-quest" | "ring-life" | "lane-kept" | "full-day";
+
+/**
+ * What closed between two snapshots, in the order it is shown: the first
+ * deed keeps the day, then the rings, the Must lane's KEPT stamp and the
+ * Full day. Only false → true transitions: an undo re-opens silently, and
+ * nothing is celebrated on arrival (the board only asks after a tap).
+ */
+export function dayMomentsOf(prev: DaySnapshot, next: DaySnapshot): DayMoment[] {
+  const out: DayMoment[] = [];
+  if (!prev.kept && next.kept) out.push("day-kept");
+  if (!prev.rings.musts && next.rings.musts) out.push("ring-musts");
+  if (!prev.rings.quest && next.rings.quest) out.push("ring-quest");
+  if (!prev.rings.life && next.rings.life) out.push("ring-life");
+  if (!prev.mustLane && next.mustLane) out.push("lane-kept");
+  if (!prev.full && next.full) out.push("full-day");
+  return out;
+}
+
+/** The live-region sentence of each moment. `streak` is the day streak once the day is kept. */
+export function momentText(m: DayMoment, ctx: { streak: number; musts: number }): string {
+  switch (m) {
+    case "day-kept":
+      return `Day ${ctx.streak} kept. Your streak is safe until 4 a.m.`;
+    case "ring-musts":
+      return ctx.musts > 0 ? `Musts kept, ${ctx.musts} of ${ctx.musts}.` : "Musts ring closed.";
+    case "ring-quest":
+      return "Quest ring closed.";
+    case "ring-life":
+      return "Life deed done. The Life ring closed.";
+    case "lane-kept":
+      return "Must lane kept.";
+    case "full-day":
+      return "Full day. Musts, quest and a life deed, all kept.";
+  }
+}

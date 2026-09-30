@@ -1,0 +1,108 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   XTNL · SIGIL & SLATE — tokens (FROZEN CONTRACT; imported into @layer theme
+   by globals.css). Values measured with scratchpad/redesign/final-src/lab.mjs
+   (WCAG 2.x; OKLab ΔE×100, Machado CVD) and asserted by
+   scripts/contrast-check.ts.
+
+   Six colour families, one meaning each:
+     Ink       structure, text, numbers, actions
+     Signal    state of a thing in time: kept · owed · held
+     Currency  life XP (--xp) · review points (--pts) · mastery points (--mp)
+     Material  rarity, depth and the character band: iron → astral
+     Light     earned, and only for now
+     Art       attribute hues (attribute-themes.ts, unchanged): inside emblem
+               art, radar vertices and path headers only
+   ===================================================================== */
+
+:root, .theme-night {            /* Night is the default. .theme-night re-scopes Night inside the ceremony curtain in any theme */
+  color-scheme: dark;
+  /* surfaces */
+  --canvas:#050609; --page:#0a0d13; --sunken:#07090e; --card:#11151d; --raised:#171c26; --overlay:#1d2330;
+  --bar:#0c0f15;                 /* top bar, tab bar, rail, sidebar: OPAQUE, never backdrop-blurred */
+  --scrim:rgba(3,4,7,.66);       /* transient overlays may add backdrop-filter: blur(3px) */
+  --curtain:#05060a; --face:#0d1017;   /* ceremony background; coin face of every crest, emblem and medallion (both themes) */
+  /* ink: every text step ≥ 4.5 on page / card / raised / overlay / sunken */
+  --ink-0:#f1f3f8;   /* 17.52 / 16.47 / 15.37 / 14.17 / 17.94 */
+  --ink-1:#c3cad8;   /* 11.82 / 11.11 / 10.37 /  9.56 / 12.10 */
+  --ink-2:#9aa3b5;   /*  7.67 /  7.21 /  6.73 /  6.20 /  7.85  — the lowest step for text of any size */
+  --ink-mute:#6f788c;/*  4.39 /  4.13 /  3.85 /  3.55 — NON-TEXT only: disabled glyphs, locked rims, unlit flame */
+  /* lines */
+  --line-1:rgba(255,255,255,.065); --line-2:rgba(255,255,255,.11);
+  --line-ctl:#76819a;  /* every control border + tick ring: 4.98 page, 4.68 card, 4.37 raised, 4.03 overlay */
+  --hi:rgba(255,255,255,.04);
+  /* signal = state in time (fg on card; on-solid; on own 14% wash) */
+  --kept:#5fd38d; --on-kept:#0b1a12;
+  --owed:#e07a95; --on-owed:#26060e;
+  --held:#72d2ec; --on-held:#06161c;   /* always paired with a hatch or glyph plus a word */
+  --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
+  /* "due" is retired as a hue: due = ink-0 text + clock glyph; the Must lane is told apart by diamond shape */
+  /* currency: glyph marks. The figure beside a glyph is always ink */
+  --xp:#fdaf3a;  --on-xp:#221400;   /* life XP · spark */
+  --pts:#8ea6ff; --on-pts:#07103a;  /* review points · faceted lozenge */
+  --mp:#ffe08a;  --on-mp:#2a1d00;   /* mastery points · hex nut */
+  /* light: earned, and only for now */
+  --light:#fff1cf; --light-glow:rgba(255,222,150,.34);
+  /* materials: rarity, depth, band. Gradients on shapes only; never text on page surfaces, never status */
+  --iron-a:#c3c9d4;   --iron-m:#8a93a4;   --iron-b:#434a5a;
+  --bronze-a:#f3c08f; --bronze-m:#c0834f; --bronze-b:#8a5530;
+  --silver-a:#ffffff; --silver-m:#c9d1de; --silver-b:#7d889c;
+  --gold-a:#fff0bd;   --gold-m:#f0c75e;   --gold-b:#c9901f;   /* gold button label #2a1d00: 13.5 top, 5.88 darkest stop */
+  --astral-a:#d8f3ff; --astral-m:#c7b5ff; --astral-b:#ffd9ee;
+  --focus:var(--ink-0);            /* 2px outline, 2px offset; never reshapes the element */
+  --shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);   /* only overlays cast shadows */
+}
+
+:root[data-theme="vellum"] {      /* token-complete; ships AFTER launch; lint: identity hues never as text */
+  color-scheme: light;
+  --canvas:#e2dccf; --page:#f3efe6; --sunken:#e9e3d6; --card:#fffdf8; --raised:#faf6ee; --overlay:#ffffff;
+  --bar:#f3efe6; --scrim:rgba(30,26,18,.38); --face:#0d1017;
+  --ink-0:#17191f; --ink-1:#3a404d; --ink-2:#595f6e /* 6.28 card, 5.00 sunken */; --ink-mute:#777d8a;
+  --line-1:rgba(40,32,16,.08); --line-2:rgba(40,32,16,.14); --line-ctl:#7f7868 /* 4.31 card, 3.43 sunken */; --hi:rgba(255,255,255,.7);
+  --kept:#196b3d; --on-kept:#fff; --owed:#9c2f6b /* 6.81 */; --on-owed:#fff; --held:#0e6480; --on-held:#fff;
+  --xp:#a33d00 /* 6.41 */; --on-xp:#fff; --pts:#3450c2 /* 6.72 */; --on-pts:#fff; --mp:#b47308 /* 3.83, glyph only */; --on-mp:#1f1500;
+  --light:#b8801f; --light-glow:rgba(184,128,31,.22); --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
+}
+
+/* type, space, radius, motion, layers (theme-independent) */
+:root {
+  --font-ui: var(--font-inter), "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-fraunces), "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-display-italic: var(--font-fraunces-italic), var(--font-fraunces), "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, Consolas, monospace;
+  /* spacing: 4-based, in px (html stays 16px) */
+  --s-1:2px; --s-2:4px; --s-3:6px; --s-4:8px; --s-5:12px; --s-6:16px; --s-7:20px; --s-8:24px; --s-9:32px; --s-10:40px; --s-11:56px;
+  --r-chip:8px; --r-ctl:12px; --r-card:16px; --r-sheet:24px; --r-pill:999px;
+  --hit:44px; --hit-min:40px;
+  --topbar-h:56px; --tabbar-h:64px; --rail-w:84px; --sidebar-w:232px;   /* replace --nav-h and the 22+60+58 sums */
+  --t-press:90ms; --t-quick:160ms; --t-base:240ms; --t-slow:420ms; --t-flight:560ms; --t-seal:1400ms; --t-ceremony:2000ms;
+  --ease-out:cubic-bezier(.16,1,.3,1); --ease-inout:cubic-bezier(.65,0,.35,1); --ease-stamp:cubic-bezier(.34,1.56,.64,1);
+  --ambient-play:running;
+  --z-sky:-1; --z-bar:20; --z-toast:30; --z-sheet:50; --z-ceremony:70; --z-fx:80;
+}
+@media (min-width:600px) { :root { --topbar-h:60px; } }
+@media (min-width:600px) and (max-height:760px) { :root { --topbar-h:52px; } }
+
+html[data-motion="calm"], html[data-motion="still"], html[data-power="save"] { --ambient-play:paused; }
+/* Still: nothing animates, and every rule rests on its final state. !important
+   in the FIRST layer beats every later layer's normal and important declarations. */
+html[data-motion="still"] *, html[data-motion="still"] *::before, html[data-motion="still"] *::after { animation:none !important; transition:none !important; }
+
+/* ===== LEGACY ALIASES (PR 1; delete each when `grep var(--name)` reaches 0) =====
+   Declared on .theme-night too, so an alias inside the curtain follows Night. */
+:root, .theme-night {
+  --base:var(--page); --sub:var(--sunken); --lift:var(--overlay);
+  --ink-3:var(--ink-2);       /* 141 TSX + 18 CSS text uses: 1.64:1 → 7.21:1 on card, 6.20 on overlay */
+  --line:var(--line-1); --line-hi:var(--line-2); --line-act:var(--line-ctl);
+  --green:var(--kept); --green-hi:var(--kept); --green-10:color-mix(in srgb,var(--kept) 10%,transparent); --green-06:color-mix(in srgb,var(--kept) 6%,transparent);
+  --red:var(--owed); --red-10:color-mix(in srgb,var(--owed) 10%,transparent);
+  --blue:var(--held); --blue-10:color-mix(in srgb,var(--held) 10%,transparent);
+  --amber:var(--ink-0); --amber-10:color-mix(in srgb,var(--ink-0) 8%,transparent);  /* due → ink; each Apex use → gold material (codemod) */
+  --nav-h:var(--topbar-h); --background:var(--page); --foreground:var(--ink-0);
+  /* Old elevation scale: only overlays cast shadows now, so all three are the pop shadow. */
+  --shadow-sm:var(--shadow-pop); --shadow-md:var(--shadow-pop); --shadow-lg:var(--shadow-pop);
+  /* --rank-* keep their values: SkillLogo mirrors them in RANK_META */
+  --rank-pure:#5a7490; --rank-synergy:#4d9cf5; --rank-capstone:#9b6bff; --rank-apex:#f0a030; --rank-ultimate:#ff5eb0;
+  --rank-pure-10:rgba(90,116,144,.10); --rank-synergy-10:rgba(77,156,245,.10); --rank-capstone-10:rgba(155,107,255,.12);
+  --rank-apex-10:rgba(240,160,48,.12); --rank-ultimate-10:rgba(255,94,176,.14);
+}

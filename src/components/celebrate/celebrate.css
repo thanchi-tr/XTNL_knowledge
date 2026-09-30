@@ -1,0 +1,43 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   L3-celebrate — what the Seal dock, the curtain and the Moments art add
+   to L0's kit (.seal-card, .what, .medal, .curtain, .cur-*, .grants,
+   .rays, .flash, .wave live in styles/components.css and effects.css).
+   No keyframes here: every celebration animates through motion.ts (WAAPI),
+   and every rule below is a resting, final state.
+   ===================================================================== */
+@layer components {
+  /* The Seal docks at the toast position, stacked above any live toast (an
+     Undo must never be covered): the host sets --dock-lift to the toast dock's height. */
+  .dock.seal-dock {
+    z-index: calc(var(--z-toast) + 1);
+    bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom) + var(--dock-lift, 0px));
+  }
+  @media (min-width: 600px) {
+    .dock.seal-dock { bottom: calc(20px + var(--dock-lift, 0px)); }
+  }
+  .app:has(.focus-mode) ~ .dock.seal-dock { bottom: calc(12px + env(safe-area-inset-bottom) + var(--dock-lift, 0px)); }
+
+  .seal-card .sc-t h3 { text-wrap: balance; }
+  .seal-card .sc-t .t-eyebrow { margin-bottom: 2px; }
+  .seal-card .facts .cur { color: var(--ink-0); font-weight: 600; }
+  .seal-card .medal.glyph .num-wrap b { font-size: 20px; letter-spacing: .02em; }
+  .seal-card.inline { margin-top: 12px; border-radius: var(--r-card); }
+
+  /* The curtain: its focus container takes focus with no ring (it is not a control). */
+  .curtain .cur-in:focus { outline: none; }
+  .curtain .cur-in .t-epithet { color: var(--ink-1); }
+  /* A caller's backdrop (the sky band, a Cataclysm variant, fixed at z 16) stays under the words and the Skip. */
+  .curtain .cur-backdrop { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .curtain .cur-in { z-index: 20; }
+  .curtain .cur-skip { z-index: 21; }
+  .curtain .cur-what { text-align: left; margin-top: 16px; }
+  /* Notches and crest edges pop from their own centre, not the SVG origin. */
+  .curtain .cur-art :is(.notch, .edge) { transform-box: fill-box; transform-origin: center; }
+  .curtain .cur-acts .btn-quiet { min-width: 88px; }
+
+  /* A Moment's art (You › Moments rows). */
+  .moment-art { display: inline-grid; place-items: center; flex: none; }
+  .moment-art .coin-wrap .chip,
+  .moment-art .coin-pct { display: none; }
+}

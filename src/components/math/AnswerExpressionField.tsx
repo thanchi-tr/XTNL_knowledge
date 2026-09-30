@@ -1,6 +1,7 @@
 "use client";
 
 import "katex/dist/katex.min.css";
+import "@/components/library/study.css";
 import katex from "katex";
 import { useMemo, useRef } from "react";
 import { LatexPalette } from "./LatexPalette";
@@ -73,43 +74,42 @@ export function AnswerExpressionField({ value, onChange }: Props) {
         placeholder="sqrt(x^2 + y^2)  or  \sqrt{x^2 + y^2}"
       />
 
-      <div className="mt-2">
+      <div style={{ marginTop: 8 }}>
         <LatexPalette onInsert={insert} />
       </div>
 
-      <div className="mt-2 p-3" style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}>
-        <p className="label-xs">Preview</p>
+      <div className="m-preview">
+        <span className="t-eyebrow">Preview</span>
         {result === null ? (
-          <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-3)" }}>Nothing to preview yet.</p>
+          <p className="t-meta">Nothing to preview yet.</p>
         ) : result.ok ? (
           <>
-            <div className="mt-1" style={{ color: "var(--ink-0)", overflowX: "auto" }}>
-              {html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : <span className="mono">{result.tex}</span>}
+            <div className="m-out">
+              {html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : <span className="t-mono">{result.tex}</span>}
             </div>
-            <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ fontSize: 10, color: "var(--ink-3)" }}>
+            <div className="m-facts t-meta">
               <span>
-                Stored as <span className="mono" style={{ color: "var(--ink-2)" }}>{result.mathjs}</span>
+                Stored as <span className="t-mono ink-1">{result.mathjs}</span>
               </span>
               <span>
                 {result.variables.length > 0 ? (
                   <>
-                    Variables{" "}
-                    <span className="mono" style={{ color: "var(--ink-2)" }}>{result.variables.join(", ")}</span> — a
-                    reviewer must use these exact names.
+                    Variables <span className="t-mono ink-1">{result.variables.join(", ")}</span>: a reviewer must use these exact
+                    names.
                   </>
                 ) : (
-                  "No free variables — this is a constant."
+                  "No free variables: this is a constant."
                 )}
               </span>
             </div>
           </>
         ) : (
-          <p className="mt-1" style={{ fontSize: 11.5, color: "var(--red)", lineHeight: 1.5 }}>
-            The grader can’t parse this: {result.error}
-            <span className="mt-0.5 block" style={{ color: "var(--ink-3)", fontSize: 10 }}>
-              Until this parses, no answer could ever be marked correct — grading evaluates both sides as expressions.
-            </span>
-          </p>
+          <div>
+            <p className="st-error">The grader can’t parse this: {result.error}</p>
+            <p className="t-meta" style={{ marginTop: 2 }}>
+              Until this parses, no answer could ever be marked correct: grading evaluates both sides as expressions.
+            </p>
+          </div>
         )}
       </div>
     </div>

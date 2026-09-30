@@ -13,6 +13,11 @@ import { getMasteryBalanceFresh, submitAttestation } from "@/lib/mastery";
 import { invalidate } from "@/lib/cache";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { formatExpiry } from "@/lib/format-date";
+import { SKILL_POOL } from "@/lib/skill-pool";
+import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
+import type { CelebrationEvent, ProgressSnapshot } from "@/lib/celebration-types";
+import { opensAfter, requirementsOf } from "@/components/skills/ladder";
+import { buildUnlockEvent, firstOfDepth, mergeUnlockEvents } from "@/components/skills/unlock-event";
 
 export type SkillActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -35,14 +40,41 @@ function describeBlockers(blockers: UnlockBlocker[]): string {
     .join(" ");
 }
 
+export interface UnlockResult {
+  skillCode: string;
+  masteryPaid: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  /**
+   * The Ascension first (the emblem-unlock T3, with its exact cost and
+   * cause), then anything else the unlock moved (a title, a band), as L3's
+   * detectors return them. The client enqueues each; nothing plays twice.
+   */
+  events: CelebrationEvent[];
+  /** The player's first emblem at this depth (13–15): its Ascension plays the Cataclysm backdrop. */
+  firstOfDepth: boolean;
+}
+
+/** Never lets the celebration layer take an unlock down: a failed snapshot means no detected extras. */
+async function snapshotOrNull(userId: string): Promise<ProgressSnapshot | null> {
+  try {
+    // The unlock scope: owned emblems, the MP balance and the levels (a first Ultimate changes the title).
+    return await captureSnapshot(userId, { scope: "unlock" });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Spends mastery points to unlock a skill. Re-checks every blocker
  * server-side against a freshly loaded `ProgressionState` — the UI's own
  * blocker list is advisory, this is the enforcement.
+ *
+ * Returns the unlock's Ascension (T3): the emblem, what it grants, what it
+ * cost (the balance before and after, from the same fresh read that priced
+ * it) and why it was allowed. Deterministic: nothing is rolled.
  */
-export async function unlockSkill(
-  skillCode: string
-): Promise<SkillActionResult<{ skillCode: string; masteryPaid: number }>> {
+export async function unlockSkill(skillCode: string): Promise<SkillActionResult<UnlockResult>> {
   const skill = getSkill(skillCode);
   if (!skill) {
     return { ok: false, error: "That skill does not exist." };
@@ -51,9 +83,10 @@ export async function unlockSkill(
   const userId = getCurrentUserId();
   // Both fresh: this spends points. Pricing a purchase off a cached balance
   // is exactly the kind of staleness that lets a player overspend.
-  const [progression, masteryBalance] = await Promise.all([
+  const [progression, masteryBalance, before] = await Promise.all([
     loadProgressionFresh(userId),
     getMasteryBalanceFresh(userId),
+    snapshotOrNull(userId),
   ]);
 
   const blockers = unlockBlockers(
@@ -83,7 +116,40 @@ export async function unlockSkill(
   }
   invalidate("progress");
 
-  return { ok: true, value: { skillCode: skill.code, masteryPaid: skill.masteryCost } };
+  const ctx = {
+    scores: progression.scores,
+    ownedCodes: progression.ownedCodes,
+    balance: masteryBalance,
+    modifiers: progression.modifiers,
+  };
+  const balanceAfter = masteryBalance - skill.masteryCost;
+  const local = buildUnlockEvent({
+    skill,
+    balanceBefore: masteryBalance,
+    balanceAfter,
+    ownedBefore: progression.ownedCodes.length,
+    poolSize: SKILL_POOL.length,
+    requirements: requirementsOf(skill, ctx),
+    opens: opensAfter(skill, progression.ownedCodes),
+  });
+
+  let detected: CelebrationEvent[] = [];
+  if (before) {
+    const after = await snapshotOrNull(userId);
+    if (after) detected = await detectCelebrations(before, after, { cause: "unlock" }).catch(() => []);
+  }
+
+  return {
+    ok: true,
+    value: {
+      skillCode: skill.code,
+      masteryPaid: skill.masteryCost,
+      balanceBefore: masteryBalance,
+      balanceAfter,
+      events: mergeUnlockEvents(local, detected),
+      firstOfDepth: firstOfDepth(skill, progression.ownedCodes),
+    },
+  };
 }
 
 export async function submitMasteryAttestation(

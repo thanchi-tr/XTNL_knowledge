@@ -1,16 +1,19 @@
+import type { Metadata } from "next";
 import { loadFieldsForCapture } from "@/lib/queries";
 import { loadVocabulary, loadStructureWords } from "@/lib/vocabulary";
+import { loadDailyFocus } from "@/lib/daily-focus";
+import { loadProgression } from "@/lib/skill-effects";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
 import { AddIdeaForm, type AddFormField } from "@/components/AddIdeaForm";
-import { DraftPrefill } from "@/components/capture/DraftPrefill";
+import { Chip } from "@/components/ui/Chip";
 
 export const dynamic = "force-dynamic";
 
+export const metadata: Metadata = { title: "New idea" };
+
 /** Enough of the split to be informative without turning the form into a chart. */
 const COMPOSITION_PREVIEW_COUNT = 4;
-
-const FORM_ID = "add-idea-form";
 
 interface IdeaDraft {
   question: string;
@@ -38,27 +41,45 @@ async function loadIdeaDraft(id: string | undefined): Promise<IdeaDraft | null> 
   }
 }
 
+/** Today's focus Field, for the form's hint. Soft: no focus is a fine answer. */
+async function loadFocus() {
+  try {
+    const userId = getCurrentUserId();
+    const progression = await loadProgression(userId);
+    const focus = await loadDailyFocus(userId, progression.activeSkills);
+    return focus && focus.multiplier > 1 ? { fieldId: focus.fieldId, fieldName: focus.fieldName, multiplier: focus.multiplier } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Study › New idea (the Form template, max 640). Question first; Field and
+ * Domain are guessed from it; Advanced holds the format and the collection;
+ * a sticky Check first / Create. A quick-capture draft (?draft=<id>) fills
+ * the default Short fields.
+ *
+ * This page stays off the `main` container (no cq-main): the word-hint strip
+ * is a fixed layer rendered inside the form.
+ */
 export default async function AddIdeaPage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { draft: draftParam } = await searchParams;
-  // Domains are offered as explicit placement targets in the form. Without
-  // them an empty hand-created Domain is unreachable — discovery routes by
-  // nearest existing Idea, and an empty Domain has none.
-  const [rows, vocab, structure, draft] = await Promise.all([
+  // Domains are offered as explicit placement targets: without them an empty
+  // hand-created Domain is unreachable (discovery routes by nearest Idea).
+  const [rows, vocab, structure, draft, focus] = await Promise.all([
     loadFieldsForCapture(),
     loadVocabulary(),
     loadStructureWords(),
     loadIdeaDraft(typeof draftParam === "string" ? draftParam : undefined),
+    loadFocus(),
   ]);
 
-  // Structure names first: they are words the player committed to rather than
-  // merely typed, and they are worth suggesting from the very first Idea,
-  // before any corpus exists for the frequency floor to work on. De-duped
-  // case-insensitively so a Field called "Trading" does not shadow the same
-  // word earned from the corpus.
+  // Structure names first: words the player committed to, useful from the
+  // very first Idea. De-duped case-insensitively.
   const seen = new Set<string>();
   const vocabulary: string[] = [];
   for (const word of [...structure, ...vocab.map((v) => v.word)]) {
@@ -79,39 +100,30 @@ export default async function AddIdeaPage({
   }));
 
   return (
-    <main className="site-container flex-1 py-8">
-      <div className="mx-auto w-full max-w-2xl">
-        <header className="fade-up mb-6">
-          <p className="section-eyebrow">Capture</p>
-          <h1 className="mt-1.5 text-[19px] font-semibold tracking-tight" style={{ color: "var(--ink-0)" }}>
-            New Idea
-          </h1>
-          <p className="mt-1" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-            Submissions are embedded and checked against existing ideas before anything is written.
-          </p>
-        </header>
-        {draft && (
-          <div
-            className="fade-up mb-4 px-3 py-2.5"
-            style={{ borderRadius: 10, background: "var(--blue-10)", border: "1px solid rgba(77,156,245,0.26)" }}
-          >
-            <p className="label-xs" style={{ fontSize: 9.5, color: "var(--blue)" }}>
+    <div className="page narrow add-page">
+      {draft && (
+        <div className="card pad" style={{ margin: "8px 0 4px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="st-row">
+            <Chip icon="inbox">
               From quick capture
-            </p>
-            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-0)" }}>
-              {draft.question}
-              {draft.answer && <span style={{ color: "var(--ink-2)" }}> · {draft.answer}</span>}
-            </p>
-            <p className="mt-1" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              Filled in below. The line stays in your Inbox until you drop it there.
-            </p>
+            </Chip>
           </div>
-        )}
-        <div id={FORM_ID} className="fade-up fade-up-1">
-          <AddIdeaForm fields={fields} vocabulary={vocabulary} />
+          <p className="ink-0" style={{ margin: 0 }}>
+            {draft.question}
+            {draft.answer && <span className="ink-2"> · {draft.answer}</span>}
+          </p>
+          <p className="t-meta" style={{ margin: 0 }}>
+            Filled in below. The line stays in your Inbox until you drop it there.
+          </p>
         </div>
-        {draft && <DraftPrefill question={draft.question} answer={draft.answer} targetId={FORM_ID} />}
-      </div>
-    </main>
+      )}
+      <AddIdeaForm
+        fields={fields}
+        vocabulary={vocabulary}
+        initialQuestion={draft?.question ?? ""}
+        initialAnswer={draft?.answer ?? ""}
+        focus={focus}
+      />
+    </div>
   );
 }

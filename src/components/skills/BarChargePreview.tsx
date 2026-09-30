@@ -86,8 +86,8 @@ function MockBar({
       style={{
         position: "relative",
         isolation: "isolate",
-        background: "rgba(4,8,15,.92)",
-        borderTop: "1px solid var(--line)",
+        background: "color-mix(in srgb, var(--page) 92%, transparent)",
+        borderTop: "1px solid var(--line-1)",
         overflow: "hidden",
       }}
     >
@@ -96,7 +96,7 @@ function MockBar({
       <div className="site-container relative flex items-center gap-4 py-2.5" style={{ zIndex: 1 }}>
         <div className="shrink-0">
           <p className="label-xs">Loadout</p>
-          <p className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+          <p className="mono t-meta" >
             slot {slot + 1}
           </p>
         </div>
@@ -118,8 +118,8 @@ function MockBar({
                   // origin remains reachable in the preview.
                   width: "100%",
                   minWidth: 0,
-                  borderColor: i === slot ? "rgba(0,204,122,.45)" : "var(--line-hi)",
-                  background: i === slot ? "var(--raised)" : "var(--sub)",
+                  borderColor: i === slot ? "color-mix(in srgb, var(--kept) 45%, transparent)" : "var(--line-2)",
+                  background: i === slot ? "var(--raised)" : "var(--sunken)",
                 }}
               >
                 {i === slot ? (
@@ -128,7 +128,7 @@ function MockBar({
                     <EquipPulse key={`${variant}-${take}-pulse`} skill={skill} />
                   </>
                 ) : (
-                  <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  <span className="mono t-meta" >
                     {i + 1}
                   </span>
                 )}
@@ -182,11 +182,11 @@ export function BarChargePreview({ samples }: Props) {
               style={{
                 padding: "4px 12px",
                 borderRadius: 8,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
-                border: `1px solid ${v.key === variant ? "rgba(0,204,122,.45)" : "var(--line-hi)"}`,
-                background: v.key === variant ? "var(--green-10)" : "transparent",
-                color: v.key === variant ? "var(--green)" : "var(--ink-2)",
+                border: `1px solid ${v.key === variant ? "color-mix(in srgb, var(--kept) 45%, transparent)" : "var(--line-2)"}`,
+                background: v.key === variant ? "color-mix(in srgb, var(--kept) 10%, transparent)" : "transparent",
+                color: v.key === variant ? "var(--kept)" : "var(--ink-2)",
                 cursor: "pointer",
               }}
             >
@@ -202,10 +202,10 @@ export function BarChargePreview({ samples }: Props) {
       {samples.map((s) => (
         <section key={s.code} className="card overflow-hidden">
           <div className="flex flex-wrap items-baseline justify-between gap-2 p-3 pb-2">
-            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: RANK_META[s.rank].color }}>
+            <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: RANK_META[s.rank].color }}>
               {s.rank} · T{s.tier}
             </span>
-            <span style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
+            <span className="t-meta">
               {s.rank === "ULTIMATE"
                 ? "aftermath — collapse, accretion, gravity"
                 : s.rank === "APEX"

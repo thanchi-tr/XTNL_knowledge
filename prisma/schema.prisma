@@ -789,3 +789,63 @@ model TaskInstance {
   @@index([userId, debtOpen])
   @@schema("public")
 }
+
+// ── Celebrations: persisted Seals and Ascensions (migration celebrations) ────
+//
+// The reward ladder's two loud tiers (redesign.md › Rewards). Detectors in
+// src/lib/celebrations.ts diff a before and an after snapshot of progress and
+// write each Seal (T2) or Ascension (T3) here once, keyed by an idempotent
+// dedupeKey, so a moment plays once across the Fold and the desktop. T0 and T1
+// render in place and are never stored. Additive: new tables only, kinds are
+// TEXT typed by src/lib/celebration-types.ts, and nothing has a foreign key.
+
+/// One Seal (tier 2) or Ascension (tier 3). Acknowledging sets shownAt; an
+/// unseen row surfaces on the next open. You › Moments lists them.
+model CelebrationEvent {
+  id         String    @id @default(cuid())
+  userId     String
+  /// 2 = Seal, 3 = Ascension.
+  tier       Int
+  /// A T2/T3 kind from celebration-types.ts: 'domain-level', 'band', 'emblem-unlock', …
+  kind       String
+  /// Idempotency, one row per key per user, ever: 'title:Practitioner', 'band:bronze', 'domain:<id>:7', 'streak:30', 'unlock:<code>', …
+  dedupeKey  String
+  /// CelebrationFacts: eyebrow, title, fact lines, exact amounts, numeral, material, and the T3 text.
+  facts      Json
+  /// WhatMoved[]: label left, exact value right.
+  what       Json      @default("[]")
+  /// Set when a louder event from the same diff claimed this key (the level-15 re-forge claims 'title:Practitioner' and 'level:15'). Such a row never plays and is not a Moment.
+  mergedInto String?
+  createdAt  DateTime  @default(now())
+  /// When a device first showed it. Null: still pending.
+  shownAt    DateTime?
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, shownAt])
+  @@index([userId, createdAt])
+  @@schema("public")
+}
+
+/// Settings › Feedback, persisted for the account (savePrefs). theme, motion and
+/// autoAdvance follow the account across devices; sound and haptics are per
+/// device (the localStorage mirror). Every column is nullable on purpose: null
+/// means "never chosen", so a device that saved only its theme never imposes a
+/// default motion on another device that chose Still.
+model UserPrefs {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  /// night | vellum
+  theme       String?
+  /// system | full | calm | still
+  motion      String?
+  /// off | soft (per device; normally null)
+  sound       String?
+  /// off | on (per device; normally null)
+  haptics     String?
+  /// next | wait
+  autoAdvance String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@schema("public")
+}

@@ -4,19 +4,24 @@ import { prisma } from "./prisma";
 import { invalidate } from "./cache";
 import {
   graceEndsAt,
-  reviewReward,
-  rollRewardVariance,
-  type RewardBand,
+  reviewPayout,
   domainLevelProgress,
   nextIntervalDays,
   MAX_LEVEL,
   MASTERY_BONUS,
   MASTERY_LEVEL,
+  type ReviewPayout,
 } from "./xp";
 import { recalculateLeveling } from "./leveling";
 import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
 import { recordFieldActivity } from "./field-streaks";
-import { mintIdeaMasteryOp, mintReviewFractionOp, comboMasteryBonus } from "./mastery";
+import {
+  mintIdeaMasteryOp,
+  mintReviewFractionOp,
+  comboMasteryBonus,
+  reviewMasteryFraction,
+  IDEA_MASTERY_POINTS,
+} from "./mastery";
 import { activityOp, invalidateActivity, recordActivity } from "./activity";
 import type { ActivityInput } from "./life-types";
 import { getCurrentUserId } from "./user";
@@ -35,35 +40,110 @@ function addDays(date: Date, days: number): Date {
   return d;
 }
 
-/** Where the Domain now sits relative to its next level threshold. */
-export interface DomainProgress {
-  domainName: string;
-  level: number;
-  /** 0..1 toward the next level. */
-  progress: number;
-  pointsIntoLevel: number;
-  pointsForNextLevel: number;
+/**
+ * An Idea with the Domain and Field it sits in: everything a review reads
+ * before it writes. One query — `relationLoadStrategy: "join"` (the
+ * relationJoins preview is on) turns the include into a single joined
+ * SELECT, so the grader's read, the SRS read and the "domain before" read
+ * that used to be three sequential round trips are now one.
+ */
+export type ReviewIdea = Idea & {
+  domain: {
+    id: string;
+    name: string;
+    level: number;
+    totalPoints: number;
+    fieldId: string;
+    field: { id: string; name: string; level: number };
+  };
+};
+
+export function readReviewIdea(ideaId: string): Promise<ReviewIdea> {
+  return prisma.idea.findUniqueOrThrow({
+    where: { id: ideaId },
+    relationLoadStrategy: "join",
+    include: {
+      domain: {
+        select: {
+          id: true,
+          name: true,
+          level: true,
+          totalPoints: true,
+          fieldId: true,
+          field: { select: { id: true, name: true, level: true } },
+        },
+      },
+    },
+  });
+}
+
+/** A level before and after this review. */
+export interface LevelMove {
+  before: number;
+  after: number;
+}
+
+/** Points progress inside a Domain's points level (xp.ts domainLevelProgress). */
+export type PointsProgress = ReturnType<typeof domainLevelProgress>;
+
+/** Where the Domain sat before this review and where it sits now. */
+export interface DomainMove {
+  id: string;
+  name: string;
+  /** Domain.level: points capped by depth (xp.ts domainLevel). */
+  level: LevelMove;
+  totalPoints: LevelMove;
+  /** Points progress toward the next points level, before and after (the result panel's meter). */
+  progress: { before: PointsProgress; after: PointsProgress };
+}
+
+export interface FieldMove {
+  id: string;
+  name: string;
+  level: LevelMove;
 }
 
 export type ReviewOutcome =
   | {
       outcome: "advanced";
+      previousLevel: number;
       newLevel: number;
       domainLeveledUp: boolean;
       newDomainLevel: number;
-      /** Actual points credited, including level scaling, combo and any mastery bonus. */
+      /** Actual points credited: payout.total (level base × combo × yield, plus any mastery bonus). */
       pointsAwarded: number;
+      /** The price in parts, exactly as paid. Nothing in it is random. */
+      payout: ReviewPayout;
       /** True only on the review that first reaches MASTERY_LEVEL. */
       mastered: boolean;
-      /** Where this payout landed inside the variance band — lets the card call out a good roll. */
-      rewardBand: RewardBand;
-      domainProgress: DomainProgress;
+      /** Mastery points this review minted (the per-review fraction, plus the mastery lump when mastered). */
+      masteryMinted: number;
+      domain: DomainMove;
+      field: FieldMove;
+      /** The interval actually scheduled, in days. */
+      intervalDays: number;
+      /** ISO instant of the next review. */
+      nextDue: string;
       /** Next session combo value — server-authoritative (COMBO_ANCHOR-aware); the client just stores it. */
       nextCombo: number;
     }
-  | { outcome: "strike"; failedAttempts: number; /** STRIKE_TOLERANCE-adjusted; the actual limit that triggers a Degradation. */ strikeLimit: number; nextCombo: number }
-  | { outcome: "degraded"; newLevel: number; nextCombo: number }
-  | { outcome: "shielded"; level: number; /** Which owned skill absorbed the Degradation — never a hardcoded name. */ skillName: string; nextCombo: number };
+  | {
+      outcome: "strike";
+      failedAttempts: number;
+      /** STRIKE_TOLERANCE-adjusted; the actual limit that triggers a Degradation. */
+      strikeLimit: number;
+      nextCombo: number;
+      nextDue: string;
+    }
+  | { outcome: "degraded"; previousLevel: number; newLevel: number; nextCombo: number; nextDue: string }
+  | {
+      outcome: "shielded";
+      level: number;
+      /** Which owned skill absorbed the Degradation — never a hardcoded name. */
+      skillName: string;
+      nextCombo: number;
+      nextDue: string;
+    };
 
 /**
  * A review's row in the life ledger (activity.ts). Sink DOMAIN: its points,
@@ -87,7 +167,7 @@ function reviewEvent(ideaId: string, now: Date, xp: number, detail: string): Act
  * `graceExtraDays` is the GRACE_EXTENSION skill hook, applied to the grace
  * period the *newly degraded* level gets.
  */
-async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promise<number> {
+async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promise<{ newLevel: number; dueDate: Date }> {
   const newLevel = Math.max(1, idea.level - 1);
   const newYield = idea.yieldPoints * DEGRADATION_YIELD_MULTIPLIER;
   const yieldDelta = newYield - idea.yieldPoints; // negative
@@ -111,7 +191,7 @@ async function degradeIdea(idea: Idea, now: Date, graceExtraDays: number): Promi
   ]);
   await recalculateLeveling(idea.domainId);
 
-  return newLevel;
+  return { newLevel, dueDate };
 }
 
 /**
@@ -132,29 +212,41 @@ async function attemptDegradation(
   const anchor = await tryConsumeWardCharge(userId, progression.activeSkills, now);
 
   if (anchor) {
+    const dueDate = addDays(now, 1);
     await prisma.idea.update({
       where: { id: idea.id },
-      data: { failedAttempts: 0, dueDate: addDays(now, 1) },
+      data: { failedAttempts: 0, dueDate },
     });
     // Reschedules the Idea without touching points, so it never reaches
     // `recalculateLeveling` — the one write path that invalidates for us.
     // The due queue still changed, so it has to be dropped here.
     invalidate("ideas");
-    return { outcome: "shielded", level: idea.level, skillName: anchor.name, nextCombo };
+    return { outcome: "shielded", level: idea.level, skillName: anchor.name, nextCombo, nextDue: dueDate.toISOString() };
   }
 
-  const newLevel = await degradeIdea(idea, now, progression.modifiers.graceExtraDays);
-  return { outcome: "degraded", newLevel, nextCombo };
+  const { newLevel, dueDate } = await degradeIdea(idea, now, progression.modifiers.graceExtraDays);
+  return { outcome: "degraded", previousLevel: idea.level, newLevel, nextCombo, nextDue: dueDate.toISOString() };
+}
+
+/** What a caller that already read the Idea (the review action, grading it) hands over, so nothing is read twice. */
+export interface ReviewPreload {
+  idea: ReviewIdea;
+  progression: ProgressionState;
 }
 
 /**
  * Applies the result of an attempted review (spec section 5, Reward &
- * Punishment). Correct -> advance level, credit `reviewReward` (level-scaled
- * and combo-multiplied, plus a one-time mastery bonus at level 12 — see
- * xp.ts for why this is no longer the spec's flat +2), next dueDate from the
- * interval schedule above. Incorrect -> failedAttempts++, then either a
- * plain Strike (24h reschedule, no other change) or — if failedAttempts hit
- * the limit or the grace period has already lapsed — a Degradation.
+ * Punishment). Correct -> advance level, credit the review's price
+ * (xp.ts reviewPayout: level base × combo × yield, plus a one-time mastery
+ * bonus at level 12 — see xp.ts for why this is no longer the spec's flat
+ * +2), next dueDate from the interval schedule. Incorrect ->
+ * failedAttempts++, then either a plain Strike (24h reschedule, no other
+ * change) or — if failedAttempts hit the limit or the grace period has
+ * already lapsed — a Degradation.
+ *
+ * There is no reward roll: a review pays its stated price every time (the
+ * old ±12% variance had an expected value of exactly 1.0, so removing it
+ * moved no one's expected income; scripts/review-check.ts proves both).
  *
  * Loads the caller's full skill progression once and threads its
  * `ActiveModifiers` through every formula below (REVIEW_YIELD, MASTERY_YIELD,
@@ -164,25 +256,30 @@ async function attemptDegradation(
  * every real review, correct or not; showing up is what's measured. And every
  * review lands once in the life ledger as a REVIEW row, which is what the
  * daily streak and the Today board read.
+ *
+ * One read wave before the write: the Idea with its Domain and Field (one
+ * joined query) and the progression, together — or neither, when the action
+ * already read both in its own wave and passes them as `preload`.
  */
 export async function applyReviewResult(
   ideaId: string,
   correct: boolean,
   now: Date = new Date(),
-  /** Consecutive correct answers *before* this one; clamped inside `reviewReward`. */
-  combo = 0
+  /** Consecutive correct answers *before* this one; clamped inside `reviewPayout`. */
+  combo = 0,
+  preload?: ReviewPreload
 ): Promise<ReviewOutcome> {
   const userId = getCurrentUserId();
-  // Three independent reads — issued together rather than in sequence,
-  // because each round trip to the database costs far more than the query.
-  const [idea, progression] = await Promise.all([
-    prisma.idea.findUniqueOrThrow({ where: { id: ideaId } }),
-    // Fresh: this is a write path, and it prices real rewards off these
-    // modifiers. A cached ward charge or yield multiplier could be seconds
-    // stale, which is fine for display and not fine here.
-    loadProgressionFresh(userId, now),
-  ]);
-  const domainBefore = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
+  const [idea, progression] = preload
+    ? [preload.idea, preload.progression]
+    : await Promise.all([
+        readReviewIdea(ideaId),
+        // Fresh: this is a write path, and it prices real rewards off these
+        // modifiers. A cached ward charge or yield multiplier could be seconds
+        // stale, which is fine for display and not fine here.
+        loadProgressionFresh(userId, now),
+      ]);
+  const domainBefore = idea.domain;
   const modifiers = progression.modifiers;
 
   // Streak bookkeeping affects nothing this response returns, so it runs
@@ -214,19 +311,26 @@ export async function applyReviewResult(
 
   if (correct) {
     const newLevel = Math.min(MAX_LEVEL, idea.level + 1);
-    const dueDate = addDays(now, nextIntervalDays(newLevel, modifiers.intervalMultiplier));
+    const intervalDays = nextIntervalDays(newLevel, modifiers.intervalMultiplier);
+    const dueDate = addDays(now, intervalDays);
 
-    // Reward scales with the level being *cleared*, not the one being
-    // entered — you are paid for the recall you just performed.
-    // Variance applies to the review payout only — never to the mastery
-    // lump, which is a once-per-Idea milestone and should read as a fixed
-    // reward for reaching the top of the ladder rather than a roll.
-    const roll = rollRewardVariance();
-    const base = reviewReward(idea.level, combo, modifiers.comboCap, modifiers.reviewYieldMultiplier) * roll.factor;
     // Mastery fires only on the transition, so re-reviewing a capped Idea
     // (level 12 -> Math.min keeps it at 12) never re-pays the bonus.
     const mastered = newLevel === MASTERY_LEVEL && idea.level < MASTERY_LEVEL;
-    const pointsAwarded = base + (mastered ? MASTERY_BONUS * modifiers.masteryMultiplier : 0);
+    // Reward scales with the level being *cleared*, not the one being
+    // entered — you are paid for the recall you just performed. The mastery
+    // lump is a once-per-Idea milestone and is never multiplied by the combo.
+    const payout = reviewPayout(
+      idea.level,
+      combo,
+      modifiers.comboCap,
+      modifiers.reviewYieldMultiplier,
+      mastered ? MASTERY_BONUS * modifiers.masteryMultiplier : 0
+    );
+    const pointsAwarded = payout.total;
+    const fractionMultiplier = modifiers.masteryMultiplier * comboMasteryBonus(combo);
+    const masteryMinted =
+      reviewMasteryFraction(idea.level) * fractionMultiplier + (mastered ? IDEA_MASTERY_POINTS * modifiers.masteryMultiplier : 0);
 
     const ops: Prisma.PrismaPromise<unknown>[] = [
       prisma.idea.update({
@@ -249,9 +353,7 @@ export async function applyReviewResult(
     // `comboMasteryBonus` layers on top: a longer run of correct answers
     // mints slightly more, capped and sub-linear so a single long session
     // cannot out-earn the economy this is meant to trickle into.
-    ops.push(
-      mintReviewFractionOp(userId, ideaId, idea.level, modifiers.masteryMultiplier * comboMasteryBonus(combo))
-    );
+    ops.push(mintReviewFractionOp(userId, ideaId, idea.level, fractionMultiplier));
     // The whole point on top, once per Idea ever, at the mastery transition.
     if (mastered) {
       ops.push(mintIdeaMasteryOp(userId, ideaId, modifiers.masteryMultiplier));
@@ -263,26 +365,37 @@ export async function applyReviewResult(
     // the knowledge tags), so the progression cache stays warm.
     invalidateActivity(review);
     landed = true;
-    const { domainLevel: newDomainLevel } = await recalculateLeveling(idea.domainId);
+    const { domainLevel: newDomainLevel, fieldLevel: newFieldLevel } = await recalculateLeveling(idea.domainId);
 
-    const domainAfter = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
-    const progress = domainLevelProgress(domainAfter.totalPoints);
+    // The Domain's new total is the one read before plus this credit: the
+    // increment is atomic in the transaction above, so re-reading the row
+    // only to print it cost a round trip on every answer.
+    const pointsAfter = domainBefore.totalPoints + pointsAwarded;
 
     return {
       outcome: "advanced",
+      previousLevel: idea.level,
       newLevel,
       domainLeveledUp: newDomainLevel > domainBefore.level,
       newDomainLevel,
       pointsAwarded,
+      payout,
       mastered,
-      rewardBand: roll.band,
-      domainProgress: {
-        domainName: domainAfter.name,
-        level: progress.level,
-        progress: progress.progress,
-        pointsIntoLevel: progress.pointsIntoLevel,
-        pointsForNextLevel: progress.pointsForNextLevel,
+      masteryMinted,
+      domain: {
+        id: domainBefore.id,
+        name: domainBefore.name,
+        level: { before: domainBefore.level, after: newDomainLevel },
+        totalPoints: { before: domainBefore.totalPoints, after: pointsAfter },
+        progress: { before: domainLevelProgress(domainBefore.totalPoints), after: domainLevelProgress(pointsAfter) },
       },
+      field: {
+        id: domainBefore.field.id,
+        name: domainBefore.field.name,
+        level: { before: domainBefore.field.level, after: newFieldLevel },
+      },
+      intervalDays,
+      nextDue: dueDate.toISOString(),
       nextCombo: combo + 1,
     };
   }
@@ -295,16 +408,17 @@ export async function applyReviewResult(
   const nextCombo = Math.floor(combo * modifiers.comboRetained);
 
   if (!shouldDegrade) {
+    const dueDate = addDays(now, 1);
     await prisma.idea.update({
       where: { id: ideaId },
-      data: { failedAttempts, dueDate: addDays(now, 1) },
+      data: { failedAttempts, dueDate },
     });
     // Same as the shielded path: the Idea moved out of the due window
     // without any points changing, so nothing else will invalidate for us.
     invalidate("ideas");
     lateOutcome = "strike";
     landed = true;
-    return { outcome: "strike", failedAttempts, strikeLimit, nextCombo };
+    return { outcome: "strike", failedAttempts, strikeLimit, nextCombo, nextDue: dueDate.toISOString() };
   }
 
   const outcome = await attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);

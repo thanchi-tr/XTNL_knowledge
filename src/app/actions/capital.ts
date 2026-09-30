@@ -24,7 +24,8 @@ export async function claimCapital(): Promise<ClaimActionResult> {
     if (res.status === "nothing") {
       return { ok: false, error: "Nothing has accrued yet." };
     }
-    revalidatePath("/overview");
+    revalidatePath("/you");
+    revalidatePath("/you/stats");
     return { ok: true, amount: res.amount, balance: res.balance, capped: res.capped };
   } catch {
     return { ok: false, error: "Couldn't claim just now. Try again." };

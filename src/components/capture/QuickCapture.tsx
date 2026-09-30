@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   createFromCapture,
   loadCaptureVocabulary,
@@ -22,21 +23,26 @@ import {
 } from "@/lib/capture-parse";
 import { todayKey } from "@/lib/life-day";
 import type { CaptureToken } from "@/lib/life-types";
+import { mark } from "@/lib/celebrate";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { useAutocorrect } from "@/components/useAutocorrect";
+import { IconButton } from "@/components/ui/Button";
+import { CurrencyGlyph } from "@/components/ui/Icon";
+import { dismissToast, getToasts, pushToast, subscribeToasts, type ToastInput } from "@/components/ui/toast-store";
 import { CaptureChips } from "./CaptureChips";
-import { CAPTURE_EVENT, CAPTURED_EVENT, CaptureFab, type CaptureRequest } from "./CaptureFab";
-import { isUndoCaptureKey, nextOccurrenceNote } from "./capture-ui";
+import { CAPTURE_EVENT, CAPTURED_EVENT, type CaptureRequest } from "./events";
+import { isUndoCaptureKey, nextOccurrenceNote, toInboxLine } from "./capture-ui";
 import { pushEscapeLayer, trapTab } from "./layers";
 
 /**
- * The one-line capture sheet, mounted once in the shell.
+ * The one-line capture sheet, mounted once in the root layout.
  *
  * The whole point is friction: on a desktop a task is one key, the line,
- * and Enter; on the phone it is the home-screen shortcut or the corner
- * button, the line, and the keyboard's own Enter. Nothing is required but
- * the words. The line is read as it is typed and shown back as chips, and
- * any chip that guessed wrong is one tap from being plain text again.
+ * and Enter; on the phone it is the tab bar's +, the home-screen shortcut
+ * (/today?capture=task), the line, and the keyboard's own Enter. Nothing is
+ * required but the words. The line is read as it is typed and shown back as
+ * quiet chips, and any chip that guessed wrong is one tap from being plain
+ * text again.
  *
  * Saving closes the sheet before the server answers — a round trip here
  * costs up to a second, and the answer is almost always yes. The line is
@@ -44,10 +50,13 @@ import { pushEscapeLayer, trapTab } from "./layers";
  * first and only forgotten when the server confirms, so a dead network or a
  * closed tab costs a retry, never the words.
  *
- * Mounted in the layout's bottomSlot as a prop and never inside Suspense
- * (layout.tsx), for the same hydration reason as the loadout bar. And, like
- * the bar, it owns its own state: router.refresh() does not reliably
- * re-render shell components, so nothing here waits on one.
+ * The sheet and its scrim are portalled to <body> (never inside <main>,
+ * whose @container would trap a fixed layer), under one [data-capture-ui]
+ * marker so the review card can tell a tap meant for the sheet from one
+ * meant for it. A bottom sheet on phones, lifted by the on-screen keyboard;
+ * a centred 560 panel from 600. The save toast goes to the app's one
+ * ToastDock while the sheet is closed, and is a status line inside it while
+ * it is open.
  */
 
 const DRAFT_KEY = "xtnl:capture:draft";
@@ -63,6 +72,8 @@ const TOAST_SHORT_MS = 4_000;
 const FLOATING_KEYBOARD_PX = 120;
 const LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · idea: · goal: · #body · ^goal · (min: …) · ? inbox";
 const NO_WORDS: string[] = [];
+/** The dock key every capture toast shares: a new one replaces the last. */
+const DOCK_KEY = "capture";
 
 interface Line {
   text: string;
@@ -178,6 +189,8 @@ export function QuickCapture() {
   const vocabAt = useRef(0);
   const seq = useRef(0);
   const lineRef = useRef<Line>({ text: "", reverted: [] });
+  /** The toast this sheet has in the dock, and the state key it shows. */
+  const dockRef = useRef<{ id: number; key: number } | null>(null);
 
   const inset = useKeyboardInset(open);
 
@@ -289,7 +302,7 @@ export function QuickCapture() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, openSheet]);
 
-  // Everything else asks by event: the header button, the corner button, any page.
+  // Everything else asks by event: the tab bar's +, the rail and sidebar Capture, any page.
   useEffect(() => {
     function onRequest(e: Event) {
       openSheet((e as CustomEvent<CaptureRequest | undefined>).detail ?? undefined);
@@ -371,6 +384,8 @@ export function QuickCapture() {
           next = null;
         }
         showToast({ kind: "added", key: ++seq.current, item, next });
+        // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
+        void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
         window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
       } else {
         const message = res.error;
@@ -380,14 +395,15 @@ export function QuickCapture() {
     });
   };
 
-  /** Enter saves and closes; Shift+Enter saves and stays for the next line. */
-  const save = (stay: boolean) => {
+  /** Enter saves and closes; Shift+Enter saves and stays for the next line. `inbox` sends it to the Inbox. */
+  const save = (stay: boolean, opts: { inbox?: boolean } = {}) => {
     if (!parsed || !text.trim()) return;
     if (!parsed.title) {
       setError("Add a few words for the title — only dates and tags are left.");
       return;
     }
-    const line = stamp({ text, reverted }, ++seq.current);
+    const lineText = opts.inbox && !parsed.inbox ? toInboxLine(text) : text;
+    const line = stamp({ text: lineText, reverted }, ++seq.current);
     addPending(line);
     writeJson(DRAFT_KEY, null);
     setText("");
@@ -436,24 +452,57 @@ export function QuickCapture() {
     });
   };
 
-  // The toast clears itself unless the pointer or focus is on it.
+  // Handlers the dock's toast calls later, always the latest.
+  const undoRef = useRef(undo);
+  const openRef = useRef(openSheet);
   useEffect(() => {
-    if (!toast || toast.kind === "working" || toastHeld) return;
+    undoRef.current = undo;
+    openRef.current = openSheet;
+  });
+
+  // Inside the open sheet the status line clears itself unless the pointer
+  // or focus is on it. (In the dock, the dock keeps the time.)
+  useEffect(() => {
+    if (!open || !toast || toast.kind === "working" || toastHeld) return;
     const key = toast.key;
     const t = window.setTimeout(
       () => setToast((cur) => (cur && cur.key === key ? null : cur)),
       toast.kind === "removed" ? TOAST_SHORT_MS : TOAST_MS
     );
     return () => window.clearTimeout(t);
-  }, [toast, toastHeld]);
+  }, [open, toast, toastHeld]);
+
+  // The sheet is closed: the toast lives in the app's one dock (above the
+  // tab bar on phones, bottom-right from 600). Pushed under one key, so a
+  // new toast replaces the last; when the dock lets it go, so do we.
+  useEffect(() => {
+    if (open || !toast) {
+      const d = dockRef.current;
+      if (d) {
+        dockRef.current = null;
+        dismissToast(d.id);
+      }
+      return;
+    }
+    const input = dockToastOf(toast, { onUndo: (item) => undoRef.current(item), onOpen: () => openRef.current() });
+    const id = pushToast({ ...input, key: DOCK_KEY });
+    dockRef.current = { id, key: toast.key };
+  }, [open, toast]);
+
+  useEffect(
+    () =>
+      subscribeToasts(() => {
+        const d = dockRef.current;
+        if (!d || getToasts().some((t) => t.id === d.id)) return;
+        dockRef.current = null;
+        setToast((cur) => (cur && cur.key === d.key ? null : cur));
+      }),
+    []
+  );
 
   // The keyboard path to Undo: Ctrl/Cmd+Z while an 'added' toast is showing
   // and the sheet is closed, from anywhere but a text field or a review
   // card. A capture made with 'c' and Enter can be taken back the same way.
-  const undoRef = useRef(undo);
-  useEffect(() => {
-    undoRef.current = undo;
-  });
   const undoTarget = !open && toast?.kind === "added" ? toast.item : null;
   useEffect(() => {
     if (!undoTarget) return;
@@ -514,230 +563,226 @@ export function QuickCapture() {
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  const toastBody = toast && (
-    <ToastBody toast={toast} onUndo={undo} onClose={() => setToast(null)} onOpen={() => openSheet()} inSheet={open} />
-  );
+  if (!open || !parsed || typeof document === "undefined") return null;
+
   const hintsFloating = hintsVisible && inset > FLOATING_KEYBOARD_PX;
-  const canSave = !!parsed && !!text.trim() && !!parsed.title;
+  const canSave = !!text.trim() && !!parsed.title;
+  const canInbox = canSave && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
+  const saveLabel = parsed.inbox || parsed.kind === "IDEA_DRAFT" ? "Add to Inbox" : parsed.kind === "GOAL" ? "Add goal" : parsed.doneNow ? "Add as done" : "Add";
 
-  return (
-    // `display: contents` — no box of its own, but everything the capture UI
-    // puts on screen sits under one marker, so the review card can tell a tap
-    // on the corner button or the backdrop from a tap meant for it.
+  return createPortal(
+    // One marker over everything the capture UI puts on screen, so the review
+    // card can tell a tap on the sheet or its scrim from a tap meant for it.
     <div data-capture-ui="" className="contents">
-      <CaptureFab hidden={open} />
-
-      {!open && toast && (
-        <div
-          className="capture-toast"
-          role="status"
-          aria-live="polite"
-          onMouseEnter={() => setToastHeld(true)}
-          onMouseLeave={() => setToastHeld(false)}
-          onFocus={() => setToastHeld(true)}
-          onBlur={() => setToastHeld(false)}
-        >
-          {toastBody}
-        </div>
-      )}
-
-      {open && parsed && (
-        <>
-          <div className="capture-backdrop" onMouseDown={closeSheet} aria-hidden />
-          <div
-            ref={sheetRef}
-            className="capture-sheet card"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Quick capture"
-            data-capture-sheet=""
-            data-hints={hintsFloating ? "1" : undefined}
-            data-kb={inset > 0 ? "1" : undefined}
-            style={{ "--kb": `${inset}px` } as React.CSSProperties}
-            onKeyDown={onSheetKeyDown}
-          >
-            <div className="capture-head">
-              <p className="section-eyebrow">Capture</p>
-              {captured > 0 && (
-                <span className="mono capture-count" aria-live="polite">
-                  {captured} captured
-                </span>
-              )}
-              <button type="button" className="btn-ghost capture-close" onClick={closeSheet} aria-label="Close capture" aria-keyshortcuts="Escape">
-                Close
-                <kbd className="capture-kbd" aria-hidden>
-                  Esc
-                </kbd>
-              </button>
-            </div>
-
-            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
-            <div className="capture-line">
-              <input
-                ref={setInput}
-                type="text"
-                value={text}
-                maxLength={MAX_CAPTURE_CHARS}
-                onChange={(e) => onLineChange(e.target.value)}
-                onKeyDown={onInputKeyDown}
-                onKeyUp={(e) => {
-                  autocorrect.onKeyUp(e);
-                  completeBind.onKeyUp();
-                }}
-                onInput={completeBind.onInput}
-                onClick={completeBind.onClick}
-                onFocus={completeBind.onFocus}
-                onBlur={completeBind.onBlur}
-                placeholder="gym legs 60m every mon,thu !"
-                className="input capture-input"
-                aria-label="Capture a line"
-                aria-describedby="capture-help"
-                autoComplete="off"
-                enterKeyHint="done"
-              />
-              <button type="button" className="btn-primary capture-save" onClick={() => save(false)} disabled={!canSave}>
-                Save
-              </button>
-            </div>
-
-            <CaptureChips
-              text={text}
-              parsed={parsed}
-              goals={vocab ? vocab.goals : null}
-              rawBefore={vocab && vocab.day === day ? vocab.rawBefore : 0}
-              onRevert={revert}
-            />
-
-            {autocorrect.recent.length > 0 && (
-              <p className="capture-note">
-                Corrected {autocorrect.recent.map((c) => `${c.from} → ${c.to}`).join(", ")} · Ctrl+Z undoes it
-              </p>
-            )}
-            {error && (
-              <p className="capture-error" role="alert">
-                {error}
-              </p>
-            )}
-
-            {failed.length > 0 && (
-              <ul className="capture-failed" aria-label="Lines that did not save">
-                {failed.map((f) => (
-                  <li key={f.nonce}>
-                    <span className="capture-failed-text">{f.text}</span>
-                    <span className="capture-failed-error">{f.error}</span>
-                    <span className="capture-failed-actions">
-                      <button type="button" className="btn-ghost" onClick={() => retry(f)}>
-                        Retry
-                      </button>
-                      {!text.trim() && (
-                        <button type="button" className="btn-ghost" onClick={() => edit(f)}>
-                          Edit
-                        </button>
-                      )}
-                      <button type="button" className="btn-ghost" onClick={() => dismiss(f)}>
-                        Dismiss
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {toast && (
-              <div className="capture-status" role="status" aria-live="polite">
-                {toastBody}
-              </div>
-            )}
-
-            <div className="capture-foot" id="capture-help">
-              {!text.trim() && <p className="capture-legend">{LEGEND}</p>}
-              <div className="capture-foot-row">
-                <span className="capture-keys">Enter saves · Shift+Enter saves and stays · Esc closes</span>
-                <Link href="/add" className="capture-idea-link" onClick={closeSheet}>
-                  Idea (full form)
-                </Link>
-              </div>
-            </div>
+      <div className="scrim show capture-backdrop" onMouseDown={closeSheet} aria-hidden="true" />
+      <div
+        ref={sheetRef}
+        className="capture-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="capture-title"
+        aria-describedby="capture-sub"
+        data-capture-sheet=""
+        data-hints={hintsFloating ? "1" : undefined}
+        data-kb={inset > 0 ? "1" : undefined}
+        style={{ "--kb": `${inset}px` } as React.CSSProperties}
+        onKeyDown={onSheetKeyDown}
+      >
+        <div className="grabber" aria-hidden="true" />
+        <div className="sheet-h">
+          <div className="t">
+            <h2 id="capture-title">Capture</h2>
+            <p className="sub" id="capture-sub">
+              One line. Everything else is guessed and shown as chips you can tap to undo.
+            </p>
           </div>
-        </>
-      )}
-    </div>
+          {captured > 0 && (
+            <span className="t-meta num capture-count" aria-live="polite">
+              {captured} captured
+            </span>
+          )}
+          <IconButton icon="x" label="Close capture" aria-keyshortcuts="Escape" onClick={closeSheet} />
+        </div>
+
+        <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+        <input
+          ref={setInput}
+          type="text"
+          value={text}
+          maxLength={MAX_CAPTURE_CHARS}
+          onChange={(e) => onLineChange(e.target.value)}
+          onKeyDown={onInputKeyDown}
+          onKeyUp={(e) => {
+            autocorrect.onKeyUp(e);
+            completeBind.onKeyUp();
+          }}
+          onInput={completeBind.onInput}
+          onClick={completeBind.onClick}
+          onFocus={completeBind.onFocus}
+          onBlur={completeBind.onBlur}
+          placeholder="gym legs 60m every mon,thu !"
+          className="capture-input"
+          aria-label="Capture a line"
+          aria-describedby="capture-help"
+          autoComplete="off"
+          enterKeyHint="done"
+        />
+
+        <CaptureChips text={text} parsed={parsed} goals={vocab ? vocab.goals : null} rawBefore={vocab && vocab.day === day ? vocab.rawBefore : 0} onRevert={revert} />
+
+        {autocorrect.recent.length > 0 && (
+          <p className="capture-note">Corrected {autocorrect.recent.map((c) => `${c.from} → ${c.to}`).join(", ")} · Ctrl+Z undoes it</p>
+        )}
+        {error && (
+          <p className="capture-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="capture-acts">
+          <button type="button" className="btn btn-primary lg capture-save" onClick={() => save(false)} disabled={!canSave}>
+            {saveLabel}
+          </button>
+          {canInbox && (
+            <button type="button" className="btn btn-secondary lg" onClick={() => save(false, { inbox: true })}>
+              To Inbox
+            </button>
+          )}
+        </div>
+
+        {failed.length > 0 && (
+          <ul className="capture-failed" aria-label="Lines that did not save">
+            {failed.map((f) => (
+              <li key={f.nonce}>
+                <span className="capture-failed-text">{f.text}</span>
+                <span className="capture-failed-error">{f.error}</span>
+                <span className="capture-failed-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => retry(f)}>
+                    Retry
+                  </button>
+                  {!text.trim() && (
+                    <button type="button" className="btn btn-quiet" onClick={() => edit(f)}>
+                      Edit
+                    </button>
+                  )}
+                  <button type="button" className="btn btn-quiet" onClick={() => dismiss(f)}>
+                    Dismiss
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {toast && (
+          <div
+            className="capture-status"
+            role="status"
+            aria-live="polite"
+            onMouseEnter={() => setToastHeld(true)}
+            onMouseLeave={() => setToastHeld(false)}
+            onFocus={() => setToastHeld(true)}
+            onBlur={() => setToastHeld(false)}
+          >
+            <StatusLine toast={toast} onUndo={undo} onClose={() => setToast(null)} />
+          </div>
+        )}
+
+        <div className="capture-foot" id="capture-help">
+          {!text.trim() && <p className="capture-legend">{LEGEND}</p>}
+          <div className="capture-foot-row">
+            <span className="capture-keys">Enter saves · Shift+Enter saves and stays · Esc closes</span>
+            <Link href="/add" className="link capture-idea-link" onClick={closeSheet}>
+              Idea (full form)
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
-/**
- * 'Added · Gym legs · Mon · Thu · compulsory · ≈21 XP · Undo'. The figure
- * is the server's projection, not the sheet's estimate, so it is exactly
- * what the first tick at the estimate pays.
- */
-function ToastBody({
-  toast,
-  onUndo,
-  onClose,
-  onOpen,
-  inSheet,
-}: {
-  toast: Toast;
-  onUndo: (item: CapturedItem) => void;
-  onClose: () => void;
-  onOpen: () => void;
-  inSheet: boolean;
-}) {
-  if (toast.kind === "working") {
-    return <span className="capture-toast-muted">{toast.message}</span>;
-  }
+/** What the capture puts in the dock, by toast kind. The figure is the server's projection, not the sheet's guess. */
+function dockToastOf(toast: Toast, on: { onUndo: (item: CapturedItem) => void; onOpen: () => void }): ToastInput {
+  if (toast.kind === "working") return { body: toast.message, holdMs: TOAST_MS };
+  if (toast.kind === "removed") return { title: "Removed", body: toast.title, holdMs: TOAST_SHORT_MS };
+  if (toast.kind === "error") return { title: "Didn't save", body: toast.message, action: { label: "Open", onAction: on.onOpen }, holdMs: TOAST_MS };
+  const { item, next } = toast;
+  return {
+    title: addedHead(item),
+    body: <AddedBody item={item} next={next} dock />,
+    action: { label: "Undo", onAction: () => on.onUndo(item) },
+    holdMs: TOAST_MS,
+  };
+}
+
+function addedHead(item: CapturedItem): string {
+  if (item.kind === "IDEA_DRAFT") return "Idea in Inbox";
+  if (item.doneNow) return "Done";
+  if (item.kind === "GOAL") return "Goal added";
+  return "Added";
+}
+
+/** "Gym legs · Mon · Thu · compulsory · Next: Thu · ≈ 21". */
+function AddedBody({ item, next, dock }: { item: CapturedItem; next: string | null; dock?: boolean }) {
+  const parts: ReactNode[] = [
+    <span key="t" className="capture-toast-title">
+      {item.title}
+    </span>,
+  ];
+  if (item.describe) parts.push(<span key="d">{item.describe}</span>);
+  if (next) parts.push(<span key="n">{next}</span>);
+  if (item.projectedXp > 0)
+    parts.push(
+      <span key="x" className="cur">
+        <CurrencyGlyph kind="xp" />
+        <span className="num">≈ {formatXp(item.projectedXp)}</span>
+      </span>
+    );
+  return (
+    <span className="capture-toast-line">
+      {parts}
+      {item.kind === "IDEA_DRAFT" && item.href && (
+        <Link href={item.href} className="link">
+          Open form
+        </Link>
+      )}
+      {dock && <span className="sr-only">Press Control+Z to undo.</span>}
+    </span>
+  );
+}
+
+/** The status line inside the open sheet. */
+function StatusLine({ toast, onUndo, onClose }: { toast: Toast; onUndo: (item: CapturedItem) => void; onClose: () => void }) {
+  if (toast.kind === "working") return <span className="t-meta">{toast.message}</span>;
   if (toast.kind === "removed") {
     return (
       <span>
-        <span className="capture-toast-muted">Removed</span> · {toast.title}
+        <span className="t-meta">Removed</span> · {toast.title}
       </span>
     );
   }
   if (toast.kind === "error") {
     return (
-      <span className="capture-toast-line">
-        <span style={{ color: "var(--red)", fontWeight: 600 }}>Didn&apos;t save</span>
-        <span className="capture-toast-muted">{toast.message}</span>
-        {!inSheet && (
-          <button type="button" className="capture-toast-action" onClick={onOpen}>
-            Open
-          </button>
-        )}
-        <button type="button" className="capture-toast-action capture-toast-x" onClick={onClose} aria-label="Dismiss">
-          ×
+      <span className="capture-status-row">
+        <span>
+          <b className="capture-status-head">Didn&apos;t save.</b> {toast.message}
+        </span>
+        <button type="button" className="btn btn-quiet" onClick={onClose}>
+          OK
         </button>
       </span>
     );
   }
-  const { item, next } = toast;
-  const idea = item.kind === "IDEA_DRAFT";
-  const head = idea ? "Idea in Inbox" : item.doneNow ? "Done" : item.kind === "GOAL" ? "Goal added" : "Added";
   return (
-    <span className="capture-toast-line">
-      <span style={{ color: "var(--green)", fontWeight: 600 }}>{head}</span>
-      <span className="capture-toast-title">{item.title}</span>
-      {item.describe && <span className="capture-toast-muted">{item.describe}</span>}
-      {next && <span style={{ color: "var(--blue)" }}>{next}</span>}
-      {item.projectedXp > 0 && <span className="mono capture-toast-muted">≈{formatXp(item.projectedXp)} XP</span>}
-      {idea && item.href && (
-        <Link href={item.href} className="capture-toast-action" onClick={onClose}>
-          Open form
-        </Link>
-      )}
-      <button
-        type="button"
-        className="capture-toast-action"
-        onClick={() => onUndo(item)}
-        aria-keyshortcuts={inSheet ? undefined : "Control+Z Meta+Z"}
-      >
+    <span className="capture-status-row">
+      <span>
+        <b className="capture-status-head">{addedHead(toast.item)}</b> <AddedBody item={toast.item} next={toast.next} />
+      </span>
+      <button type="button" className="btn btn-quiet" onClick={() => onUndo(toast.item)}>
         Undo
-        {!inSheet && (
-          <kbd className="capture-kbd" aria-hidden>
-            Ctrl+Z
-          </kbd>
-        )}
       </button>
-      {!inSheet && <span className="capture-kbd-sr">Press Control+Z to undo.</span>}
     </span>
   );
 }

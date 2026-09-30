@@ -3,25 +3,21 @@ import { invalidate } from "./cache";
 import { BOON_META, BOON_KINDS, type BoonKind, type ActiveBoonRow } from "./boon-meta";
 
 /**
- * Spoils Caches — the reward a Boss victory opens.
+ * Boons — the reward a Boss victory opens, chosen by the player.
  *
- * **Why this is not a loot box in the usual sense.** The pattern that makes
- * loot boxes a problem is a *variable reward schedule*: you don't know what
- * you'll get, some outcomes are far better than others, and so there is
- * always a reason to open one more. Every part of that is deliberately
- * absent here:
+ * A victory used to open a "Spoils Cache" that drew one of four boons at
+ * random. Even with every boon of comparable worth, a surprise draw on a
+ * reward is the variable-ratio pattern this project refuses, so the draw is
+ * gone: a victory now offers every boon and the player picks one
+ * (bosses.ts claimBossBoon, once per victory, within BOSS_BOON_CLAIM_HOURS).
  *
- *  - You cannot buy, farm, or re-roll a cache. Exactly one is minted per
+ *  - You cannot buy, farm, or re-roll a boon. Exactly one is granted per
  *    Boss victory, and victories are already gated by a cooldown and by
  *    having enough genuinely due material to form an encounter.
  *  - The mastery a victory pays is fixed and shown *before* you commit to
- *    the fight (`bossMasteryReward`). The cache never changes that number.
+ *    the fight (`bossMasteryReward`). The boon never changes that number.
  *  - Every boon in the pool is of comparable worth for the same duration,
- *    so there is no jackpot to chase and no dud to re-roll away from.
- *
- * What is random is only *which* of four equally good buffs you get for the
- * next day. That is variety, not a gamble — the same line this project drew
- * when it put randomness in a Boss's card draw but never in its payout.
+ *    so the choice is about what tomorrow's study needs, not a jackpot.
  */
 
 export {
@@ -32,11 +28,6 @@ export {
   type BoonMeta,
   type ActiveBoonRow,
 } from "./boon-meta";
-
-/** Draws one boon. Uniform across the pool — no weighting, because no entry is rarer or better than another. */
-export function drawBoon(): BoonKind {
-  return BOON_KINDS[Math.floor(Math.random() * BOON_KINDS.length)];
-}
 
 export async function grantBoon(
   userId: string,

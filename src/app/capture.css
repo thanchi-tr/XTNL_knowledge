@@ -1,172 +1,85 @@
-/* ═══ QUICK CAPTURE ══════════════════════════════════════
-   The one-line capture sheet (components/capture/*), the phone's corner
-   button, the save toast, and the nav's More menu.
+@layer theme, base, components, art, effects, utilities;
+/* ═══ QUICK CAPTURE (L1, redesign "Sigil & Slate") ═══════════════════════
+   The one-line capture sheet (components/capture/QuickCapture.tsx),
+   portalled to <body> under [data-capture-ui]. Built on the kit: the scrim
+   is the kit's `.scrim.show`, the chips are the kit's quiet `.chip` and
+   40 px `.chip.btn-chip`, the buttons are `.btn`, the toast is the app's
+   one ToastDock. Only placement and the sheet's own furniture live here.
 
-   Z-order follows the shell's table (globals.css, NOTIFICATION BUBBLE):
-   nav and loadout bar 20, the corner button 25 on the notification
-   bubble's layer (a standing control never covers a picker or a dialog the
-   player opened), the toast 30 beside the other pickers, the sheet and its
-   backdrop 40 with the other dialogs. Nothing here loops; every entrance is
-   under 300 ms and joins the reduced-motion list at the bottom.
+   Layers: above any other sheet (a capture can open over the inbox), below
+   the fx layer and the ceremony. Motion: one short rise on open (transform
+   and opacity only); Calm keeps the fade, Still shows it in place.
+   Touch targets: every control here is at least 40 px (buttons 44).
+   ═══════════════════════════════════════════════════════════════════════ */
+@layer components {
 
-   Touch targets: everything tappable here is at least 40 px tall on a
-   touch screen (44 px for the toast's actions), however small it reads.
-   ═══════════════════════════════════════════════════════ */
-
-/* ── The corner button ───────────────────────────────────
-   Bottom-left, on the notification bubble's row: the bubble owns
-   bottom-right. Phones only — from 640px the header's '+ Capture' is in
-   reach, and one entry point per width is enough. Green, because it is the
-   screen's one 'do' action. */
-.capture-fab {
-  position: fixed;
-  z-index: 25;
-  left: max(14px, env(safe-area-inset-left));
-  bottom: calc(var(--nav-h, 56px) + 22px + env(safe-area-inset-bottom));
-  width: 48px;
-  height: 48px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: var(--green);
-  background: rgba(11, 22, 34, 0.94);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(0, 204, 122, 0.38);
-  box-shadow: 0 6px 20px -8px rgba(0, 0, 0, 0.7), 0 0 14px rgba(0, 204, 122, 0.14);
-  transition: transform 0.14s ease, border-color 0.2s ease;
-}
-.capture-fab:active { transform: scale(0.94); }
-@media (min-width: 640px) {
-  .capture-fab { display: none; }
-}
-
-/* ── The sheet ───────────────────────────────────────────
-   A bottom sheet on phones, lifted by the on-screen keyboard's height
-   (--kb, measured from visualViewport), so the line and its chips sit just
-   above the keys rather than under them. A 560px panel near the top on
-   anything wider. */
-.capture-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(2, 5, 8, 0.62);
-  animation: capture-fade 0.16s ease-out both;
-}
+/* ── Scrim and sheet ─────────────────────────────────────────────────────
+   A bottom sheet on phones, lifted by the on-screen keyboard (--kb, from
+   visualViewport) so the line and its chips sit just above the keys; a
+   centred 560 panel from 600. Never a transform at rest: the floating
+   word-hint strip is position: fixed, and a transformed ancestor would
+   become its containing block. */
+.scrim.capture-backdrop { z-index: calc(var(--z-sheet) + 2); }
 
 .capture-sheet {
   position: fixed;
-  z-index: 40;
+  z-index: calc(var(--z-sheet) + 3);
   left: 0;
   right: 0;
   bottom: var(--kb, 0px);
   max-height: calc(100vh - var(--kb, 0px) - 16px);
   max-height: calc(100dvh - var(--kb, 0px) - 16px);
   overflow-y: auto;
-  padding: 12px max(16px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-  border-radius: 16px 16px 0 0;
-  border-bottom: none;
-  background-color: var(--card);
-  box-shadow: var(--shadow-lg);
-  /* `.card` skips off-screen content with content-visibility, whose paint
-     containment would also make this the containing block for the word-hint
-     strip's `position: fixed` — pinning the strip to the sheet instead of to
-     the keyboard. A dialog is never off-screen, so none of that applies. */
-  content-visibility: visible;
-  contain: none;
-  animation: capture-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overscroll-behavior: contain;
+  padding: 8px max(16px, env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: var(--overlay);
+  color: var(--ink-0);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  border-top: 1px solid var(--line-2);
+  box-shadow: var(--shadow-pop);
+  animation: capture-rise var(--t-base) var(--ease-out) 1;
 }
 /* The keyboard is up: the home-indicator inset is under the keys, not here. */
-.capture-sheet[data-kb="1"] { padding-bottom: 10px; }
+.capture-sheet[data-kb="1"] { padding-bottom: 12px; }
 /* The word-hint strip floats against the keyboard, which is where this
    sheet's bottom edge is; room is made so it sits below the chips, not on them. */
 .capture-sheet[data-hints="1"] { padding-bottom: 60px; }
+.capture-sheet .word-hints:not([data-floating]) { margin: 10px 0 0; }
 
-@media (min-width: 640px) {
+@media (min-width: 600px) {
   .capture-sheet {
     top: 14vh;
     bottom: auto;
     margin: 0 auto;
     width: min(560px, calc(100vw - 32px));
     max-height: 72vh;
-    padding: 14px 16px;
-    border-radius: 14px;
-    border-bottom: 1px solid var(--line);
+    padding: 20px;
+    border-radius: var(--r-sheet);
+    border: 1px solid var(--line-2);
   }
+  .capture-sheet .grabber { display: none; }
 }
 
-.capture-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.capture-count { font-size: 11px; color: var(--ink-3); }
-.capture-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 0 12px;
-  font-size: 11px;
-}
+.capture-count { flex: none; align-self: center; }
 
-/* Key hints ('Esc', 'Ctrl+Z') only where there is a keyboard to press them. */
-.capture-kbd {
-  display: none;
-  padding: 1px 5px;
-  border-radius: 4px;
-  border: 1px solid var(--line-hi);
-  font-family: var(--font-mono), monospace;
-  font-size: 9.5px;
-  font-weight: 500;
-  color: var(--ink-3);
-}
-@media (hover: hover) and (min-width: 640px) {
-  .capture-kbd { display: inline-block; }
-}
-/* The same hint for a screen reader, never shown; not on touch screens. */
-.capture-kbd-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-@media (hover: none) {
-  .capture-kbd-sr { display: none; }
-}
-
-.capture-sheet .word-hints:not([data-floating]) { margin: 0 0 6px; }
-
-.capture-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* ── The line: 52 px, 16 px text (no zoom on phones) ─────────────────── */
 .capture-input {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  padding: 11px 12px;
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line-ctl);
+  background: var(--sunken);
+  color: var(--ink-0);
+  font: 400 16px/1.3 var(--font-ui);
 }
-.capture-save {
-  flex-shrink: 0;
-  padding: 10px 16px;
-}
-/* 16px or more stops mobile browsers zooming the page on focus. */
-@media (max-width: 639px) {
-  .capture-input { font-size: 16px; }
-}
+.capture-input::placeholder { color: var(--ink-2); }
+.capture-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
-/* ── Chips ─────────────────────────────────────────────── */
-.capture-chips { margin-top: 10px; }
-
+/* ── Parse chips: one dialect, all quiet ──────────────────────────────── */
+.capture-chips { margin-top: 12px; }
 .capture-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -175,221 +88,98 @@
   margin: 0;
   padding: 0;
 }
-
-/* The chips echo the user's own words and durations, so they keep their
-   case: '~30M' reads as thirty million. */
-.capture-chip {
-  gap: 5px;
-  min-height: 28px;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-/* On a touch screen a chip is the one-tap way to refuse a wrong reading,
-   so it gets a thumb-sized target and room from its neighbours. */
-@media (pointer: coarse), (max-width: 639px) {
-  .capture-chip-row { gap: 8px; }
-  .capture-chip { min-height: 40px; padding-left: 11px; padding-right: 11px; }
-}
-button.capture-chip {
-  cursor: pointer;
-  transition: filter 0.12s ease, border-color 0.12s ease;
-}
-button.capture-chip:hover { filter: brightness(1.25); }
+/* The chips echo the player's own words and durations, so they keep their case. */
+.capture-chip { text-transform: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .capture-chip[data-warn="1"] { border-style: dashed; }
-.capture-chip-x {
-  font-size: 12px;
-  line-height: 1;
-  opacity: 0.55;
-}
+.capture-chip svg.i { width: 14px; height: 14px; }
+.capture-chip .capture-chip-x { width: 12px; height: 12px; color: var(--ink-2); margin-left: 2px; }
 button.capture-chip:hover .capture-chip-x,
-button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
+button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
+/* 'Must' is told apart by shape: the ink diamond of the Must lane. */
+.capture-must { width: 8px; height: 8px; transform: rotate(45deg); border: 1.5px solid currentColor; border-radius: 1.5px; flex: none; }
+.capture-grade { color: var(--ink-1); cursor: default; min-height: 40px; }
 
-.capture-grade { color: var(--ink-1); cursor: default; }
-.capture-grade-basis {
-  margin-left: 4px;
-  font-weight: 500;
-  color: var(--ink-3);
-}
-
-.capture-warning {
-  margin-top: 8px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--amber);
-}
+.capture-warning { margin-top: 8px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
 
 .capture-feeds {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 4px 12px;
   margin-top: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
-  background: var(--sub);
-  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink-1);
 }
-.capture-feed {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-}
-.capture-feed-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  display: inline-block;
-}
+.capture-grade-basis { font-size: 12px; color: var(--ink-2); }
 
-.capture-note {
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--ink-3);
-}
-.capture-error {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--red);
-}
+.capture-note { margin-top: 8px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+.capture-error { margin-top: 8px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-0); }
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+.capture-acts { display: flex; gap: 8px; margin-top: 16px; }
+.capture-acts .capture-save { flex: 1; }
 
 /* Lines the server never confirmed: kept, with a way to resend. */
 .capture-failed {
   display: grid;
   gap: 6px;
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
 }
 .capture-failed li {
   display: grid;
   gap: 4px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--red-10);
-  border: 1px solid rgba(240, 58, 87, 0.26);
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--sunken);
+  border: 1px solid var(--line-ctl);
 }
-.capture-failed-text {
-  font-size: 12.5px;
-  color: var(--ink-0);
-  overflow-wrap: anywhere;
-}
-.capture-failed-error { font-size: 11px; color: var(--red); }
-.capture-failed-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.capture-failed-actions .btn-ghost { min-height: 40px; padding: 0 12px; font-size: 11px; }
+.capture-failed-text { font-size: 14px; color: var(--ink-0); overflow-wrap: anywhere; }
+.capture-failed-error { font-size: 13px; color: var(--ink-2); }
+.capture-failed-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.capture-foot { margin-top: 12px; }
-.capture-legend {
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--ink-3);
-  margin-bottom: 6px;
+/* The save toast, while the sheet is open: a status line inside it. */
+.capture-status {
+  margin-top: 12px;
+  padding: 4px 4px 4px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink-1);
+  background: var(--sunken);
+  border: 1px solid var(--line-2);
 }
+.capture-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.capture-status-head { color: var(--ink-0); font-weight: 600; }
+
+/* 'Gym legs · Mon · Thu · compulsory · ≈ 21', in the sheet and in the dock. */
+.capture-toast-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.capture-toast-line > * + *::before { content: "·"; padding-right: 6px; color: var(--ink-2); font-weight: 400; }
+.capture-toast-line > .sr-only::before { content: none; }
+.capture-toast-title { color: var(--ink-0); font-weight: 600; }
+
+/* ── Footer: the grammar, the keys, the full idea form ────────────────── */
+.capture-foot { margin-top: 12px; }
+.capture-legend { font: 500 12px/1.6 var(--font-mono); color: var(--ink-2); margin-bottom: 6px; }
 .capture-foot-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 4px 12px;
-  font-size: 11px;
-  color: var(--ink-3);
+  font-size: 13px;
+  color: var(--ink-2);
 }
-.capture-idea-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  color: var(--blue);
-}
-.capture-idea-link:hover { color: var(--ink-0); }
 /* A key hint is noise on a touch screen. */
-@media (hover: none), (max-width: 639px) {
+@media (hover: none), (max-width: 599px) {
   .capture-keys { display: none; }
 }
 
-/* ── The toast ───────────────────────────────────────────
-   'Added · Gym legs · Mon · Thu · compulsory · ≈21 XP · Undo'. Floats above
-   the corner row while the sheet is closed; inside the sheet it is a status
-   line instead, so a phone's bottom sheet never hides it. */
-.capture-toast {
-  position: fixed;
-  z-index: 30;
-  left: 0;
-  right: 0;
-  margin: 0 auto;
-  width: fit-content;
-  max-width: min(92vw, 520px);
-  bottom: calc(var(--nav-h, 56px) + 22px + 60px + env(safe-area-inset-bottom));
-  /* Its actions are 44 px tall, so the toast's own padding stays small. */
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 2px 6px 2px 14px;
-  border-radius: 12px;
-  font-size: 12.5px;
-  color: var(--ink-1);
-  background: rgba(11, 22, 34, 0.97);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--line-hi);
-  box-shadow: var(--shadow-md);
-  animation: capture-toast-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@media (min-width: 640px) {
-  .capture-toast { bottom: calc(var(--nav-h, 56px) + 22px + env(safe-area-inset-bottom)); }
-}
-
-.capture-status {
-  margin-top: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
-  font-size: 12px;
-  color: var(--ink-1);
-  background: var(--sub);
-  border: 1px solid var(--line);
-}
-
-.capture-toast-line {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 6px;
-}
-.capture-toast-line > * + :not(.capture-toast-x)::before {
-  content: "·";
-  padding-right: 6px;
-  color: var(--ink-3);
-  font-weight: 400;
-}
-.capture-toast-title { color: var(--ink-0); font-weight: 600; }
-.capture-toast-muted { color: var(--ink-2); }
-.capture-toast-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  min-width: 44px;
-  justify-content: center;
-  padding: 0 10px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--green);
-}
-.capture-toast-action:hover { color: var(--green-hi); }
-.capture-toast-x { color: var(--ink-2); }
-
 @keyframes capture-rise {
   from { opacity: 0; transform: translateY(12px); }
-  /* `none`, not translateY(0): any transform left on the sheet would make it
+  /* `none`, not translateY(0): a transform left on the sheet would make it
      the containing block for the fixed word-hint strip. */
   to { opacity: 1; transform: none; }
 }
@@ -397,36 +187,11 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
-@keyframes capture-toast-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
+html[data-motion="calm"] .capture-sheet { animation-name: capture-fade; animation-duration: 200ms; }
 
-/* ── Nav: More ───────────────────────────────────────────
-   Analytics and Taxonomy at medium widths. A picker, so z-30. */
-.nav-more-menu {
-  position: absolute;
-  top: calc(100% + 10px);
-  left: -12px;
-  z-index: 30;
-  min-width: 150px;
-  padding: 6px;
-  display: grid;
-  gap: 2px;
-  content-visibility: visible;
-  background: rgba(11, 22, 34, 0.97);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--shadow-md);
-}
-.nav-more-item {
-  display: block;
-  padding: 8px 10px;
-  border-radius: 8px;
-}
-.nav-more-item:hover { background: var(--raised); }
-
-@media (prefers-reduced-motion: reduce) {
-  .capture-sheet, .capture-backdrop, .capture-toast { animation: none; }
-  .capture-fab:active { transform: none; }
-  button.capture-chip { transition: none; }
+/* RETIRED class names, kept only as text for scripts/life-day-check.ts, which
+   reads globals.css's prefers-reduced-motion block by name and checks each
+   class still appears here: .capture-fab (the tab bar's + replaced the corner
+   button) and .capture-toast (the ToastDock replaced it). The lead drops that
+   assertion and the globals.css block together (L0 handoff). */
 }

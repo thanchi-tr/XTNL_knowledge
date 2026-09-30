@@ -1,6 +1,9 @@
+import "./rules.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { DAY_START_HOUR } from "@/lib/life-day";
+import { FULL_DAY_MP, QUEST_CAP } from "@/lib/full-day";
 import {
   BAND_BASE,
   BAND_META,
@@ -59,7 +62,7 @@ import { HABIT_ALPHA, HABIT_RUNGS } from "@/lib/habit";
 import { SIZING_PROMPT_VERSION, TASK_SIZING_MODEL } from "@/lib/gemini";
 import { BANDS, CATEGORIES, DURATION_BANDS, TRACKS, type PayMode, type PriceInput, type Timing } from "@/lib/life-types";
 
-export const metadata: Metadata = { title: "Rules" };
+export const metadata: Metadata = { title: "How a day is judged" };
 
 /**
  * The page reads no data of its own — every number on it comes from the
@@ -82,53 +85,42 @@ const f1 = (n: number) => n.toFixed(1);
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 const signed = (n: number) => (n < 0 ? `−${-n}` : `+${n}`);
 
-function Card({ title, sub, children, className = "" }: { title: string; sub?: string; children: ReactNode; className?: string }) {
+function Card({ title, sub, children, wide = false }: { title: string; sub?: string; children: ReactNode; wide?: boolean }) {
   return (
-    <section className={`card p-4 ${className}`}>
-      <h2 className="panel-title" style={{ fontSize: 12.5 }}>
-        {title}
-      </h2>
-      {sub && <p className="panel-sub mt-0.5">{sub}</p>}
-      <div className="mt-3" style={{ fontSize: 13, color: "var(--ink-1)", lineHeight: 1.6 }}>
-        {children}
-      </div>
+    <section className={`card rules-card${wide ? " wide" : ""}`}>
+      <h2 className="rules-h">{title}</h2>
+      {sub && <p className="t-meta">{sub}</p>}
+      <div className="rules-body">{children}</div>
     </section>
   );
 }
 
 function Formula({ children }: { children: ReactNode }) {
-  return (
-    <p
-      className="mono my-2 overflow-x-auto rounded-lg px-3 py-2"
-      style={{ fontSize: 12.5, background: "var(--sub)", border: "1px solid var(--line)", color: "var(--ink-0)", whiteSpace: "nowrap" }}
-    >
-      {children}
-    </p>
-  );
+  return <p className="t-mono rules-formula">{children}</p>;
 }
 
 /** A small two-row table of inputs and what they give. Scrolls sideways on its own, never the page. */
 function Samples({ head, rows }: { head: [string, string]; rows: [string, string][] }) {
   return (
-    <div className="my-2 overflow-x-auto">
-      <table className="data-table" style={{ fontSize: 12 }}>
+    <div className="rules-scroll">
+      <table className="rules-table">
         <tbody>
           <tr>
-            <th scope="row" className="label-xs" style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
+            <th scope="row" className="t-eyebrow">
               {head[0]}
             </th>
             {rows.map(([k]) => (
-              <td key={k} className="num" style={{ padding: "6px 10px", color: "var(--ink-2)" }}>
+              <td key={k} className="num ink-2">
                 {k}
               </td>
             ))}
           </tr>
           <tr>
-            <th scope="row" className="label-xs" style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
+            <th scope="row" className="t-eyebrow">
               {head[1]}
             </th>
             {rows.map(([k, v]) => (
-              <td key={k} className="num" style={{ padding: "6px 10px" }}>
+              <td key={k} className="num">
                 {v}
               </td>
             ))}
@@ -182,53 +174,75 @@ export default function RulesPage() {
   const kneeSamples = [50, 100, 150, 200, 300, 500, Math.round(KNEE_CAP_AT_RAW)];
   // The curve's coefficient, read back from the curve itself (C at one day is 1 + rate / 100).
   const streakRate = Math.round((consistencyFactor(1) - 1) * 1000) / 10;
+  const edge = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
 
   return (
-    <main className="site-container flex-1 py-8">
-      <header className="fade-up mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="section-eyebrow">Today</p>
-          <h1 className="mt-1.5 text-[19px] font-semibold tracking-tight" style={{ color: "var(--ink-0)" }}>
-            Rules
-          </h1>
-          <p className="mt-1 max-w-[62ch]" style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.6 }}>
-            How a task is sized once and priced every time. Every number here is read from the code that pays, and
-            every example is priced by it as the page loads. Nothing is random: what a row says is what a tick pays.
-          </p>
-        </div>
-        <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+    <div className="page today-rules cq-main">
+      <div className="rules-intro">
+        <p className="t-body">
+          How a day is judged, and how a task is sized once and priced every time. Every number here is read from the code
+          that pays, and every example is priced by it as the page loads. Nothing is random: what a row says is what a tick
+          pays.
+        </p>
+        <p className="t-mono ink-2">
           formula {FORMULA_VERSION} · sizing prompt v{SIZING_PROMPT_VERSION}
         </p>
-      </header>
+      </div>
 
-      <div className="fade-up fade-up-1 grid grid-cols-1 gap-3 fold:grid-cols-2">
-        <Card title="The price" sub="One formula, the same in the browser and on the server" className="fold:col-span-2">
+      <div className="rules-grid">
+        <Card title="How a day is judged" sub="What keeps the streak and what makes a Full day" wide>
+          <ol className="rules-list">
+            <li>
+              A life day runs from {edge} to {edge}. Any tick or any review keeps the day streak; an empty day ends it only
+              once the whole next day has passed.
+            </li>
+            <li>
+              Yesterday stays open until today ends: anything done yesterday can be ticked today at the full rate. A tick can
+              be undone for {UNDO_WINDOW_MINUTES} minutes on the same day, and the undo nets to zero, streak included.
+            </li>
+            <li>
+              Life XP and review points are two ledgers and are never added together. Reviews pay review points and no life
+              XP; a study task (&apos;review 20&apos;) is paid by the reviews, never twice.
+            </li>
+            <li>
+              A Full day is every must done or excused (the minimum counts), the review quest met (nothing due, the queue
+              clear, or {QUEST_CAP} reviews, however many are due), and one life deed. Today counts it now; its +{FULL_DAY_MP}{" "}
+              MP arrives with daily settlement.
+            </li>
+            <li>
+              Not yet in force (they arrive with daily settlement): rest, sick and vacation days that hold the streak, banked
+              freezes, owed musts and their make-ups, and a Full day repairing the broken day before it once a week.
+            </li>
+          </ol>
+        </Card>
+
+        <Card title="The price" sub="One formula, the same in the browser and on the server" wide>
           <Formula>raw = B × E × T × C × D × V × K</Formula>
           <Formula>paid = g(R_before + raw) − g(R_before)</Formula>
           <p>
-            A price is rounded to 0.1. Under the daily knee it is exactly what is paid. The most one completion can be
-            priced at is <span className="mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort{" "}
-            {f2(EFFORT_CAP)} × consistency {f2(CONSISTENCY_CAP)}, whatever is typed or claimed.
+            A price is rounded to 0.1. Under the daily knee it is exactly what is paid. The most one completion can be priced
+            at is <span className="t-mono">{f1(RAW_WORST_CASE)}</span>: Severe {BAND_BASE.SEVERE} × effort {f2(EFFORT_CAP)} ×
+            consistency {f2(CONSISTENCY_CAP)}, whatever is typed or claimed.
           </p>
         </Card>
 
         <Card title="B · Band" sub="Demand per minute and the barrier to start — never length">
-          <div className="overflow-x-auto">
-            <table className="data-table" style={{ fontSize: 12.5 }}>
+          <div className="rules-scroll">
+            <table className="rules-table">
               <tbody>
                 {BANDS.map((b) => (
                   <tr key={b}>
-                    <td style={{ fontWeight: 600 }}>{BAND_META[b].label}</td>
+                    <td className="b">{BAND_META[b].label}</td>
                     <td className="num">{BAND_BASE[b]}</td>
-                    <td style={{ color: "var(--ink-2)" }}>{BAND_META[b].blurb}</td>
+                    <td className="ink-2">{BAND_META[b].blurb}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-2">
-            A self-rating moves the band {signed(BAND_OVERRIDE_MIN)} to {signed(BAND_OVERRIDE_MAX)} steps — never above the machine&apos;s
-            band + {BAND_OVERRIDE_MAX}, never below Intro. It changes future completions only, is printed
+          <p>
+            A self-rating moves the band {signed(BAND_OVERRIDE_MIN)} to {signed(BAND_OVERRIDE_MAX)} steps — never above the
+            machine&apos;s band + {BAND_OVERRIDE_MAX}, never below Intro. It changes future completions only, is printed
             &apos;self-rated&apos; on every receipt, and after the first completion can change once per{" "}
             {BAND_OVERRIDE_COOLDOWN_DAYS} days.
           </p>
@@ -241,28 +255,25 @@ export default function RulesPage() {
           <Samples head={["min", "E"]} rows={effortSamples.map((m) => [String(m), f2(effortFactor(m))])} />
           <p>
             A typed estimate counts between {EST_MINUTES_MIN} and {EST_MINUTES_MAX} minutes, and never as more than{" "}
-            {EST_EFF_MACHINE_MULTIPLE}× the minutes the task was sized at. Reported minutes count between{" "}
-            {REPORTED_MIN_SHARE}× and {REPORTED_MAX_SHARE}× that, and never above {REPORTED_MINUTES_MAX}. Nothing reported
-            counts the estimate.
+            {EST_EFF_MACHINE_MULTIPLE}× the minutes the task was sized at. Reported minutes count between {REPORTED_MIN_SHARE}×
+            and {REPORTED_MAX_SHARE}× that, and never above {REPORTED_MINUTES_MAX}. Nothing reported counts the estimate.
           </p>
         </Card>
 
         <Card title="T · Timing" sub="There is no early bonus">
-          <div className="overflow-x-auto">
-            <table className="data-table" style={{ fontSize: 12.5 }}>
+          <div className="rules-scroll">
+            <table className="rules-table">
               <tbody>
                 {(Object.keys(TIMING_FACTOR) as Timing[]).map((t) => (
                   <tr key={t}>
-                    <td className="num" style={{ width: 56 }}>
-                      {f2(TIMING_FACTOR[t])}
-                    </td>
-                    <td style={{ color: "var(--ink-1)" }}>{TIMING_WORDS[t]}</td>
+                    <td className="num w">{f2(TIMING_FACTOR[t])}</td>
+                    <td className="ink-1">{TIMING_WORDS[t]}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-2">
+          <p>
             {RECORD_WINDOW_DAYS === 1
               ? "Yesterday stays open until today ends: anything done yesterday can be ticked today at full rate."
               : `The last ${RECORD_WINDOW_DAYS} days stay open: anything done in them can be ticked at full rate.`}{" "}
@@ -276,9 +287,9 @@ export default function RulesPage() {
           </Formula>
           <Samples head={["days", "C"]} rows={streakSamples.map((d) => [String(d), f2(consistencyFactor(d))])} />
           <p>
-            Days are kept occurrences in a row, converted to days: a Mon · Thu habit kept 10 times is 35 days. A target
-            habit counts kept weeks × 7. The cap, {f2(CONSISTENCY_CAP)}, is reached at {CONSISTENCY_CAP_DAYS} days. The
-            minimum version and one-off tasks use 1.00.
+            Days are kept occurrences in a row, converted to days: a Mon · Thu habit kept 10 times is 35 days. A target habit
+            counts kept weeks × 7. The cap, {f2(CONSISTENCY_CAP)}, is reached at {CONSISTENCY_CAP_DAYS} days. The minimum
+            version and one-off tasks use 1.00.
           </p>
         </Card>
 
@@ -288,8 +299,8 @@ export default function RulesPage() {
           </Formula>
           <Samples head={["nth today", "D"]} rows={[1, 2, 3, 4, 5].map((n) => [String(n), f2(repeatFactor(n))])} />
           <p>
-            n counts today&apos;s completions of the same task, and of any task whose title is nearly the same words
-            (similarity ≥ {DECAY_GROUP_DICE}), so one chore split into five copies decays like one chore done five times.
+            n counts today&apos;s completions of the same task, and of any task whose title is nearly the same words (similarity
+            ≥ {DECAY_GROUP_DICE}), so one chore split into five copies decays like one chore done five times.
           </p>
         </Card>
 
@@ -297,26 +308,21 @@ export default function RulesPage() {
           <Formula>
             V = e^(−{INTRO_VOLUME_LAMBDA} · max(0, k − {INTRO_FREE_BEFORE}))
           </Formula>
-          <Samples
-            head={["routine #", "V"]}
-            rows={[6, 7, 8, 10, 15].map((n) => [String(n), f2(introVolumeFactor(n - 1))])}
-          />
+          <Samples head={["routine #", "V"]} rows={[6, 7, 8, 10, 15].map((n) => [String(n), f2(introVolumeFactor(n - 1))])} />
           <p>
-            k is the Intro tasks already done today, so the first {INTRO_FREE_BEFORE + 1} pay in full. It keeps a day of
-            trivial ticks from outpaying one piece of real work.
+            k is the Intro tasks already done today, so the first {INTRO_FREE_BEFORE + 1} pay in full. It keeps a day of trivial
+            ticks from outpaying one piece of real work.
           </p>
         </Card>
 
         <Card title="K · Kind" sub="How a completion is paid">
-          <div className="overflow-x-auto">
-            <table className="data-table" style={{ fontSize: 12.5 }}>
+          <div className="rules-scroll">
+            <table className="rules-table">
               <tbody>
                 {(Object.keys(PAY_MODE_FACTOR) as PayMode[]).map((m) => (
                   <tr key={m}>
-                    <td className="num" style={{ width: 56 }}>
-                      {f2(PAY_MODE_FACTOR[m])}
-                    </td>
-                    <td style={{ color: "var(--ink-1)" }}>{MODE_WORDS[m]}</td>
+                    <td className="num w">{f2(PAY_MODE_FACTOR[m])}</td>
+                    <td className="ink-1">{MODE_WORDS[m]}</td>
                   </tr>
                 ))}
               </tbody>
@@ -324,28 +330,29 @@ export default function RulesPage() {
           </div>
         </Card>
 
-        <Card title="The daily knee" sub="Shared by all life XP; shown on receipts, never as a bar" className="fold:col-span-2">
+        <Card title="The daily knee" sub="Shared by all life XP; shown on receipts, never as a bar" wide>
           <Formula>
-            g(R) = R up to {KNEE_FULL_RATE}; then {KNEE_FULL_RATE} + {KNEE_SCALE} · ln(1 + (R − {KNEE_FULL_RATE}) / {KNEE_SCALE}); at most {KNEE_CAP}
+            g(R) = R up to {KNEE_FULL_RATE}; then {KNEE_FULL_RATE} + {KNEE_SCALE} · ln(1 + (R − {KNEE_FULL_RATE}) / {KNEE_SCALE}); at most{" "}
+            {KNEE_CAP}
           </Formula>
           <Samples head={["raw today", "paid today"]} rows={kneeSamples.map((r) => [String(r), f1(kneeG(r))])} />
           <p>
-            R_before is the raw total already earned today, so a day always pays g(ΣR) in whatever order its tasks are
-            done. The day stops growing at {KNEE_CAP} (about {Math.round(KNEE_CAP_AT_RAW)} raw), which is also the most a
-            forged day could pay. Two completions landing at the same instant can leave the day a little off g(ΣR);
-            once daily settlement arrives, any drift above {KNEE_RECONCILE_TOLERANCE} is corrected by an adjustment row.
+            R_before is the raw total already earned today, so a day always pays g(ΣR) in whatever order its tasks are done.
+            The day stops growing at {KNEE_CAP} (about {Math.round(KNEE_CAP_AT_RAW)} raw), which is also the most a forged day
+            could pay. Two completions landing at the same instant can leave the day a little off g(ΣR); once daily settlement
+            arrives, any drift above {KNEE_RECONCILE_TOLERANCE} is corrected by an adjustment row.
           </p>
         </Card>
 
-        <Card title="Worked examples" sub="Priced now by the function that pays" className="fold:col-span-2">
-          <ul className="space-y-2.5">
+        <Card title="Worked examples" sub="Priced now by the function that pays" wide>
+          <ul className="rules-examples">
             {EXAMPLES.map((ex) => {
               const r = priceTask({ ...EXAMPLE_BASE, ...ex.input }, { rawBefore: ex.rawBefore ?? 0 }, "DUTY");
               return (
                 <li key={ex.name}>
-                  <p style={{ color: "var(--ink-0)", fontSize: 12.5 }}>{ex.name}</p>
-                  <p className="mono" style={{ fontSize: 11.5, color: "var(--ink-2)", overflowWrap: "anywhere" }}>
-                    {describeReceipt(r)} · pays <span style={{ color: "var(--green)" }}>{f1(r.xp)}</span>
+                  <p className="ink-0">{ex.name}</p>
+                  <p className="t-mono ink-2">
+                    {describeReceipt(r)} · pays <b className="ink-0">{f1(r.xp)}</b>
                   </p>
                 </li>
               );
@@ -355,16 +362,16 @@ export default function RulesPage() {
 
         <Card title="Sizing" sub="The AI sizes a task once; the formula prices it every time">
           <p>
-            A capture is written at once with a lexical grade from {LIFE_RULE_COUNT} word rules (confidence = score /
-            (score + 5)). Within {SIZING_WINDOW_HOURS} hours the model ({TASK_SIZING_MODEL}, prompt v
-            {SIZING_PROMPT_VERSION}) may refine it once. It only chooses a category, a band, a duration and up to three
-            attributes; this code turns those into numbers.
+            A capture is written at once with a lexical grade from {LIFE_RULE_COUNT} word rules (confidence = score / (score +
+            5)). Within {SIZING_WINDOW_HOURS} hours the model ({TASK_SIZING_MODEL}, prompt v{SIZING_PROMPT_VERSION}) may refine
+            it once. It only chooses a category, a band, a duration and up to three attributes; this code turns those into
+            numbers.
           </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5" style={{ color: "var(--ink-1)" }}>
+          <ul className="rules-bullets">
             <li>An answer outside the allowed choices keeps the lexical value.</li>
             <li>
-              When the lexical grade is at least {pct(SIZING_LOCK_CONFIDENCE)} sure and the model is two or more bands
-              away, the band moves one step.
+              When the lexical grade is at least {pct(SIZING_LOCK_CONFIDENCE)} sure and the model is two or more bands away, the
+              band moves one step.
             </li>
             {BAND_MINUTE_CAPS.map((c) => (
               <li key={c.maxMinutes}>
@@ -373,8 +380,8 @@ export default function RulesPage() {
             ))}
             <li>
               Attributes blend {pct(SIZING_AI_COMPOSITION_SHARE)} model, {pct(1 - SIZING_AI_COMPOSITION_SHARE)} lexical.
-              Confidence is {f1(SIZING_CONFIDENCE_BASE)} + {f1(SIZING_CONFIDENCE_LEXICAL_SHARE)} × the lexical confidence;
-              the model&apos;s reason is kept, up to {SIZING_BASIS_CHARS} characters.
+              Confidence is {f1(SIZING_CONFIDENCE_BASE)} + {f1(SIZING_CONFIDENCE_LEXICAL_SHARE)} × the lexical confidence; the
+              model&apos;s reason is kept, up to {SIZING_BASIS_CHARS} characters.
             </li>
             <li>A task with the same words as one already sized copies that grade instead of asking again.</li>
             <li>
@@ -387,13 +394,13 @@ export default function RulesPage() {
 
         <Card title="Durations and tracks" sub="What each choice means in numbers">
           <Samples head={["band", "minutes"]} rows={DURATION_BANDS.map((d) => [d, String(DURATION_BAND_MINUTES[d])])} />
-          <div className="mt-2 overflow-x-auto">
-            <table className="data-table" style={{ fontSize: 12.5 }}>
+          <div className="rules-scroll">
+            <table className="rules-table">
               <tbody>
                 {TRACKS.map((track) => (
                   <tr key={track}>
-                    <td style={{ fontWeight: 600, width: 64 }}>{TRACK_LABEL[track]}</td>
-                    <td style={{ color: "var(--ink-1)" }}>
+                    <td className="b w">{TRACK_LABEL[track]}</td>
+                    <td className="ink-1">
                       {CATEGORIES.filter((c) => CATEGORY_TRACK[c] === track)
                         .map((c) => CATEGORY_LABEL[c])
                         .join(", ")}
@@ -403,9 +410,7 @@ export default function RulesPage() {
               </tbody>
             </table>
           </div>
-          <p className="mt-2" style={{ color: "var(--ink-2)", fontSize: 12 }}>
-            A #body, #duty, #craft or #care tag sets the track instead.
-          </p>
+          <p className="t-meta">A #body, #duty, #craft or #care tag sets the track instead.</p>
         </Card>
 
         <Card title="Habit strength" sub="Rises when kept, falls when missed, never resets">
@@ -413,25 +418,25 @@ export default function RulesPage() {
             kept: S = S · {(1 - HABIT_ALPHA).toFixed(3)} + {HABIT_ALPHA} · missed: S = S · {(1 - HABIT_ALPHA).toFixed(3)}
           </Formula>
           <p>
-            The minimum version, a skip and an excused day leave it unchanged, and today and yesterday are never judged
-            while they can still be ticked.
+            The minimum version, a skip and an excused day leave it unchanged, and today and yesterday are never judged while
+            they can still be ticked.
           </p>
           <Samples head={["rung", "from"]} rows={HABIT_RUNGS.map((r) => [r.rung, f2(r.from)])} />
         </Card>
 
         <Card title="Not yet in force" sub="Arrives with compulsory duties; nothing is charged today">
           <p>
-            A missed compulsory occurrence will owe min({DEBT_CAP}, B × E(estimate)) — no streak, repeat or knee — and
-            never grows. At most {DEBT_OPEN_PER_TEMPLATE} open per task and {DEBT_OPEN_TOTAL_CAP} in total; past that a
-            miss is recorded with no debt. Making it up repays it in full.
+            A missed compulsory occurrence will owe min({DEBT_CAP}, B × E(estimate)) — no streak, repeat or knee — and never
+            grows. At most {DEBT_OPEN_PER_TEMPLATE} open per task and {DEBT_OPEN_TOTAL_CAP} in total; past that a miss is
+            recorded with no debt. Making it up repays it in full.
           </p>
-          <p className="mt-2">
-            <Link href="/today" style={{ color: "var(--green)", fontSize: 12 }}>
-              ← Back to today
+          <p>
+            <Link href="/today" className="link">
+              Back to Today
             </Link>
           </p>
         </Card>
       </div>
-    </main>
+    </div>
   );
 }

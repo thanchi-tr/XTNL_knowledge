@@ -15,33 +15,17 @@ const StreakContext = createContext<StreakContextValue | null>(null);
  * Session combo streak — consecutive correct answers in the current tab.
  * Not persisted, and resets on reload on purpose.
  *
+ * The COMBO lives only in the review runner (redesign: the nav streak is the
+ * DAY streak, shown on Today's Day ledger; the shell shows no combo). This
+ * provider stays mounted around the page content so the runner can keep it
+ * across its cards; L2 may move it into the runner outright.
+ *
  * This feeds scoring: SessionCard sends it as `combo` and `reviewReward`
  * turns it into up to a +50% multiplier. What the *next* value should be is
- * no longer decided here — a wrong answer doesn't necessarily zero it
- * (COMBO_ANCHOR can retain a fraction), so `applyReviewResult` computes
- * `nextCombo` server-side and this provider just stores whatever it's told.
- * It remains client state for the same reason `SubmitReviewInput.combo`
- * remains a documented, bounded exception to server authority — see that
- * comment for why grading itself never left the server.
+ * decided server-side (`applyReviewResult` → `nextCombo`); this provider
+ * just stores whatever it is told.
  */
-export function StreakProvider({
-  children,
-  /**
-   * Rendered after `children`, at the bottom of the shell — the loadout bar.
-   *
-   * A named slot rather than just another child, and that distinction turned
-   * out to matter: a Suspense-wrapped Server Component placed as a bare
-   * sibling after `{children}` here rendered its HTML but never hydrated, so
-   * the bar's buttons were inert on every route. Passed as a prop — the same
-   * shape `AppNav` already uses for `titleSlot`, which does hydrate — it
-   * works. Keeping both slots on the one pattern means there is one way to
-   * hang server content off this shell, not two.
-   */
-  bottomSlot,
-}: {
-  children: ReactNode;
-  bottomSlot?: ReactNode;
-}) {
+export function StreakProvider({ children }: { children: ReactNode }) {
   const [streak, setStreak] = useState(0);
   const [best, setBest] = useState(0);
 
@@ -50,12 +34,7 @@ export function StreakProvider({
     setBest((b) => Math.max(b, next));
   }, []);
 
-  return (
-    <StreakContext.Provider value={{ streak, best, recordResult }}>
-      {children}
-      {bottomSlot}
-    </StreakContext.Provider>
-  );
+  return <StreakContext.Provider value={{ streak, best, recordResult }}>{children}</StreakContext.Provider>;
 }
 
 export function useStreak(): StreakContextValue {

@@ -1,0 +1,28 @@
+@layer theme, base, components, art, effects, utilities;
+/* How a day is judged (/today/rules), L1. Kit cards and type roles; one
+   column on phones, two from a main width of 640. Tables and formulas
+   scroll sideways on their own, never the page. */
+@layer components {
+  .today-rules .rules-intro { display: grid; gap: 6px; padding: 4px 4px 16px; max-width: 72ch; }
+  .today-rules .rules-intro .t-body { color: var(--ink-1); }
+  .today-rules .rules-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  @container main (min-width: 640px) {
+    .today-rules .rules-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .today-rules .rules-card.wide { grid-column: 1 / -1; }
+  }
+  .today-rules .rules-card { padding: 16px; min-width: 0; }
+  .today-rules .rules-h { font: 600 19px/23px var(--font-display); margin: 0; }
+  .today-rules .rules-card > .t-meta { margin-top: 2px; }
+  .today-rules .rules-body { margin-top: 12px; font-size: 14px; line-height: 1.55; color: var(--ink-1); display: grid; gap: 8px; }
+  .today-rules .rules-formula { margin: 0; padding: 8px 12px; overflow-x: auto; white-space: nowrap; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line-2); color: var(--ink-0); }
+  .today-rules .rules-scroll { overflow-x: auto; }
+  .today-rules .rules-table { border-collapse: collapse; font-size: 13px; }
+  .today-rules .rules-table th, .today-rules .rules-table td { padding: 6px 10px; text-align: left; border-top: 1px solid var(--line-1); vertical-align: top; }
+  .today-rules .rules-table tr:first-child th, .today-rules .rules-table tr:first-child td { border-top: 0; }
+  .today-rules .rules-table th { white-space: nowrap; }
+  .today-rules .rules-table .b { font-weight: 600; color: var(--ink-0); }
+  .today-rules .rules-table .w { width: 64px; }
+  .today-rules .rules-list, .today-rules .rules-bullets { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+  .today-rules .rules-examples { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .today-rules .rules-examples .t-mono { overflow-wrap: anywhere; }
+}

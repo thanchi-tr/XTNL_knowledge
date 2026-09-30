@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import { ruleOf, type BoardRow } from "@/lib/today-board";
 import type { DayKey } from "@/lib/life-day";
-import { fmtMinutes, fmtXp } from "./format";
+import { Button } from "@/components/ui/Button";
+import { ChipButton } from "@/components/ui/Chip";
+import { CurrencyGlyph } from "@/components/ui/Icon";
+import { Meter } from "@/components/ui/Meter";
+import { approx } from "@/components/ui/format";
+import { fmtMinutes } from "./format";
 import { capacityView, tomorrowOffer } from "./board-ui";
 
 interface Props {
@@ -22,97 +26,76 @@ interface Props {
   onSetCapacity?: (minutes: number) => void;
 }
 
-/** The capacities the tile offers, in minutes. */
+/** The capacities on offer, in minutes. */
 const CAPACITY_CHOICES = [120, 180, 240, 360, 480] as const;
 
 /**
- * The day's planned time against its capacity (Sunsama's workload line).
+ * The day's planned time against its capacity (Sunsama's workload line),
+ * opened from the Day ledger's third cell.
  *
- * The tile only warns against a capacity the player chose. Until then the
- * figure reads 'of 4h (default)', the tile stays neutral and offers to set
- * one: turning amber and proposing to move work because of a number nobody
- * picked would be a dishonest number.
+ * It only warns against a capacity the player chose. Until then the
+ * figure reads 'of 4h (default)', nothing warns, and it offers to set one:
+ * proposing to move work because of a number nobody picked would be a
+ * dishonest number (board-ui.capacityView).
  *
- * Over a chosen capacity it turns amber and offers one move: the cheapest
- * card that is safe to move (cheapestMovable) — and only a move the server
- * accepts (tomorrowOffer). It asks rather than moves, and one tap does it.
- * A repeating task can't be moved to tomorrow (tomorrow has its own), so
- * for one the offer is to skip today instead.
+ * Over a chosen capacity it says by how much and offers one move: the
+ * cheapest card that is safe to move (cheapestMovable) — and only a move
+ * the server accepts (tomorrowOffer). It asks rather than moves, and one
+ * tap does it. A repeating task can't be moved to tomorrow (tomorrow has
+ * its own), so for one the offer is to skip today instead.
  */
-export function CapacityTile({ planned, capacity, over, chosen, suggestion, today, busy, settingBusy = false, onMove, onSetCapacity }: Props) {
-  const [choosing, setChoosing] = useState(false);
-  const pct = capacity > 0 ? Math.min(1, planned / capacity) : 1;
+export function CapacityPanel({ planned, capacity, over, chosen, suggestion, today, busy, settingBusy = false, onMove, onSetCapacity }: Props) {
   const view = capacityView({ over, chosen });
   const skip = suggestion ? !!ruleOf(suggestion.template) : false;
   const movable = suggestion ? skip || tomorrowOffer(suggestion.template, today).show : false;
-  const showChoices = !!onSetCapacity && (!chosen || choosing);
+  const pct = capacity > 0 ? Math.min(1, planned / capacity) : 1;
 
   return (
-    <div className="card flex min-w-0 flex-col gap-2" style={{ padding: "18px 16px", borderColor: view.warn ? "rgba(240,160,48,0.3)" : undefined }}>
-      <span className="flex items-baseline justify-between gap-2">
-        <span className="label-xs">Capacity</span>
-        {onSetCapacity && chosen && (
-          <button
-            type="button"
-            className="today-inline-link"
-            style={{ fontSize: 11, color: "var(--blue)" }}
-            aria-expanded={choosing}
-            onClick={() => setChoosing((c) => !c)}
-          >
-            {choosing ? "Done" : "Change"}
-          </button>
-        )}
-      </span>
-      <span className="mono" style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, color: view.warn ? "var(--amber)" : "var(--ink-0)" }}>
-        {fmtMinutes(planned)}
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-3)" }}>
+    <div className="today-capacity">
+      <p className="cap-fig">
+        <span className="t-numeral-s num">{fmtMinutes(planned)}</span>
+        <span className="t-meta">
           {" "}
-          of {fmtMinutes(capacity)}
+          planned of {fmtMinutes(capacity)}
           {view.suffixDefault ? " (default)" : ""}
         </span>
-      </span>
-      <div className="today-bar" data-tone={view.tone} aria-hidden>
-        <div className="today-bar-fill" style={{ width: `${Math.round(pct * 100)}%` }} />
-      </div>
+      </p>
+      <Meter value={pct} thin label="Planned time against capacity" valueText={`${fmtMinutes(planned)} of ${fmtMinutes(capacity)}`} />
       {view.warn ? (
-        <div style={{ fontSize: 11, lineHeight: 1.5, color: "var(--amber)" }}>
-          Over by {fmtMinutes(over)}.
+        <div className="cap-warn">
+          <p>
+            <b className="ink-0">Over by {fmtMinutes(over)}.</b>
+            {suggestion && movable && view.offerMove && (
+              <>
+                {" "}
+                {skip ? "Skip" : "Move"} <b className="ink-0">{suggestion.template.title}</b>
+                {skip ? " today" : " to tomorrow"}?{" "}
+                <span className="cur">
+                  <CurrencyGlyph kind="xp" />
+                  <span className="num">{approx(suggestion.projection.xp)}</span>
+                </span>
+              </>
+            )}
+          </p>
           {suggestion && movable && view.offerMove && (
-            <>
-              {" "}
-              {skip ? "Skip" : "Move"} <span style={{ color: "var(--ink-0)" }}>{suggestion.template.title}</span>
-              {skip ? " today" : " to tomorrow"}? ({fmtXp(suggestion.projection.xp)} XP)
-              <div className="mt-1.5">
-                <button type="button" className="today-pill" disabled={busy} onClick={() => onMove(suggestion)}>
-                  {skip ? "Skip today" : "Move to tomorrow"}
-                </button>
-              </div>
-            </>
+            <Button variant="secondary" disabled={busy} onClick={() => onMove(suggestion)}>
+              {skip ? "Skip today" : "Move to tomorrow"}
+            </Button>
           )}
         </div>
       ) : (
-        <span style={{ fontSize: 11, color: "var(--ink-3)", lineHeight: 1.5 }}>
+        <p className="t-meta">
           {chosen
-            ? "Planned for today, done or not"
+            ? "Planned for today, done or not."
             : `Planned for today, done or not. ${fmtMinutes(capacity)} is a default, not yours, so it never warns.${onSetCapacity ? " Set yours:" : ""}`}
-        </span>
+        </p>
       )}
-      {showChoices && (
-        <div className="today-drawer-row" role="group" aria-label="Your daily capacity" aria-busy={settingBusy}>
+      {onSetCapacity && (
+        <div className="today-opts" role="group" aria-label="Your daily capacity" aria-busy={settingBusy}>
           {CAPACITY_CHOICES.map((m) => (
-            <button
-              key={m}
-              type="button"
-              className="today-pill mono"
-              aria-pressed={chosen && capacity === m}
-              disabled={settingBusy}
-              onClick={() => {
-                setChoosing(false);
-                onSetCapacity?.(m);
-              }}
-            >
+            <ChipButton key={m} pressed={chosen && capacity === m} disabled={settingBusy} onClick={() => onSetCapacity(m)}>
               {fmtMinutes(m)}
-            </button>
+            </ChipButton>
           ))}
         </div>
       )}

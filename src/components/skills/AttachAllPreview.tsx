@@ -49,8 +49,8 @@ function AttachCell({ skill, take, onFire }: { skill: Skill; take: number; onFir
         className="w-full p-2"
         style={{
           borderRadius: 10,
-          background: "var(--sub)",
-          border: "1px solid var(--line)",
+          background: "var(--sunken)",
+          border: "1px solid var(--line-1)",
           cursor: "pointer",
           position: "relative",
           overflow: "hidden",
@@ -63,14 +63,14 @@ function AttachCell({ skill, take, onFire }: { skill: Skill; take: number; onFir
         )}
 
         <span className="relative flex flex-col items-center gap-1.5" style={{ zIndex: 1 }}>
-          <span className="slot" style={{ position: "relative", borderColor: "rgba(0,204,122,.45)", background: "var(--raised)" }}>
+          <span className="slot" style={{ position: "relative", borderColor: "color-mix(in srgb, var(--kept) 45%, transparent)", background: "var(--raised)" }}>
             <SkillLogo skill={skill} size={34} />
             {take > 0 && <EquipPulse key={`ep-${take}`} skill={skill} />}
           </span>
-          <span className="w-full truncate text-center" style={{ fontSize: 9.5, color: "var(--ink-1)" }}>
+          <span className="w-full truncate text-center" style={{ fontSize: 12, color: "var(--ink-1)" }}>
             {skill.name}
           </span>
-          <span className="mono" style={{ fontSize: 8.5, color }}>
+          <span className="mono" style={{ fontSize: 12, color }}>
             d{depthOf(skill)} · {(charge * 100).toFixed(0)}% · {variant}
           </span>
         </span>
@@ -170,7 +170,7 @@ export function AttachAllPreview({ groups }: Props) {
               <button
                 type="button"
                 className="btn-secondary"
-                style={{ fontSize: 10.5, padding: "4px 10px" }}
+                style={{ fontSize: 12, padding: "4px 10px" }}
                 onClick={() => playGroup(g.skills)}
               >
                 Play in sequence
@@ -178,7 +178,7 @@ export function AttachAllPreview({ groups }: Props) {
               <button
                 type="button"
                 className="btn-secondary"
-                style={{ fontSize: 10.5, padding: "4px 10px" }}
+                style={{ fontSize: 12, padding: "4px 10px" }}
                 onClick={() => bump(g.skills.map((s) => s.code))}
               >
                 All at once

@@ -1,3 +1,13 @@
+@layer theme, base, components, art, effects, utilities;
+/* ═══ WHERE THE SKIES RENDER (redesign "Sigil & Slate") ═════
+   Not global. Imported by the /skills segment layout (the path header) and
+   the /dev/style/art layout (the previews) only, and every selector below is
+   a .sky-* class, so nothing here can reach another page even after a client
+   navigation leaves the sheet loaded. The mount points are .sky-scope
+   containers: the path header (a scoped sky inside a .sky-frame) and the
+   previews. Skies drift only there and behind a ceremony, on --ambient-play
+   (paused under Calm, Still and power-save).
+   ═══════════════════════════════════════════════════════ */
 /* ═══ SKIES ══════════════════════════════════════════════
    Fifteen backgrounds, one per rung of the depth ladder, running futuristic
    at d1 to primordial at d15. See `src/lib/sky.ts` for why fifteen and why
@@ -31,6 +41,7 @@
    Intensity is `--atmos-rarity` throughout, so a sky is faint when you are
    carrying one emblem of its rung and full when you are carrying ten.
    ═══════════════════════════════════════════════════════ */
+@layer art {
 
 .sky {
   /* ── Units ───────────────────────────────────────────────
@@ -1212,4 +1223,5 @@
    -- a Fold's main display is wide and still battery-powered. */
 @media (hover: none) and (pointer: coarse) {
   .sky-p:nth-child(3n) { display: none; }
+}
 }

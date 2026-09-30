@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ CATACLYSM — VARIANTS D–F ═══════════════════════════
    Three more events per terminal tier, taking each to six.
 
@@ -11,6 +12,7 @@
 
    d14 is the arrival family; d15 is the terminal family.
    ═══════════════════════════════════════════════════════ */
+@layer effects {
 
 /* ── d14-D — shards ──────────────────────────────────────
    Angular where the others are linear, and tumbling where the others hold
@@ -238,4 +240,5 @@
   .cat-eclipse-sun, .cat-eclipse-moon,
   .cat-pulsar-core, .cat-beam, .cat-crush,
   .cat-comet-flash { animation: none; opacity: 0; }
+}
 }

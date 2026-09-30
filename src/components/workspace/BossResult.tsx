@@ -1,137 +1,137 @@
 "use client";
 
-import { motion } from "framer-motion";
+/**
+ * The encounter's closing beat, at the top of the session recap.
+ *
+ * Victory states the fixed payout (the MP promised before the fight), the
+ * real score against the real bar, and offers every boon to choose from:
+ * nothing is drawn. Defeat names what the debuff costs, when it lifts on its
+ * own, and the real score, so the gap always looks closeable. Either way the
+ * encounter was a full session of genuine reviews, and the screen says so.
+ */
+import { useState } from "react";
 import type { BossResolution } from "@/lib/bosses";
+import { BOON_META, type BoonKind } from "@/lib/boon-meta";
 import { DEBUFF_META } from "@/lib/debuff-meta";
-import { BOON_META } from "@/lib/boon-meta";
+import { formatExpiry } from "@/lib/format-date";
+import { Amount } from "@/components/ui/Amount";
+import { Chip } from "@/components/ui/Chip";
+import { BossSigil } from "./BossSigil";
+
+type Settled = Exclude<BossResolution, { outcome: "rejected" }>;
 
 interface Props {
-  resolution: BossResolution;
-  onDone: () => void;
+  resolution: Settled;
+  fieldId: string;
+  /** Grants the chosen boon; resolves to an error message, or null when it was granted. */
+  onChoose: (kind: BoonKind) => Promise<string | null>;
 }
 
-/**
- * The encounter's closing beat.
- *
- * A defeat is written to sting without discouraging: it names what the
- * debuff costs and when it lifts, and states the real accuracy against the
- * real bar, so the gap always looks closeable. Losing to a Boss in this app
- * still means you did a full session of genuine reviews — the screen says
- * so rather than pretending the time was wasted.
- */
-export function BossResult({ resolution, onDone }: Props) {
-  if (resolution.outcome === "rejected") {
-    return (
-      <div className="card px-6 py-10 text-center">
-        <p className="chip chip-muted mx-auto">Encounter void</p>
-        <p className="mt-3" style={{ fontSize: 13, color: "var(--ink-1)" }}>
-          {resolution.why}
-        </p>
-        <button type="button" onClick={onDone} className="btn-secondary mt-6">
-          Back
-        </button>
-      </div>
-    );
-  }
-
+export function BossResult({ resolution, fieldId, onChoose }: Props) {
   const victory = resolution.outcome === "victory";
-
+  const score = `${resolution.correct} of ${resolution.total} correct · ${resolution.needCorrect} needed`;
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-      className={`card flex flex-col items-center px-6 py-10 text-center ${victory ? "" : "boss-hit"}`}
-      style={{
-        borderColor: victory ? "rgba(240,160,48,0.45)" : "rgba(240,58,87,0.35)",
-        background: victory
-          ? "linear-gradient(160deg, rgba(240,160,48,0.10) 0%, transparent 60%), var(--card)"
-          : "linear-gradient(160deg, rgba(240,58,87,0.08) 0%, transparent 60%), var(--card)",
-      }}
-    >
-      <span className={`chip ${victory ? "chip-amber" : "chip-red"}`}>{victory ? "Victory" : "Defeat"}</span>
+    <section className="card rv-boss" aria-labelledby="rv-boss-h">
+      <div className="top">
+        <BossSigil seed={fieldId} tier={victory ? Math.max(1, resolution.newTier - 1) : 1} muted={!victory} className="rv-sig" />
+        <div style={{ minWidth: 0 }}>
+          <div className="t-eyebrow">{victory ? "Victory" : "Defeat"}</div>
+          <h2 id="rv-boss-h" className="t-display-m" style={{ margin: "2px 0 0" }}>
+            {victory ? `${resolution.defeated.name} falls` : "It holds"}
+          </h2>
+          <p className="t-meta">{score}</p>
+        </div>
+      </div>
 
       {victory ? (
         <>
-          <p className="rank-ascend mt-4 text-[20px] font-bold" style={{ color: "var(--amber)" }}>
-            {resolution.defeated.name} falls
-          </p>
-          <p className="mono mt-4" style={{ fontSize: 36, fontWeight: 800, lineHeight: 1, color: "var(--amber)" }}>
-            +{resolution.masteryAwarded}
-          </p>
-          <p className="label-xs mt-1.5">Mastery earned</p>
-
-          {/* The Spoils Cache. Revealed, not gambled on — the mastery above
-              was fixed before the fight, and this is the variety on top. */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ delay: 0.35, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-5 w-full max-w-xs px-4 py-3"
-            style={{
-              borderRadius: 10,
-              background: "var(--green-06)",
-              border: "1px solid rgba(0,204,122,0.28)",
-            }}
-          >
-            <p className="label-xs" style={{ fontSize: 9, color: "var(--green)" }}>
-              Spoils cache
-            </p>
-            <p className="mt-1" style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-0)" }}>
-              {BOON_META[resolution.spoils.kind].label}
-            </p>
-            <p style={{ fontSize: 11, color: "var(--green)", marginTop: 1 }}>
-              {BOON_META[resolution.spoils.kind].effectText(resolution.spoils.magnitude)}
-            </p>
-            <p style={{ fontSize: 10, color: "var(--ink-3)", marginTop: 4, lineHeight: 1.5 }}>
-              {BOON_META[resolution.spoils.kind].blurb}
-            </p>
-          </motion.div>
-
-          <p className="mt-5 max-w-sm" style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.6 }}>
-            Something older takes its place. <strong style={{ color: "var(--ink-1)" }}>{resolution.nextBoss.name}</strong>{" "}
-            waits at tier {resolution.newTier}.
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <Amount kind="mp" value={resolution.masteryAwarded} label="MP, as promised" className="ink-0" />
+            <Chip tone="kept" icon="check">
+              Won
+            </Chip>
+          </div>
+          <BoonChoice
+            choices={resolution.boon.choices}
+            claimUntil={resolution.boon.claimUntil}
+            onChoose={onChoose}
+          />
+          <p className="t-meta">
+            Something older takes its place: <b className="ink-1">{resolution.nextBoss.name}</b> waits at tier {resolution.newTier}, after{" "}
+            {formatExpiry(resolution.cooldownUntil)}.
           </p>
         </>
       ) : (
         <>
-          <p className="mt-4 text-[18px] font-semibold" style={{ color: "var(--ink-0)" }}>
-            It holds.
-          </p>
-          <p className="mt-3 max-w-sm" style={{ fontSize: 12.5, color: "var(--ink-1)", fontStyle: "italic", lineHeight: 1.6 }}>
-            “{resolution.taunt}”
-          </p>
-          <p className="mt-4" style={{ fontSize: 11, color: "var(--red)" }}>
-            {DEBUFF_META[resolution.debuff].label} — {DEBUFF_META[resolution.debuff].effectText(DEBUFF_META[resolution.debuff].defaultMagnitude)}
+          <p className="t-epithet">“{resolution.taunt}”</p>
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+            <Chip tone="owed">
+              {DEBUFF_META[resolution.debuff].label} · {DEBUFF_META[resolution.debuff].effectText(DEBUFF_META[resolution.debuff].defaultMagnitude)}
+            </Chip>
+            <span className="t-meta">Lifts on its own at {formatExpiry(resolution.debuffUntil)}.</span>
+          </div>
+        </>
+      )}
+      <p className="t-meta">Every card in that encounter was a real review. The schedule moved regardless.</p>
+    </section>
+  );
+}
+
+/** Every boon, one tap each: the choice is the reward, and there is no wrong one (boon-meta.ts). */
+export function BoonChoice({
+  choices,
+  claimUntil,
+  onChoose,
+}: {
+  choices: BoonKind[];
+  claimUntil: Date;
+  onChoose: (kind: BoonKind) => Promise<string | null>;
+}) {
+  const [busy, setBusy] = useState<BoonKind | null>(null);
+  const [chosen, setChosen] = useState<BoonKind | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function choose(kind: BoonKind) {
+    if (busy || chosen) return;
+    setBusy(kind);
+    setError(null);
+    const err = await onChoose(kind).catch(() => "Could not save the choice. Try again.");
+    setBusy(null);
+    if (err) setError(err);
+    else setChosen(kind);
+  }
+
+  return (
+    <div className="rv-col" style={{ gap: 8 }}>
+      <div className="t-eyebrow">{chosen ? "Your boon" : "Choose a boon"}</div>
+      {chosen ? (
+        <p className="t-body">
+          <b>{BOON_META[chosen].label}</b> · {BOON_META[chosen].effectText(BOON_META[chosen].magnitude)} for {BOON_META[chosen].durationHours} hours.
+        </p>
+      ) : (
+        <>
+          <div className="rv-boons" role="group" aria-label="Boons">
+            {choices.map((k) => {
+              const m = BOON_META[k];
+              return (
+                <button key={k} type="button" className="rv-boon" aria-pressed={busy === k} disabled={busy !== null} onClick={() => void choose(k)}>
+                  <b>{m.label}</b>
+                  <span className="fx">{m.effectText(m.magnitude)}</span>
+                  <span className="t-meta">{m.blurb}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="t-meta">
+            Each lasts {BOON_META[choices[0] ?? "INSIGHT"].durationHours} hours. Choose before {formatExpiry(claimUntil)}.
           </p>
         </>
       )}
-
-      <div
-        className="mt-6 grid w-full max-w-xs grid-cols-2 gap-px overflow-hidden"
-        style={{ background: "var(--line)", borderRadius: 10 }}
-      >
-        <div className="px-3 py-3" style={{ background: "var(--card)" }}>
-          <p className="mono" style={{ fontSize: 16, fontWeight: 700, color: victory ? "var(--green)" : "var(--red)" }}>
-            {Math.round(resolution.accuracy * 100)}%
-          </p>
-          <p className="label-xs mt-0.5">Accuracy</p>
-        </div>
-        <div className="px-3 py-3" style={{ background: "var(--card)" }}>
-          <p className="mono" style={{ fontSize: 16, fontWeight: 700, color: "var(--ink-1)" }}>
-            {Math.round(resolution.required * 100)}%
-          </p>
-          <p className="label-xs mt-0.5">Required</p>
-        </div>
-      </div>
-
-      <p className="mt-4" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
-        Every card in that encounter was a real review. The schedule moved regardless.
-      </p>
-
-      <button type="button" onClick={onDone} className="btn-primary mt-6">
-        Return
-      </button>
-    </motion.div>
+      {error && (
+        <p role="alert" className="rv-alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

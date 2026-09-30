@@ -10,24 +10,20 @@ interface Props {
 }
 
 /**
- * Panel wrapper for a chart or list.
- *
- * Title is now title-case Inter at 11px rather than uppercase violet mono
- * with 0.15em tracking — per the ecosystem's typography rules, wide-tracked
- * all-caps mono is reserved for the single green section eyebrow, not for
- * every panel on the page.
+ * Chart chrome on the Sigil & Slate tokens (redesign.md › Charts): a card,
+ * the diamond section header, a line-1 grid and ink-2 labels inside. A
+ * single series is ink-0; several are ink with dash patterns and direct end
+ * labels (palette.ts seriesDash). Hue is kept for state and currency.
  */
 export function ChartCard({ title, subtitle, aside, children, className }: Props) {
   return (
-    <section className={`card p-4 ${className ?? ""}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="panel-title">{title}</h3>
-          {subtitle && <p className="panel-sub">{subtitle}</p>}
-        </div>
-        {aside && <div className="shrink-0">{aside}</div>}
+    <section className={`card pad${className ? ` ${className}` : ""}`}>
+      <div className="sec-h" style={{ padding: 0, marginBottom: 12 }}>
+        <span className="lane-mark" aria-hidden="true" />
+        <h3>{title}</h3>
+        {(aside ?? subtitle) != null && <span className="aside">{aside ?? subtitle}</span>}
       </div>
-      <div className="mt-4">{children}</div>
+      {children}
     </section>
   );
 }

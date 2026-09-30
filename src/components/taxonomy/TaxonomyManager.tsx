@@ -1,11 +1,20 @@
 "use client";
 
+/**
+ * Study › Fields & Domains: create a Field, add a Domain by hand, and edit a
+ * Field's composition (the attribute split it trains). Re-attribute and the
+ * resets live in Settings › Data.
+ */
 import { useState, useTransition, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Attribute } from "@prisma/client";
 import { createField, createDomain, updateFieldComposition } from "@/app/actions/taxonomy";
 import type { TaxonomyTree } from "@/lib/taxonomy";
 import { ATTRIBUTES, ATTRIBUTE_META, COMPOSITION_TOTAL, type Composition } from "@/lib/attributes";
+import { Button } from "@/components/ui/Button";
+import { levelText, plural } from "@/components/library/library-model";
+import "@/components/library/study.css";
 
 interface Props {
   initialTree: TaxonomyTree[];
@@ -16,15 +25,10 @@ export function TaxonomyManager({ initialTree }: Props) {
   const [isPending, startTransition] = useTransition();
 
   const [newFieldName, setNewFieldName] = useState("");
-  // Which Field's "add Domain" row is open. Only one at a time — a page-wide
-  // map of open inputs would be more flexible and harder to track visually.
+  // One open "add Domain" row and one open composition editor at a time.
   const [openFieldId, setOpenFieldId] = useState<string | null>(null);
   const [newDomainName, setNewDomainName] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  // Composition editor — same single-open-row pattern as the Domain form
-  // above, keyed separately since a field's "+ Domain" row and its
-  // composition editor are independent surfaces.
   const [compositionFieldId, setCompositionFieldId] = useState<string | null>(null);
   const [draftWeights, setDraftWeights] = useState<Composition | null>(null);
 
@@ -32,6 +36,11 @@ export function TaxonomyManager({ initialTree }: Props) {
     setCompositionFieldId(field.id);
     setDraftWeights({ ...field.composition });
     setError(null);
+  }
+
+  function closeComposition() {
+    setCompositionFieldId(null);
+    setDraftWeights(null);
   }
 
   function handleSaveComposition(fieldId: string) {
@@ -43,8 +52,7 @@ export function TaxonomyManager({ initialTree }: Props) {
         setError(res.error);
         return;
       }
-      setCompositionFieldId(null);
-      setDraftWeights(null);
+      closeComposition();
       router.refresh();
     });
   }
@@ -84,186 +92,159 @@ export function TaxonomyManager({ initialTree }: Props) {
     });
   }
 
+  const domainCount = initialTree.reduce((sum, f) => sum + f.domains.length, 0);
+
   return (
-    <div className="space-y-3">
-      <form onSubmit={handleCreateField} className="flex gap-2">
+    <div className="st-page">
+      <p className="t-meta">
+        Domains are normally discovered for you: an idea that matches nothing gets a new one, named for it. Create them by
+        hand when you already know how a subject should split. {plural(initialTree.length, "field")} ·{" "}
+        {plural(domainCount, "domain")}.
+      </p>
+
+      <form onSubmit={handleCreateField} className="st-new">
+        <label className="sr-only" htmlFor="st-new-field">
+          New field name
+        </label>
         <input
+          id="st-new-field"
           type="text"
+          className="st-input"
           value={newFieldName}
           onChange={(e) => setNewFieldName(e.target.value)}
-          placeholder="New field — e.g. Real Analysis"
-          className="input"
+          placeholder="New field, e.g. Real Analysis"
+          autoComplete="off"
         />
-        <button type="submit" disabled={isPending || !newFieldName.trim()} className="btn-primary">
-          Add Field
-        </button>
+        <Button type="submit" variant="primary" disabled={isPending || !newFieldName.trim()}>
+          Add field
+        </Button>
       </form>
 
       {error && (
-        <p
-          role="alert"
-          className="px-3 py-2"
-          style={{
-            fontSize: 12,
-            borderRadius: 10,
-            background: "var(--red-10)",
-            border: "1px solid rgba(240,58,87,0.20)",
-            color: "var(--red)",
-          }}
-        >
+        <p role="alert" className="st-error">
           {error}
         </p>
       )}
 
       {initialTree.length === 0 && (
-        <p className="card px-4 py-10 text-center" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-          No fields yet. Create one above to start building the taxonomy.
-        </p>
+        <p className="card lib-empty ink-1">No fields yet. Create one above to start the structure your ideas file into.</p>
       )}
 
-      {initialTree.map((field) => {
-        const ideaTotal = field.domains.reduce((s, d) => s + d.ideaCount, 0);
-        return (
-          <section key={field.id} className="card">
-            <div
-              className="flex flex-wrap items-baseline justify-between gap-3 px-4 py-3"
-              style={{ borderBottom: "1px solid var(--line)" }}
-            >
-              <div className="flex items-baseline gap-3">
-                <h2 className="text-[14px] font-semibold" style={{ color: "var(--ink-0)" }}>
-                  {field.name}
-                </h2>
-                <span className="mono" style={{ fontSize: 11, color: "var(--green)" }}>
-                  L{field.level.toFixed(1)}
-                </span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                  {field.domains.length} domain{field.domains.length === 1 ? "" : "s"} · {ideaTotal} idea
-                  {ideaTotal === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (compositionFieldId === field.id) {
-                      setCompositionFieldId(null);
-                      setDraftWeights(null);
-                    } else {
-                      openComposition(field);
-                    }
-                  }}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    color: compositionFieldId === field.id ? "var(--ink-2)" : "var(--ink-1)",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  {compositionFieldId === field.id ? "Cancel" : "Composition"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpenFieldId(openFieldId === field.id ? null : field.id);
-                    setNewDomainName("");
-                    setError(null);
-                  }}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    color: openFieldId === field.id ? "var(--ink-2)" : "var(--green)",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  {openFieldId === field.id ? "Cancel" : "+ Domain"}
-                </button>
-              </div>
-            </div>
-
-            {compositionFieldId === field.id && draftWeights && (
-              <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)", background: "var(--sub)" }}>
-                <p className="mb-2" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-                  Attribute weights — what this Field trains, as a percentage split. Must sum to {COMPOSITION_TOTAL};
-                  saving re-normalises automatically.{" "}
-                  <span style={{ color: draftTotal === COMPOSITION_TOTAL ? "var(--green)" : "var(--ink-3)" }}>
-                    Currently {draftTotal}.
-                  </span>
-                </p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                  {ATTRIBUTES.map((attribute) => (
-                    <label key={attribute} className="flex items-center justify-between gap-2" style={{ fontSize: 12 }}>
-                      <span style={{ color: "var(--ink-1)" }}>{ATTRIBUTE_META[attribute].label}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={draftWeights[attribute]}
-                        onChange={(e) => {
-                          const value = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-                          setDraftWeights((prev) => (prev ? { ...prev, [attribute as Attribute]: value } : prev));
-                        }}
-                        className="input"
-                        style={{ width: 60, padding: "4px 8px" }}
-                      />
-                    </label>
-                  ))}
+      <div className="st-fields">
+        {initialTree.map((field) => {
+          const ideaTotal = field.domains.reduce((s, d) => s + d.ideaCount, 0);
+          const composing = compositionFieldId === field.id && draftWeights !== null;
+          const adding = openFieldId === field.id;
+          const headingId = `st-f-${field.id}`;
+          return (
+            <section key={field.id} className="card" aria-labelledby={headingId}>
+              <div className="st-head">
+                <div className="who">
+                  <h2 id={headingId}>{field.name}</h2>
+                  <div className="t-meta">
+                    {levelText(field.level)} · {plural(field.domains.length, "domain")} · {plural(ideaTotal, "idea")}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleSaveComposition(field.id)}
-                  disabled={isPending}
-                  className="btn-primary mt-3"
-                >
-                  Save composition
-                </button>
+                <div className="acts">
+                  <Button
+                    variant="quiet"
+                    aria-expanded={composing}
+                    onClick={() => (composing ? closeComposition() : openComposition(field))}
+                  >
+                    {composing ? "Close composition" : "Composition"}
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    icon={adding ? undefined : "plus"}
+                    aria-expanded={adding}
+                    onClick={() => {
+                      setOpenFieldId(adding ? null : field.id);
+                      setNewDomainName("");
+                      setError(null);
+                    }}
+                  >
+                    {adding ? "Cancel" : "Domain"}
+                  </Button>
+                </div>
               </div>
-            )}
 
-            {openFieldId === field.id && (
-              <form
-                onSubmit={(e) => handleCreateDomain(e, field.id)}
-                className="flex gap-2 px-4 py-3"
-                style={{ borderBottom: "1px solid var(--line)", background: "var(--sub)" }}
-              >
-                <input
-                  type="text"
-                  value={newDomainName}
-                  onChange={(e) => setNewDomainName(e.target.value)}
-                  placeholder={`New domain under ${field.name}`}
-                  autoFocus
-                  className="input"
-                />
-                <button type="submit" disabled={isPending || !newDomainName.trim()} className="btn-primary">
-                  Create
-                </button>
-              </form>
-            )}
+              {composing && draftWeights && (
+                <div className="st-panel">
+                  <p className="t-meta">
+                    What {field.name} trains, as a percentage split. It should sum to {COMPOSITION_TOTAL}; saving re-normalises
+                    it. Now <b className={draftTotal === COMPOSITION_TOTAL ? "ink-0" : "ink-1"}>{draftTotal}</b>.
+                  </p>
+                  <div className="st-comp">
+                    {ATTRIBUTES.map((attribute) => (
+                      <label key={attribute}>
+                        <span>{ATTRIBUTE_META[attribute].label}</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          max={100}
+                          className="st-input num"
+                          value={draftWeights[attribute]}
+                          onChange={(e) => {
+                            const value = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                            setDraftWeights((prev) => (prev ? { ...prev, [attribute as Attribute]: value } : prev));
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="st-row">
+                    <Button variant="primary" onClick={() => handleSaveComposition(field.id)} disabled={isPending}>
+                      Save composition
+                    </Button>
+                    <Button variant="quiet" onClick={closeComposition}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
 
-            {field.domains.length === 0 ? (
-              <p className="px-4 py-4" style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                No domains yet — one is created automatically when you add an idea that matches nothing here.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="data-table">
+              {adding && (
+                <form onSubmit={(e) => handleCreateDomain(e, field.id)} className="st-panel">
+                  <div className="st-new">
+                    <label className="sr-only" htmlFor={`st-d-${field.id}`}>
+                      New domain under {field.name}
+                    </label>
+                    <input
+                      id={`st-d-${field.id}`}
+                      type="text"
+                      className="st-input"
+                      value={newDomainName}
+                      onChange={(e) => setNewDomainName(e.target.value)}
+                      placeholder={`New domain under ${field.name}`}
+                      autoFocus
+                      autoComplete="off"
+                    />
+                    <Button type="submit" variant="primary" disabled={isPending || !newDomainName.trim()}>
+                      Create
+                    </Button>
+                  </div>
+                  <p className="st-hint" style={{ marginTop: 0 }}>
+                    An empty domain fills when you pick it on New idea; discovery only routes to domains that already hold ideas.
+                  </p>
+                </form>
+              )}
+
+              {field.domains.length === 0 ? (
+                <p className="st-empty t-meta">No domains yet: one opens when you add an idea that matches nothing here.</p>
+              ) : (
+                <table className="st-table">
+                  <caption className="sr-only">Domains in {field.name}</caption>
                   <thead>
                     <tr>
                       <th scope="col">Domain</th>
-                      <th scope="col" className="num">
+                      <th scope="col" className="n">
                         Ideas
                       </th>
-                      <th scope="col" className="num">
+                      <th scope="col" className="n">
                         Points
                       </th>
-                      <th scope="col" className="num">
+                      <th scope="col" className="n">
                         Level
                       </th>
                     </tr>
@@ -272,24 +253,26 @@ export function TaxonomyManager({ initialTree }: Props) {
                     {field.domains.map((domain) => (
                       <tr key={domain.id}>
                         <td>{domain.name}</td>
-                        <td className="num" style={{ color: domain.ideaCount === 0 ? "var(--ink-3)" : "var(--ink-1)" }}>
-                          {domain.ideaCount}
-                        </td>
-                        <td className="num" style={{ color: "var(--ink-1)" }}>
-                          {domain.totalPoints.toFixed(0)}
-                        </td>
-                        <td className="num" style={{ color: "var(--green)" }}>
-                          {domain.level}
-                        </td>
+                        <td className={domain.ideaCount === 0 ? "n zero" : "n"}>{domain.ideaCount}</td>
+                        <td className="n">{Math.round(domain.totalPoints).toLocaleString("en-GB")}</td>
+                        <td className="n">L{domain.level}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
-            )}
-          </section>
-        );
-      })}
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      <p className="t-meta">
+        Recompute attribution and the resets are in{" "}
+        <Link className="link" href="/settings#data">
+          Settings › Data
+        </Link>
+        .
+      </p>
     </div>
   );
 }

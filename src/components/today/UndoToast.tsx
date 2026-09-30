@@ -5,6 +5,13 @@ import { useEffect, useId, useRef } from "react";
 /** The removal whose Undo last took focus. */
 let lastFocused: string | null = null;
 
+/** Moves focus to an Undo once per removal id (the row that held focus has just gone). */
+export function focusUndoOnce(id: string, el: HTMLElement | null | undefined): void {
+  if (!el || lastFocused === id) return;
+  lastFocused = id;
+  el.focus({ preventScroll: true });
+}
+
 interface Props {
   /** Identifies this removal: focus moves to Undo once per id. */
   id: string;
@@ -12,38 +19,34 @@ interface Props {
   verb: string;
   title: string;
   onUndo: () => void;
-  /** Inside a sheet: a status line in the sheet rather than a floating toast. */
-  inline?: boolean;
 }
 
 /**
- * 'Archived · Gym legs · Undo', for ten seconds after an Archive or a Drop.
+ * 'Dropped · Book dentist · Undo', as a status line inside a sheet, for ten
+ * seconds after a Drop made there. (On the board the same Undo is a toast
+ * in the app's ToastDock; inside a sheet the dock would sit under the
+ * scrim, so the sheet carries its own line.)
  *
- * The removal is only sent when the ten seconds are up (TodayBoard holds
- * it), so Undo is free and certain rather than a second write racing the
- * first. The row the player acted on has just disappeared, taking focus
- * with it, so focus moves to Undo: a keyboard user is one Enter from
- * taking it back, and a screen reader hears what happened.
+ * The row the player acted on has just disappeared, taking focus with it,
+ * so focus moves to Undo: a keyboard user is one Enter from taking it back,
+ * and a screen reader hears what happened.
  */
-export function UndoToast({ id, verb, title, onUndo, inline = false }: Props) {
+export function UndoToast({ id, verb, title, onUndo }: Props) {
   const ref = useRef<HTMLButtonElement | null>(null);
   const textId = useId();
 
-  // Once per removal: moving between the sheet and the page (the inbox
-  // closing while the Undo lasts) remounts the toast, and must not pull
-  // focus away from where the sheet just returned it.
+  // Once per removal: the sheet closing while the Undo lasts moves it to the
+  // dock, and must not pull focus away from where the sheet returned it.
   useEffect(() => {
-    if (lastFocused === id) return;
-    lastFocused = id;
-    ref.current?.focus({ preventScroll: true });
+    focusUndoOnce(id, ref.current);
   }, [id]);
 
   return (
-    <div className={inline ? "today-undo-line" : "today-toast"} role="status" aria-live="polite">
-      <span id={textId} className="today-toast-text">
-        <span style={{ color: "var(--ink-2)" }}>{verb}</span> · <span className="today-toast-title">{title}</span>
+    <div className="today-undo-line" role="status" aria-live="polite">
+      <span id={textId} className="txt">
+        <span className="ink-2">{verb}</span> · <b>{title}</b>
       </span>
-      <button ref={ref} type="button" className="today-toast-action" onClick={onUndo} aria-describedby={textId}>
+      <button ref={ref} type="button" className="btn btn-quiet" onClick={onUndo} aria-describedby={textId}>
         Undo
       </button>
     </div>

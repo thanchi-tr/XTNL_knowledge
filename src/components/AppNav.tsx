@@ -1,11 +1,18 @@
 "use client";
 
+/*
+ * RETIRED (redesign L0): the shell (components/shell/*) replaced this header.
+ * Nothing renders it. It stays only because scripts/life-day-check.ts still
+ * reads this file (the More-disclosure and md-row assertions); delete it
+ * together with that block (handoff to the lead).
+ */
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { XtnlLogo } from "./Logo";
 import { useStreak } from "./StreakProvider";
-import { openCapture } from "./capture/CaptureFab";
+import { openCaptureSheet as openCapture } from "./shell/capture-bridge";
 
 /**
  * The width from which a link sits in the row; below it, it is in More.

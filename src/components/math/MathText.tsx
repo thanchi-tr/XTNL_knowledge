@@ -49,7 +49,12 @@ export function MathText({ text, className }: Props) {
           // Invalid LaTeX mid-edit shouldn't blank the field or break the
           // sentence around it — show the raw span, flagged, and move on.
           return (
-            <span key={i} className="mono" style={{ color: "var(--amber)" }} title="Couldn't parse this as LaTeX">
+            <span
+              key={i}
+              className="t-mono"
+              style={{ textDecoration: "underline wavy var(--owed)", textUnderlineOffset: 3 }}
+              title="Couldn't parse this as LaTeX"
+            >
               {seg.text}
             </span>
           );

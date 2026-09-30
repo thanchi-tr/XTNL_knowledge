@@ -1,0 +1,99 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   SKILLS — path chips, the path header on its sky, the rank ladder, the
+   emblem detail (L4, final-you.html ?tab=skills and ?detail=1).
+   Imported by src/app/skills/layout.tsx (and /dev/style/art). The sky art
+   itself is skies.css, imported by the same layout only.
+   ===================================================================== */
+@layer components {
+  /* ---------- path chips: 13, polygon glyph in hue, ready dot ---------- */
+  .pathchips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: 0; list-style: none; }
+  .pathchips::-webkit-scrollbar { display: none; }
+  .pchip {
+    min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2);
+    display: inline-flex; align-items: center; gap: 7px; font: 600 13px var(--font-ui); color: var(--ink-1);
+    white-space: nowrap; text-decoration: none; background: transparent;
+  }
+  .pchip:hover { background: var(--raised); color: var(--ink-0); }
+  .pchip svg { width: 14px; height: 14px; flex: none; }
+  .pchip[aria-current="page"] { border-color: var(--line-ctl); background: var(--raised); color: var(--ink-0); }
+
+  /* ---------- path header on its sky (a .sky-scope: the only place a sky drifts outside a ceremony) ---------- */
+  .phead {
+    position: relative; overflow: hidden; padding: 18px 16px; border-radius: var(--r-card);
+    border: 1px solid var(--line-1); background: #0a1014; margin: 10px 0 16px; min-height: 96px;
+  }
+  .phead .phead-wash { position: absolute; inset: 0; pointer-events: none; }
+  /* Text sits on a dark gradient, whatever the sky does behind it (AA in both themes). */
+  .phead .phead-scrim { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(5, 6, 9, .78) 0%, rgba(5, 6, 9, .52) 55%, rgba(5, 6, 9, .7) 100%); }
+  .phead .in { position: relative; z-index: 1; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .phead .in > svg { width: 40px; height: 40px; flex: none; }
+  .phead h2 { font: 600 24px/28px var(--font-display); color: #f1f3f8; margin: 0; }
+  .phead .t-meta { color: #c3cad8; }
+  .phead .bal { margin-left: auto; text-align: right; color: #f1f3f8; }
+  .phead .bal .cur { font: 600 18px var(--font-display); }
+  .phead .sky.sky-scoped { z-index: 0; }
+
+  /* ---------- the rank ladder, Ultimate → Pure ---------- */
+  .rank { padding: 14px 14px 10px; }
+  .rank + .rank { border-top: 1px solid var(--line-1); }
+  .rank-h { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .rank-h .mat { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .rank-h h3 { font: 700 12px/16px var(--font-ui); letter-spacing: .12em; text-transform: uppercase; margin: 0; color: var(--ink-0); }
+  .rank-h span { font-size: 13px; color: var(--ink-2); }
+  .rank-h .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 12px 6px; margin: 0; padding: 0; list-style: none; }
+  .node {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; width: 100%;
+    font-size: 12px; line-height: 15px; color: var(--ink-1); min-height: 44px; padding: 4px 2px; border-radius: 12px;
+    background: transparent; border: 0;
+  }
+  .node:hover { background: var(--raised); }
+  .node.owned { color: var(--ink-0); }
+  .node .nm { overflow-wrap: anywhere; }
+  .rank-more { display: flex; justify-content: center; margin-top: 8px; }
+  .skel-phead { margin: 10px 0 16px; }
+
+  /* ---------- emblem detail (sheet body, or the graph's side panel from 1024) ---------- */
+  .dt-art { display: flex; gap: 14px; align-items: center; }
+  .dt-art h3 { font: 600 21px/26px var(--font-display); margin: 0; }
+  .dt-mat { border: 0; }
+  .dt-mat.iron { background: linear-gradient(180deg, var(--iron-a), var(--iron-m)); color: #0d1017; }
+  .dt-mat.bronze { background: linear-gradient(180deg, var(--bronze-a), var(--bronze-m)); color: #1d0f04; }
+  .dt-mat.silver { background: linear-gradient(180deg, var(--silver-a), var(--silver-m)); color: #0d1017; }
+  .dt-mat.gold { background: linear-gradient(180deg, var(--gold-a), var(--gold-m)); color: #2a1d00; }
+  .dt-mat.astral { background: linear-gradient(135deg, var(--astral-a), var(--astral-m)); color: #120a2a; }
+  .req { padding: 10px 0; }
+  .req + .req { border-top: 1px solid var(--line-1); }
+  .req .rl { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; gap: 8px; }
+  .req .rl b { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .req .rl .fig { flex: none; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .req.met .rl .fig { color: var(--kept); }
+  .req.met .meter > i.base { background: var(--kept); }
+  .cost { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); margin-top: 12px; font-size: 14px; }
+  .cost b { font-variant-numeric: tabular-nums; }
+  .dt-note { text-align: center; margin-top: 8px; }
+
+  /* ---------- attest mastery ---------- */
+  .att-input {
+    display: block; width: 100%; margin-top: 12px; min-height: 96px; padding: 10px 12px; resize: vertical;
+    border-radius: var(--r-ctl); border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0);
+    font: 400 15px/1.45 var(--font-ui);
+  }
+  .att-input::placeholder { color: var(--ink-2); }
+  .att-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  /* ---------- active effects: boons (held) and penalties (owed), each with its way out ---------- */
+  .fx-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .fx-list li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; font-size: 14px; }
+  .fx-list li + li { border-top: 1px solid var(--line-1); }
+  .fx-list li .grow { flex: 1; min-width: 0; }
+  .fx-list li b { font-weight: 600; }
+
+  /* ---------- the graph (SkillTree): focusable nodes ---------- */
+  .tree-node { cursor: pointer; outline: none; }
+  .tree-node .focus-ring { opacity: 0; }
+  .tree-node:focus-visible .focus-ring { opacity: 1; }
+  .tree-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  @media (min-width: 1024px) { .tree-grid { grid-template-columns: minmax(0, 1fr) 360px; } }
+}

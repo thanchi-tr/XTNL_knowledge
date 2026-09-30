@@ -1,6 +1,14 @@
 import type { SkillRank } from "./skill-pool";
 
 /**
+ * Rarity is a material rim around the art (redesign "Sigil & Slate"): Pure
+ * iron, Synergy bronze, Capstone silver, Apex gold, Ultimate astral. Defined
+ * once in materials.ts and re-exported here beside RANK_META, whose colours
+ * are untouched so none of the 749 emblems recolour.
+ */
+export { RANK_MATERIAL, rankMaterial } from "./materials";
+
+/**
  * One source of truth for how a rank *looks*, shared by SkillLogo,
  * SkillCard and SkillTree so a Capstone is the same violet in the emblem,
  * the card border, and the tree node. Colours mirror the `--rank-*` tokens

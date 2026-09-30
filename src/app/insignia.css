@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ INSIGNIA ═══════════════════════════════════════════
    The sky reaches the chrome.
 
@@ -47,16 +48,15 @@
    a scoped row now always wins. The shape table is still written once — the
    two prefixes share every declaration block.
    ═══════════════════════════════════════════════════════ */
+@layer art {
 
 .nav-new-idea {
   position: relative;
   overflow: hidden;
   isolation: isolate;
+  /* Transform and background only (the redesign's button rule). */
   transition:
-    border-radius 480ms cubic-bezier(.22, .61, .36, 1),
     background 350ms ease,
-    box-shadow 350ms ease,
-    color 350ms ease,
     transform 120ms ease;
 }
 
@@ -124,44 +124,8 @@ html[data-sky] .nav-new-idea:active:not(:disabled),
     0 0 12px rgb(var(--sky-a) / .22);
 }
 
-/* ── Motes ───────────────────────────────────────────────
-   Sparks drifting up inside the face. Clipped by the button's own
-   `overflow: hidden`, so they follow whatever silhouette the era gave it
-   without needing a second mask.
-
-   Two periods tall, `background-size: 100% 50%`, repeating — so translating
-   by exactly -50% lands the pattern back on itself and the loop is seamless.
-   The animation is `transform` only, never `background-position`: this
-   element is in the nav on every page, and a per-frame repaint there is the
-   last place in the app to put one. */
-html[data-sky] .nav-new-idea::before,
-.insignia-row[data-sky] .nav-new-idea::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 200%;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(circle at 14% 18%, rgb(255 255 255 / .55) 0 1px, transparent 1.6px),
-    radial-gradient(circle at 33% 61%, rgb(255 255 255 / .38) 0 1.2px, transparent 1.8px),
-    radial-gradient(circle at 51% 29%, rgb(255 255 255 / .48) 0 1px, transparent 1.6px),
-    radial-gradient(circle at 70% 73%, rgb(255 255 255 / .34) 0 1.3px, transparent 1.9px),
-    radial-gradient(circle at 86% 41%, rgb(255 255 255 / .5) 0 1px, transparent 1.6px),
-    radial-gradient(circle at 24% 87%, rgb(255 255 255 / .30) 0 1.1px, transparent 1.7px),
-    radial-gradient(circle at 61% 7%, rgb(255 255 255 / .42) 0 1px, transparent 1.6px);
-  background-size: 100% 50%;
-  background-repeat: repeat;
-  animation: nav-motes 6.5s linear infinite;
-  animation-play-state: var(--ambient-play, running);
-}
-
-@keyframes nav-motes {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(0, -50%, 0); }
-}
+/* ── Motes: removed (redesign "Sigil & Slate": no nav motes; the only
+   ambient loops are the ready-emblem orbit and the ceremony rays). */
 
 /* ═══ THE FIFTEEN SILHOUETTES ════════════════════════════
    Every one is arcs. The `/` syntax sets horizontal and vertical radii
@@ -287,7 +251,7 @@ html[data-sky] .nav-title::before,
   left: 0;
   top: 50%;
   transform: translateY(-52%);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1;
   color: rgb(var(--sky-a, 122 214 255));
   text-shadow: 0 0 8px rgb(var(--sky-a, 122 214 255) / .55);
@@ -358,8 +322,6 @@ html[data-sky="firstlight"] .nav-title::after,
 
 @media (prefers-reduced-motion: reduce) {
   .nav-new-idea { transition: none; }
-  html[data-sky] .nav-new-idea::before,
-  .insignia-row[data-sky] .nav-new-idea::before { animation: none; }
 }
 
 /* ═══ THE REVIEW SHORTCUT ════════════════════════════════
@@ -417,7 +379,7 @@ html[data-sky] .nav-review:hover:not(:disabled),
   margin-left: 7px;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   /* Dark on the light face, which is the inverse of every other count badge
@@ -450,7 +412,7 @@ html[data-sky] .nav-review:hover:not(:disabled),
   margin: 0;
   padding: 6px 10px;
   background: var(--raised);
-  border-top: 1px solid var(--line-hi);
+  border-top: 1px solid var(--line-2);
   box-shadow: 0 -8px 24px rgb(0 0 0 / .4);
 }
 
@@ -471,8 +433,8 @@ html[data-sky] .nav-review:hover:not(:disabled),
   white-space: nowrap;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid var(--line-hi);
-  background: var(--sub);
+  border: 1px solid var(--line-2);
+  background: var(--sunken);
   font-size: 12.5px;
   cursor: pointer;
   /* Thumb-sized on a phone, where this bar sits against the keyboard and a
@@ -489,21 +451,22 @@ html[data-sky] .nav-review:hover:not(:disabled),
 
 /* The half already typed is dimmed, so the chip reads as a completion rather
    than as a word — you see what Tab is about to *add*, not what it replaces. */
-.word-hint-typed { color: var(--ink-3); }
+.word-hint-typed { color: var(--ink-2); }
 .word-hint-rest { color: var(--ink-0); font-weight: 600; }
 
 .word-hint-key {
   margin-left: 5px;
   padding: 1px 4px;
   border-radius: 4px;
-  border: 1px solid var(--line-hi);
+  border: 1px solid var(--line-2);
   background: var(--canvas);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: .04em;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 /* No room for the key hint on a cover screen; the chips themselves stay. */
 @media (max-width: 420px) {
   .word-hint-key { display: none; }
+}
 }

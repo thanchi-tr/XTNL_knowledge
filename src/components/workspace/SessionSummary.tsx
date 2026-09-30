@@ -1,46 +1,96 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { fieldColor } from "@/lib/palette";
+/**
+ * The hub's hero (redesign › Study › Review › Hub): the quest ring, "17 due ·
+ * about 9 minutes · pays review points, 0 life XP", Start (Enter), and the
+ * 40 px field chips. Or, when nothing is due, the three questions an empty
+ * queue has to answer: is anything in here, when does it come back, and
+ * what do I do now.
+ */
+import { Button } from "@/components/ui/Button";
+import { ChipButton } from "@/components/ui/Chip";
+import { PromiseRing } from "@/components/ui/PromiseRing";
+import { minutesFor } from "@/lib/review-facts";
 
-interface Props {
-  scopeName: string;
-  dueCount: number;
-  domainCount: number;
-  onStart: () => void;
+export interface HubField {
+  id: string;
+  name: string;
+  due: number;
 }
 
-export function SessionSummary({ scopeName, dueCount, domainCount, onStart }: Props) {
-  const accent = scopeName === "All Fields" ? "#00cc7a" : fieldColor(scopeName);
-  const estMinutes = Math.max(1, Math.round((dueCount * 20) / 60));
+interface Props {
+  quest: { done: number; target: number };
+  /** Due in the selected scope. */
+  dueCount: number;
+  totalDue: number;
+  fields: HubField[];
+  selected: string;
+  onSelect: (fieldName: string) => void;
+  onStart: () => void;
+  scheduledCount: number;
+  upcoming: { label: string; count: number } | null;
+}
 
+export const ALL_FIELDS = "ALL";
+
+export function SessionSummary({ quest, dueCount, totalDue, fields, selected, onSelect, onStart, scheduledCount, upcoming }: Props) {
+  const cleared = quest.target > 0 && quest.done >= quest.target;
+  const ring = quest.target > 0 && (
+    <PromiseRing value={Math.min(quest.done, quest.target)} target={quest.target} size={64} label="Today's quest" showCount />
+  );
+
+  if (totalDue === 0) {
+    return (
+      <section className="card rv-hero" aria-labelledby="rv-hub-h">
+        <div className="rv-hero-top">
+          {ring}
+          <div style={{ minWidth: 0 }}>
+            <div className="t-eyebrow">{cleared ? "Today's quest · cleared" : "Review"}</div>
+            <h2 id="rv-hub-h">{scheduledCount > 0 ? "Nothing due today" : "No ideas yet"}</h2>
+            <p className="t-meta">
+              {scheduledCount > 0
+                ? `${scheduledCount} idea${scheduledCount === 1 ? "" : "s"} scheduled${upcoming ? ` · next ${upcoming.count} ${upcoming.label}` : ""}`
+                : "Add one and it enters the rotation immediately."}
+            </p>
+          </div>
+        </div>
+        <Button href="/add" variant={scheduledCount > 0 ? "secondary" : "primary"} size="lg" block icon="plus">
+          New idea
+        </Button>
+      </section>
+    );
+  }
+
+  const withDue = fields.filter((f) => f.due > 0);
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="panel flex flex-col items-center px-6 py-14 text-center"
-    >
-      <p className="label-xs">{scopeName}</p>
-      <motion.p
-        key={dueCount}
-        initial={{ scale: 0.85, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 16 }}
-        className="mt-3 font-mono text-6xl font-black tabular-nums"
-        style={{ color: accent }}
-      >
-        {dueCount}
-      </motion.p>
-      <p className="mt-1 text-sm text-ink-1">
-        idea{dueCount === 1 ? "" : "s"} ready for review across {domainCount} domain{domainCount === 1 ? "" : "s"}
-      </p>
-      <p className="mt-1 font-mono text-xs text-ink-3">~{estMinutes} min</p>
-
-      <button type="button" onClick={onStart} className="btn-primary mt-8">
-        ▶ Start Session
-      </button>
-      <p className="mt-3 text-xs text-ink-3">Questions run one at a time, in random order.</p>
-    </motion.div>
+    <section className="card rv-hero" aria-labelledby="rv-hub-h">
+      <div className="rv-hero-top">
+        {ring}
+        <div style={{ minWidth: 0 }}>
+          <div className="t-eyebrow">{quest.target > 0 ? `Today's quest · ${cleared ? "cleared" : `${quest.target} cards`}` : "Review"}</div>
+          <h2 id="rv-hub-h">
+            <span className="num">{dueCount}</span> due
+          </h2>
+          <p className="t-meta">
+            about {minutesFor(dueCount)} minute{minutesFor(dueCount) === 1 ? "" : "s"} · pays review points, 0 life XP
+          </p>
+        </div>
+      </div>
+      <Button variant="primary" size="lg" block icon="study" kbd="Enter" onClick={onStart} disabled={dueCount === 0}>
+        Start review
+      </Button>
+      {withDue.length > 1 && (
+        <div className="rv-chips" role="group" aria-label="Fields">
+          <ChipButton pressed={selected === ALL_FIELDS} onClick={() => onSelect(ALL_FIELDS)}>
+            All fields <span className="num">{totalDue}</span>
+          </ChipButton>
+          {withDue.map((f) => (
+            <ChipButton key={f.id} pressed={selected === f.name} onClick={() => onSelect(f.name)}>
+              {f.name} <span className="num">{f.due}</span>
+            </ChipButton>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

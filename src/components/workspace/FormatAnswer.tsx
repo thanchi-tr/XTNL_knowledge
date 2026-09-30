@@ -2,22 +2,16 @@
 
 import { useState } from "react";
 import type { QuestionType } from "@prisma/client";
-import {
-  decodeListQuestion,
-  decodeOrderQuestion,
-  decodeNumericQuestion,
-  clozeBlank,
-} from "@/lib/idea-payload";
+import { decodeListQuestion, decodeOrderQuestion, decodeNumericQuestion, clozeBlank } from "@/lib/idea-payload";
+import { Button } from "@/components/ui/Button";
+import { cx } from "@/components/ui/cx";
 
 /**
- * Review inputs for the four formats added after the original set.
- *
- * Extracted rather than added to `SessionCard`'s ternary chain, which was
- * already three formats deep — four more branches inline would have buried
- * the card's actual job (submit, hold, report) under input markup.
+ * Review inputs for the four formats added after the original set: CLOZE,
+ * LIST, ORDER and NUMERIC.
  *
  * Every one of these submits an array or a string; none can see the answer,
- * because `SessionCard` is never given it.
+ * because the runner is never given it before grading.
  */
 
 interface Props {
@@ -25,16 +19,32 @@ interface Props {
   /** The stored, already-blanked/scrambled question payload. */
   question: string;
   disabled: boolean;
+  /** True while the answer is being checked. */
+  pending?: boolean;
   onSubmit: (answer: string | string[]) => void;
 }
 
-const INPUT = "input";
+export function FormatAnswer({ questionType, question, disabled, pending, onSubmit }: Props) {
+  if (questionType === "CLOZE") return <ClozeAnswer question={question} disabled={disabled} pending={pending} onSubmit={onSubmit} />;
+  if (questionType === "LIST") return <ListAnswer question={question} disabled={disabled} pending={pending} onSubmit={onSubmit} />;
+  if (questionType === "ORDER") return <OrderAnswer question={question} disabled={disabled} pending={pending} onSubmit={onSubmit} />;
+  return <NumericAnswer question={question} disabled={disabled} pending={pending} onSubmit={onSubmit} />;
+}
 
-export function FormatAnswer({ questionType, question, disabled, onSubmit }: Props) {
-  if (questionType === "CLOZE") return <ClozeAnswer question={question} disabled={disabled} onSubmit={onSubmit} />;
-  if (questionType === "LIST") return <ListAnswer question={question} disabled={disabled} onSubmit={onSubmit} />;
-  if (questionType === "ORDER") return <OrderAnswer question={question} disabled={disabled} onSubmit={onSubmit} />;
-  return <NumericAnswer question={question} disabled={disabled} onSubmit={onSubmit} />;
+/** The prompt each format shows on the question card (no answer in any of them). */
+export function formatPrompt(questionType: Props["questionType"], question: string): string {
+  if (questionType === "CLOZE") return "Fill the blanks";
+  if (questionType === "LIST") return decodeListQuestion(question).prompt;
+  if (questionType === "ORDER") return decodeOrderQuestion(question).prompt;
+  return decodeNumericQuestion(question).prompt;
+}
+
+function SubmitButton({ disabled, pending }: { disabled: boolean; pending?: boolean }) {
+  return (
+    <Button type="submit" variant="primary" size="lg" block disabled={disabled} kbd="Enter">
+      {pending ? "Checking…" : "Check answer"}
+    </Button>
+  );
 }
 
 /**
@@ -53,9 +63,7 @@ function splitOnBlanks(text: string): { segments: Segment[]; count: number } {
     if (/^\[\d+\]$/.test(part)) {
       // The blank's index is assigned while building this list, not by a
       // counter mutated inside the render's `map` — React may re-run that
-      // map, and a running counter would drift. (The previous version also
-      // marked blanks with a sentinel string that had picked up a stray NUL
-      // byte, which no equality check could match reliably.)
+      // map, and a running counter would drift.
       segments.push({ kind: "blank", index: count });
       count += 1;
     } else if (part) {
@@ -65,19 +73,21 @@ function splitOnBlanks(text: string): { segments: Segment[]; count: number } {
   return { segments, count };
 }
 
-function ClozeAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType">) {
+type Inner = Omit<Props, "questionType">;
+
+function ClozeAnswer({ question, disabled, pending, onSubmit }: Inner) {
   const { segments, count } = splitOnBlanks(question);
   const [blanks, setBlanks] = useState<string[]>(() => Array(count).fill(""));
 
   return (
     <form
-      className="space-y-4"
+      className="rv-form"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(blanks);
+        if (!disabled && blanks.every((b) => b.trim())) onSubmit(blanks);
       }}
     >
-      <p className="text-[17px] leading-relaxed text-ink-0">
+      <p className="rv-cloze">
         {segments.map((seg, i) => {
           if (seg.kind === "text") return <span key={i}>{seg.text}</span>;
           const idx = seg.index;
@@ -90,44 +100,37 @@ function ClozeAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType
               aria-label={`Blank ${idx + 1}`}
               placeholder={clozeBlank(idx + 1)}
               autoFocus={idx === 0}
-              className="mx-1 inline-block rounded border-b-2 bg-transparent px-1 text-center align-baseline"
-              style={{
-                width: `${Math.max(6, (blanks[idx]?.length ?? 0) + 2)}ch`,
-                borderColor: blanks[idx]?.trim() ? "var(--green)" : "var(--line-act)",
-                color: "var(--green)",
-                outline: "none",
-              }}
+              disabled={disabled}
+              className={cx("rv-blank", blanks[idx]?.trim() && "filled")}
+              style={{ width: `${Math.max(6, (blanks[idx]?.length ?? 0) + 2)}ch` }}
             />
           );
         })}
       </p>
-      <button type="submit" disabled={disabled || blanks.some((b) => !b.trim())} className="btn-primary">
-        Submit
-      </button>
+      <SubmitButton disabled={disabled || blanks.some((b) => !b.trim())} pending={pending} />
     </form>
   );
 }
 
-function ListAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType">) {
-  const { prompt, count } = decodeListQuestion(question);
+function ListAnswer({ question, disabled, pending, onSubmit }: Inner) {
+  const { count } = decodeListQuestion(question);
   const [items, setItems] = useState<string[]>(() => Array(Math.max(1, count)).fill(""));
 
   return (
     <form
-      className="space-y-4"
+      className="rv-form"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(items);
+        if (!disabled && items.every((i) => i.trim())) onSubmit(items);
       }}
     >
-      <p className="text-[17px] leading-snug text-ink-0">{prompt}</p>
-      <p className="label-xs">
+      <p className="t-meta">
         {count} item{count === 1 ? "" : "s"} · order does not matter
       </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <ol className="rv-seq">
         {items.map((item, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <span className="mono w-4 shrink-0 text-right" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          <li key={i}>
+            <span className="n" aria-hidden="true">
               {i + 1}
             </span>
             <input
@@ -136,52 +139,51 @@ function ListAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType"
               onChange={(e) => setItems((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
               aria-label={`Item ${i + 1}`}
               autoFocus={i === 0}
-              className={INPUT}
+              disabled={disabled}
+              className="rv-input"
             />
-          </div>
+          </li>
         ))}
-      </div>
-      <button type="submit" disabled={disabled || items.some((i) => !i.trim())} className="btn-primary">
-        Submit
-      </button>
+      </ol>
+      <SubmitButton disabled={disabled || items.some((i) => !i.trim())} pending={pending} />
     </form>
   );
 }
 
-function OrderAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType">) {
-  const { prompt, items } = decodeOrderQuestion(question);
+function OrderAnswer({ question, disabled, pending, onSubmit }: Inner) {
+  const { items } = decodeOrderQuestion(question);
   const [sequence, setSequence] = useState<string[]>([]);
   const remaining = items.filter((i) => !sequence.includes(i));
 
   return (
-    <div className="space-y-4">
-      <p className="text-[17px] leading-snug text-ink-0">{prompt}</p>
-
+    <form
+      className="rv-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!disabled && sequence.length === items.length) onSubmit(sequence);
+      }}
+    >
       {/* Click-to-build rather than drag-and-drop: a sequence is short, and
           dragging is the least accessible interaction available. */}
       <div>
-        <p className="label-xs mb-2">Your sequence</p>
+        <p className="t-eyebrow">Your sequence</p>
         {sequence.length === 0 ? (
-          <p style={{ fontSize: 12, color: "var(--ink-3)" }}>Choose the first step below.</p>
+          <p className="t-meta" style={{ marginTop: 6 }}>
+            Choose the first step below.
+          </p>
         ) : (
-          <ol className="space-y-1.5">
+          <ol className="rv-seq" style={{ marginTop: 6 }}>
             {sequence.map((item, i) => (
-              <li key={item} className="flex items-center gap-2">
-                <span className="mono w-4 text-right" style={{ fontSize: 11, color: "var(--green)" }}>
+              <li key={item}>
+                <span className="n" aria-hidden="true">
                   {i + 1}
                 </span>
                 <button
                   type="button"
                   disabled={disabled}
                   onClick={() => setSequence((prev) => prev.slice(0, i))}
-                  title={`Remove from step ${i + 1} onward`}
-                  className="flex-1 rounded-control px-3 py-2 text-left text-sm"
-                  style={{
-                    border: "1px solid rgba(0,204,122,0.35)",
-                    background: "var(--green-10)",
-                    color: "var(--ink-0)",
-                    cursor: "pointer",
-                  }}
+                  aria-label={`Step ${i + 1}: ${item}. Remove it and every later step`}
+                  className="rv-pill placed"
                 >
                   {item}
                 </button>
@@ -193,16 +195,10 @@ function OrderAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType
 
       {remaining.length > 0 && (
         <div>
-          <p className="label-xs mb-2">Remaining</p>
-          <div className="flex flex-wrap gap-2">
+          <p className="t-eyebrow">Remaining</p>
+          <div className="rv-pick" style={{ marginTop: 6 }}>
             {remaining.map((item) => (
-              <button
-                key={item}
-                type="button"
-                disabled={disabled}
-                onClick={() => setSequence((prev) => [...prev, item])}
-                className="rounded-control border border-[var(--line-hi)] bg-sub px-3 py-2 text-sm text-ink-1 transition hover:border-[rgba(0,204,122,0.45)] hover:text-ink-0 disabled:opacity-40"
-              >
+              <button key={item} type="button" disabled={disabled} onClick={() => setSequence((prev) => [...prev, item])} className="rv-pill">
                 {item}
               </button>
             ))}
@@ -210,32 +206,24 @@ function OrderAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType
         </div>
       )}
 
-      <button
-        type="button"
-        disabled={disabled || sequence.length !== items.length}
-        onClick={() => onSubmit(sequence)}
-        className="btn-primary"
-      >
-        Submit
-      </button>
-    </div>
+      <SubmitButton disabled={disabled || sequence.length !== items.length} pending={pending} />
+    </form>
   );
 }
 
-function NumericAnswer({ question, disabled, onSubmit }: Omit<Props, "questionType">) {
-  const { prompt, unit } = decodeNumericQuestion(question);
+function NumericAnswer({ question, disabled, pending, onSubmit }: Inner) {
+  const { unit } = decodeNumericQuestion(question);
   const [value, setValue] = useState("");
 
   return (
     <form
-      className="space-y-4"
+      className="rv-form"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(value);
+        if (!disabled && value.trim()) onSubmit(value);
       }}
     >
-      <p className="text-[17px] leading-snug text-ink-0">{prompt}</p>
-      <div className="flex items-center gap-2">
+      <div className="row">
         <input
           // `text`, not `number`: a spinner is useless for a recalled value
           // and number inputs silently reject intermediate states like
@@ -245,19 +233,14 @@ function NumericAnswer({ question, disabled, onSubmit }: Omit<Props, "questionTy
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="Value"
-          aria-label="Numeric answer"
+          aria-label={unit ? `Numeric answer, in ${unit}` : "Numeric answer"}
           autoFocus
-          className={`${INPUT} mono max-w-[220px]`}
+          disabled={disabled}
+          className="rv-input mono"
         />
-        {unit && (
-          <span className="mono" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-            {unit}
-          </span>
-        )}
+        {unit && <span className="t-mono ink-1">{unit}</span>}
       </div>
-      <button type="submit" disabled={disabled || !value.trim()} className="btn-primary">
-        Submit
-      </button>
+      <SubmitButton disabled={disabled || !value.trim()} pending={pending} />
     </form>
   );
 }

@@ -63,6 +63,14 @@ interface Props {
 }
 
 /**
+ * ART PREVIEW ONLY (redesign "Sigil & Slate"). The bar left the layout: the
+ * real loadout is You › Loadout (LoadoutGrid, equip = one slot glint, Tier 0)
+ * and the one-line LoadoutStrip on the Study hub and in the runner. This
+ * component keeps the full attach spectacle (EquipPulse, BarCharge, the page
+ * surge, the Cataclysm, the atmosphere) for the /dev/style/art previews,
+ * which drive it with persist={false}; the Cataclysm itself now plays for
+ * real only as the backdrop of a first deep unlock (UnlockButton).
+ *
  * The loadout bar: ten slots, and the only place a skill's effect becomes
  * real.
  *
@@ -319,8 +327,10 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
     // parent asks the bar to run its own attach, which is a user action
     // arriving by prop rather than by click. Doing it during render is not
     // an option — `attach` starts timers and a transition.
-    // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (free) attach(free.slot, attachRequest.skill);
+    // Keyed on the request alone: re-running on every local slot change would re-fire it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachRequest]);
 
   const activeSetIds = useMemo(() => new Set(resonance.sets.map((s) => s.id)), [resonance.sets]);
@@ -390,7 +400,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
               </button>
             </div>
             {localBench.length === 0 ? (
-              <p style={{ fontSize: 13, color: "var(--ink-2)" }}>
+              <p className="t-meta">
                 Every skill you own is already equipped. Unlock more from a path to expand your options.
               </p>
             ) : (
@@ -408,8 +418,8 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                       className="flex w-full items-center gap-2.5 p-2 text-left"
                       style={{
                         borderRadius: 10,
-                        border: "1px solid var(--line)",
-                        background: "var(--sub)",
+                        border: "1px solid var(--line-1)",
+                        background: "var(--sunken)",
                         cursor: "pointer",
                       }}
                     >
@@ -423,7 +433,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                         </span>
                         <span
                           className="block truncate"
-                          style={{ fontSize: 10, color: RANK_META[skill.rank].color }}
+                          style={{ fontSize: 12, color: RANK_META[skill.rank].color }}
                         >
                           {RANK_META[skill.rank].label} · {skill.effectText}
                         </span>
@@ -443,7 +453,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
         data-resonant={lit ? "1" : "0"}
         style={
           {
-            background: "rgba(4,8,15,.92)",
+            background: "color-mix(in srgb, var(--page) 92%, transparent)",
             backdropFilter: "blur(10px)",
             // The top border lives in `.loadout-bar`, not here: an inline
             // style outranks the stylesheet, so declaring it here silently
@@ -544,7 +554,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                   left to be inferred, because the sky is the one part of
                   this system with no other label anywhere in the app. */}
               {sky.sky && (
-                <span className="pw-sky" style={{ color: "var(--ink-3)" }}>
+                <span className="pw-sky ink-2" >
                   {sky.sky.name}
                 </span>
               )}
@@ -561,7 +571,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
               }
             >
               <span className="pw-pct">{(resonance.powerShare * 100).toFixed(0)}%</span>
-              <span className="pw-slots" style={{ color: filled === slots.length ? "var(--green)" : "var(--ink-3)" }}>
+              <span className="pw-slots" style={{ color: filled === slots.length ? "var(--kept)" : "var(--ink-2)" }}>
                 {filled}/{slots.length}
               </span>
               {overcharge > 0 && <span className="pw-tag">OVERCHARGE</span>}
@@ -588,10 +598,10 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                   style={{
                     borderColor: s.skill
                       ? s.active
-                        ? "rgba(0,204,122,.45)"
+                        ? "color-mix(in srgb, var(--kept) 45%, transparent)"
                         : "rgba(240,160,48,.45)"
-                      : "var(--line-hi)",
-                    background: s.skill ? "var(--raised)" : "var(--sub)",
+                      : "var(--line-2)",
+                    background: s.skill ? "var(--raised)" : "var(--sunken)",
                     // A dormant skill is dimmed rather than hidden: it is
                     // still taking up one of your ten.
                     opacity: s.skill && !s.active ? 0.55 : 1,
@@ -600,7 +610,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
                   {s.skill ? (
                     <SkillLogo skill={s.skill} size={34} />
                   ) : (
-                    <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                    <span className="mono t-meta" >
                       {s.slot + 1}
                     </span>
                   )}
@@ -615,7 +625,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
           </ul>
 
           {error && (
-            <p className="shrink-0" style={{ fontSize: 11, color: "var(--red)" }} role="alert">
+            <p className="shrink-0" style={{ fontSize: 12, color: "var(--owed)" }} role="alert">
               {error}
             </p>
           )}
@@ -630,7 +640,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
             className="site-container relative flex items-center gap-2 overflow-x-auto pb-2"
             style={{ zIndex: 1, scrollbarWidth: "none" }}
           >
-            <span className="shrink-0" style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
+            <span className="shrink-0 t-meta" >
               {visual.tagline}
             </span>
             {resonance.sets.map((s) => (

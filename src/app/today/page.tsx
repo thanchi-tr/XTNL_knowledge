@@ -6,8 +6,10 @@ import { todayKey } from "@/lib/life-day";
 import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "@/lib/tasks";
 import { boardClock, unrecordedStudyTasks } from "@/lib/today-board";
 import { getDailyStreak } from "@/lib/streak";
-import { loadWeeklyQuotas } from "@/lib/field-quota";
 import { loadBossStates } from "@/lib/bosses";
+import { loadNotifications } from "@/lib/notifications";
+import { ShellTitle } from "@/components/shell/ShellTitle";
+import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
 import { LiveClock } from "@/components/today/LiveClock";
 
@@ -23,14 +25,15 @@ export default async function TodayPage() {
   const day = todayKey(now);
 
   // One wave: the board's own read (templates, recent instances, the day's
-  // ledger, the queue size — cached per life day), the streak, and the two
-  // knowledge-side lines the quest card mirrors. All cached; a warm load
-  // costs nothing.
-  const [board, streak, quotas, bosses] = await Promise.all([
+  // ledger, the queue size — cached per life day), the streak, the ready
+  // encounters Next up names, and the notification feed the Asks cards
+  // read (the same cached feed as the top bar's bell). All cached; a warm
+  // load costs nothing.
+  const [board, streak, bosses, feed] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
-    loadWeeklyQuotas(userId, now),
     loadBossStates(userId),
+    loadNotifications(userId, now).catch(() => null),
   ]);
 
   // Writes a render may owe, after the response and only when owed: the
@@ -45,39 +48,31 @@ export default async function TodayPage() {
     });
   }
 
-  const short = quotas.filter((q) => !q.met);
-  const owed = short.reduce((s, q) => s + q.short, 0);
-  const quota =
-    quotas.length === 0
-      ? null
-      : short.length > 0
-        ? { line: `${owed} new idea${owed === 1 ? "" : "s"} owed this week`, met: false }
-        : { line: "Weekly quota met", met: true };
-  const bossReady = bosses.filter((b) => b.availability.status === "ready").length;
+  const readyBosses = bosses.filter((b) => b.availability.status === "ready").map((b) => b.archetype.name);
+  const focus = feed?.notices.find((n) => n.id === "focus")?.title ?? null;
 
-  // The date once (the heading), then a clock that keeps time and the zone
-  // it keeps it in — printed on purpose: a wrong zone would silently shift
-  // every day edge in the app, and this is where it would be noticed.
+  // The date lives in the top bar (the life day's own date, which between
+  // midnight and 04:00 is still the day before, and says so). The clock
+  // below keeps time and prints its zone on purpose: a wrong zone would
+  // silently shift every day edge in the app, and this is where it shows.
   const clock = boardClock(now);
 
   return (
-    <main className="site-container flex-1 py-8">
-      <header className="fade-up mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="section-eyebrow">Today</p>
-          <h1 className="mt-1.5 text-[19px] font-semibold tracking-tight" style={{ color: "var(--ink-0)" }}>
-            {clock.date}
-          </h1>
-        </div>
-        <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          <LiveClock initialTime={clock.time} zone={clock.zone} tz={clock.tz} /> ·{" "}
-          <Link href="/today/rules" style={{ color: "var(--blue)" }}>
-            How XP works
-          </Link>
-        </p>
-      </header>
-
-      <TodayBoard data={board} streak={streak} nowIso={now.toISOString()} quota={quota} bossReady={bossReady} />
-    </main>
+    <>
+      <ShellTitle eyebrow={clock.lateNight ? "Today · until 04:00" : "Today"} title={longDate(board.today)} />
+      <TodayBoard
+        data={board}
+        streak={streak}
+        nowIso={now.toISOString()}
+        notices={feed?.notices ?? []}
+        focus={focus}
+        bosses={readyBosses}
+        footer={
+          <p className="t-num">
+            <LiveClock initialTime={clock.time} zone={clock.zone} tz={clock.tz} /> · <Link href="/today/rules">How a day is judged</Link>
+          </p>
+        }
+      />
+    </>
   );
 }

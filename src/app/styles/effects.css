@@ -1,0 +1,74 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   EFFECTS — the reward layers (FROZEN class names).
+   PRINCIPLE: the end state is written first. Every rule below rests on its
+   final state; the animation only shows the way there, once. Only
+   transform, opacity and stroke-dashoffset animate. Exactly two loops
+   exist: the ready-emblem orbit (14 s) and the ceremony rays (90 s), both
+   on --ambient-play (paused under Calm, Still and power-save).
+   ===================================================================== */
+@layer effects {
+  /* ---------- the fx layer (motion.ts): fixed, inert, above everything ---------- */
+  .fx { position: fixed; inset: 0; pointer-events: none; z-index: var(--z-fx); overflow: hidden; }
+  .fx-token {
+    position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px 0 7px;
+    border-radius: 999px; font: 700 13px var(--font-ui); font-variant-numeric: tabular-nums; color: var(--ink-0); white-space: nowrap;
+    background: color-mix(in srgb, var(--tok, var(--xp)) 24%, var(--overlay));
+    border: 1px solid color-mix(in srgb, var(--tok, var(--xp)) 55%, transparent);
+    box-shadow: 0 6px 16px -6px rgba(0,0,0,.6);
+  }
+  .fx-token svg.g { width: 13px; height: 13px; color: var(--tok, var(--xp)); fill: currentColor; }
+  .fx-mote { position: absolute; left: 0; top: 0; width: 6px; height: 6px; border-radius: 1.5px; background: var(--tok, var(--light)); transform-origin: center; }
+  .fx-floater {
+    position: absolute; font: 700 13px var(--font-ui); color: var(--ink-0); white-space: nowrap; padding: 3px 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--tok, var(--xp)) 22%, var(--overlay));
+    border: 1px solid color-mix(in srgb, var(--tok, var(--xp)) 40%, transparent);
+  }
+
+  /* ---------- T1: the light sweep across a tile (celebrate.chime sweepEl) ---------- */
+  .sweep { position: relative; overflow: hidden; }
+  .sweep::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; background: linear-gradient(105deg, transparent 35%, var(--light-glow) 50%, transparent 65%); transform: translateX(-100%); }
+  .sweep.go::after { animation: fx-sweep 900ms var(--ease-inout) 1; }
+  @keyframes fx-sweep { 0% { opacity: 1; transform: translateX(-100%); } 100% { opacity: 1; transform: translateX(100%); } }
+
+  /* ---------- stamps: KEPT, CLEARED, FULL DAY (scale 1.7 → 1, rotate −7°, 380 ms) ---------- */
+  .stamp {
+    display: inline-block; font: 700 12px/1 var(--font-display); letter-spacing: .18em; text-transform: uppercase; white-space: nowrap;
+    color: var(--kept); border: 1.5px solid var(--kept); border-radius: 6px; padding: 5px 6px 4px 8px;
+    transform: rotate(-7deg); pointer-events: none;
+  }
+  .stamp.landing { animation: fx-stamp 380ms var(--ease-stamp) 1; }
+  @keyframes fx-stamp { 0% { opacity: 0; transform: rotate(-7deg) scale(1.7); } 60% { opacity: 1; } 100% { opacity: 1; transform: rotate(-7deg) scale(1); } }
+
+  /* ---------- promise ring close: one 4.5% overshoot + one glint lap ---------- */
+  .pring.glinting .glint { animation: fx-glint 900ms var(--ease-inout) 1; }
+  .pring.glinting > svg { animation: fx-overshoot 520ms var(--ease-stamp) 1; }
+  @keyframes fx-glint { 0% { opacity: 0; stroke-dashoffset: 100; } 15% { opacity: .9; } 100% { opacity: 0; stroke-dashoffset: 0; } }
+  @keyframes fx-overshoot { 0% { transform: rotate(-90deg) scale(1); } 45% { transform: rotate(-90deg) scale(1.045); } 100% { transform: rotate(-90deg) scale(1); } }
+
+  /* ---------- the one ambient loop outside ceremonies: the ready orbit ---------- */
+  .coin .orbit { position: absolute; inset: -6px; border-radius: 50%; border: 1.5px dashed #f0c75e; animation: fx-orbit 14s linear infinite; animation-play-state: var(--ambient-play); }
+  @keyframes fx-orbit { to { transform: rotate(360deg); } }
+
+  /* ---------- T3 curtain: rays (the second loop), flash, one shockwave ---------- */
+  .curtain .rays {
+    position: fixed; left: 50%; top: 22%; width: 1400px; height: 1400px; margin: -700px 0 0 -700px; pointer-events: none; opacity: 1;
+    background: repeating-conic-gradient(from 0deg, var(--ray, rgba(255,214,140,.11)) 0 4deg, transparent 4deg 13deg);
+    -webkit-mask: radial-gradient(circle, #000 0, rgba(0,0,0,.6) 20%, transparent 52%);
+    mask: radial-gradient(circle, #000 0, rgba(0,0,0,.6) 20%, transparent 52%);
+    animation: fx-spin 90s linear infinite; animation-play-state: var(--ambient-play);
+  }
+  @keyframes fx-spin { to { transform: rotate(360deg); } }
+  .curtain .flash { position: fixed; inset: 0; background: radial-gradient(circle at 50% 30%, rgba(255,244,214,.85), rgba(255,244,214,0) 55%); opacity: 0; pointer-events: none; }
+  .curtain .wave { position: fixed; left: 50%; top: 0; width: 320px; height: 320px; margin-left: -160px; border-radius: 50%; border: 1.5px solid rgba(255,236,190,.75); opacity: 0; pointer-events: none; }
+
+  /* ---------- Calm: the kit's own transitions shorten to ≤ 260 ms (the gateway strips transforms) ---------- */
+  html[data-motion="calm"] :is(.meter > i, .pring .val, .sheet, .toast, .seal-card, .mini-ledger, .tick .ring, .tick .ring path, .scrim) {
+    transition-duration: 200ms;
+    transition-delay: 0s;
+  }
+  html[data-motion="calm"] :is(.stamp.landing, .pring.glinting .glint, .pring.glinting > svg) { animation: none; }
+  html[data-motion="calm"] .sweep.go::after { animation: none; }
+
+  /* ---------- skeleton arrival: none. loading.tsx covers the wait; nothing fades in. ---------- */
+}

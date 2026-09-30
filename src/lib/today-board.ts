@@ -764,6 +764,8 @@ export interface BoardRow {
   /** The instance that paid (latest done slot), for its receipt and undo. */
   instanceId: string | null;
   timesDone: number;
+  /** The latest done slot was the minimum version (DONE_MVV): the tick shows half-filled, "Minimum kept". */
+  minimum: boolean;
   paid: PaidRecord | null;
   /** What a tick at the estimate pays now. */
   projection: Receipt;
@@ -940,6 +942,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       slot,
       instanceId: latestDone?.id ?? null,
       timesDone: done.length,
+      minimum: latestDone?.status === "DONE_MVV",
       paid: latestDone ? (d.paid[latestDone.id] ?? null) : null,
       projection,
       streakDays,
@@ -1402,7 +1405,7 @@ export function goalMetricOf(title: string): { krMetric: KrMetric; krTarget: num
 /** 'Thu 1 Oct', '06:12', 'AEST' for an instant in the life zone. The zone is printed so a wrong one is visible. */
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; time: string; zone: string; tz: string } {
+export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; time: string; zone: string; tz: string; lateNight: boolean } {
   try {
     const parts = new Intl.DateTimeFormat("en-AU", {
       timeZone: tz,
@@ -1425,8 +1428,10 @@ export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; tim
       time: `${get("hour")}:${get("minute")}`,
       zone: get("timeZoneName"),
       tz,
+      // Between midnight and 04:00 the board still shows the day before.
+      lateNight: lifeDate !== calendar,
     };
   } catch {
-    return { date: shortDate(dayKeyOf(now, tz)), time: "", zone: "", tz };
+    return { date: shortDate(dayKeyOf(now, tz)), time: "", zone: "", tz, lateNight: false };
   }
 }

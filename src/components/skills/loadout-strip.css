@@ -1,0 +1,9 @@
+@layer theme, base, components, art, effects, utilities;
+/* The one-line loadout strip (Study hub, runner footer, You). Imported by
+   LoadoutStrip.tsx, so it travels to whichever route renders the strip. */
+@layer components {
+  .lo-strip { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 8px 6px 12px; text-decoration: none; color: inherit; }
+  .lo-strip:hover { background: var(--raised); }
+  .lo-strip .coins { display: flex; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
+  .lo-strip .lo-empty { width: 32px; height: 32px; border-radius: 50%; border: 1.5px dashed var(--ink-mute); flex: none; }
+}

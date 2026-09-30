@@ -20,11 +20,12 @@ export interface BoonMeta {
 /**
  * Four boons, deliberately of comparable worth.
  *
- * This is the design constraint that keeps a Spoils Cache from being a
- * gamble: you cannot draw a "bad" one and you cannot draw a jackpot, so
- * there is nothing to re-roll for. The randomness decides *what kind of
- * good thing* you get for the next day, never *how much* — the mastery a
- * victory pays is fixed and stated before you commit to the fight.
+ * A Boss victory offers all four and the player chooses one (bosses.ts
+ * claimBossBoon); nothing is drawn. Comparable worth is what keeps the
+ * choice about what the next day's study needs rather than a jackpot — the
+ * mastery a victory pays is fixed and stated before you commit to the fight.
+ * Every boon lasts at least BOSS_BOON_CLAIM_HOURS, which the claim relies on
+ * (scripts/review-check.ts asserts it).
  */
 export const BOON_META: Record<BoonKind, BoonMeta> = {
   INSIGHT: {

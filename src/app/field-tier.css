@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ FIELD TIERS ════════════════════════════════════════
    Decoration on a Field's library tile, driven by its level.
 
@@ -13,9 +14,10 @@
    from another, and re-using it for progression would trade the identity
    readout for the progression one.
 
-   The two looping animations opt into `--ambient-play`, like everything else
-   that runs forever in this app — see the POWER block in globals.css.
+   Nothing here loops any more (the sheen and the crest are still), per the
+   redesign: the only loops are the ready orbit and the ceremony rays.
    ═══════════════════════════════════════════════════════ */
+@layer art {
 
 .ftile {
   position: relative;
@@ -77,31 +79,19 @@
   overflow: hidden;
 }
 
+/* The travelling sheen band is retired (redesign "Sigil & Slate": no loops
+   outside the ready orbit and the ceremony rays). A FORMIDABLE tile keeps a
+   still, faint wash along its top edge instead. */
 .ftile-sheen::after {
   content: "";
   position: absolute;
-  top: -60%;
-  bottom: -60%;
-  width: 40%;
-  left: -60%;
-  transform: rotate(18deg);
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--tier-accent) 14%, transparent) 50%,
-    transparent 100%
-  );
-  animation: ftile-sheen 9s cubic-bezier(.5, 0, .5, 1) infinite;
-  animation-play-state: var(--ambient-play, running);
+  inset: 0 0 auto 0;
+  height: 40%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tier-accent) 8%, transparent), transparent);
 }
 
-@keyframes ftile-sheen {
-  0%        { left: -60%; }
-  45%, 100% { left: 130%; }
-}
-
-/* Crest — MONUMENTAL only. A slowly turning ring behind the level badge,
-   the one ornament nothing below the top of the ladder has. */
+/* Crest — MONUMENTAL only. A still ring behind the level badge, the one
+   ornament nothing below the top of the ladder has (it no longer turns). */
 .ftile-crest {
   position: absolute;
   top: 8px;
@@ -112,22 +102,15 @@
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--tier-accent) 45%, transparent);
   box-shadow: 0 0 14px color-mix(in srgb, var(--tier-accent) 30%, transparent);
-  animation: ftile-crest 18s linear infinite;
-  animation-play-state: var(--ambient-play, running);
 }
 
-/* Dashed, so the rotation is visible at all — a plain circle turning looks
-   identical at every angle. */
+/* Dashed: an engraved inner ring. */
 .ftile-crest::before {
   content: "";
   position: absolute;
   inset: 3px;
   border-radius: 50%;
   border: 1px dashed color-mix(in srgb, var(--tier-accent) 40%, transparent);
-}
-
-@keyframes ftile-crest {
-  to { transform: rotate(360deg); }
 }
 
 /* The level badge — NASCENT and up. */
@@ -137,9 +120,9 @@
   gap: 3px;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: .03em;
+  letter-spacing: .02em;
   white-space: nowrap;
   color: var(--tier-accent);
   border: 1px solid color-mix(in srgb, var(--tier-accent) 34%, transparent);
@@ -149,4 +132,5 @@
 /* A dormant field is legible and plainly unstarted, never broken-looking. */
 .ftile[data-tier="DORMANT"] {
   opacity: .72;
+}
 }

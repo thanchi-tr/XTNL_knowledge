@@ -2,99 +2,90 @@
 
 import type { Horizon } from "@/lib/life-types";
 import type { GoalCard } from "@/lib/today-board";
+import { ChipButton } from "@/components/ui/Chip";
+import { CurrencyGlyph } from "@/components/ui/Icon";
+import { Meter } from "@/components/ui/Meter";
+import { SectionHeader } from "@/components/ui/Tabs";
+import { formatNumber, formatPercent } from "@/components/ui/format";
+
+/** A goal's frozen MP payout (M5): "pays ⬡ 6 × progress from 70%". Absent until goals pay. */
+export interface GoalPayout {
+  mp: number;
+  /** Progress from which it pays (0.7). */
+  from: number;
+}
 
 interface Props {
   goals: Record<Horizon, GoalCard[]>;
   busy: boolean;
   onProgress: (goalId: string) => void;
+  /** The frozen payout per goal, once goals pay (M5). Without it the line says goals pay through their steps. */
+  payoutOf?: (goalId: string) => GoalPayout | null;
 }
 
-const HORIZONS: { key: Horizon; label: string; hint: string }[] = [
-  { key: "SHORT", label: "Short", hint: "within a month" },
-  { key: "MID", label: "Mid", hint: "within six months" },
-  { key: "LONG", label: "Long", hint: "further out" },
-];
+const HORIZON_ORDER: Horizon[] = ["SHORT", "MID", "LONG"];
+const HORIZON_LABEL: Record<Horizon, string> = { SHORT: "Short", MID: "Mid", LONG: "Long" };
 
 /**
- * Goals in three horizons, each with an honest rollup: a goal measured by
- * its steps shows the share of one-off steps done, one measured by hand
- * shows its count against the target, and a goal with neither says so
- * rather than drawing a bar it cannot justify. Recurring children appear as
- * 'support habits N% kept' — context, not progress. Goals pay nothing yet;
- * their steps do.
+ * Goals, nearest horizon first, each with an honest rollup: a goal measured
+ * by its steps shows the share of one-off steps done, one measured by hand
+ * shows its count against the target (with its +1), and a goal with
+ * neither says so rather than drawing a meter it cannot justify. Support
+ * habits read "82% kept (28 d)": context, not progress. Goals pay nothing
+ * of their own yet; their steps do, and the line says which.
  */
-export function GoalsStrip({ goals, busy, onProgress }: Props) {
-  const total = goals.SHORT.length + goals.MID.length + goals.LONG.length;
+export function GoalsStrip({ goals, busy, onProgress, payoutOf }: Props) {
+  const list = HORIZON_ORDER.flatMap((h) => goals[h]);
 
   return (
-    <section className="card today-lane" aria-labelledby="goals-title">
-      <div className="today-lane-head">
-        <h2 id="goals-title" className="panel-title">
-          Goals
-        </h2>
-        <span className="today-lane-count">{total === 0 ? "none yet" : `${total} open`}</span>
+    <section className="today-goals" aria-labelledby="goals-h">
+      <SectionHeader id="goals-h" title="Goals" aside={list.length === 0 ? "none yet" : `${list.length} open`} />
+      <div className="card">
+        {list.length === 0 ? (
+          <p className="goal goal-empty t-meta">
+            Capture one with <span className="t-mono">goal: read 12 books by dec</span>, then link steps to it with{" "}
+            <span className="t-mono">^read</span>.
+          </p>
+        ) : (
+          list.map((g) => {
+            const pay = payoutOf?.(g.template.id) ?? null;
+            return (
+              <div key={g.template.id} className="goal">
+                <div className="gh">
+                  <b>{g.template.title}</b>
+                  <span>
+                    {HORIZON_LABEL[g.horizon]}
+                    {g.dueLabel ? ` · ${g.dueLabel}` : ""}
+                  </span>
+                </div>
+                {g.progress != null && <Meter value={g.progress} label={`${g.template.title}: ${g.label}`} valueText={g.label} />}
+                <div className="gf">
+                  <span className="num">{g.progress != null && g.metric !== "MANUAL" ? formatPercent(g.progress) : g.label}</span>
+                  {g.progress != null && g.metric !== "MANUAL" && <span>· {g.label}</span>}
+                  {pay ? (
+                    <span>
+                      · pays{" "}
+                      <span className="cur">
+                        <CurrencyGlyph kind="mp" />
+                        <span className="num">{formatNumber(pay.mp, pay.mp % 1 === 0 ? 0 : 1)} × progress</span>
+                      </span>{" "}
+                      from {formatPercent(pay.from)}
+                    </span>
+                  ) : (
+                    <span>· pays through its steps</span>
+                  )}
+                  {g.metric === "MANUAL" && (
+                    <ChipButton className="goal-plus" disabled={busy} onClick={() => onProgress(g.template.id)} aria-label={`Add one to ${g.template.title}`}>
+                      +1
+                    </ChipButton>
+                  )}
+                </div>
+                {g.support && <p className="t-meta">{g.support}</p>}
+              </div>
+            );
+          })
+        )}
       </div>
-
-      {total === 0 ? (
-        <p className="today-empty">
-          Capture one with <span className="mono">goal: read 12 books by dec</span>, then link steps to it with{" "}
-          <span className="mono">^read</span>.
-        </p>
-      ) : (
-        <div className="grid gap-3 px-3.5 pb-3.5 sm:grid-cols-3 fold:grid-cols-1">
-          {HORIZONS.map((h) => (
-            <div key={h.key} className="min-w-0">
-              <p className="label-xs" title={h.hint}>
-                {h.label} <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>· {goals[h.key].length}</span>
-              </p>
-              {goals[h.key].length === 0 ? (
-                <p className="mt-1" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                  —
-                </p>
-              ) : (
-                <ul className="mt-1.5 grid gap-2.5">
-                  {goals[h.key].map((g) => (
-                    <li key={g.template.id} className="min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <span style={{ fontSize: 12.5, color: "var(--ink-0)", lineHeight: 1.35, overflowWrap: "anywhere" }}>{g.template.title}</span>
-                        {g.dueLabel && <span className="today-chip" data-tone={g.dueLabel.startsWith("late") ? "red" : undefined}>{g.dueLabel}</span>}
-                      </div>
-                      {g.progress != null && (
-                        <div
-                          className="today-bar mt-1.5"
-                          role="progressbar"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={Math.round(g.progress * 100)}
-                          aria-label={`${g.template.title}: ${g.label}`}
-                        >
-                          <div className="today-bar-fill" style={{ width: `${Math.round(g.progress * 100)}%` }} />
-                        </div>
-                      )}
-                      <div className="mt-1 flex flex-wrap items-center justify-between gap-2" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-                        <span>{g.label}</span>
-                        {g.metric === "MANUAL" && (
-                          <button
-                            type="button"
-                            className="today-pill mono"
-                            style={{ minWidth: 44, padding: "0 10px" }}
-                            disabled={busy}
-                            onClick={() => onProgress(g.template.id)}
-                            aria-label={`Add one to ${g.template.title}`}
-                          >
-                            +1
-                          </button>
-                        )}
-                      </div>
-                      {g.support && <p style={{ fontSize: 10.5, color: "var(--ink-3)" }}>{g.support}</p>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

@@ -1,97 +1,92 @@
 import type { NoveltyMatch, NoveltyVerdict, Relation } from "@/lib/novelty";
+import { Chip, type ChipTone } from "@/components/ui/Chip";
+import { Meter } from "@/components/ui/Meter";
+import { formatPercent } from "@/components/ui/format";
 
 /**
- * How a new-or-existing verdict reads on the Add form (src/lib/novelty.ts).
+ * How a new-or-existing verdict reads on New idea (src/lib/novelty.ts).
  *
- * The old panel said "92% similar" and nothing else, which was true and no
- * help: it could not tell a reworded duplicate from a corrected figure. This
- * says what was found in a sentence, shows both cards side by side, and
- * lists the evidence — so the user checks the verdict rather than trusting
- * a percentage.
+ * "92% similar" alone was true and no help: it could not tell a reworded
+ * duplicate from a corrected figure. This shows both cards side by side
+ * (Yours · Already have, with a similarity meter), says what was found in a
+ * sentence, and lists the evidence, so the verdict is checked, not trusted.
+ *
+ * Tone follows the house rule (colour only reports a state): a conflict is
+ * owed (stop and look), a distinct card is kept (go ahead), everything else
+ * is ink.
  */
-
-/** Colour by what the relation asks of the user: stop and look, think twice, or go ahead. */
-export function relationChip(relation: Relation): string {
+export function relationTone(relation: Relation): ChipTone {
   switch (relation) {
     case "CONFLICT":
     case "OPPOSITE":
-      return "chip-red";
-    case "IDENTICAL":
-      return "chip-muted";
-    case "REWORDED":
-    case "COVERED":
-    case "EXTENDS":
-    case "REFORMATTED":
-    case "CLOSE":
-      return "chip-amber";
-    case "SIBLING":
-    case "RELATED":
-      return "chip-blue";
+      return "owed";
     case "DISTINCT":
-      return "chip-green";
+      return "kept";
+    default:
+      return "quiet";
   }
 }
 
-const where = (m: NoveltyMatch) => [m.domainName, m.fieldName].filter(Boolean).join(" · ");
+const where = (m: Pick<NoveltyMatch, "domainName" | "fieldName">) => [m.domainName, m.fieldName].filter(Boolean).join(" · ");
 
-/** One card, as the comparison shows it. */
-function CardFace({ heading, prompt, answer, note }: { heading: string; prompt: string; answer: string; note?: string }) {
+/** Yours vs Already have. With no match close enough to name, the right card says so. */
+export function VerdictCompare({ verdict, fieldName }: { verdict: NoveltyVerdict; /** Where it was checked, for the empty case. */ fieldName?: string }) {
+  const m = verdict.match;
+  const c = verdict.candidate;
   return (
-    <div className="min-w-0 flex-1 px-3 py-2" style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}>
-      <p className="label-xs" style={{ marginBottom: 4 }}>
-        {heading}
-        {note && <span style={{ color: "var(--ink-3)", fontWeight: 400 }}> · {note}</span>}
-      </p>
-      {prompt && (
-        <p style={{ fontSize: 12, color: "var(--ink-0)", lineHeight: 1.45, overflowWrap: "anywhere" }}>{prompt}</p>
-      )}
-      {answer && (
-        <p className="mt-1" style={{ fontSize: 11.5, color: "var(--ink-1)", lineHeight: 1.45, overflowWrap: "anywhere" }}>
-          → {answer}
-        </p>
-      )}
+    <div className="add-verdict">
+      <div className="card add-vcol">
+        <div className="t-eyebrow">Yours</div>
+        <p>{c.prompt}</p>
+        {c.answer && <p className="add-ans">{c.answer}</p>}
+      </div>
+      <div className="card add-vcol">
+        <div className="t-eyebrow">Already have</div>
+        {m ? (
+          <>
+            <p>{m.title ?? m.prompt}</p>
+            {m.title && m.prompt && m.prompt !== m.title && <p className="add-ans">{m.prompt}</p>}
+            {m.answer && <p className="add-ans">{m.answer}</p>}
+            {where(m) && <p className="t-meta">in {where(m)}</p>}
+            <div className="add-sim">
+              <span>similar</span>
+              <Meter thin value={m.similarity} label={`Similarity to “${m.title ?? m.prompt}”`} valueText={formatPercent(m.similarity)} />
+              <span className="num">{formatPercent(m.similarity)}</span>
+            </div>
+          </>
+        ) : (
+          <p className="ink-2">Nothing close{fieldName ? ` in ${fieldName}` : ""}.</p>
+        )}
+      </div>
     </div>
   );
 }
 
-export function VerdictDetail({ verdict, compare = true }: { verdict: NoveltyVerdict; /** Show both cards side by side. */ compare?: boolean }) {
-  const m = verdict.match;
-  const candidate = verdict.candidate;
-  const showCompare = compare && m && verdict.action !== "CREATE_NEW_NODE";
+/** The sentence, the evidence and the other cards worth knowing about. */
+export function VerdictDetail({ verdict }: { verdict: NoveltyVerdict }) {
   return (
     <div>
-      <p style={{ fontSize: 12.5, color: "var(--ink-1)", lineHeight: 1.5 }}>{verdict.summary}</p>
-
-      {showCompare && (
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <CardFace heading="Yours" prompt={candidate.prompt} answer={candidate.answer} />
-          <CardFace heading="Already have" prompt={m.prompt} answer={m.answer} note={where(m)} />
-        </div>
+      <p className="ink-1" style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5 }}>
+        {verdict.summary}
+      </p>
+      {verdict.evidence.length > 0 && (
+        <ul className="add-evidence" aria-label="Evidence" style={{ listStyle: "none", margin: "10px 0 0", padding: 0 }}>
+          {verdict.evidence.map((e) => (
+            <li key={e}>
+              <Chip>{e}</Chip>
+            </li>
+          ))}
+        </ul>
       )}
-
-      <ul className="mt-2.5 flex flex-wrap gap-1.5" aria-label="Evidence">
-        {verdict.evidence.map((e) => (
-          <li
-            key={e}
-            className="mono"
-            style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "var(--sub)", border: "1px solid var(--line)", color: "var(--ink-2)" }}
-          >
-            {e}
-          </li>
-        ))}
-      </ul>
-
       {verdict.also.length > 0 && (
-        <ul className="mt-2.5 space-y-1" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+        <ul className="add-also" aria-label="Also worth knowing">
           {verdict.also.map((a) => (
-            <li key={a.id} className="flex flex-wrap items-center gap-1.5">
-              <span className={`chip ${relationChip(a.relation)}`} style={{ fontSize: 9.5 }}>
-                {a.label}
-              </span>
-              <span className="min-w-0 truncate" title={a.prompt}>
+            <li key={a.id}>
+              <Chip tone={relationTone(a.relation)}>{a.label}</Chip>
+              <span className="ink-1" title={a.prompt}>
                 {a.title ?? a.prompt}
               </span>
-              {a.fieldName && <span style={{ color: "var(--ink-3)" }}>in {where(a)}</span>}
+              {a.fieldName && <span>in {where(a)}</span>}
             </li>
           ))}
         </ul>

@@ -19,6 +19,8 @@ export interface DebuffMeta {
   effectText: (magnitude: number) => string;
   /** Why it happened — shown alongside so a debuff never feels arbitrary. */
   blurb: string;
+  /** How it clears, in plain words: every penalty is announced with its way out. */
+  clears: string;
   defaultMagnitude: number;
   /** Hard ceiling; `applyDebuff` clamps to this however it is called. */
   maxMagnitude: number;
@@ -31,6 +33,7 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
     label: "Shaken",
     effectText: (m) => `−${Math.round(m * 100)}% points per review`,
     blurb: "A loss you walked into knowingly. It costs yield, not progress.",
+    clears: "Lifts on its own 24 hours after the defeat.",
     defaultMagnitude: 0.25,
     maxMagnitude: 0.4,
     durationHours: 24,
@@ -40,6 +43,7 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
     label: "Fatigued",
     effectText: (m) => `Combo ceiling cut by ${Math.round(m * 100)}%`,
     blurb: "Pushed past the point of sharpness. Rest, or grind at a lower ceiling.",
+    clears: "Lifts on its own after 18 hours.",
     defaultMagnitude: 0.5,
     maxMagnitude: 0.6,
     durationHours: 18,
@@ -49,6 +53,7 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
     label: "Doubt",
     effectText: (m) => `−${m.toFixed(0)}% to every attribute score`,
     blurb: "A long streak broken. Standing slips until you show up again.",
+    clears: "Lifts on its own after 3 days.",
     defaultMagnitude: 8,
     maxMagnitude: 15,
     durationHours: 72,
@@ -67,6 +72,7 @@ export const DEBUFF_META: Record<DebuffKind, DebuffMeta> = {
     label: "Stagnation",
     effectText: (m) => `−${Math.round(m * 100)}% points per review`,
     blurb: "A Field went a week without new material. Review alone stops paying full rate.",
+    clears: "Lifts after a week; add new ideas to the field so the next week's quota is met.",
     defaultMagnitude: 0.08,
     maxMagnitude: 0.3,
     durationHours: 168,

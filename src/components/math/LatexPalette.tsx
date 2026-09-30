@@ -135,60 +135,35 @@ export function LatexPalette({ onInsert }: Props) {
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-1">
-        {tabs.map((label) => {
-          const active = !results && openGroup === label;
-          return (
-            <button
-              key={label}
-              type="button"
-              onClick={() => {
-                setOpenGroup(label);
-                setQuery("");
-              }}
-              style={{
-                padding: "2px 8px",
-                borderRadius: 6,
-                fontSize: 10.5,
-                fontWeight: 600,
-                border: `1px solid ${active ? "rgba(0,204,122,.4)" : "var(--line)"}`,
-                background: active ? "var(--green-10)" : "transparent",
-                color: active ? "var(--green)" : label === "Recent" ? "var(--amber)" : "var(--ink-2)",
-                cursor: "pointer",
-              }}
-            >
-              {label}
-            </button>
-          );
-        })}
+      <div className="ltx-pal-tabs" role="group" aria-label="Symbol groups">
+        {tabs.map((label) => (
+          <button
+            key={label}
+            type="button"
+            className="chip btn-chip"
+            aria-pressed={!results && openGroup === label}
+            onClick={() => {
+              setOpenGroup(label);
+              setQuery("");
+            }}
+          >
+            {label}
+          </button>
+        ))}
         <input
-          type="text"
+          type="search"
+          className="st-input ltx-pal-q"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="search symbols…"
+          placeholder="Search symbols"
           aria-label="Search LaTeX symbols"
-          style={{
-            marginLeft: "auto",
-            width: 130,
-            padding: "2px 8px",
-            borderRadius: 6,
-            fontSize: 10.5,
-            border: "1px solid var(--line)",
-            background: "var(--sub)",
-            color: "var(--ink-1)",
-          }}
         />
       </div>
 
-      <div
-        className="mt-1.5 p-2"
-        style={{ borderRadius: 8, background: "var(--sub)", border: "1px solid var(--line)" }}
-      >
-        <div className="flex flex-wrap gap-1" style={{ maxHeight: 150, overflowY: "auto" }}>
+      <div className="ltx-pal">
+        <div className="ltx-syms">
           {showing.length === 0 ? (
-            <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              {results ? `No symbol matches “${query}”.` : "Nothing here yet."}
-            </span>
+            <span className="t-meta">{results ? `No symbol matches “${query}”.` : "Nothing here yet."}</span>
           ) : (
             showing.map((s) => {
               const html = glyphHtml(s);
@@ -196,6 +171,7 @@ export function LatexPalette({ onInsert }: Props) {
                 <button
                   key={s.command}
                   type="button"
+                  className="ltx-sym"
                   onClick={() => insert(s)}
                   onMouseEnter={() => setHovered(s)}
                   onMouseLeave={() => setHovered((h) => (h === s ? null : h))}
@@ -203,21 +179,6 @@ export function LatexPalette({ onInsert }: Props) {
                   onBlur={() => setHovered((h) => (h === s ? null : h))}
                   title={s.command}
                   aria-label={`Insert ${s.command}`}
-                  style={{
-                    minWidth: 34,
-                    minHeight: 30,
-                    padding: "3px 7px",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    lineHeight: 1.2,
-                    border: "1px solid var(--line-hi)",
-                    background: "var(--raised)",
-                    color: "var(--ink-0)",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
                 >
                   {html ? <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} /> : s.glyph}
                 </button>
@@ -228,23 +189,10 @@ export function LatexPalette({ onInsert }: Props) {
 
         {/* A persistent readout beats a native tooltip here: it appears
             instantly, sits in one predictable place, and survives keyboard
-            focus, so tabbing through the palette still tells you what each
+            focus, so tabbing through the palette still says what each
             button is. */}
-        <div
-          className="mono"
-          style={{
-            marginTop: 6,
-            paddingTop: 5,
-            borderTop: "1px solid var(--line)",
-            fontSize: 10.5,
-            color: hovered ? "var(--blue)" : "var(--ink-3)",
-            minHeight: 15,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {hovered ? hovered.command : `${ALL_SNIPPETS.length} symbols — hover one to see its command`}
+        <div className={hovered ? "ltx-read on" : "ltx-read"}>
+          {hovered ? hovered.command : `${ALL_SNIPPETS.length} symbols: hover or focus one to see its command`}
         </div>
       </div>
     </div>

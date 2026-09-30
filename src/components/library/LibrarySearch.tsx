@@ -1,1038 +1,612 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { deleteIdea } from "@/app/actions/ideas";
-import { bandFor, DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
+/**
+ * Study › Library, the Browse template (redesign L5).
+ *
+ *   search (48 px) + Filters (a sheet: every facet family)
+ *   quick chips: All · Due n · Mastered n · Struggling n
+ *   field tiles: the tier ornament as a material stripe; a tap narrows to that field
+ *   sections by field: idea rows (64 px): title, domain + due line, level or Mastered
+ *
+ * Every filter lives in the URL (library-model: parseFilters / filtersToParams),
+ * written with history.replaceState so Back is not flooded; opening an idea
+ * pushes ?idea=<id>, so Back closes it. The idea opens in the kit Sheet: a
+ * bottom sheet on compact, a right drawer from 600. Its own page is
+ * /library/[id] (a modifier-click on a row still opens it).
+ *
+ * Faceted search: OR inside a family, AND across families.
+ */
+import "./study.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
-import { displayQuestion, displayAnswer } from "@/lib/idea-display";
-import { MathText } from "@/components/math/MathText";
-import { fieldColor } from "@/lib/palette";
-import { fieldTier, nextTierAt } from "@/lib/field-tier";
-import { MASTERY_LEVEL } from "@/lib/xp";
+import { ideaHistory } from "@/app/actions/ideas";
+import { DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
+import { fieldTier } from "@/lib/field-tier";
 import { QUESTION_TYPES } from "@/lib/idea-payload";
+import { MASTERY_LEVEL } from "@/lib/xp";
+import { MathText } from "@/components/math/MathText";
+import { Button } from "@/components/ui/Button";
+import { Chip, ChipButton } from "@/components/ui/Chip";
+import { Icon } from "@/components/ui/Icon";
+import { Sheet } from "@/components/ui/Sheet";
+import { PageActions, SectionHeader } from "@/components/ui/Tabs";
+import { IdeaDetail } from "./IdeaDetail";
+import {
+  COLLECTION_LABELS,
+  COLLECTION_NAME,
+  DIFFICULTY_BANDS,
+  EMPTY_FILTERS,
+  STATUS_NAME,
+  TYPE_NAME,
+  URL_KEYS,
+  dueLabel,
+  facetCount,
+  filtersToParams,
+  historyOf,
+  ideaHeadline,
+  isMastered,
+  isUnfiltered,
+  levelText,
+  matchesFilters,
+  parseFilters,
+  plural,
+  searchText,
+  statusCounts,
+  tierMaterial,
+  toggle,
+  type IdeaHistory,
+  type LibraryField,
+  type LibraryFilters,
+  type LibraryIdea,
+  type LibraryStatus,
+} from "./library-model";
 
-export interface LibraryIdea {
-  id: string;
-  question: string;
-  answer: string;
-  questionType: QuestionType;
-  collectionLabel: CollectionLabel;
-  level: number;
-  isArchived: boolean;
-  fieldName: string;
-  domainName: string;
-  title: string | null;
-  corePremise: string | null;
-  tags: string[];
-  linkedCount: number;
-  /** 0–100, decided automatically. 0 means never scored, not trivial. */
-  difficulty: number;
-}
+export type { LibraryIdea } from "./library-model";
 
 interface Props {
   ideas: LibraryIdea[];
-  fieldNames: string[];
-  /** Level per field name, driving the tier decoration on the "by field" tiles. */
-  fieldLevels: Record<string, number>;
-  domainsByField: Record<string, string[]>;
+  fields: LibraryField[];
   allTags: string[];
+  /** Request time (ms), so server and browser agree on "due". */
+  now: number;
 }
 
-const COLLECTION_LABELS: CollectionLabel[] = ["BOOK", "ACTIONABLE", "PROPOSAL"];
+/** Rows shown per field before "Show all". */
+const SECTION_CAP = 40;
+const QUICK: LibraryStatus[] = ["all", "due", "mastered", "struggling"];
 
-/**
- * One hue per collection, so the "by collection" tiles are as immediately
- * distinguishable as the field tiles are. Fields get their colour from
- * `fieldColor`, which hashes the name; collections are a closed enum of
- * three, so they are assigned deliberately instead.
- */
-const COLLECTION_COLORS: Record<CollectionLabel, string> = {
-  BOOK: "#4d9cf5",
-  ACTIONABLE: "#00cc7a",
-  PROPOSAL: "#f0a030",
-};
+export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
+  const params = useSearchParams();
+  const filters = useMemo(() => parseFilters(new URLSearchParams(params.toString())), [params]);
+  const openId = params.get(URL_KEYS.idea);
 
-const COLLECTION_BLURBS: Record<CollectionLabel, string> = {
-  BOOK: "Reference knowledge — what is true.",
-  ACTIONABLE: "Things to do, or do differently.",
-  PROPOSAL: "Claims still being tested.",
-};
+  // The search box types into local state and writes the URL shortly after,
+  // so a keystroke never waits on the router.
+  const [q, setQ] = useState(filters.q);
+  const [lastUrlQ, setLastUrlQ] = useState(filters.q);
+  if (filters.q !== lastUrlQ) {
+    // Back/forward (or a chip that cleared everything) changed q under us.
+    setLastUrlQ(filters.q);
+    setQ(filters.q);
+  }
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const pushedIdea = useRef(false);
 
-type BrowseView = "field" | "collection";
-
-interface BrowseGroup {
-  key: string;
-  label: string;
-  color: string;
-  ideas: LibraryIdea[];
-  /** The breakdown inside the tile: domains under a field, fields under a collection. */
-  subs: Map<string, number>;
-}
-
-type StatusFilter = "any" | "mastered" | "developing" | "archived";
-
-const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
-  { value: "any", label: "Any" },
-  { value: "developing", label: "In progress" },
-  { value: "mastered", label: `Mastered (L${MASTERY_LEVEL})` },
-  { value: "archived", label: "Archived" },
-];
-
-/**
- * Separator for composite domain keys. U+0000 because a field or domain
- * name can contain any printable character a user types, so any visible
- * delimiter risks a collision.
- */
-const DOMAIN_KEY_SEP = "\u0000";
-
-/**
- * Domains are keyed by field as well as name. Domain names are unique only
- * within a field, so a bare-name filter would silently match same-named
- * domains under unrelated fields.
- */
-function domainKey(fieldName: string, domainName: string): string {
-  return `${fieldName}${DOMAIN_KEY_SEP}${domainName}`;
-}
-
-function toggleSet<T>(set: Set<T>, value: T): Set<T> {
-  const next = new Set(set);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
-  return next;
-}
-
-/** A selectable filter token. Shared by every facet so they behave alike. */
-function FacetChip({
-  label,
-  active,
-  count,
-  color,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  count?: number;
-  color?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="inline-flex items-center gap-1.5 whitespace-nowrap transition-colors"
-      style={{
-        padding: "3px 9px",
-        borderRadius: 6,
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: "0.02em",
-        border: `1px solid ${active ? (color ?? "rgba(0,204,122,0.45)") : "var(--line-hi)"}`,
-        background: active ? (color ? `${color}1f` : "var(--green-10)") : "transparent",
-        color: active ? (color ?? "var(--green)") : "var(--ink-2)",
-        cursor: "pointer",
-      }}
-    >
-      {label}
-      {count !== undefined && (
-        <span className="mono" style={{ opacity: 0.65, fontSize: 10 }}>
-          {count}
-        </span>
-      )}
-    </button>
+  const write = useCallback(
+    (next: LibraryFilters, idea: string | null = openId) => {
+      const qs = filtersToParams(next, { idea }).toString();
+      window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+    },
+    [openId]
   );
-}
 
-function FacetRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="label-xs mb-2">{label}</p>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-/**
- * Faceted library search.
- *
- * Replaces a pair of single-value `<select>`s that could express exactly one
- * field and one domain at a time — and where picking a field wiped the
- * domain choice, so "everything in Thermodynamics plus one domain from
- * Algebra" was not expressible at all. Every facet here is a set, and the
- * facets compose:
- *
- *   (any selected field) AND (any selected domain) AND (any selected tag)
- *   AND (any selected type) AND (any selected collection) AND level range
- *
- * Within a facet the semantics are OR, across facets AND — the standard
- * faceted-search contract, and the one that makes multi-field selection
- * mean "show me all of these" rather than the empty intersection.
- */
-export function LibrarySearch({ ideas, fieldNames, fieldLevels, domainsByField, allTags }: Props) {
-  const [query, setQuery] = useState("");
-  const [fieldFilter, setFieldFilter] = useState<Set<string>>(new Set());
-  const [domainFilter, setDomainFilter] = useState<Set<string>>(new Set());
-  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
-  const [typeFilter, setTypeFilter] = useState<Set<QuestionType>>(new Set());
-  const [labelFilter, setLabelFilter] = useState<Set<CollectionLabel>>(new Set());
-  const [status, setStatus] = useState<StatusFilter>("any");
-  const [minLevel, setMinLevel] = useState(1);
-  const [maxLevel, setMaxLevel] = useState(MASTERY_LEVEL);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [bandFilter, setBandFilter] = useState<Set<DifficultyBand>>(new Set());
-
-  const router = useRouter();
-  const [isDeleting, startDelete] = useTransition();
-  /**
-   * Two-step delete: the first click arms the row, the second commits.
-   *
-   * Deliberately not a modal. Deleting one idea out of a list is a small,
-   * frequent action, and a dialog for each one trains you to dismiss
-   * dialogs — which is exactly the habit you do not want when a
-   * genuinely destructive confirmation appears. Arming is reversible,
-   * visible, and costs one click.
-   */
-  const [armed, setArmed] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  /** Hidden immediately on success so the list responds before the refetch. */
-  const [removed, setRemoved] = useState<Set<string>>(new Set());
-
-  function remove(id: string) {
-    setDeleteError(null);
-    startDelete(async () => {
-      const res = await deleteIdea(id);
-      if (!res.ok) {
-        setDeleteError(res.error);
-        setArmed(null);
-        return;
-      }
-      setRemoved((prev) => new Set(prev).add(id));
-      setArmed(null);
-      router.refresh();
-    });
-  }
-
-  /**
-   * Domains offered for selection. Narrowed to the chosen fields when any
-   * are chosen, so the domain list stays navigable — but selections already
-   * made are never silently dropped, they surface as removable tokens in
-   * the active-filter bar instead.
-   */
-  const domainOptions = useMemo(() => {
-    const source = fieldFilter.size > 0 ? [...fieldFilter] : fieldNames;
-    const out: { name: string; field: string }[] = [];
-    const seen = new Set<string>();
-    for (const f of source) {
-      for (const d of domainsByField[f] ?? []) {
-        const key = domainKey(f, d);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ name: d, field: f });
-      }
-    }
-    return out;
-  }, [fieldFilter, fieldNames, domainsByField]);
-
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return ideas.filter((idea) => {
-      if (status === "archived") {
-        if (!idea.isArchived) return false;
-      } else {
-        if (idea.isArchived) return false;
-        if (status === "mastered" && idea.level < MASTERY_LEVEL) return false;
-        if (status === "developing" && idea.level >= MASTERY_LEVEL) return false;
-      }
-
-      if (removed.has(idea.id)) return false;
-      // An active band filter excludes unscored ideas: they have no band, and
-      // filing them under Intro would assert something never measured.
-      if (bandFilter.size > 0 && (idea.difficulty === 0 || !bandFilter.has(bandFor(idea.difficulty))))
-        return false;
-      if (fieldFilter.size > 0 && !fieldFilter.has(idea.fieldName)) return false;
-      if (domainFilter.size > 0 && !domainFilter.has(domainKey(idea.fieldName, idea.domainName))) return false;
-      if (tagFilter.size > 0 && !idea.tags.some((t) => tagFilter.has(t))) return false;
-      if (typeFilter.size > 0 && !typeFilter.has(idea.questionType)) return false;
-      if (labelFilter.size > 0 && !labelFilter.has(idea.collectionLabel)) return false;
-      if (idea.level < minLevel || idea.level > maxLevel) return false;
-
-      if (q) {
-        // Title, premise and tags are searched alongside the raw Q&A —
-        // the node data is often the most memorable handle on an idea.
-        const haystack = [
-          displayQuestion(idea.questionType, idea.question),
-          displayAnswer(idea.questionType, idea.answer),
-          idea.title ?? "",
-          idea.corePremise ?? "",
-          idea.tags.join(" "),
-        ]
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [ideas, query, fieldFilter, domainFilter, tagFilter, typeFilter, labelFilter, status, minLevel, maxLevel, removed, bandFilter]);
-
-  /** Result counts per option, computed against everything *except* that facet. */
-  const fieldCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const idea of ideas) {
-      if (idea.isArchived && status !== "archived") continue;
-      counts[idea.fieldName] = (counts[idea.fieldName] ?? 0) + 1;
-    }
-    return counts;
-  }, [ideas, status]);
-
-  const activeTokens: { key: string; label: string; clear: () => void }[] = [
-    ...[...fieldFilter].map((f) => ({
-      key: `field:${f}`,
-      label: f,
-      clear: () => setFieldFilter((s) => toggleSet(s, f)),
-    })),
-    ...[...domainFilter].map((d) => ({
-      key: `domain:${d}`,
-      // Token shows just the domain name; the field is implied by the
-      // field token or by the colour of the row it filters.
-      label: d.split(DOMAIN_KEY_SEP)[1] ?? d,
-      clear: () => setDomainFilter((s) => toggleSet(s, d)),
-    })),
-    ...[...tagFilter].map((t) => ({
-      key: `tag:${t}`,
-      label: `#${t}`,
-      clear: () => setTagFilter((s) => toggleSet(s, t)),
-    })),
-    ...[...typeFilter].map((t) => ({
-      key: `type:${t}`,
-      label: t,
-      clear: () => setTypeFilter((s) => toggleSet(s, t)),
-    })),
-    ...[...bandFilter].map((b) => ({
-      key: `band:${b}`,
-      label: DIFFICULTY_META[b].label,
-      clear: () => setBandFilter((s) => toggleSet(s, b)),
-    })),
-    ...[...labelFilter].map((l) => ({
-      key: `label:${l}`,
-      label: l,
-      clear: () => setLabelFilter((s) => toggleSet(s, l)),
-    })),
-  ];
-  if (status !== "any") {
-    activeTokens.push({
-      key: "status",
-      label: STATUS_OPTIONS.find((o) => o.value === status)!.label,
-      clear: () => setStatus("any"),
-    });
-  }
-  if (minLevel > 1 || maxLevel < MASTERY_LEVEL) {
-    activeTokens.push({
-      key: "level",
-      label: `L${minLevel}–${maxLevel}`,
-      clear: () => {
-        setMinLevel(1);
-        setMaxLevel(MASTERY_LEVEL);
-      },
-    });
-  }
-
-  /**
-   * The library shows containers, not contents.
-   *
-   * A flat list of every card was fine at twenty ideas and unusable at a few
-   * hundred: the top-level view answered "what have I written" with a wall of
-   * individual questions, which is the one question you can already answer by
-   * searching. Grouped tiles answer the question you actually arrive with —
-   * where is my material, and how much of it is there — and the ideas
-   * themselves are one click away in a dialog.
-   *
-   * Both views group the *filtered* results, not the whole library, so every
-   * facet above still applies and the counts on the tiles are counts of what
-   * matches.
-   */
-  const [view, setView] = useState<BrowseView>("field");
-  /** Tile currently opened in the dialog, and an optional sub-group within it. */
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const [openSub, setOpenSub] = useState<string | null>(null);
-
-  const groups = useMemo<BrowseGroup[]>(() => {
-    const map = new Map<string, BrowseGroup>();
-
-    for (const idea of results) {
-      // The two views differ only in what forms a group and what forms the
-      // breakdown inside it, so one pass builds either.
-      const key = view === "field" ? idea.fieldName : idea.collectionLabel;
-      const sub = view === "field" ? idea.domainName : idea.fieldName;
-
-      let group = map.get(key);
-      if (!group) {
-        group = {
-          key,
-          label: key,
-          color: view === "field" ? fieldColor(key) : COLLECTION_COLORS[idea.collectionLabel],
-          ideas: [],
-          subs: new Map(),
-        };
-        map.set(key, group);
-      }
-      group.ideas.push(idea);
-      group.subs.set(sub, (group.subs.get(sub) ?? 0) + 1);
-    }
-
-    /**
-     * With nothing filtered, the field view lists every Field — including
-     * ones holding no ideas yet.
-     *
-     * Groups are built from matching ideas, so an empty Field would otherwise
-     * be invisible in the very view whose job is to show the shape of the
-     * library. A Field you created and have not filled is a real part of that
-     * shape, and it now carries a level worth seeing. Once any filter or
-     * query is active the opposite is true: a Field with no matches is not an
-     * answer, so only matching groups survive.
-     */
-    if (view === "field" && activeTokens.length === 0 && query.trim() === "") {
-      for (const name of fieldNames) {
-        if (map.has(name)) continue;
-        map.set(name, { key: name, label: name, color: fieldColor(name), ideas: [], subs: new Map() });
-      }
-    }
-
-    return [...map.values()].sort((a, b) => {
-      // Level leads in the field view, so the ladder the decoration describes
-      // is also the order you read the tiles in.
-      if (view === "field") {
-        const byLevel = (fieldLevels[b.key] ?? 0) - (fieldLevels[a.key] ?? 0);
-        if (byLevel !== 0) return byLevel;
-      }
-      return b.ideas.length - a.ideas.length || a.label.localeCompare(b.label);
-    });
-  }, [results, view, activeTokens.length, query, fieldNames, fieldLevels]);
-
-  const openGroup = openKey === null ? null : (groups.find((g) => g.key === openKey) ?? null);
-  const modalIdeas = !openGroup
-    ? []
-    : openSub === null
-      ? openGroup.ideas
-      : openGroup.ideas.filter((i) => (view === "field" ? i.domainName : i.fieldName) === openSub);
-
-  function closeModal() {
-    setOpenKey(null);
-    setOpenSub(null);
-  }
-
-  // Escape closes the dialog. Bound only while one is open, so the listener
-  // is not sitting on the document for the whole life of the page.
   useEffect(() => {
-    if (openKey === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      // A layer above (the capture sheet) already took this Escape.
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        setOpenKey(null);
-        setOpenSub(null);
-      }
+    if (q === filters.q) return;
+    const t = window.setTimeout(() => {
+      setLastUrlQ(q);
+      write({ ...filters, q });
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [q, filters, write]);
+
+  const set = (patch: Partial<LibraryFilters>) => write({ ...filters, q, ...patch });
+
+  // Search reads every idea's text; build each haystack once.
+  const haystacks = useMemo(() => new Map(ideas.map((i) => [i.id, searchText(i)])), [ideas]);
+  const live = useMemo(() => ideas.filter((i) => !removed.has(i.id)), [ideas, removed]);
+  const counts = useMemo(() => statusCounts(live, now), [live, now]);
+  const effective = useMemo(() => ({ ...filters, q }), [filters, q]);
+  const results = useMemo(
+    () => live.filter((i) => matchesFilters(i, effective, now, haystacks.get(i.id))),
+    [live, effective, now, haystacks]
+  );
+
+  // Fields ordered by level (the ladder the stripe describes), then name.
+  const orderedFields = useMemo(
+    () => [...fields].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name)),
+    [fields]
+  );
+  const ideaCountByField = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of live) if (!i.isArchived) m.set(i.fieldId, (m.get(i.fieldId) ?? 0) + 1);
+    return m;
+  }, [live]);
+  const sections = useMemo(() => {
+    const byField = new Map<string, LibraryIdea[]>();
+    for (const i of results) {
+      const list = byField.get(i.fieldId) ?? [];
+      list.push(i);
+      byField.set(i.fieldId, list);
+    }
+    return orderedFields
+      .filter((f) => byField.has(f.id))
+      .map((f) => ({ field: f, ideas: byField.get(f.id)!.sort((a, b) => a.dueAt - b.dueAt || a.id.localeCompare(b.id)) }));
+  }, [results, orderedFields]);
+
+  // ── The open idea (?idea=<id>) ────────────────────────────────────────────
+  const openIdea = openId ? (live.find((i) => i.id === openId) ?? null) : null;
+  const [histories, setHistories] = useState<Record<string, IdeaHistory>>({});
+  useEffect(() => {
+    if (!openId || histories[openId]) return;
+    let cancelled = false;
+    ideaHistory(openId)
+      .then((rows) => {
+        if (!cancelled) setHistories((h) => ({ ...h, [openId]: historyOf(rows) }));
+      })
+      .catch(() => {
+        if (!cancelled) setHistories((h) => ({ ...h, [openId]: historyOf([]) }));
+      });
+    return () => {
+      cancelled = true;
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [openKey]);
+  }, [openId, histories]);
 
-  /**
-   * Reopens nothing when the filters change out from under an open dialog.
-   * Adjusting state during render rather than in an effect, so the dialog
-   * never paints once against a group that no longer exists.
-   */
-  if (openKey !== null && !groups.some((g) => g.key === openKey)) {
-    setOpenKey(null);
-    setOpenSub(null);
+  useEffect(() => {
+    if (!openId) pushedIdea.current = false;
+  }, [openId]);
+
+  function openDetail(id: string) {
+    const qs = filtersToParams(effective, { idea: id }).toString();
+    window.history.pushState(null, "", `?${qs}`);
+    pushedIdea.current = true;
   }
 
-  function clearAll() {
-    setFieldFilter(new Set());
-    setDomainFilter(new Set());
-    setTagFilter(new Set());
-    setTypeFilter(new Set());
-    setBandFilter(new Set());
-    setLabelFilter(new Set());
-    setStatus("any");
-    setMinLevel(1);
-    setMaxLevel(MASTERY_LEVEL);
+  function closeDetail() {
+    if (!openId) return;
+    if (pushedIdea.current) {
+      pushedIdea.current = false;
+      window.history.back();
+    } else {
+      write(effective, null);
+    }
   }
+
+  const unfiltered = isUnfiltered(effective);
+  const tokens = activeTokens(filters, fields, (patch) => set(patch));
 
   return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search questions, answers, titles and tags…"
-          className="input flex-1"
-        />
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          aria-expanded={advancedOpen}
-          className={advancedOpen ? "btn-primary" : "btn-secondary"}
-          style={{ padding: "9px 16px" }}
+    <>
+      <PageActions>
+        <Button variant="secondary" href="/add" icon="plus">
+          New idea
+        </Button>
+      </PageActions>
+
+      <div className="lib-search" role="search">
+        <label className="lib-q">
+          <span className="sr-only">Search ideas</span>
+          <Icon name="search" />
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={`Search ${plural(counts.all, "idea")}`}
+            autoComplete="off"
+            enterKeyHint="search"
+          />
+        </label>
+        <Button
+          variant="secondary"
+          icon="grid"
+          className="lib-filters-btn"
+          onClick={() => setFiltersOpen(true)}
+          aria-haspopup="dialog"
         >
-          Filters{activeTokens.length > 0 ? ` · ${activeTokens.length}` : ""}
-        </button>
+          Filters{facetCount(filters) > 0 ? ` · ${facetCount(filters)}` : ""}
+        </Button>
       </div>
 
-      {/* Active filters stay visible whether or not the panel is open —
-          otherwise a collapsed panel hides why the result count is low. */}
-      {activeTokens.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {activeTokens.map((token) => (
-            <button
-              key={token.key}
-              type="button"
-              onClick={token.clear}
-              title={`Remove ${token.label}`}
-              className="inline-flex items-center gap-1.5"
-              style={{
-                padding: "3px 8px",
-                borderRadius: 6,
-                fontSize: 11,
-                fontWeight: 600,
-                border: "1px solid rgba(0,204,122,0.30)",
-                background: "var(--green-10)",
-                color: "var(--green)",
-                cursor: "pointer",
-              }}
-            >
-              {token.label}
-              <span aria-hidden style={{ opacity: 0.7 }}>
-                ×
-              </span>
-            </button>
+      <div className="lib-chips" role="group" aria-label="Show">
+        {QUICK.map((s) => (
+          <ChipButton key={s} pressed={filters.status === s} onClick={() => set({ status: s })}>
+            {STATUS_NAME[s]}
+            {s !== "all" && counts[s] > 0 && <span className="num">{counts[s].toLocaleString("en-GB")}</span>}
+          </ChipButton>
+        ))}
+        {filters.status === "archived" && (
+          <ChipButton pressed onClick={() => set({ status: "all" })}>
+            Archived <span className="num">{counts.archived.toLocaleString("en-GB")}</span>
+          </ChipButton>
+        )}
+      </div>
+
+      {tokens.length > 0 && (
+        <div className="lib-tokens" aria-label="Active filters">
+          {tokens.map((t) => (
+            <ChipButton key={t.key} onClick={t.clear} aria-label={`Remove filter ${t.label}`}>
+              {t.label}
+              <Icon name="x" />
+            </ChipButton>
           ))}
-          <button
-            type="button"
-            onClick={clearAll}
-            style={{
-              fontSize: 11,
-              color: "var(--ink-2)",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              textDecoration: "underline",
-            }}
-          >
+          <Button variant="quiet" onClick={() => write({ ...EMPTY_FILTERS })}>
             Clear all
-          </button>
+          </Button>
         </div>
       )}
 
-      {advancedOpen && (
-        <div className="card space-y-5 p-4">
-          <FacetRow label={`Fields${fieldFilter.size > 0 ? ` · ${fieldFilter.size} selected` : ""}`}>
-            {fieldNames.map((f) => (
-              <FacetChip
-                key={f}
-                label={f}
-                count={fieldCounts[f] ?? 0}
-                color={fieldColor(f)}
-                active={fieldFilter.has(f)}
-                onClick={() => setFieldFilter((s) => toggleSet(s, f))}
-              />
-            ))}
-          </FacetRow>
-
-          <FacetRow
-            label={
-              fieldFilter.size > 0
-                ? `Domains · within ${fieldFilter.size} selected field${fieldFilter.size === 1 ? "" : "s"}`
-                : "Domains · all fields"
-            }
-          >
-            {domainOptions.length === 0 ? (
-              <span style={{ fontSize: 11, color: "var(--ink-3)" }}>No domains available.</span>
-            ) : (
-              domainOptions.map((d) => (
-                <FacetChip
-                  key={domainKey(d.field, d.name)}
-                  label={d.name}
-                  color={fieldColor(d.field)}
-                  active={domainFilter.has(domainKey(d.field, d.name))}
-                  onClick={() => setDomainFilter((s) => toggleSet(s, domainKey(d.field, d.name)))}
-                />
-              ))
-            )}
-          </FacetRow>
-
-          {allTags.length > 0 && (
-            <FacetRow label="Tags">
-              {allTags.map((t) => (
-                <FacetChip
-                  key={t}
-                  label={`#${t}`}
-                  active={tagFilter.has(t)}
-                  onClick={() => setTagFilter((s) => toggleSet(s, t))}
-                />
-              ))}
-            </FacetRow>
-          )}
-
-          <FacetRow label="Difficulty">
-            {(Object.keys(DIFFICULTY_META) as DifficultyBand[]).map((b) => (
-              <FacetChip
-                key={b}
-                label={DIFFICULTY_META[b].label}
-                active={bandFilter.has(b)}
-                onClick={() => setBandFilter((s) => toggleSet(s, b))}
-              />
-            ))}
-          </FacetRow>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <FacetRow label="Question type">
-              {QUESTION_TYPES.map((t) => (
-                <FacetChip
-                  key={t}
-                  label={t}
-                  active={typeFilter.has(t)}
-                  onClick={() => setTypeFilter((s) => toggleSet(s, t))}
-                />
-              ))}
-            </FacetRow>
-
-            <FacetRow label="Collection">
-              {COLLECTION_LABELS.map((l) => (
-                <FacetChip
-                  key={l}
-                  label={l}
-                  active={labelFilter.has(l)}
-                  onClick={() => setLabelFilter((s) => toggleSet(s, l))}
-                />
-              ))}
-            </FacetRow>
-
-            <FacetRow label="Status">
-              {STATUS_OPTIONS.map((o) => (
-                <FacetChip
-                  key={o.value}
-                  label={o.label}
-                  active={status === o.value}
-                  onClick={() => setStatus(o.value)}
-                />
-              ))}
-            </FacetRow>
-
-            <div>
-              <p className="label-xs mb-2">Level range</p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={MASTERY_LEVEL}
-                  value={minLevel}
-                  onChange={(e) =>
-                    setMinLevel(Math.min(maxLevel, Math.max(1, Number(e.target.value) || 1)))
-                  }
-                  className="input w-16"
-                  aria-label="Minimum level"
-                />
-                <span style={{ color: "var(--ink-3)" }}>–</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={MASTERY_LEVEL}
-                  value={maxLevel}
-                  onChange={(e) =>
-                    setMaxLevel(
-                      Math.max(minLevel, Math.min(MASTERY_LEVEL, Number(e.target.value) || MASTERY_LEVEL))
-                    )
-                  }
-                  className="input w-16"
-                  aria-label="Maximum level"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {deleteError && (
-        <p
-          role="alert"
-          className="px-3 py-2"
-          style={{
-            fontSize: 12,
-            borderRadius: 8,
-            background: "var(--red-10)",
-            border: "1px solid rgba(240,58,87,0.20)",
-            color: "var(--red)",
-          }}
-        >
-          {deleteError}
-        </p>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {results.length} of {ideas.length} idea{ideas.length === 1 ? "" : "s"} in {groups.length}{" "}
-          {view === "field" ? "field" : "collection"}
-          {groups.length === 1 ? "" : "s"}
-        </p>
-
-        <div
-          role="tablist"
-          aria-label="Group library by"
-          className="flex"
-          style={{ borderRadius: 8, border: "1px solid var(--line-hi)", overflow: "hidden" }}
-        >
-          {(["field", "collection"] as BrowseView[]).map((v) => (
-            <button
-              key={v}
-              role="tab"
-              type="button"
-              aria-selected={view === v}
-              onClick={() => {
-                setView(v);
-                closeModal();
-              }}
-              style={{
-                padding: "5px 14px",
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.02em",
-                border: "none",
-                background: view === v ? "var(--green-10)" : "transparent",
-                color: view === v ? "var(--green)" : "var(--ink-2)",
-                cursor: "pointer",
-              }}
-            >
-              By {v}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Tiles only — no idea text at this level. Clicking one opens the
-          dialog below; clicking a sub-chip opens it already narrowed. */}
-      <ul className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))" }}>
-        {groups.map((g) => {
-          const subs = [...g.subs.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-          const mastered = g.ideas.filter((i) => i.level >= MASTERY_LEVEL).length;
-          // Tier decoration applies to fields only — a collection has no
-          // level, and inventing one for the sake of symmetry would be
-          // decoration that means nothing.
-          const level = view === "field" ? (fieldLevels[g.key] ?? 0) : null;
-          const tier = level === null ? null : fieldTier(level);
-          const nextAt = level === null ? null : nextTierAt(level);
-          return (
-            <li
-              key={g.key}
-              className={`card card-hover p-3.5${tier ? " ftile" : ""}`}
-              {...(tier
-                ? {
-                    "data-tier": tier.tier,
-                    "data-lit": tier.lit ? "1" : "0",
-                    "data-notches": tier.notches ? "1" : "0",
-                  }
-                : {})}
-              style={
-                {
-                  borderLeftColor: g.color,
-                  borderLeftWidth: 3,
-                  ...(tier ? { "--tier-accent": g.color, "--tier-glow": tier.glow } : {}),
-                } as React.CSSProperties
-              }
-            >
-              {tier?.sheen && <span className="ftile-sheen" aria-hidden="true" />}
-              {tier?.crest && <span className="ftile-crest" aria-hidden="true" />}
-              <button
-                type="button"
-                onClick={() => {
-                  setOpenKey(g.key);
-                  setOpenSub(null);
-                }}
-                className="w-full text-left"
-                style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-              >
-                <span className="flex items-start justify-between gap-2">
-                  <span className="mono uppercase" style={{ fontSize: 11, fontWeight: 700, color: g.color }}>
-                    {g.label}
-                  </span>
-                  {tier?.badge && (
-                    <span
-                      className="ftile-badge mono shrink-0"
-                      title={`${tier.label} — ${tier.blurb}${nextAt ? ` Next tier at level ${nextAt}.` : ""}`}
-                    >
-                      Lv {level}
-                    </span>
-                  )}
-                </span>
-                {/* Named only once the tier means something. A "Dormant"
-                    label on every empty field would be noise on exactly the
-                    tiles that have least to say. */}
-                {tier && tier.tier !== "DORMANT" && (
-                  <span className="mt-0.5 block" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-                    {tier.label}
-                  </span>
-                )}
-                {view === "collection" && (
-                  <span className="mt-0.5 block" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
-                    {COLLECTION_BLURBS[g.key as CollectionLabel]}
-                  </span>
-                )}
-                <span className="mono mt-1.5 block" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-                  {g.ideas.length} idea{g.ideas.length === 1 ? "" : "s"} · {subs.length}{" "}
-                  {view === "field" ? "domain" : "field"}
-                  {subs.length === 1 ? "" : "s"}
-                  {mastered > 0 && <span style={{ color: "var(--green)" }}> · {mastered} mastered</span>}
-                </span>
-              </button>
-
-              <div className="mt-2 flex flex-wrap gap-1">
-                {subs.slice(0, 5).map(([name, n]) => (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => {
-                      setOpenKey(g.key);
-                      setOpenSub(name);
-                    }}
-                    title={`${name} — ${n} idea${n === 1 ? "" : "s"}`}
-                    className="mono"
-                    style={{
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontSize: 10,
-                      padding: "2px 7px",
-                      borderRadius: 5,
-                      border: "1px solid var(--line-hi)",
-                      background: "var(--sub)",
-                      color: "var(--ink-2)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {name} {n}
-                  </button>
-                ))}
-                {subs.length > 5 && (
-                  <span className="mono" style={{ fontSize: 10, padding: "2px 4px", color: "var(--ink-3)" }}>
-                    +{subs.length - 5}
-                  </span>
-                )}
-              </div>
-            </li>
-          );
-        })}
-
-        {groups.length === 0 && (
-          <li className="card px-4 py-10 text-center" style={{ gridColumn: "1/-1", fontSize: 13, color: "var(--ink-2)" }}>
-            No ideas match these filters.
-            {activeTokens.length > 0 && (
-              <>
-                {" "}
+      {fields.length > 0 && (
+        <ul className="lib-ftiles" aria-label="Fields">
+          {orderedFields.map((f) => {
+            const tier = fieldTier(f.level);
+            const on = filters.fields.includes(f.id);
+            const n = ideaCountByField.get(f.id) ?? 0;
+            return (
+              <li key={f.id}>
                 <button
                   type="button"
-                  onClick={clearAll}
-                  style={{ color: "var(--green)", background: "none", border: "none", cursor: "pointer" }}
+                  className="card lib-ftile"
+                  aria-pressed={on}
+                  onClick={() => set({ fields: toggle(filters.fields, f.id) })}
+                  title={`${tier.label}: ${tier.blurb}`}
                 >
-                  Clear all filters
+                  <span className="lib-orn" data-m={tierMaterial(f.level) ?? "none"} aria-hidden="true" />
+                  <b>{f.name}</b>
+                  <span className="t-meta">
+                    {tier.tier === "DORMANT" ? "No points yet" : `${tier.label} · ${levelText(f.level)}`}
+                  </span>
+                  <span className="t-meta">{plural(n, "idea")}</span>
                 </button>
-              </>
-            )}
-          </li>
-        )}
-      </ul>
-
-      {openGroup && (
-        <div
-          className="fixed inset-0 z-40"
-          style={{ background: "rgba(2,5,8,.72)", backdropFilter: "blur(3px)" }}
-          onClick={closeModal}
-          role="presentation"
-        >
-          <div
-            className="card fixed left-1/2 top-1/2 flex w-[min(94vw,860px)] -translate-x-1/2 -translate-y-1/2 flex-col"
-            style={{ maxHeight: "84vh", borderLeftColor: openGroup.color, borderLeftWidth: 3 }}
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`${openGroup.label} — ${modalIdeas.length} ideas`}
-          >
-            <div className="flex items-start justify-between gap-3 p-4 pb-3">
-              <div className="min-w-0">
-                <h2 className="mono uppercase" style={{ fontSize: 12, fontWeight: 700, color: openGroup.color }}>
-                  {openGroup.label}
-                  {openSub && <span style={{ color: "var(--ink-2)" }}> · {openSub}</span>}
-                </h2>
-                <p className="panel-sub mt-0.5">
-                  {modalIdeas.length} idea{modalIdeas.length === 1 ? "" : "s"}
-                </p>
-              </div>
-              <button type="button" className="btn-ghost shrink-0" onClick={closeModal}>
-                Close
-              </button>
-            </div>
-
-            {/* Narrow to one domain/field without leaving the dialog. */}
-            {openGroup.subs.size > 1 && (
-              <div className="flex flex-wrap gap-1.5 px-4 pb-3">
-                <FacetChip label="All" active={openSub === null} onClick={() => setOpenSub(null)} />
-                {[...openGroup.subs.entries()]
-                  .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-                  .map(([name, n]) => (
-                    <FacetChip
-                      key={name}
-                      label={name}
-                      count={n}
-                      active={openSub === name}
-                      onClick={() => setOpenSub(openSub === name ? null : name)}
-                    />
-                  ))}
-              </div>
-            )}
-
-            <ul className="space-y-2 overflow-y-auto px-4 pb-4">
-        {modalIdeas.map((idea) => {
-          const mastered = idea.level >= MASTERY_LEVEL;
-          return (
-            <li
-              key={idea.id}
-              className="card p-3.5"
-              style={{ borderLeftColor: fieldColor(idea.fieldName), borderLeftWidth: 3 }}
-            >
-              <div className="mb-1.5 flex flex-wrap items-center gap-2" style={{ fontSize: 10, color: "var(--ink-2)" }}>
-                <span className="mono uppercase" style={{ color: fieldColor(idea.fieldName) }}>
-                  {idea.fieldName}
-                </span>
-                <span>·</span>
-                <span>{idea.domainName}</span>
-                <span>·</span>
-                <span className="mono uppercase">{idea.questionType}</span>
-                <span className="mono" style={{ color: mastered ? "var(--green)" : undefined }}>
-                  L{idea.level}
-                </span>
-                {/* Unscored ideas (difficulty 0, predating the column) show
-                    nothing rather than claiming to be trivial. */}
-                {idea.difficulty > 0 && (
-                  <span
-                    className="mono"
-                    title={`Difficulty ${idea.difficulty}/100 — ${DIFFICULTY_META[bandFor(idea.difficulty)].blurb}`}
-                    style={{ color: DIFFICULTY_META[bandFor(idea.difficulty)].color }}
-                  >
-                    {DIFFICULTY_META[bandFor(idea.difficulty)].label}
-                  </span>
-                )}
-                {mastered && <span className="chip chip-green">Mastered</span>}
-                {idea.linkedCount > 0 && (
-                  <span className="chip chip-blue">
-                    {idea.linkedCount} link{idea.linkedCount === 1 ? "" : "s"}
-                  </span>
-                )}
-                {idea.isArchived && <span className="chip chip-muted">Archived</span>}
-              </div>
-
-              {idea.title && (
-                <p style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{idea.title}</p>
-              )}
-              <p style={{ fontSize: 13, color: idea.title ? "var(--ink-1)" : "var(--ink-0)" }}>
-                {idea.questionType === "FORMULA" ? (
-                  <MathText text={displayQuestion(idea.questionType, idea.question)} />
-                ) : (
-                  displayQuestion(idea.questionType, idea.question)
-                )}
-              </p>
-              <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-1)" }}>
-                {displayAnswer(idea.questionType, idea.answer)}
-              </p>
-
-              {idea.tags.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {idea.tags.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setTagFilter((s) => toggleSet(s, t))}
-                      title={`Filter by #${t}`}
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        padding: "1px 6px",
-                        borderRadius: 4,
-                        border: "1px solid var(--line)",
-                        background: tagFilter.has(t) ? "var(--green-10)" : "transparent",
-                        color: tagFilter.has(t) ? "var(--green)" : "var(--ink-2)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      #{t}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Delete, armed on first click and committed on the second.
-                  Kept quiet until armed: destructive controls that look
-                  destructive at rest make a list feel hazardous to browse. */}
-              <div className="mt-2.5 flex items-center justify-end gap-2">
-                {armed === idea.id ? (
-                  <>
-                    <span style={{ fontSize: 11, color: "var(--ink-2)" }}>Delete permanently?</span>
-                    <button
-                      type="button"
-                      disabled={isDeleting}
-                      onClick={() => remove(idea.id)}
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 600,
-                        padding: "3px 10px",
-                        borderRadius: 6,
-                        border: "1px solid rgba(240,58,87,0.45)",
-                        background: "var(--red-10)",
-                        color: "var(--red)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {isDeleting ? "Deleting…" : "Delete"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setArmed(null)}
-                      style={{ fontSize: 11, color: "var(--ink-2)", background: "none", border: "none", cursor: "pointer" }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setArmed(idea.id);
-                      setDeleteError(null);
-                    }}
-                    aria-label={`Delete ${idea.title ?? displayQuestion(idea.questionType, idea.question)}`}
-                    style={{ fontSize: 11, color: "var(--ink-3)", background: "none", border: "none", cursor: "pointer" }}
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-            </li>
-          );
-        })}
-              {modalIdeas.length === 0 && (
-                <li className="px-4 py-8 text-center" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-                  {/* A field that was created and never filled is not the
-                      same as one you have just emptied, and telling someone
-                      their ideas were "removed" when they never wrote any is
-                      alarming for no reason. */}
-                  {openGroup.ideas.length === 0
-                    ? "Nothing filed here yet."
-                    : "Every idea here was removed."}
-                </li>
-              )}
-            </ul>
-          </div>
-        </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
+
+      {!unfiltered && (
+        <p className="t-meta lib-count" aria-live="polite" style={{ marginTop: 14 }}>
+          {plural(results.length, "idea")} match
+        </p>
+      )}
+
+      {sections.length === 0 ? (
+        <div className="card lib-empty" style={{ marginTop: 18 }}>
+          {ideas.length === 0 ? (
+            <>
+              <p className="ink-1">Nothing here yet. Your first idea starts the library.</p>
+              <Button variant="primary" href="/add" icon="plus">
+                New idea
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="ink-1">No ideas match these filters.</p>
+              <Button variant="secondary" onClick={() => write({ ...EMPTY_FILTERS })}>
+                Clear filters
+              </Button>
+            </>
+          )}
+        </div>
+      ) : (
+        sections.map(({ field, ideas: rows }) => {
+          const all = expanded.has(field.id);
+          const shown = all ? rows : rows.slice(0, SECTION_CAP);
+          return (
+            <section key={field.id} className="lib-sec" aria-labelledby={`lib-h-${field.id}`}>
+              <SectionHeader id={`lib-h-${field.id}`} title={field.name} aside={plural(rows.length, "idea")} />
+              <div className="card cv-auto">
+                <ul className="lib-list">
+                  {shown.map((i) => (
+                    <li key={i.id}>
+                      <IdeaRow idea={i} now={now} onOpen={openDetail} />
+                    </li>
+                  ))}
+                </ul>
+                {rows.length > shown.length && (
+                  <Button variant="quiet" className="lib-more" onClick={() => setExpanded((s) => new Set(s).add(field.id))}>
+                    Show all {rows.length.toLocaleString("en-GB")}
+                  </Button>
+                )}
+              </div>
+            </section>
+          );
+        })
+      )}
+
+      <FilterSheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        filters={effective}
+        fields={orderedFields}
+        allTags={allTags}
+        resultCount={results.length}
+        archivedCount={counts.archived}
+        onChange={(patch) => set(patch)}
+        onClear={() => write({ ...EMPTY_FILTERS })}
+      />
+
+      <Sheet
+        open={openIdea !== null}
+        onClose={closeDetail}
+        title={openIdea ? ideaHeadline(openIdea) : "Idea"}
+        description={openIdea ? `${openIdea.domainName} · ${openIdea.fieldName}` : undefined}
+      >
+        {openIdea && (
+          <>
+            <IdeaDetail
+              key={openIdea.id}
+              idea={openIdea}
+              now={now}
+              history={histories[openIdea.id] ?? null}
+              onDeleted={(id) => {
+                setRemoved((s) => new Set(s).add(id));
+                closeDetail();
+              }}
+            />
+            <p style={{ marginTop: 12 }}>
+              <Link className="link" href={`/library/${openIdea.id}`}>
+                Open as a page
+              </Link>
+            </p>
+          </>
+        )}
+      </Sheet>
+      {openId && !openIdea && !removed.has(openId) && <MissingIdea onDone={closeDetail} />}
+    </>
+  );
+}
+
+function IdeaRow({ idea, now, onOpen }: { idea: LibraryIdea; now: number; onOpen: (id: string) => void }) {
+  const mastered = isMastered(idea);
+  const headline = ideaHeadline(idea);
+  return (
+    <Link
+      href={`/library/${idea.id}`}
+      prefetch={false}
+      className="lib-idea"
+      onClick={(e) => {
+        // A plain click opens the sheet; a modifier-click keeps the link's own behaviour.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        onOpen(idea.id);
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <b>{idea.questionType === "FORMULA" && !idea.title ? <MathText text={headline} /> : headline}</b>
+        <span className="t-meta">
+          <span>{idea.domainName}</span>
+          <span>{idea.isArchived ? "archived" : mastered ? `mastered · ${dueLabel(idea.dueAt, now)}` : dueLabel(idea.dueAt, now)}</span>
+          {idea.failedAttempts > 0 && !idea.isArchived && <span>{plural(idea.failedAttempts, "strike")}</span>}
+        </span>
+      </div>
+      <span className="lib-lvl">
+        {mastered ? (
+          <Chip tone="kept" icon="check">
+            Mastered
+          </Chip>
+        ) : (
+          <span aria-label={`Level ${idea.level} of ${MASTERY_LEVEL}`}>L{idea.level}</span>
+        )}
+      </span>
+    </Link>
+  );
+}
+
+/** ?idea=<id> for an idea that is gone (deleted elsewhere, or a stale link): say so, once. */
+function MissingIdea({ onDone }: { onDone: () => void }) {
+  return (
+    <Sheet open onClose={onDone} title="That idea isn't here" description="It was deleted, or the link is out of date.">
+      <Button variant="secondary" onClick={onDone}>
+        Back to the library
+      </Button>
+    </Sheet>
+  );
+}
+
+// ─── Active filter tokens ───────────────────────────────────────────────────
+
+interface Token {
+  key: string;
+  label: string;
+  clear: () => void;
+}
+
+function activeTokens(f: LibraryFilters, fields: LibraryField[], set: (patch: Partial<LibraryFilters>) => void): Token[] {
+  const fieldName = new Map(fields.map((x) => [x.id, x.name]));
+  const domainName = new Map(fields.flatMap((x) => x.domains.map((d) => [d.id, d.name] as const)));
+  const out: Token[] = [];
+  for (const id of f.fields) out.push({ key: `f:${id}`, label: fieldName.get(id) ?? "Unknown field", clear: () => set({ fields: toggle(f.fields, id) }) });
+  for (const id of f.domains) out.push({ key: `d:${id}`, label: domainName.get(id) ?? "Unknown domain", clear: () => set({ domains: toggle(f.domains, id) }) });
+  for (const t of f.tags) out.push({ key: `t:${t}`, label: `#${t}`, clear: () => set({ tags: toggle(f.tags, t) }) });
+  for (const t of f.types) out.push({ key: `y:${t}`, label: TYPE_NAME[t], clear: () => set({ types: toggle(f.types, t) }) });
+  for (const c of f.cols) out.push({ key: `c:${c}`, label: COLLECTION_NAME[c], clear: () => set({ cols: toggle(f.cols, c) }) });
+  for (const b of f.bands) out.push({ key: `b:${b}`, label: DIFFICULTY_META[b].label, clear: () => set({ bands: toggle(f.bands, b) }) });
+  if (f.minLevel > 1 || f.maxLevel < MASTERY_LEVEL) {
+    out.push({ key: "lv", label: `Level ${f.minLevel}–${f.maxLevel}`, clear: () => set({ minLevel: 1, maxLevel: MASTERY_LEVEL }) });
+  }
+  return out;
+}
+
+// ─── The filter sheet ───────────────────────────────────────────────────────
+
+function FilterSheet({
+  open,
+  onClose,
+  filters: f,
+  fields,
+  allTags,
+  resultCount,
+  archivedCount,
+  onChange,
+  onClear,
+}: {
+  open: boolean;
+  onClose: () => void;
+  filters: LibraryFilters;
+  fields: LibraryField[];
+  allTags: string[];
+  resultCount: number;
+  archivedCount: number;
+  onChange: (patch: Partial<LibraryFilters>) => void;
+  onClear: () => void;
+}) {
+  // Domains narrow to the chosen fields, but a domain already chosen is never
+  // dropped silently: it stays offered (and as a token) until removed.
+  const domainFields = f.fields.length > 0 ? fields.filter((x) => f.fields.includes(x.id)) : fields;
+  const offered = domainFields.flatMap((x) => x.domains.map((d) => ({ ...d, field: x.name })));
+  const offeredIds = new Set(offered.map((d) => d.id));
+  const kept = fields.flatMap((x) => x.domains.map((d) => ({ ...d, field: x.name }))).filter((d) => f.domains.includes(d.id) && !offeredIds.has(d.id));
+  const domains = [...offered, ...kept];
+  const sameName = new Map<string, number>();
+  for (const d of domains) sameName.set(d.name, (sameName.get(d.name) ?? 0) + 1);
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Filters"
+      description="Inside a group any choice matches; across groups, all of them must."
+      footer={
+        <>
+          <Button variant="quiet" onClick={onClear}>
+            Clear all
+          </Button>
+          <Button variant="primary" style={{ flex: 1 }} onClick={onClose}>
+            Show {plural(resultCount, "idea")}
+          </Button>
+        </>
+      }
+    >
+      <div className="lib-facet">
+        <span className="t-eyebrow" id="lf-status">
+          Show
+        </span>
+        <div className="lib-opts" role="group" aria-labelledby="lf-status">
+          {(["all", "due", "mastered", "struggling", "archived"] as LibraryStatus[]).map((s) => (
+            <ChipButton key={s} pressed={f.status === s} onClick={() => onChange({ status: s })}>
+              {STATUS_NAME[s]}
+              {s === "archived" && archivedCount > 0 ? ` ${archivedCount}` : ""}
+            </ChipButton>
+          ))}
+        </div>
+        <p className="st-hint">Struggling: at least one strike since the last recall.</p>
+      </div>
+
+      {fields.length > 0 && (
+        <Facet title="Fields">
+          {fields.map((x) => (
+            <ChipButton key={x.id} pressed={f.fields.includes(x.id)} onClick={() => onChange({ fields: toggle(f.fields, x.id) })}>
+              {x.name}
+            </ChipButton>
+          ))}
+        </Facet>
+      )}
+
+      {domains.length > 0 && (
+        <Facet title={f.fields.length > 0 ? "Domains in the chosen fields" : "Domains"}>
+          {domains.map((d) => (
+            <ChipButton key={d.id} pressed={f.domains.includes(d.id)} onClick={() => onChange({ domains: toggle(f.domains, d.id) })}>
+              {d.name}
+              {(sameName.get(d.name) ?? 0) > 1 ? ` · ${d.field}` : ""}
+            </ChipButton>
+          ))}
+        </Facet>
+      )}
+
+      {allTags.length > 0 && (
+        <Facet title="Tags">
+          {allTags.map((t) => (
+            <ChipButton key={t} pressed={f.tags.includes(t)} onClick={() => onChange({ tags: toggle(f.tags, t) })}>
+              #{t}
+            </ChipButton>
+          ))}
+        </Facet>
+      )}
+
+      <Facet title="Format">
+        {QUESTION_TYPES.map((t: QuestionType) => (
+          <ChipButton key={t} pressed={f.types.includes(t)} onClick={() => onChange({ types: toggle(f.types, t) })}>
+            {TYPE_NAME[t]}
+          </ChipButton>
+        ))}
+      </Facet>
+
+      <Facet title="Collection">
+        {COLLECTION_LABELS.map((c: CollectionLabel) => (
+          <ChipButton key={c} pressed={f.cols.includes(c)} onClick={() => onChange({ cols: toggle(f.cols, c) })}>
+            {COLLECTION_NAME[c]}
+          </ChipButton>
+        ))}
+      </Facet>
+
+      <Facet title="Difficulty" hint="Unscored ideas drop out while a difficulty is chosen.">
+        {DIFFICULTY_BANDS.map((b: DifficultyBand) => (
+          <ChipButton key={b} pressed={f.bands.includes(b)} onClick={() => onChange({ bands: toggle(f.bands, b) })}>
+            {DIFFICULTY_META[b].label}
+          </ChipButton>
+        ))}
+      </Facet>
+
+      <div className="lib-facet">
+        <span className="t-eyebrow">Level</span>
+        <div className="lib-range">
+          <label className="sr-only" htmlFor="lf-min">
+            Lowest level
+          </label>
+          <input
+            id="lf-min"
+            className="st-input num"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MASTERY_LEVEL}
+            value={f.minLevel}
+            onChange={(e) => onChange({ minLevel: Math.min(f.maxLevel, Math.max(1, Number(e.target.value) || 1)) })}
+          />
+          <span className="ink-2" aria-hidden="true">
+            to
+          </span>
+          <label className="sr-only" htmlFor="lf-max">
+            Highest level
+          </label>
+          <input
+            id="lf-max"
+            className="st-input num"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MASTERY_LEVEL}
+            value={f.maxLevel}
+            onChange={(e) =>
+              onChange({ maxLevel: Math.max(f.minLevel, Math.min(MASTERY_LEVEL, Number(e.target.value) || MASTERY_LEVEL)) })
+            }
+          />
+          <span className="t-meta">of {MASTERY_LEVEL}</span>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function Facet({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="lib-facet" role="group" aria-label={title}>
+      <span className="t-eyebrow">{title}</span>
+      <div className="lib-opts">{children}</div>
+      {hint && <p className="st-hint">{hint}</p>}
     </div>
   );
 }

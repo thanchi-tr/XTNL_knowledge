@@ -2,8 +2,8 @@ import { cache } from "react";
 import { dueCutoff } from "./due";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
-import { applyDebuff } from "./debuffs";
-import { drawBoon, grantBoon, type BoonKind } from "./boons";
+import { applyDebuff, DEBUFF_META } from "./debuffs";
+import { BOON_KINDS, BOON_META, grantBoon, type ActiveBoonRow, type BoonKind } from "./boons";
 import { loadMaintenanceIds } from "./field-focus";
 import { formatExpiry } from "./format-date";
 import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
@@ -24,10 +24,16 @@ import type { ActivityInput } from "./life-types";
  * is random: which of the due Ideas you face, weighted toward the
  * highest-level (hardest-won) ones, is decided per encounter. The *payout*
  * is not random — a victory at a given tier is always worth exactly the
- * same, stated up front before you commit. This is the roguelike split
+ * same, stated up front before you commit, and the boon it opens is one
+ * you choose (it used to be drawn at random). This is the roguelike split
  * (uncertain challenge, deterministic reward), not the slot-machine one
  * (certain challenge, uncertain reward); the second is the pattern this
  * project has refused elsewhere, and refuses here.
+ *
+ * **Its bar only drops on a correct answer.** The runner shows "need 7 of 9
+ * · 3 so far": `bossNeedCorrect` is the fewest correct answers that win,
+ * computed with the resolver's own comparison, so the bar and the verdict
+ * can never disagree.
  *
  * **Why it escalates.** Every victory raises the Field's Boss tier: the
  * next encounter draws more cards, demands higher accuracy, pays more, and
@@ -53,6 +59,47 @@ export function bossRequiredAccuracy(tier: number): number {
 /** Mastery points a victory pays. Deterministic and shown before you commit. */
 export function bossMasteryReward(tier: number): number {
   return Math.round((2 + 1.5 * tier) * 10) / 10;
+}
+
+/** A victory's accuracy test, exactly as `resolveBossAttempt` applies it. */
+export function bossWins(tier: number, correct: number, total: number): boolean {
+  const accuracy = total > 0 ? correct / total : 0;
+  return !(accuracy < bossRequiredAccuracy(tier));
+}
+
+/**
+ * The fewest correct answers out of `total` that win at `tier` ("need 7 of
+ * 9"). Found by asking `bossWins` itself rather than by ceil(required ×
+ * total): the two agree for every tier and size today (review-check), but
+ * only this form stays equal to the verdict by construction if the accuracy
+ * curve ever changes to values whose float product lands a hair off.
+ */
+export function bossNeedCorrect(tier: number, total: number): number {
+  for (let c = 0; c <= total; c++) if (bossWins(tier, c, total)) return c;
+  return total;
+}
+
+/** How long a victory's boon waits to be chosen. At most every boon's duration, so a claim row outlives the window (see claimBossBoon). */
+export const BOSS_BOON_CLAIM_HOURS = 24;
+
+/** The ActiveBoon.reason a victory's chosen boon carries: one claim per victory. */
+export function bossSpoilsReason(fieldId: string, victoryAt: Date): string {
+  return `BOSS_SPOILS:${fieldId}:${victoryAt.toISOString()}`;
+}
+
+/** The last instant a victory's boon can be chosen. */
+export function boonClaimUntil(victoryAt: Date): Date {
+  return new Date(victoryAt.getTime() + BOSS_BOON_CLAIM_HOURS * 3_600_000);
+}
+
+/**
+ * Whether a boon row claims the victory at `victoryAt`: its exact reason, or
+ * (before choosing existed) the drawn boon a victory minted on the spot,
+ * reason "BOSS_SPOILS", created at or after it.
+ */
+export function claimsVictory(row: { reason: string; createdAt: Date }, fieldId: string, victoryAt: Date): boolean {
+  if (row.reason === bossSpoilsReason(fieldId, victoryAt)) return true;
+  return row.reason === "BOSS_SPOILS" && row.createdAt.getTime() >= victoryAt.getTime();
 }
 
 // ============================================================================
@@ -154,10 +201,14 @@ export interface BossState {
   archetype: BossArchetype;
   batchSize: number;
   requiredAccuracy: number;
+  /** Correct answers out of batchSize that win ("need 7 of 9"). */
+  needCorrect: number;
   masteryReward: number;
   /** Due, non-archived Ideas in this Field right now — the Boss's actual body. */
   dueCount: number;
   availability: BossAvailability;
+  /** The last victory's boon, still waiting to be chosen (until claimUntil), or null. */
+  pendingBoon: { victoryAt: Date; claimUntil: Date } | null;
 }
 
 export const loadBossStates = cache(async (userId: string): Promise<BossState[]> => {
@@ -165,7 +216,7 @@ export const loadBossStates = cache(async (userId: string): Promise<BossState[]>
 });
 
 async function loadBossStatesUncached(userId: string, now: Date): Promise<BossState[]> {
-  const [allFields, encounters, maintained] = await Promise.all([
+  const [allFields, encounters, maintained, claims] = await Promise.all([
     prisma.field.findMany({
       orderBy: { name: "asc" },
       select: {
@@ -177,6 +228,14 @@ async function loadBossStatesUncached(userId: string, now: Date): Promise<BossSt
     }),
     prisma.bossEncounter.findMany({ where: { userId } }),
     loadMaintenanceIds(userId),
+    // Boon claims, for "a victory's boon is still waiting to be chosen". A
+    // claim outlives its window (BOSS_BOON_CLAIM_HOURS is at most every
+    // boon's duration, and only expired rows are purged), so this sees every
+    // claim that could still matter.
+    prisma.activeBoon.findMany({
+      where: { userId, reason: { startsWith: "BOSS_SPOILS" } },
+      select: { reason: true, createdAt: true },
+    }),
   ]);
 
   // A Field in maintenance fields no Boss at all — not a locked or cooling
@@ -207,6 +266,15 @@ async function loadBossStatesUncached(userId: string, now: Date): Promise<BossSt
       availability = { status: "ready" };
     }
 
+    const victoryAt = encounter?.lastVictoryAt ?? null;
+    const pendingBoon =
+      victoryAt &&
+      !(encounter?.lastAttemptAt && encounter.lastAttemptAt > victoryAt) &&
+      now < boonClaimUntil(victoryAt) &&
+      !claims.some((c) => claimsVictory(c, field.id, victoryAt))
+        ? { victoryAt, claimUntil: boonClaimUntil(victoryAt) }
+        : null;
+
     return {
       fieldId: field.id,
       fieldName: field.name,
@@ -216,9 +284,11 @@ async function loadBossStatesUncached(userId: string, now: Date): Promise<BossSt
       archetype: bossFor(field.id, tier),
       batchSize,
       requiredAccuracy: bossRequiredAccuracy(tier),
+      needCorrect: bossNeedCorrect(tier, batchSize),
       masteryReward: bossMasteryReward(tier),
       dueCount,
       availability,
+      pendingBoon,
     };
   });
 }
@@ -295,20 +365,32 @@ export type BossResolution =
       outcome: "victory";
       accuracy: number;
       required: number;
+      correct: number;
+      total: number;
+      needCorrect: number;
       masteryAwarded: number;
       newTier: number;
       defeated: BossArchetype;
       nextBoss: BossArchetype;
       cooldownUntil: Date;
-      /** The Spoils Cache this victory opened — see boons.ts for why its contents vary but its worth does not. */
-      spoils: { kind: BoonKind; magnitude: number; expiresAt: Date };
+      /**
+       * The boon this victory opened: the player chooses one of these
+       * (claimBossBoon) before claimUntil. Every boon is of comparable worth
+       * for the same 24 hours (boon-meta.ts).
+       */
+      boon: { choices: BoonKind[]; victoryAt: Date; claimUntil: Date };
     }
   | {
       outcome: "defeat";
       accuracy: number;
       required: number;
+      correct: number;
+      total: number;
+      needCorrect: number;
       taunt: string;
       debuff: "SHAKEN";
+      /** When the debuff lifts on its own. */
+      debuffUntil: Date;
       cooldownUntil: Date;
     }
   | { outcome: "rejected"; why: string };
@@ -357,6 +439,7 @@ export async function resolveBossAttempt(
 
   const accuracy = total > 0 ? correct / total : 0;
   const required = bossRequiredAccuracy(tier);
+  const needCorrect = bossNeedCorrect(tier, total);
 
   // The fight goes in the life ledger whichever way it ends: it was real
   // work either way, and it counts toward the daily streak. Keyed by the
@@ -397,8 +480,13 @@ export async function resolveBossAttempt(
       outcome: "defeat",
       accuracy,
       required,
+      correct,
+      total,
+      needCorrect,
       taunt: bossFor(fieldId, tier).taunt,
       debuff: "SHAKEN",
+      // applyDebuff's own expiry: now + the kind's duration.
+      debuffUntil: new Date(now.getTime() + DEBUFF_META.SHAKEN.durationHours * 3_600_000),
       cooldownUntil,
     };
   }
@@ -429,24 +517,62 @@ export async function resolveBossAttempt(
     throw err;
   }
   invalidateActivity(won);
-
-  // The Spoils Cache. Minted after the mastery award, never instead of it —
-  // the payout you were promised before the fight is unconditional, and
-  // this is variety on top.
-  const spoils = await grantBoon(userId, drawBoon(), "BOSS_SPOILS", now);
   invalidate("progress");
 
+  // The boon is chosen, not drawn: the victory opens a choice of every boon
+  // (claimBossBoon grants the one picked). The mastery above was promised
+  // before the fight and is unconditional; the boon is on top.
   return {
     outcome: "victory",
     accuracy,
     required,
+    correct,
+    total,
+    needCorrect,
     masteryAwarded,
     newTier,
     defeated: bossFor(fieldId, tier),
     nextBoss: bossFor(fieldId, newTier),
     cooldownUntil,
-    spoils: { kind: spoils.kind, magnitude: spoils.magnitude, expiresAt: spoils.expiresAt },
+    boon: { choices: [...BOON_KINDS], victoryAt: now, claimUntil: boonClaimUntil(now) },
   };
+}
+
+/**
+ * Grants the boon a victory's player chose. One per victory: the claim is
+ * the ActiveBoon row itself (reason `bossSpoilsReason`), and it outlives the
+ * claim window because every boon lasts at least BOSS_BOON_CLAIM_HOURS.
+ * Refused when the latest attempt was not a win, when the window has
+ * closed, or when this victory's boon was already chosen.
+ */
+export async function claimBossBoon(
+  userId: string,
+  fieldId: string,
+  kind: BoonKind,
+  now: Date = new Date()
+): Promise<{ ok: true; boon: ActiveBoonRow } | { ok: false; error: string }> {
+  if (!(BOON_KINDS as string[]).includes(kind)) return { ok: false, error: "No such boon." };
+  const [encounter, claims] = await Promise.all([
+    prisma.bossEncounter.findUnique({ where: { userId_fieldId: { userId, fieldId } } }),
+    prisma.activeBoon.findMany({
+      where: { userId, reason: { startsWith: "BOSS_SPOILS" } },
+      select: { reason: true, createdAt: true, kind: true },
+    }),
+  ]);
+  const victoryAt = encounter?.lastVictoryAt ?? null;
+  if (!victoryAt || (encounter?.lastAttemptAt && encounter.lastAttemptAt > victoryAt)) {
+    return { ok: false, error: "No victory is waiting on a boon." };
+  }
+  if (now >= boonClaimUntil(victoryAt)) {
+    return { ok: false, error: "That victory's boon was not chosen in time." };
+  }
+  const taken = claims.find((c) => claimsVictory(c, fieldId, victoryAt));
+  if (taken) {
+    const label = BOON_META[taken.kind as BoonKind]?.label ?? taken.kind;
+    return { ok: false, error: `This victory's boon is already chosen: ${label}.` };
+  }
+  const boon = await grantBoon(userId, kind, bossSpoilsReason(fieldId, victoryAt), now);
+  return { ok: true, boon };
 }
 
 /** Opens an encounter: stamps the start time the resolver corroborates against, and returns the draw. */

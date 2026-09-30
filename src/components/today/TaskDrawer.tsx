@@ -40,7 +40,8 @@ interface Props {
   onResize: () => void;
 }
 
-const CHIP_COLOR = { muted: "var(--ink-2)", blue: "var(--blue)", green: "var(--green)" } as const;
+/** The grade chip's tone: ink for a settled grade, the held hue for one still sizing (always with its words). */
+const CHIP_CLASS = { muted: "ink-2", blue: "ink-1", green: "ink-0" } as const;
 
 /**
  * Everything a row can do besides the one-tap tick: report real minutes (the
@@ -98,21 +99,21 @@ export function TaskDrawer(props: Props) {
               <button
                 key={m}
                 type="button"
-                className="today-pill mono"
+                className="today-pill num"
                 aria-pressed={minutes === m}
                 onClick={() => props.onMinutes(minutes === m ? null : m)}
               >
-                {m}m
+                {m} min
               </button>
             ))}
           </div>
           <div className="today-drawer-row">
-            <button type="button" className="today-pill" data-tone="green" disabled={busy} onClick={props.onDone}>
-              Done · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`} · ≈ {fmtXp(projection.xp)} XP
+            <button type="button" className="today-pill" data-tone="primary" disabled={busy} onClick={props.onDone}>
+              Done · {minutes != null ? fmtMinutes(minutes) : `~${fmtMinutes(row.estMinutes)}`} · ≈ {fmtXp(projection.xp)}
             </button>
             {t.mvv && props.minimumProjection && (
               <button type="button" className="today-pill" disabled={busy} onClick={props.onMinimum}>
-                Do minimum: {t.mvv} · ≈ {fmtXp(props.minimumProjection.xp)} XP
+                Do minimum: {t.mvv} · ≈ {fmtXp(props.minimumProjection.xp)}
               </button>
             )}
           </div>
@@ -132,7 +133,7 @@ export function TaskDrawer(props: Props) {
         )}
         {row.state === "done" && recurring && !study && row.lane !== "yesterday" && (
           <button type="button" className="today-pill" disabled={busy} onClick={props.onAgain} title="Once more today; repeat decay applies">
-            Again · ≈ {fmtXp(projection.xp)} XP
+            Again · ≈ {fmtXp(projection.xp)}
           </button>
         )}
         <button
@@ -148,7 +149,7 @@ export function TaskDrawer(props: Props) {
         >
           {working?.kind === "rename" ? "Renaming…" : "Edit"}
         </button>
-        <button type="button" className="today-pill" data-tone="red" disabled={busy} onClick={props.onArchive} title="Archive it. Undo stays on screen for 10 seconds.">
+        <button type="button" className="today-pill" data-tone="danger" disabled={busy} onClick={props.onArchive} title="Archive it. Undo stays on screen for 10 seconds.">
           Archive
         </button>
       </div>
@@ -167,8 +168,7 @@ export function TaskDrawer(props: Props) {
           }}
         >
           <input
-            className="input"
-            style={{ flex: "1 1 200px" }}
+            className="today-input"
             value={title}
             maxLength={200}
             onChange={(e) => setTitle(e.target.value)}
@@ -191,9 +191,9 @@ export function TaskDrawer(props: Props) {
       )}
 
       <div className="today-size">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <span className="label-xs">Size</span>
-          <span className="mono" style={{ fontSize: 11, color: CHIP_COLOR[chip.tone] }} title={t.gradeBasis ?? undefined}>
+        <div className="today-size-h">
+          <span className="t-eyebrow">Size</span>
+          <span className={`t-mono ${CHIP_CLASS[chip.tone]}`} title={t.gradeBasis ?? undefined}>
             {chip.label}
           </span>
         </div>
@@ -213,14 +213,14 @@ export function TaskDrawer(props: Props) {
                 data-current={current ? "1" : undefined}
                 disabled={locked || !usable || current}
                 onClick={() => props.onOverride(i - machineIdx)}
-                style={{ textAlign: "left", background: current ? undefined : "transparent", cursor: usable && !current ? "pointer" : "default", opacity: allowed ? 1 : 0.4 }}
+                data-allowed={allowed ? undefined : "0"}
                 title={!allowed ? "A self-rating can go at most one band above the machine's" : !rating.open ? "Self-rating is closed until the weekly cooldown ends" : undefined}
               >
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: current ? "var(--ink-0)" : "var(--ink-1)", minWidth: 78 }}>
+                <span className="band-name">
                   {BAND_LABEL[b]}
                   {i === machineIdx ? " ·" : ""}
                 </span>
-                <span style={{ fontSize: 11 }}>
+                <span className="band-blurb">
                   {BAND_BLURB[b]}
                   {current && pendingRate !== null ? " · saving…" : ""}
                 </span>
@@ -241,7 +241,7 @@ export function TaskDrawer(props: Props) {
           {t.gradeModel && (
             <>
               <dt>Model</dt>
-              <dd className="mono" style={{ fontSize: 10.5 }}>
+              <dd className="t-mono">
                 {t.gradeModel}
                 {t.gradePromptVersion != null ? ` · prompt v${t.gradePromptVersion}` : ""}
               </dd>
@@ -267,7 +267,7 @@ export function TaskDrawer(props: Props) {
               {resizing ? "Sizing…" : "Resize"}
             </button>
           )}
-          <span style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
+          <span className="today-size-note">
             {!rating.open && rating.nextAt != null
               ? `Self-rated this week. The size can change again from ${formatExpiry(new Date(rating.nextAt))}.`
               : t.gradeFrozen

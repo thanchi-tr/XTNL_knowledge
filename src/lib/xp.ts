@@ -86,72 +86,115 @@ export const MASTERY_BONUS = 25;
 export const MASTERY_LEVEL = 12;
 
 /**
- * Points awarded for a passed review.
+ * The level half of a review's price: what clearing an Idea at this level is
+ * worth before the combo and the loadout. `REVIEW_XP_BASE` at level 1, plus
+ * `REVIEW_LEVEL_BONUS` of it for every level above (2.00, 2.36, 2.72 …).
+ */
+export function reviewLevelBase(ideaLevel: number): number {
+  return REVIEW_XP_BASE * (1 + REVIEW_LEVEL_BONUS * (Math.max(1, ideaLevel) - 1));
+}
+
+/**
+ * The combo multiplier a passed review is paid at: `COMBO_STEP` for every
+ * consecutive correct answer *before* this one, up to `comboCap`.
  *
- * `combo` is the count of consecutive correct answers *before* this one. It
- * is clamped rather than trusted: it originates on the client (there is no
- * server-side session record to derive it from), so the clamp bounds the
- * worst case of a forged value to +50% rather than unbounded inflation.
+ * `combo` is clamped rather than trusted: it originates on the client (there
+ * is no server-side session record to derive it from), so the clamp bounds
+ * the worst case of a forged value to the cap rather than unbounded
+ * inflation. `comboCap` is the modified ceiling (COMBO_CEILING, the MOMENTUM
+ * boon, the FATIGUED debuff), so the runner's "×1.15 on this card" label and
+ * the payout read the same number from this one function.
+ */
+export function comboMultiplier(combo: number, comboCap = COMBO_CAP): number {
+  return 1 + COMBO_STEP * Math.min(Math.max(0, combo), comboCap);
+}
+
+/** True when the next correct answer can no longer raise the combo multiplier. */
+export function comboIsCapped(combo: number, comboCap = COMBO_CAP): boolean {
+  return Math.max(0, combo) >= comboCap;
+}
+
+/**
+ * Points awarded for a passed review: level base × combo × yield.
  *
  * `comboCap`/`yieldMultiplier` are skill-modifier hooks (COMBO_CEILING,
- * REVIEW_YIELD in skill-pool.ts) — callers pass `ActiveModifiers` fields
- * here; the defaults reproduce the un-modified curve exactly.
+ * REVIEW_YIELD in skill-pool.ts, plus boons and debuffs) — callers pass
+ * `ActiveModifiers` fields here; the defaults reproduce the un-modified curve
+ * exactly. Multiplied in the same order it always was, so every payout is
+ * bit-for-bit what it was before `reviewPayout` split it into parts.
  */
 export function reviewReward(ideaLevel: number, combo = 0, comboCap = COMBO_CAP, yieldMultiplier = 1): number {
-  const levelFactor = 1 + REVIEW_LEVEL_BONUS * (Math.max(1, ideaLevel) - 1);
-  const comboFactor = 1 + COMBO_STEP * Math.min(Math.max(0, combo), comboCap);
-  return REVIEW_XP_BASE * levelFactor * comboFactor * yieldMultiplier;
-}
-
-// ============================================================================
-// Reward variance
-// ============================================================================
-/**
- * Bounded variance on a review payout — RPG damage roll, not a slot machine.
- *
- * The README records this project refusing a variable-ratio reinforcement
- * schedule: a claim button that ran a suspense animation before resolving to
- * a hidden 15% jackpot. That refusal stands, and this is deliberately not
- * that. The distinction is where the uncertainty sits:
- *
- *   - A slot machine makes *whether you are rewarded* uncertain, on a
- *     schedule tuned for compulsion. Nothing here does that: clearing a card
- *     always pays, and always pays close to its stated value.
- *   - This makes only the *exact size* wobble, inside a stated band, with an
- *     expected value of 1.0. Over any real session it averages out to
- *     precisely the deterministic number the curve always produced.
- *
- * No hidden jackpot, no suspense delay, no schedule that pays off
- * unpredictably enough to hook anyone. The band is published in the UI and
- * the top of it is labelled rather than concealed, which is the opposite of
- * how a gacha reveal works.
- *
- * `random` is injected so the roll is reproducible in tests.
- */
-export const VARIANCE_MIN = 0.88;
-export const VARIANCE_MAX = 1.12;
-/** Top slice of the band, called out so a good roll reads as a moment. */
-export const VARIANCE_STRONG_AT = 1.08;
-
-export type RewardBand = "low" | "normal" | "strong";
-
-export interface RewardRoll {
-  factor: number;
-  band: RewardBand;
+  return reviewLevelBase(ideaLevel) * comboMultiplier(combo, comboCap) * yieldMultiplier;
 }
 
 /**
- * Triangular rather than uniform: averaging two uniform draws clusters
- * results near the centre, so most reviews land close to the printed number
- * and the extremes stay genuinely uncommon. A uniform roll would make the
- * band's edges as ordinary as its middle, which reads as noise rather than
- * as a good or bad roll.
+ * A passed review's price, in the parts the result panel and the session
+ * receipt print ("2.36 base × 1.15 combo × 1.20 yield"). `review` is exactly
+ * `reviewReward(...)`; `total` adds the once-per-Idea mastery lump, which is
+ * a fixed milestone and never multiplied by the combo.
  */
-export function rollRewardVariance(random: () => number = Math.random): RewardRoll {
-  const centred = (random() + random()) / 2;
-  const factor = VARIANCE_MIN + (VARIANCE_MAX - VARIANCE_MIN) * centred;
-  const band: RewardBand = factor >= VARIANCE_STRONG_AT ? "strong" : factor <= 0.94 ? "low" : "normal";
-  return { factor: Math.round(factor * 1000) / 1000, band };
+export interface ReviewPayout {
+  /** Level base (reviewLevelBase). */
+  base: number;
+  /** Consecutive correct answers before this one, as sent. */
+  combo: number;
+  /** The combo multiplier actually paid, after the cap. */
+  comboMultiplier: number;
+  /** The ceiling the combo was clamped to (modifiers included). */
+  comboCap: number;
+  /** Loadout, boons and debuffs, folded (ActiveModifiers.reviewYieldMultiplier). */
+  yieldMultiplier: number;
+  /** base × combo × yield: what the review itself paid. */
+  review: number;
+  /** The mastery lump on the transition to MASTERY_LEVEL (0 otherwise). */
+  masteryBonus: number;
+  /** review + masteryBonus: what the Domain was credited. */
+  total: number;
+}
+
+export function reviewPayout(
+  ideaLevel: number,
+  combo = 0,
+  comboCap = COMBO_CAP,
+  yieldMultiplier = 1,
+  masteryBonus = 0
+): ReviewPayout {
+  const base = reviewLevelBase(ideaLevel);
+  const mult = comboMultiplier(combo, comboCap);
+  const review = base * mult * yieldMultiplier;
+  return {
+    base,
+    combo,
+    comboMultiplier: mult,
+    comboCap,
+    yieldMultiplier,
+    review,
+    masteryBonus,
+    total: review + masteryBonus,
+  };
+}
+
+// ============================================================================
+// Reward variance — retired
+// ============================================================================
+/**
+ * There is no roll. A review pays its stated price, every time.
+ *
+ * This used to multiply every payout by a triangular draw on [0.88, 1.12]
+ * (the mean of two uniform draws, rounded to 0.001) and label the top slice
+ * a "Strong roll". The band was symmetric about 1.0, so its expected value
+ * was exactly 1.0: over any real session it averaged to the deterministic
+ * price anyway, and all it added was a variable-ratio flourish on the one
+ * number a player should be able to trust. The redesign's honesty rule
+ * ("the same answers always pay the same") removes it.
+ *
+ * Kept as a function so the removal is explicit and checked:
+ * scripts/review-check.ts re-derives the old distribution's mean (1.0) and
+ * asserts this returns exactly that, so no payout's expectation moved.
+ * srs.ts no longer calls it.
+ */
+export function rollRewardVariance(): { factor: 1 } {
+  return { factor: 1 };
 }
 
 /**

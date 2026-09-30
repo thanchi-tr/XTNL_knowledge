@@ -1,12 +1,32 @@
+import type { Metadata } from "next";
 import { loadLibraryTree } from "@/lib/queries";
-import { LibrarySearch, type LibraryIdea } from "@/components/library/LibrarySearch";
+import { LibrarySearch } from "@/components/library/LibrarySearch";
+import type { LibraryField, LibraryIdea } from "@/components/library/library-model";
 
 export const dynamic = "force-dynamic";
 
-export default async function LibraryPage() {
-  const fields = await loadLibraryTree();
+export const metadata: Metadata = { title: "Library" };
 
-  const ideas: LibraryIdea[] = fields.flatMap((f) =>
+/**
+ * The tree plus the request time. The time is read here, once per request,
+ * and passed down so the server render and the browser agree on what is
+ * "due now" (no clock read during a render).
+ */
+async function loadLibrary() {
+  const tree = await loadLibraryTree();
+  return { tree, now: Date.now() };
+}
+
+/**
+ * Study › Library (Browse). Search and every filter family live in the URL
+ * (the client reads them with useSearchParams), the filters open as a sheet,
+ * and an idea opens as a sheet on compact and a right drawer from 600, with
+ * its own page at /library/[id] for deep links from Review.
+ */
+export default async function LibraryPage() {
+  const { tree, now } = await loadLibrary();
+
+  const ideas: LibraryIdea[] = tree.flatMap((f) =>
     f.domains.flatMap((d) =>
       d.ideas.map((i) => ({
         id: i.id,
@@ -16,7 +36,9 @@ export default async function LibraryPage() {
         collectionLabel: i.collectionLabel,
         level: i.level,
         isArchived: i.isArchived,
+        fieldId: f.id,
         fieldName: f.name,
+        domainId: d.id,
         domainName: d.name,
         // Node data from the dedup pipeline. Nullable on anything created
         // before it existed, so every consumer treats it as optional.
@@ -25,18 +47,19 @@ export default async function LibraryPage() {
         tags: i.tags,
         linkedCount: i.linkedIdeaIds.length,
         difficulty: i.difficulty,
+        dueAt: i.dueDate.getTime(),
+        failedAttempts: i.failedAttempts,
+        createdAt: i.createdAt.getTime(),
       }))
     )
   );
 
-  const fieldNames = fields.map((f) => f.name);
-  // Level per field, for the tier decoration on the "by field" tiles. Keyed
-  // by name because that is what an Idea carries into the client — the
-  // library never needs field ids.
-  const fieldLevels: Record<string, number> = {};
-  for (const f of fields) fieldLevels[f.name] = f.level;
-  const domainsByField: Record<string, string[]> = {};
-  for (const f of fields) domainsByField[f.name] = f.domains.map((d) => d.name);
+  const fields: LibraryField[] = tree.map((f) => ({
+    id: f.id,
+    name: f.name,
+    level: f.level,
+    domains: f.domains.map((d) => ({ id: d.id, name: d.name })),
+  }));
 
   // Tag vocabulary, ranked by frequency so the most useful filters lead.
   const tagCounts = new Map<string, number>();
@@ -46,27 +69,8 @@ export default async function LibraryPage() {
   const allTags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
 
   return (
-    <main className="site-container flex-1 py-8">
-      <header className="fade-up mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="section-eyebrow">Knowledge Engine</p>
-          <h1 className="mt-1.5 text-[19px] font-semibold tracking-tight" style={{ color: "var(--ink-0)" }}>
-            Library
-          </h1>
-        </div>
-        <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {ideas.length} idea{ideas.length === 1 ? "" : "s"} indexed
-        </p>
-      </header>
-      <div className="fade-up fade-up-1">
-        <LibrarySearch
-          ideas={ideas}
-          fieldNames={fieldNames}
-          fieldLevels={fieldLevels}
-          domainsByField={domainsByField}
-          allTags={allTags}
-        />
-      </div>
-    </main>
+    <div className="page cq-main">
+      <LibrarySearch ideas={ideas} fields={fields} allTags={allTags} now={now} />
+    </div>
   );
 }

@@ -1,5 +1,10 @@
 "use client";
 
+// Not global any more (redesign: the Cataclysm plays only as the backdrop of
+// a first deep unlock, and in the /dev/style/art previews). Imported here so
+// the stylesheet travels with the component, including its lazy chunk.
+import "@/app/cataclysm.css";
+import "@/app/cataclysm-extra.css";
 import { RANK_META } from "@/lib/skill-visuals";
 import { SkillLogo } from "./SkillLogo";
 import { depthOf } from "@/lib/skill-form";

@@ -9,9 +9,9 @@ export type FocusResult = { ok: true } | { ok: false; error: string };
 /**
  * Marks a Field as of interest, or puts it into maintenance.
  *
- * `revalidatePath` on the two screens whose content actually changes: the
- * overview owns the picker, and Review's Boss roster is derived from the same
- * set. The in-memory cache is dropped inside `setFieldInterest`; this is the
+ * `revalidatePath` on the screens whose content actually changes: Settings ›
+ * Study owns the picker (the overview still renders it until it retires), and
+ * Review's Boss roster is derived from the same set. The in-memory cache is dropped inside `setFieldInterest`; this is the
  * router's own cache, which is separate and would otherwise keep serving the
  * previous roster after a toggle.
  */
@@ -19,6 +19,7 @@ export async function setFieldFocus(fieldId: string, interested: boolean): Promi
   if (!fieldId) return { ok: false, error: "No field given." };
   try {
     await setFieldInterest(getCurrentUserId(), fieldId, interested);
+    revalidatePath("/settings");
     revalidatePath("/overview");
     revalidatePath("/review");
     return { ok: true };

@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+/**
+ * Attest mastery: the one place a user writes free text that a model grades
+ * for mastery points (once per life day; mastery.ts holds the rate limit, so
+ * it can't be spammed into an unlock shortcut). The award is the grader's
+ * exact figure, stated with its reason; nothing is rolled.
+ */
+import { useId, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { submitMasteryAttestation } from "@/app/actions/skills";
+import { Button } from "@/components/ui/Button";
+import { Amount } from "@/components/ui/Amount";
 
-/**
- * The one place a user writes free text that a model grades for mastery
- * points — see mastery.ts's rate limit (once per life day) for why this
- * can't be spammed into a skill-unlock shortcut.
- */
 export function AttestationForm() {
   const router = useRouter();
+  const id = useId();
   const [isPending, startTransition] = useTransition();
   const [text, setText] = useState("");
   const [result, setResult] = useState<{ points: number; rationale: string } | null>(null);
@@ -33,31 +37,39 @@ export function AttestationForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card px-4 py-4">
-      <p style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-0)" }}>Attest mastery</p>
-      <p style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 2 }}>
-        Write what you now understand — one graded attestation per day, worth up to 3 mastery points.
+    <form onSubmit={handleSubmit} className="card pad-l" aria-labelledby={`${id}-h`}>
+      <h2 id={`${id}-h`} className="t-body-l" style={{ margin: 0 }}>
+        Attest mastery
+      </h2>
+      <p className="t-meta" id={`${id}-d`} style={{ marginTop: 2 }}>
+        Write what you now understand. One graded attestation a day, worth up to 3 mastery points.
       </p>
+      <label htmlFor={`${id}-t`} className="sr-only">
+        What you now understand
+      </label>
       <textarea
+        id={`${id}-t`}
+        aria-describedby={`${id}-d`}
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}
-        className="input mt-3 w-full"
-        placeholder="What clicked? Be specific — a shallow restatement scores lower than a real insight."
+        className="att-input"
+        placeholder="What clicked? Be specific: a restatement scores lower than a real insight."
         disabled={isPending}
       />
-      <button type="submit" disabled={isPending || !text.trim()} className="btn-primary mt-2">
-        {isPending ? "Grading…" : "Submit"}
-      </button>
-
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+        <Button type="submit" variant="primary" disabled={isPending || !text.trim()}>
+          {isPending ? "Grading…" : "Submit"}
+        </Button>
+      </div>
       {error && (
-        <p role="alert" style={{ fontSize: 11, color: "var(--red)", marginTop: 8 }}>
+        <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 8 }}>
           {error}
         </p>
       )}
       {result && (
-        <p style={{ fontSize: 11, color: "var(--green)", marginTop: 8 }}>
-          +{result.points} mastery — {result.rationale}
+        <p role="status" className="t-meta ink-1" style={{ marginTop: 8 }}>
+          <Amount kind="mp" value={result.points} label="MP" /> · {result.rationale}
         </p>
       )}
     </form>

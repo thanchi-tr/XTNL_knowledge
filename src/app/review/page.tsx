@@ -1,134 +1,165 @@
+import type { Metadata } from "next";
 import { after } from "next/server";
 import { loadFieldTree } from "@/lib/queries";
-import { isDue, formatDue, daysUntilDue } from "@/lib/due";
+import { isDue, daysUntilDue } from "@/lib/due";
 import { displayQuestion } from "@/lib/idea-display";
 import { loadBossStates } from "@/lib/bosses";
 import { recordDayOpen } from "@/lib/tasks";
 import { getCurrentUserId } from "@/lib/user";
+import { todayKey } from "@/lib/life-day";
+import { loadProgression } from "@/lib/skill-effects";
+import { getDailyStreak } from "@/lib/streak";
+import { describeModifiers } from "@/lib/modifier-display";
+import { BOON_META } from "@/lib/boon-meta";
+import { DEBUFF_META } from "@/lib/debuff-meta";
+import { MASTERY_LEVEL } from "@/lib/xp";
+import { questTargetOf } from "@/lib/review-facts";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
+import type { LoadoutSummary, PenaltySummary, RecentIdea } from "@/components/workspace/ReviewHub";
+import { loadLastSeen, loadReviewDay } from "./review-data";
 
 // Due-ness changes by the second (dueDate <= now) — never let this be
 // statically cached/prerendered.
 export const dynamic = "force-dynamic";
 
-export default async function WorkspacePage() {
+export const metadata: Metadata = { title: "Review" };
+
+function daysLabel(days: number): string {
+  if (days <= 0) return "later today";
+  if (days === 1) return "tomorrow";
+  return `in ${days} days`;
+}
+
+/**
+ * Study › Review: the hub (quest, Start, field chips, loadout, encounters,
+ * Recent) and, on the same route, the focus runner and the recap
+ * (WorkspaceView; ?view=run in the URL).
+ *
+ * One wave of reads, every one cached and shared with the pages that need
+ * the same rows: the Field tree, the Boss roster, today's ledger counts (the
+ * quest and whether the day is kept), progression (the combo's ceiling and
+ * the loadout line), the daily streak and each Idea's last review. The
+ * answer side of an Idea never leaves this file: the client gets questions.
+ */
+export default async function ReviewPage() {
   const now = new Date();
+  const userId = getCurrentUserId();
+  const today = todayKey(now);
 
-  // One shared, cached read of the Field tree rather than a bespoke query —
-  // the Dashboard wants the same rows, so whichever page is visited second
-  // pays nothing. Due-filtering moves into memory below: it is a comparison
-  // over a few dozen rows, and pushing it to SQL would cost a round trip
-  // (~816ms) to save microseconds.
-  const [allFields, bosses] = await Promise.all([loadFieldTree(), loadBossStates(getCurrentUserId())]);
+  const [allFields, bosses, day, progression, streak, lastSeen] = await Promise.all([
+    loadFieldTree(),
+    loadBossStates(userId),
+    loadReviewDay(userId, today),
+    loadProgression(userId),
+    getDailyStreak(userId),
+    loadLastSeen(userId),
+  ]);
 
-  const fields = allFields.map((field) => ({
-    ...field,
-    domains: field.domains.map((domain) => ({
-      ...domain,
-      // Day-granular, not instant — see `src/lib/due.ts`. A card due today
-      // is reviewable today, not from whatever time of day it happened to
-      // be scheduled at.
-      ideas: domain.ideas.filter((idea) => isDue(idea.dueDate, now)),
-    })),
-  }));
-
-  const allFieldNames = fields.map((f) => f.name);
-
-  const fieldsWithDue: WorkspaceField[] = fields
+  // Day-granular, not instant — see `src/lib/due.ts`. A card due today is
+  // reviewable today, not from whatever time of day it happened to be
+  // scheduled at.
+  const fields: WorkspaceField[] = allFields
     .map((field) => ({
       id: field.id,
       name: field.name,
-      level: field.level,
-      domains: field.domains
-        .filter((d) => d.ideas.length > 0)
-        .map((domain) => ({
-          id: domain.id,
-          name: domain.name,
-          level: domain.level,
-          totalPoints: domain.totalPoints,
-          ideas: domain.ideas.map((idea) => {
-            const due = formatDue(idea.dueDate, now);
-            return {
-              id: idea.id,
-              level: idea.level,
-              questionType: idea.questionType,
-              question: idea.question,
-              preview: displayQuestion(idea.questionType, idea.question),
-              dueLabel: due.label,
-              overdue: due.overdue,
-            };
-          }),
-        })),
+      cards: field.domains.flatMap((domain) =>
+        domain.ideas
+          .filter((idea) => isDue(idea.dueDate, now))
+          .map((idea) => ({
+            id: idea.id,
+            level: idea.level,
+            questionType: idea.questionType,
+            question: idea.question,
+            preview: displayQuestion(idea.questionType, idea.question),
+            // A MULTI card's payload is only its options; its retrieval question is the prompt. Never the answer.
+            prompt: idea.questionType === "MULTI" ? idea.atomicPrompt?.trim() || null : null,
+            domainName: domain.name,
+            fieldName: field.name,
+            lastSeenDay: lastSeen.byIdea[idea.id] ?? null,
+            overdue: daysUntilDue(idea.dueDate, now) < 0,
+          }))
+      ),
     }))
-    .filter((field) => field.domains.length > 0);
+    .filter((f) => f.cards.length > 0);
 
-  const totalDue = fieldsWithDue.reduce((sum, f) => sum + f.domains.reduce((s, d) => s + d.ideas.length, 0), 0);
+  const totalDue = fields.reduce((s, f) => s + f.cards.length, 0);
 
   // The day's first look at the queue fixes the Today quest's target ("clear
   // the 17 that were due this morning"), so cards falling due later cannot
   // move it. After the response, once per life day; nothing here waits on it.
-  const userId = getCurrentUserId();
   after(() => recordDayOpen(userId, totalDue, now));
 
-  /**
-   * The soonest thing that is *not* due yet, so an empty queue can say when
-   * to come back instead of "check back later".
-   */
-  const notYetDue = allFields
-    .flatMap((f) => f.domains.flatMap((d) => d.ideas))
-    .filter((i) => !isDue(i.dueDate, now))
-    .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
-
-  const nextDate = notYetDue[0]?.dueDate ?? null;
+  // The soonest thing that is *not* due yet, so an empty queue can say when to come back.
+  const allIdeas = allFields.flatMap((f) => f.domains.flatMap((d) => d.ideas.map((i) => ({ idea: i, domainName: d.name }))));
+  const notYetDue = allIdeas.filter(({ idea }) => !isDue(idea.dueDate, now)).sort((a, b) => a.idea.dueDate.getTime() - b.idea.dueDate.getTime());
+  const nextDate = notYetDue[0]?.idea.dueDate ?? null;
   const upcoming = nextDate
     ? {
-        label: formatDue(nextDate, now).label.replace(/^Due /, ""),
-        // Everything landing on the same day, not just the single soonest —
-        // "next 1 tomorrow" when six arrive tomorrow is a worse answer.
-        count: notYetDue.filter((i) => daysUntilDue(i.dueDate, now) === daysUntilDue(nextDate, now)).length,
+        label: daysLabel(daysUntilDue(nextDate, now)),
+        // Everything landing on the same day, not just the single soonest.
+        count: notYetDue.filter(({ idea }) => daysUntilDue(idea.dueDate, now) === daysUntilDue(nextDate, now)).length,
       }
     : null;
 
-  const overdueCount = fieldsWithDue.reduce(
-    (sum, f) => sum + f.domains.reduce((s, d) => s + d.ideas.filter((i) => i.overdue).length, 0),
-    0
-  );
+  const quest = { done: day.reviews, target: questTargetOf(day.dayOpenQty, day.reviews, totalDue) };
+
+  const m = progression.modifiers;
+  const loadout: LoadoutSummary | null =
+    progression.ownedCodes.length === 0 && progression.boons.length === 0
+      ? null
+      : {
+          equipped: progression.loadout.filter(Boolean).length,
+          slots: progression.loadout.length,
+          lines: describeModifiers(m)
+            .slice(0, 3)
+            .map((l) => `${l.label} ${l.value}`),
+          boons: progression.boons.map((b) => ({
+            label: BOON_META[b.kind].label,
+            effect: BOON_META[b.kind].effectText(b.magnitude),
+            until: b.expiresAt,
+          })),
+        };
+
+  const penalties: PenaltySummary[] = progression.debuffs.map((d) => ({
+    kind: d.kind,
+    label: DEBUFF_META[d.kind].label,
+    effect: DEBUFF_META[d.kind].effectText(d.magnitude),
+    clears: DEBUFF_META[d.kind].clears,
+    until: d.expiresAt,
+  }));
+
+  const byId = new Map(allIdeas.map((x) => [x.idea.id, x]));
+  const recent: RecentIdea[] = lastSeen.recent
+    .map((id) => byId.get(id))
+    .filter((x): x is NonNullable<typeof x> => x != null && !isDue(x.idea.dueDate, now))
+    .slice(0, 4)
+    .map(({ idea, domainName }) => {
+      const days = daysUntilDue(idea.dueDate, now);
+      return {
+        id: idea.id,
+        title: idea.title?.trim() || displayQuestion(idea.questionType, idea.question),
+        domainName,
+        nextLabel: days === 1 ? "next tomorrow" : `next in ${days} days`,
+        level: idea.level,
+        mastered: idea.level >= MASTERY_LEVEL,
+      };
+    });
 
   return (
-    <main className="site-container flex-1 py-8">
-      <header className="fade-up mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="section-eyebrow">Review</p>
-          <h1 className="mt-1.5 flex items-baseline gap-2">
-            <span
-              className="mono"
-              style={{
-                fontSize: 26,
-                fontWeight: 800,
-                lineHeight: 1,
-                color: totalDue > 0 ? "var(--amber)" : "var(--ink-2)",
-              }}
-            >
-              {totalDue}
-            </span>
-            <span className="text-[15px] font-medium" style={{ color: "var(--ink-1)" }}>
-              idea{totalDue === 1 ? "" : "s"} due
-            </span>
-          </h1>
-        </div>
-        {overdueCount > 0 && <span className="chip chip-red">{overdueCount} overdue</span>}
-      </header>
-
-      <div className="fade-up fade-up-1">
-        <WorkspaceView
-          fieldsWithDue={fieldsWithDue}
-          allFieldNames={allFieldNames}
-          totalDue={totalDue}
-          bosses={bosses}
-          upcoming={upcoming}
-          scheduledCount={notYetDue.length}
-        />
-      </div>
-    </main>
+    <WorkspaceView
+      fields={fields}
+      totalDue={totalDue}
+      bosses={bosses}
+      upcoming={upcoming}
+      scheduledCount={notYetDue.length}
+      quest={quest}
+      comboCap={m.comboCap}
+      today={today}
+      dayKept={streak.last7Days[streak.last7Days.length - 1] === true}
+      dayStreak={streak.current}
+      loadout={loadout}
+      penalties={penalties}
+      recent={recent}
+    />
   );
 }

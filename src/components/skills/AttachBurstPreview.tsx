@@ -54,7 +54,7 @@ export function AttachBurstPreview({ samples }: Props) {
                 width: 116,
                 height: 116,
                 borderRadius: 12,
-                border: "1px solid var(--line)",
+                border: "1px solid var(--line-1)",
                 background: "var(--canvas)",
                 // The beam and shards travel well past the emblem; without
                 // this they would spill across neighbouring cells and make
@@ -65,11 +65,11 @@ export function AttachBurstPreview({ samples }: Props) {
               <SkillLogo skill={s.skill} size={44} animated={false} />
               <EquipPulse key={`${s.stage}-${take}`} skill={s.skill} />
             </div>
-            <p className="mono mt-1.5" style={{ fontSize: 10.5, color: "var(--ink-2)" }}>
+            <p className="mono mt-1.5 t-meta" >
               stage {s.stage}
             </p>
-            <p style={{ fontSize: 10.5, color: "var(--ink-3)" }}>{s.layers}</p>
-            <p className="mt-0.5" style={{ fontSize: 10, color: RANK_META[s.skill.rank].color }}>
+            <p className="t-meta">{s.layers}</p>
+            <p className="mt-0.5" style={{ fontSize: 12, color: RANK_META[s.skill.rank].color }}>
               {s.skill.rank} T{s.skill.tier}
             </p>
           </li>

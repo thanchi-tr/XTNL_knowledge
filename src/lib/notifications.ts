@@ -63,14 +63,29 @@ export interface Notice {
   detail: string;
   /** Where acting on it starts. */
   href?: string;
+  /** The one action an Asks row offers ("Review", "Sort"); the row links to href. */
+  action?: string;
 }
 
+/**
+ * The feed (FROZEN shape for the redesign: the Asks bell and sheet, and the
+ * Asks cards on Today, all read this). Derived and read-only.
+ */
 export interface NotificationFeed {
   notices: Notice[];
-  /** Items worth interrupting for — drives the bubble's badge count. */
+  /** Items worth interrupting for — drives the Asks bell's ink count. */
   actionable: number;
   /** True when anything is actively cutting the player's numbers. */
   hasPenalty: boolean;
+  /** The counts behind the shell's badges, from the same reads. */
+  counts: {
+    /** Cards due now (the Study badge; agrees with the review queue via dueCutoff). */
+    due: number;
+    /** Cards past grace. */
+    overdue: number;
+    /** Today's open musts, due todos and inbox; null when that read failed. */
+    today: TodayCounts | null;
+  };
 }
 
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
@@ -102,6 +117,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `${dueCount} card${dueCount === 1 ? "" : "s"} due`,
       detail: "Ready to review now.",
       href: "/review",
+      action: "Review",
     });
   }
 
@@ -116,6 +132,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `${overdueCount} past grace`,
       detail: "These degrade a level on the next daily sweep unless reviewed.",
       href: "/review",
+      action: "Review",
     });
   }
 
@@ -134,6 +151,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
         ? "Still open this evening. The minimum version counts if time is short."
         : `Compulsory items due today. The day runs until ${DAY_EDGE}.`,
       href: "/today",
+      action: "Open Today",
     });
   }
 
@@ -145,6 +163,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `Inbox ${today.inbox}`,
       detail: "Captured, not yet sorted. One tap each on Today.",
       href: "/today",
+      action: "Sort",
     });
   }
 
@@ -162,6 +181,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
           ? `${shortFields[0].fieldName} needs ${shortFields[0].short} more (${shortFields[0].added}/${shortFields[0].quota}).`
           : `${shortFields.length} fields short: ${shortFields.map((q) => `${q.fieldName} ${q.added}/${q.quota}`).join(", ")}.`,
       href: "/add",
+      action: "Add idea",
     });
   } else if (quotas.length > 0) {
     notices.push({
@@ -186,6 +206,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
           ? `Today's focus field. Raised by ${focus.boostedBy.slice(0, 2).join(", ")}${focus.boostedBy.length > 2 ? ` +${focus.boostedBy.length - 2} more` : ""}.`
           : `Today's focus field — new ideas filed here are worth more until ${DAY_EDGE}.`,
       href: "/add",
+      action: "Add idea",
     });
   }
 
@@ -199,6 +220,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `${ready.length} encounter${ready.length === 1 ? "" : "s"} ready`,
       detail: ready.map((b) => b.archetype.name).join(", ") + ".",
       href: "/review",
+      action: "Start",
     });
   }
 
@@ -229,7 +251,12 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
   // boon and a met quota are both good news and neither should nag.
   const actionable = notices.filter((n) => n.tone === "warn" || n.tone === "bad" || n.id === "bosses").length;
 
-  return { notices, actionable, hasPenalty: debuffs.length > 0 };
+  return {
+    notices,
+    actionable,
+    hasPenalty: debuffs.length > 0,
+    counts: { due: dueCount, overdue: overdueCount, today },
+  };
 }
 
 export async function loadNotifications(userId: string, now: Date = new Date()): Promise<NotificationFeed> {

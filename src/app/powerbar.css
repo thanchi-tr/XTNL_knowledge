@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ THE POWER RAIL ═════════════════════════════════════
    The footer's top edge is the charge meter.
 
@@ -21,6 +22,7 @@
    Everything that loops opts into `--ambient-play`, so a hidden tab or a
    phone under 20% battery stops paying for the whole layer.
    ═══════════════════════════════════════════════════════ */
+@layer art {
 
 .pw-rail {
   position: absolute;
@@ -185,7 +187,7 @@
 }
 
 .pw-sky {
-  font-size: 9.5px;
+  font-size: 12px;
   letter-spacing: .04em;
   text-transform: none;
   opacity: .85;
@@ -195,7 +197,7 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.1;
 }
 
@@ -212,7 +214,7 @@
 }
 
 .pw-slots {
-  font-size: 10.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -231,7 +233,7 @@
 }
 
 .pw-tag {
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .14em;
   padding: 2px 5px;
@@ -254,7 +256,7 @@
   .pw-readout { min-width: 84px; }
   .pw-sky,
   .pw-slots { display: none; }
-  .pw-tag { font-size: 7px; letter-spacing: .08em; padding: 1px 3px; }
+  .pw-tag { font-size: 12px; letter-spacing: .06em; padding: 1px 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -263,4 +265,5 @@
   .loadout-bar:has(.pw-rail[data-over="1"])::after { animation: none; }
   .pw-fill, .pw-head { transition: none; }
   .pw-tag { animation: none; }
+}
 }

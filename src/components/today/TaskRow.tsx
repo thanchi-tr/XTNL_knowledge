@@ -1,12 +1,15 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import type { BoardRow } from "@/lib/today-board";
 import type { Receipt } from "@/lib/life-types";
-import { themeFor } from "@/lib/attribute-themes";
 import { habitLine } from "@/lib/habit";
-import { BAND_LABEL, TRACK_LABEL, fmtXp } from "./format";
-import { tickLabelOf } from "./board-ui";
+import { Icon, Sigil } from "@/components/ui/Icon";
+import { PricePill } from "@/components/ui/PricePill";
+import { Tick, type TickState } from "@/components/ui/Tick";
+import { cx } from "@/components/ui/cx";
+import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
+import { hhmmOf, tickNameOf } from "./board-ui";
 
 interface Props {
   row: BoardRow;
@@ -16,118 +19,82 @@ interface Props {
   undoable: boolean;
   /** A write for this row is in flight: the tick waits for it rather than queueing a second. */
   busy: boolean;
-  /** The receipt panel under this row is open. */
+  /** The receipt sheet for this row is open. */
   receiptOpen: boolean;
-  /** The receipt panel's id, for aria-controls. */
+  /** The receipt sheet's id, for the price pill's aria-controls. */
   receiptId: string;
   /** A rename on its way to the server: shown in place of the title until the answer lands. */
   pendingTitle?: string | null;
-  onTick: () => void;
+  /** Completes at the estimate; `from` is the price pill, where the "+N" token starts. */
+  onTick: (from: Element | null) => void;
   onUndo: () => void;
   onToggleDrawer: () => void;
   onToggleReceipt: () => void;
   /** The minimum version, one tap from a Must row. */
-  onMinimum?: () => void;
-  /** The receipt, when open (rendered by the board). */
-  receipt?: ReactNode;
+  onMinimum?: (from: Element | null) => void;
   /** The drawer, when open. */
   children?: ReactNode;
 }
 
-type Tone = "amber" | "red" | "blue" | "green" | undefined;
-
-function Chip({ tone, children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
-  return (
-    <span className="today-chip" data-tone={tone} title={title}>
-      {children}
-    </span>
-  );
-}
-
 /**
- * One line on the board: a 44 px tick, the title, what it is, and exactly
- * what it pays.
+ * One line on the board (redesign "Sigil & Slate"): a 64 px grid of
+ * [tick][title + one meta line][price pill]. Everything else lives in the
+ * drawer, which the title opens.
  *
- * The figure on the right is the price, not a guess: '≈ N XP' is the same
- * `planCompletion` the server pays with, against the same day's ledger, and
- * it turns green and loses its '≈' once paid. Tapping it opens the receipt.
- * A tap on the tick completes at the estimate; minutes, the minimum version,
- * skip and the rest live behind '…' so the common case stays one tap.
+ * The Tick is a checkbox: a circle for todos and habits, a diamond for
+ * musts, half-filled for "Minimum kept". The pill on the right is the
+ * price, not a guess: "≈ 3.6" is the same `planCompletion` the server pays
+ * with, against the same day's ledger, and once ticked it reads "+3.6" on
+ * the life-XP wash and says "paid 3.6 exactly". Tapping it opens the
+ * receipt. Unchecking a done row inside its ten-minute window is the undo,
+ * which nets to zero.
  */
 export function TaskRow(props: Props) {
   const { row, projection, drawerOpen, undoable, busy } = props;
+  const pillRef = useRef<HTMLButtonElement | null>(null);
   const t = row.template;
   const done = row.state === "done";
-  const paidXp = row.paid ? row.paid.xp : null;
-  const shownXp = done && paidXp != null ? paidXp : projection.xp;
+  const paid = done && row.paid && !row.paid.undone ? row.paid : null;
+  const shownXp = paid ? paid.xp : projection.xp;
   const study = !!row.auto;
-  const tickLabel = tickLabelOf(row, undoable);
   const title = props.pendingTitle ?? t.title;
-
-  const meta: string[] = [];
-  // A run that reaches the edge of the history read is a floor, and says so.
-  if (row.streak && row.streak.days > 0) meta.push(`${Math.round(row.streak.days)}d${row.streak.capped ? "+" : ""}`);
-  if (row.strength != null) meta.push(habitLine(row.strength));
-  if (row.progress) meta.push(row.progress.label);
-  if (row.timesDone > 1) meta.push(`×${row.timesDone} today`);
-  if (study && done) meta.push("paid by reviews");
-
-  const attribute = t.topAttribute ? themeFor(t.topAttribute) : null;
-  const dueTone: Tone = row.late ? "red" : row.dueLabel === "by today" ? "amber" : undefined;
+  const must = row.lane === "must" || t.compulsory;
+  const tickState: TickState = done ? (row.minimum ? "minimum" : "done") : "open";
   const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
+  const drawerId = `drawer-${row.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 
   return (
-    <div className="today-row-wrap">
-      <div className="today-row" data-state={row.state} data-lane={row.lane}>
-        <button
-          type="button"
-          className="today-tick"
-          data-state={row.state}
-          aria-label={tickLabel}
+    <div className="t-row" data-state={row.state} data-lane={row.lane}>
+      <div className={cx("row", done && "done")}>
+        <Tick
+          shape={must ? "diamond" : "circle"}
+          state={tickState}
+          label={tickNameOf(row)}
           disabled={busy || row.state === "locked" || (done && !undoable)}
-          onClick={done ? props.onUndo : props.onTick}
-        >
-          <span className="today-tick-ring" aria-hidden>
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <path className="today-tick-check" d="M2.5 7.4 5.6 10.3 11.5 3.9" />
-            </svg>
-          </span>
-        </button>
+          onClick={done ? props.onUndo : () => props.onTick(pillRef.current)}
+          data-skipped={row.state === "skipped" ? "1" : undefined}
+        />
 
-        <div className="today-row-main">
-          <div className="today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
-            {title}
-            {props.pendingTitle && <span className="today-row-saving"> · saving…</span>}
-          </div>
-
-          <div className="today-chips">
-            {row.ruleLabel && <Chip>{row.ruleLabel}</Chip>}
-            {t.compulsory && row.lane !== "must" && <Chip tone="amber">must</Chip>}
-            {row.dueLabel && <Chip tone={dueTone}>{row.dueLabel}</Chip>}
-            {row.parentTitle && <Chip title="Counts toward this goal">^{row.parentTitle}</Chip>}
-            <Chip title={`${BAND_LABEL[t.band]} band${t.bandOverride !== 0 ? " (self-rated)" : ""}`}>
-              {BAND_LABEL[t.band]}
-              {t.bandOverride > 0 ? " +1" : t.bandOverride < 0 ? ` ${t.bandOverride}` : ""}
-            </Chip>
-            <Chip title={attribute ? `Mostly trains ${attribute.attribute.toLowerCase().replace(/_/g, " ")}` : undefined}>
-              {attribute && <span className="today-dot" style={{ background: attribute.color }} aria-hidden />}
-              {TRACK_LABEL[t.track]}
-            </Chip>
-            {t.intrinsic && <Chip tone="blue">#play</Chip>}
-            {t.sizing && <Chip tone="blue">sizing…</Chip>}
-          </div>
-
-          {(meta.length > 0 || (done && undoable) || minimum) && (
-            <div className="today-row-meta">
-              {meta.join(" · ")}
-              {meta.length > 0 && (minimum || (done && undoable)) ? " · " : ""}
+        <div className="r-main">
+          <button type="button" className="r-open" aria-expanded={drawerOpen} aria-controls={drawerOpen ? drawerId : undefined} onClick={props.onToggleDrawer}>
+            <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
+              {title}
+              {props.pendingTitle && <span className="r-saving"> · saving…</span>}
+            </span>
+            <span className="r-meta">
+              {done ? <DoneMeta row={row} paidXp={paid?.xp ?? null} study={study} /> : <OpenMeta row={row} />}
+            </span>
+          </button>
+          {(minimum || (done && undoable)) && (
+            <div className="r-acts">
               {minimum && (
-                <button type="button" className="today-undo" style={{ color: "var(--amber)" }} onClick={minimum} disabled={busy}>
+                <button type="button" className="r-act" onClick={() => minimum(pillRef.current)} disabled={busy}>
                   Minimum: {t.mvv}
                 </button>
               )}
               {done && undoable && (
-                <button type="button" className="today-undo" onClick={props.onUndo} disabled={busy} aria-label={`Undo ${t.title}`}>
+                <button type="button" className="r-act" onClick={props.onUndo} disabled={busy} aria-label={`Undo ${t.title}`}>
+                  <Icon name="undo" size={16} />
                   Undo
                 </button>
               )}
@@ -135,34 +102,75 @@ export function TaskRow(props: Props) {
           )}
         </div>
 
-        <div className="today-row-side">
-          <button
-            type="button"
-            className="today-xp mono"
-            data-paid={done && paidXp != null ? "1" : undefined}
-            data-zero={shownXp === 0 ? "1" : undefined}
-            onClick={props.onToggleReceipt}
-            aria-expanded={props.receiptOpen}
-            aria-controls={props.receiptOpen ? props.receiptId : undefined}
-            aria-label={`${done && paidXp != null ? "Paid" : "About"} ${fmtXp(shownXp)} XP: receipt for ${t.title}`}
-            title={done ? "What this paid" : "What a tick pays now"}
-          >
-            {done && paidXp != null ? "" : "≈ "}
-            {fmtXp(shownXp)} XP
-          </button>
-          <button
-            type="button"
-            className="today-more"
-            aria-expanded={drawerOpen}
-            aria-label={`More for ${t.title}`}
-            onClick={props.onToggleDrawer}
-          >
-            ···
-          </button>
-        </div>
+        <PricePill
+          ref={pillRef}
+          value={shownXp}
+          paid={!!paid}
+          kind="xp"
+          subject={t.title}
+          expanded={props.receiptOpen}
+          controls={props.receiptId}
+          onClick={props.onToggleReceipt}
+          aria-haspopup="dialog"
+        />
       </div>
-      {props.receipt}
-      {drawerOpen && props.children}
+      {drawerOpen && (
+        <div id={drawerId} className="r-drawer">
+          {props.children}
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The one meta line of an open row: track sigil, rung or length, streak, goal, due with its clock. */
+function OpenMeta({ row }: { row: BoardRow }) {
+  const t = row.template;
+  const bits: string[] = [TRACK_LABEL[t.track]];
+  if (row.strength != null) bits.push(habitLine(row.strength));
+  else if (!row.auto) bits.push(fmtMinutes(row.estMinutes));
+  // A run that reaches the edge of the history read is a floor, and says so.
+  if (row.streak && row.streak.days > 0) bits.push(`${Math.round(row.streak.days)} day${Math.round(row.streak.days) === 1 ? "" : "s"}${row.streak.capped ? "+" : ""}`);
+  if (row.progress) bits.push(row.progress.label);
+  if (row.ruleLabel && row.strength == null) bits.push(row.ruleLabel);
+  if (row.parentTitle) bits.push(`goal: ${row.parentTitle}`);
+  if (t.compulsory && row.lane !== "must") bits.push("must");
+  if (t.intrinsic) bits.push("#play");
+  if (t.sizing) bits.push("sizing…");
+  if (row.state === "skipped") bits.push("skipped today");
+  return (
+    <>
+      <span className="r-bit">
+        <Sigil track={TRACK_SIGIL[t.track]} />
+        {bits.join(" · ")}
+      </span>
+      {row.dueLabel && (
+        <span className="r-bit due">
+          <Icon name="clock" size={14} />
+          {row.dueLabel}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** "Kept 08:05 · paid 3.6 exactly": the receipt equals the price. */
+function DoneMeta({ row, paidXp, study }: { row: BoardRow; paidXp: number | null; study: boolean }) {
+  const at = row.paid ? Date.parse(row.paid.occurredAt) : Number.NaN;
+  const time = Number.isFinite(at) ? ` ${hhmmOf(at)}` : "";
+  const word = row.minimum ? "Minimum kept" : "Kept";
+  return (
+    <>
+      <span className="r-bit kept-at">
+        {word}
+        {time}
+      </span>
+      {study ? (
+        <span className="r-bit">paid by reviews</span>
+      ) : paidXp != null ? (
+        <span className="r-bit">paid {fmtXp(paidXp)} exactly</span>
+      ) : null}
+      {row.timesDone > 1 && <span className="r-bit">×{row.timesDone} today</span>}
+    </>
   );
 }

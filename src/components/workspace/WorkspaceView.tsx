@@ -1,471 +1,458 @@
 "use client";
 
-import Link from "next/link";
-
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import type { QuestionType } from "@prisma/client";
-import type { SubmitReviewResult } from "@/app/actions/review";
-import { startBossEncounter, resolveBossEncounter } from "@/app/actions/bosses";
-import type { BossState, BossResolution } from "@/lib/bosses";
+/**
+ * Study › Review: the hub, the focus runner and the recap, on one route.
+ *
+ * The runner's mode lives in the URL (?view=run, then ?view=recap), written
+ * with the native history API, which Next's router syncs into
+ * useSearchParams without a server round trip or a remount — so the run's
+ * state survives, and the browser's Back button exits the run. A reload of
+ * ?view=run starts the same run again (the order is seeded by the life day
+ * and the scope, so the server render and the browser agree); a reload of
+ * ?view=recap has nothing to show and lands on the hub.
+ *
+ * Every answer goes to submitReview (graded and priced on the server). The
+ * run is wrapped in celebrate.ts openRun/closeRun: T2 Seals that L3's
+ * detectors return merge into the run (in the result panel and the recap),
+ * T3s wait until the run closes, T1s chime in place.
+ */
+import { useEffect, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { submitReview } from "@/app/actions/review";
+import { chooseBossBoon, resolveBossEncounter, startBossEncounter } from "@/app/actions/bosses";
+import type { BossResolution, BossState } from "@/lib/bosses";
+import { BOON_KINDS, BOON_META, type BoonKind } from "@/lib/boon-meta";
+import { autoAdvances, type CelebrationEvent } from "@/lib/celebration-types";
+import { chime, closeRun, enqueue, openRun } from "@/lib/celebrate";
+import type { DayKey } from "@/lib/life-day";
+import { formatExpiry } from "@/lib/format-date";
+import type { ReviewAnswer } from "@/lib/verification";
 import { useStreak } from "@/components/StreakProvider";
-import { SessionCard } from "@/components/workspace/SessionCard";
-import { SessionSummary } from "@/components/workspace/SessionSummary";
-import { SessionComplete } from "@/components/workspace/SessionComplete";
-import { BossPanel } from "@/components/workspace/BossPanel";
-import { BossResult } from "@/components/workspace/BossResult";
-import { fieldColor } from "@/lib/palette";
-
-export interface WorkspaceIdea {
-  id: string;
-  level: number;
-  questionType: QuestionType;
-  question: string;
-  preview: string;
-  dueLabel: string;
-  overdue: boolean;
-}
-
-export interface WorkspaceDomain {
-  id: string;
-  name: string;
-  level: number;
-  totalPoints: number;
-  ideas: WorkspaceIdea[];
-}
+import { useMotionPref } from "@/components/ui/MotionPrefs";
+import { Button } from "@/components/ui/Button";
+import { Sheet } from "@/components/ui/Sheet";
+import { pushToast } from "@/components/ui/toast-store";
+import { BossPanel } from "./BossPanel";
+import { BossResult, BoonChoice } from "./BossResult";
+import { LoadoutStrip, PenaltyCard, RecentIdeas, type LoadoutSummary, type PenaltySummary, type RecentIdea } from "./ReviewHub";
+import { ReviewRunner, type BossRun, type RunPhase } from "./ReviewRunner";
+import { SessionComplete } from "./SessionComplete";
+import { ALL_FIELDS, SessionSummary } from "./SessionSummary";
+import { questNow, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
+import "./review.css";
 
 export interface WorkspaceField {
   id: string;
   name: string;
-  level: number;
-  domains: WorkspaceDomain[];
+  /** Due cards in this field, question side only. */
+  cards: RunCard[];
 }
 
 interface Props {
-  fieldsWithDue: WorkspaceField[];
-  allFieldNames: string[];
+  fields: WorkspaceField[];
   totalDue: number;
   bosses: BossState[];
-  /**
-   * What is coming, when nothing is due yet.
-   *
-   * The empty state used to say "Nothing due right now. Check back later."
-   * and stop. That is the screen a player lands on most often, it is the
-   * screen this app is named after, and it answered none of the three
-   * questions actually being asked: is this broken, is there anything in
-   * here at all, and when do I come back. It also hid a real bug for days —
-   * two ideas were due today and withheld by an off-by-half-a-day rule, and
-   * an empty page with no "next up" gave nothing to notice that against.
-   */
+  /** What is coming when nothing more is due today ("9 tomorrow"). */
   upcoming: { label: string; count: number } | null;
   /** Ideas that exist but are not due. Zero means the library is empty, which is a different problem. */
   scheduledCount: number;
+  /** Today's review quest at page load (capped at REVIEW_QUEST_CARDS). */
+  quest: { done: number; target: number };
+  /** The combo's modified ceiling, until the first answer brings the server's. */
+  comboCap: number;
+  today: DayKey;
+  /** The day is already kept (something counted today), and the daily streak. */
+  dayKept: boolean;
+  dayStreak: number;
+  loadout: LoadoutSummary | null;
+  penalties: PenaltySummary[];
+  recent: RecentIdea[];
 }
 
-interface RunIdea extends WorkspaceIdea {
-  domainName: string;
+type Settled = Exclude<BossResolution, { outcome: "rejected" }>;
+
+interface Run {
+  id: string;
+  queue: RunCard[];
+  index: number;
+  results: CardResult[];
+  phase: RunPhase;
+  boss: BossRun | null;
+  questStart: { done: number; target: number };
+  startedAt: number;
+  endedAt: number | null;
+  merged: CelebrationEvent[];
+  bossResolution: Settled | null;
+  bossNote: string | null;
+  /** What was due when the run began (the recap's "cleared" and "still due" read this, not later props). */
+  dueStart: { total: number; byField: [string, string[]][] };
 }
 
-interface RunTally {
-  correct: number;
-  incorrect: number;
-  domainLevelUps: string[];
-  /** Sum of everything the server actually credited this run. */
-  pointsEarned: number;
-  /** Ideas that hit level 12 this run. */
-  mastered: string[];
-  /** Consecutive correct answers right now. */
-  currentCombo: number;
-  /** Longest such run seen this session. */
-  bestCombo: number;
+type Mode = "hub" | "run" | "recap";
+
+function cardsIn(fields: WorkspaceField[], scope: string): RunCard[] {
+  return fields.filter((f) => scope === ALL_FIELDS || f.name === scope).flatMap((f) => f.cards);
 }
 
-const EMPTY_TALLY: RunTally = {
-  correct: 0,
-  incorrect: 0,
-  domainLevelUps: [],
-  pointsEarned: 0,
-  mastered: [],
-  currentCombo: 0,
-  bestCombo: 0,
-};
-
-const CELEBRATE_MS = 2600;
-
-function shuffle<T>(items: T[]): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
+function newRun(fields: WorkspaceField[], scope: string, today: DayKey, quest: { done: number; target: number }, totalDue: number): Run {
+  return {
+    id: `run:${today}:${scope}`,
+    queue: seededOrder(cardsIn(fields, scope), `${today}:${scope}`),
+    index: 0,
+    results: [],
+    phase: { kind: "ask" },
+    boss: null,
+    questStart: quest,
+    startedAt: Date.now(),
+    endedAt: null,
+    merged: [],
+    bossResolution: null,
+    bossNote: null,
+    dueStart: { total: totalDue, byField: fields.map((f) => [f.name, f.cards.map((c) => c.id)]) },
+  };
 }
 
-function flattenIdeas(fields: WorkspaceField[]): RunIdea[] {
-  const out: RunIdea[] = [];
-  for (const field of fields) {
-    for (const domain of field.domains) {
-      for (const idea of domain.ideas) {
-        out.push({ ...idea, domainName: domain.name });
-      }
-    }
-  }
-  return out;
-}
-
-export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, upcoming, scheduledCount }: Props) {
+export function WorkspaceView(props: Props) {
+  const { fields, totalDue, bosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadout, penalties, recent } = props;
   const router = useRouter();
-  const { streak } = useStreak();
-  const [selected, setSelected] = useState<string>("ALL");
-  // Captured once on mount, deliberately not re-synced on later prop
-  // updates — this is the fixed denominator for "today's progress."
-  const [initialTotal] = useState(totalDue);
-  const [celebrateField, setCelebrateField] = useState<string | null>(null);
-  const prevCountsRef = useRef<Record<string, number> | null>(null);
+  const pathname = usePathname();
+  const view = useSearchParams().get("view");
+  const { streak, recordResult } = useStreak();
+  const { prefs, motion } = useMotionPref();
 
-  const [mode, setMode] = useState<"summary" | "running" | "complete" | "boss_result">("summary");
-  const [runQueue, setRunQueue] = useState<RunIdea[]>([]);
-  const [runIndex, setRunIndex] = useState(0);
-  const [tally, setTally] = useState<RunTally>(EMPTY_TALLY);
-
-  // Boss mode. `bossFieldId` being set is what makes a run an encounter:
-  // the cards come from the server's weighted draw instead of the local
-  // shuffle, and finishing resolves the fight rather than showing a recap.
-  const [bossFieldId, setBossFieldId] = useState<string | null>(null);
-  const [bossName, setBossName] = useState<string | null>(null);
-  const [bossResolution, setBossResolution] = useState<BossResolution | null>(null);
+  const resumable = view === "run" && totalDue > 0;
+  const [mode, setMode] = useState<Mode>(resumable ? "run" : "hub");
+  const [run, setRun] = useState<Run | null>(() => (resumable ? newRun(fields, ALL_FIELDS, today, quest, totalDue) : null));
+  const [selected, setSelected] = useState<string>(ALL_FIELDS);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [boonFor, setBoonFor] = useState<string | null>(null);
   const [bossError, setBossError] = useState<string | null>(null);
-  const [pendingBossField, setPendingBossField] = useState<string | null>(null);
-  const [, startBossTransition] = useTransition();
+  const [pendingBoss, setPendingBoss] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+  const pushedRef = useRef(false);
+  // Set synchronously, so a double tap (or "1" pressed twice) can never submit one card twice.
+  const submittingRef = useRef(false);
+  const runRef = useRef(run);
+  useEffect(() => {
+    runRef.current = run;
+  }, [run]);
 
-  function handleChallengeBoss(fieldId: string) {
+  // A run opened by a reload of ?view=run joins the celebration queue once mounted; any run closes on unmount.
+  useEffect(() => {
+    if (runRef.current && runRef.current.endedAt == null) openRun(runRef.current.id);
+    if (view === "recap") window.history.replaceState(null, "", pathname);
+    return () => {
+      closeRun();
+    };
+    // Mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function toHub(refresh = true) {
+    closeRun();
+    setRun(null);
+    setMode("hub");
+    setConfirmOpen(false);
+    if (refresh) router.refresh();
+  }
+
+  // The browser's Back button out of ?view=run or ?view=recap returns to the hub.
+  const prevView = useRef(view);
+  useEffect(() => {
+    const prev = prevView.current;
+    prevView.current = view;
+    const wasIn = prev === "run" || prev === "recap";
+    const isIn = view === "run" || view === "recap";
+    if (wasIn && !isIn && mode !== "hub") {
+      pushedRef.current = false;
+      toHub();
+    }
+    // toHub only reads refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  function enter(next: Run) {
+    openRun(next.id);
+    setRun(next);
+    setMode("run");
+    window.history.pushState(null, "", "?view=run");
+    pushedRef.current = true;
+    window.scrollTo(0, 0);
+  }
+
+  function start() {
+    const next = newRun(fields, selected, today, quest, totalDue);
+    if (next.queue.length === 0) return;
+    enter(next);
+  }
+
+  function challenge(fieldId: string) {
     setBossError(null);
-    setPendingBossField(fieldId);
-    startBossTransition(async () => {
-      const res = await startBossEncounter(fieldId);
-      setPendingBossField(null);
+    setPendingBoss(fieldId);
+    startTransition(async () => {
+      const res = await startBossEncounter(fieldId).catch(() => ({ ok: false as const, error: "Could not open the encounter. Try again." }));
+      setPendingBoss(null);
       if (!res.ok) {
         setBossError(res.error);
         return;
       }
       const boss = bosses.find((b) => b.fieldId === fieldId);
-      setBossName(boss?.archetype.name ?? "The encounter");
-      setBossFieldId(fieldId);
-      setRunQueue(res.value.cards.map((c) => ({ ...c, dueLabel: "", overdue: false })));
-      setRunIndex(0);
-      setTally(EMPTY_TALLY);
-      setMode("running");
+      const queue: RunCard[] = res.value.cards.map((c) => ({ ...c, lastSeenDay: null, overdue: false }));
+      enter({
+        ...newRun(fields, ALL_FIELDS, today, quest, totalDue),
+        id: `boss:${fieldId}:${Date.now()}`,
+        queue,
+        boss: { fieldId, name: boss?.archetype.name ?? "The encounter", need: boss?.needCorrect ?? queue.length, total: queue.length },
+      });
     });
   }
 
-  function finishBossEncounter(finalTally: RunTally) {
-    if (!bossFieldId) return;
-    startBossTransition(async () => {
-      const res = await resolveBossEncounter(
-        bossFieldId,
-        finalTally.correct,
-        finalTally.correct + finalTally.incorrect
-      );
-      setBossResolution(
-        res.ok ? res.value : { outcome: "rejected", why: res.error }
-      );
-      setMode("boss_result");
+  function setPhase(phase: RunPhase) {
+    setRun((r) => (r ? { ...r, phase } : r));
+  }
+
+  function answer(userAnswer: ReviewAnswer, display: string, picked: string | null) {
+    const r = runRef.current;
+    if (submittingRef.current || !r || (r.phase.kind !== "ask" && r.phase.kind !== "error")) return;
+    const card = r.queue[r.index];
+    if (!card) return;
+    submittingRef.current = true;
+    setPhase({ kind: "pending", answer: display, picked });
+    startTransition(async () => {
+      try {
+        const result = await submitReview({ ideaId: card.id, userAnswer, combo: streak });
+        recordResult(result.combo.next);
+        setRun((cur) =>
+          cur && cur.id === r.id
+            ? { ...cur, results: [...cur.results, { card, result, answer: display }], phase: { kind: "answered", result, answer: display, picked } }
+            : cur
+        );
+        for (const ev of result.celebrations) {
+          if (ev.tier === 1) chime({ kind: ev.kind as Parameters<typeof chime>[0]["kind"], id: ev.id, text: ev.facts.title, say: ev.facts.say });
+          else if (ev.tier >= 2) enqueue(ev); // T2 merges into this run; T3 waits for it to close
+        }
+      } catch {
+        setPhase({ kind: "error", message: "No reply from the server for that answer. Check the connection and try again." });
+      } finally {
+        submittingRef.current = false;
+      }
     });
   }
 
-  const countsByField = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const name of allFieldNames) counts[name] = 0;
-    for (const f of fieldsWithDue) {
-      counts[f.name] = f.domains.reduce((s, d) => s + d.ideas.length, 0);
-    }
-    return counts;
-  }, [fieldsWithDue, allFieldNames]);
-
-  // Fires a transient "cleared!" toast the moment any Field's due count
-  // drops from >0 to 0 between renders — not just a static empty state
-  // shown on next visit, an actual celebration of the moment it happens.
-  useEffect(() => {
-    const prev = prevCountsRef.current;
-    prevCountsRef.current = countsByField;
-    if (!prev) return;
-
-    for (const name of allFieldNames) {
-      if ((prev[name] ?? 0) > 0 && (countsByField[name] ?? 0) === 0) {
-        setCelebrateField(name);
-        const t = setTimeout(() => setCelebrateField(null), CELEBRATE_MS);
-        return () => clearTimeout(t);
-      }
-    }
-  }, [countsByField, allFieldNames]);
-
-  const completed = Math.max(0, initialTotal - totalDue);
-  const progressPct = initialTotal > 0 ? Math.min(100, Math.round((completed / initialTotal) * 100)) : 0;
-  const allCaughtUp = initialTotal > 0 && totalDue === 0;
-
-  const visibleFields = selected === "ALL" ? fieldsWithDue : fieldsWithDue.filter((f) => f.name === selected);
-  const visibleDueCount = visibleFields.reduce((s, f) => s + f.domains.reduce((s2, d) => s2 + d.ideas.length, 0), 0);
-  const visibleDomainCount = visibleFields.reduce((s, f) => s + f.domains.length, 0);
-
-  function handleStart() {
-    const queue = shuffle(flattenIdeas(visibleFields));
-    if (queue.length === 0) return;
-    setRunQueue(queue);
-    setRunIndex(0);
-    setTally(EMPTY_TALLY);
-    setMode("running");
-  }
-
-  function handleCardComplete(result: SubmitReviewResult) {
-    const current = runQueue[runIndex];
-    const advanced = result.outcome.outcome === "advanced" ? result.outcome : null;
-
-    // Computed synchronously rather than only inside the setState updater:
-    // a boss encounter has to hand its *final* tally to the resolver on the
-    // last card, and reading it back out of state here would race the
-    // pending update.
-    const currentCombo = result.correct ? tally.currentCombo + 1 : 0;
-    const nextTally: RunTally = {
-      correct: tally.correct + (result.correct ? 1 : 0),
-      incorrect: tally.incorrect + (result.correct ? 0 : 1),
-      domainLevelUps: advanced?.domainLeveledUp ? [...tally.domainLevelUps, current.domainName] : tally.domainLevelUps,
-      pointsEarned: tally.pointsEarned + (advanced?.pointsAwarded ?? 0),
-      mastered: advanced?.mastered ? [...tally.mastered, current.preview] : tally.mastered,
-      currentCombo,
-      bestCombo: Math.max(tally.bestCombo, currentCombo),
-    };
-    setTally(nextTally);
-
-    if (runIndex + 1 >= runQueue.length) {
-      if (bossFieldId) {
-        finishBossEncounter(nextTally);
-      } else {
-        setMode("complete");
-      }
-    } else {
-      setRunIndex((i) => i + 1);
+  function finish(opts: { retreat?: boolean } = {}) {
+    const r = runRef.current;
+    if (!r) return;
+    const merged = closeRun();
+    const endedAt = Date.now();
+    setRun({ ...r, merged, endedAt, bossNote: opts.retreat && r.boss ? "Retreated: the encounter is forfeit. The cards answered were real reviews and stay paid." : null });
+    setMode("recap");
+    setConfirmOpen(false);
+    window.history.replaceState(null, "", "?view=recap");
+    window.scrollTo(0, 0);
+    if (r.boss && !opts.retreat) {
+      const boss = r.boss;
+      const t = tallyOf(r.results);
+      startTransition(async () => {
+        const res = await resolveBossEncounter(boss.fieldId, t.correct, t.answered).catch(() => ({ ok: false as const, error: "The verdict did not arrive. Your answers were saved." }));
+        if (!res.ok) {
+          setRun((cur) => (cur ? { ...cur, bossNote: res.error } : cur));
+          return;
+        }
+        setRun((cur) => (cur ? { ...cur, bossResolution: res.value.resolution as Settled } : cur));
+        // The run is closed: a "boss won" Seal plays at the dock through L3's presenter.
+        for (const ev of res.value.celebrations) if (ev.tier >= 2) enqueue(ev);
+      });
     }
   }
 
-  function handleReturnToSummary() {
-    setMode("summary");
-    setRunQueue([]);
-    setRunIndex(0);
-    setBossFieldId(null);
-    setBossName(null);
-    setBossResolution(null);
+  function next() {
+    const r = runRef.current;
+    if (!r || r.phase.kind !== "answered") return;
+    if (r.index + 1 >= r.queue.length) finish();
+    else setRun({ ...r, index: r.index + 1, phase: { kind: "ask" } });
+  }
+
+  function requestExit() {
+    const r = runRef.current;
+    if (!r) return;
+    if (r.results.length === 0) leave();
+    else setConfirmOpen(true);
+  }
+
+  function leave() {
+    const r = runRef.current;
+    if (r && r.results.length > 0) {
+      finish({ retreat: true });
+      return;
+    }
+    backToHub();
+  }
+
+  function backToHub() {
+    if (pushedRef.current) {
+      // Pops ?view=… — the Back handler above returns to the hub.
+      window.history.back();
+      return;
+    }
+    window.history.replaceState(null, "", pathname);
+    toHub();
+  }
+
+  async function claimBoon(fieldId: string, kind: BoonKind): Promise<string | null> {
+    const res = await chooseBossBoon(fieldId, kind);
+    if (!res.ok) return res.error;
+    pushToast({ title: `${BOON_META[kind].label} is on`, body: `${BOON_META[kind].effectText(res.value.magnitude)} until ${formatExpiry(res.value.expiresAt)}.`, key: `boon:${fieldId}` });
     router.refresh();
+    return null;
   }
 
-  if (mode === "boss_result" && bossResolution) {
+  // Enter starts a review from the hub when nothing else has focus.
+  useEffect(() => {
+    if (mode !== "hub" || totalDue === 0) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Enter" || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      const a = document.activeElement;
+      if (a && a !== document.body && a.id !== "main") return;
+      if (document.querySelector(".sheet.show, [data-capture-sheet]")) return;
+      e.preventDefault();
+      start();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // ── Runner ──
+  if (mode === "run" && run) {
+    const answered = run.results.length;
     return (
-      <div className="mx-auto max-w-lg">
-        <BossResult resolution={bossResolution} onDone={handleReturnToSummary} />
-      </div>
-    );
-  }
-
-  if (mode === "running") {
-    const current = runQueue[runIndex];
-    const runPct = runQueue.length > 0 ? Math.round((runIndex / runQueue.length) * 100) : 0;
-    const inBossFight = bossFieldId !== null;
-    // During an encounter the bar reads as the boss's remaining health, not
-    // your progress — same underlying number, opposite framing, which is
-    // what makes the last few cards feel like finishing something off.
-    const bossHealthPct = 100 - runPct;
-
-    return (
-      <div>
-        <div className="mb-6">
-          <div className="mb-1.5 flex items-center justify-between font-mono text-xs tabular-nums text-ink-2">
-            <span className="uppercase tracking-wide" style={inBossFight ? { color: "var(--amber)" } : undefined}>
-              {inBossFight ? bossName : selected === "ALL" ? "All Fields" : selected}
-              {streak >= 3 && (
-                <span className="ml-2" style={{ color: "var(--green)" }}>{streak} in a row</span>
-              )}
-            </span>
-            <span>
-              {inBossFight ? `${runQueue.length - runIndex} left` : `${runIndex}/${runQueue.length}`}
-            </span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-sub">
-            <div
-              className="h-full rounded-full transition-[width] duration-500 ease-out"
-              style={{
-                width: `${inBossFight ? bossHealthPct : runPct}%`,
-                background: inBossFight ? "var(--amber)" : "var(--green)",
-                marginLeft: inBossFight ? "auto" : undefined,
-              }}
-            />
-          </div>
-        </div>
-
-        <div className="mx-auto max-w-lg">
-          {current && (
-            <SessionCard
-              key={current.id}
-              ideaId={current.id}
-              questionType={current.questionType}
-              question={current.question}
-              preview={current.preview}
-              level={current.level}
-              domainName={current.domainName}
-              onComplete={handleCardComplete}
-            />
-          )}
-          <button
-            type="button"
-            onClick={handleReturnToSummary}
-            className="mt-6 block w-full text-center text-xs text-ink-3 transition hover:text-ink-1"
-          >
-            {/* Bailing mid-encounter forfeits it — no debuff, no reward, and
-                the reviews already answered still counted. Said plainly so
-                leaving never feels like a trap. */}
-            {bossFieldId ? "Retreat — the encounter is forfeit" : "Exit session"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === "complete") {
-    return (
-      <div className="mx-auto max-w-lg">
-        <SessionComplete
-          correct={tally.correct}
-          incorrect={tally.incorrect}
-          domainLevelUps={tally.domainLevelUps}
-          pointsEarned={tally.pointsEarned}
-          mastered={tally.mastered}
-          bestCombo={tally.bestCombo}
-          onDone={handleReturnToSummary}
+      <>
+        <ReviewRunner
+          queue={run.queue}
+          index={run.index}
+          results={run.results}
+          phase={run.phase}
+          today={today}
+          combo={streak}
+          comboCap={comboCap}
+          tally={tallyOf(run.results).pts}
+          quest={questNow(run.questStart, run.results)}
+          boss={run.boss}
+          autoAdvance={autoAdvances(prefs, motion)}
+          dayStreakIfKept={dayKept ? null : dayStreak + 1}
+          onAnswer={answer}
+          onNext={next}
+          onRetry={() => setPhase({ kind: "ask" })}
+          onRequestExit={requestExit}
         />
-      </div>
+        <Sheet
+          open={confirmOpen}
+          onClose={() => setConfirmOpen(false)}
+          title={run.boss ? "Retreat from the encounter?" : "Leave the session?"}
+          description={
+            run.boss
+              ? `The encounter is forfeit: no victory, no defeat, no debuff. The ${answered} answered ${answered === 1 ? "is" : "are"} saved and paid.`
+              : `${answered} answered ${answered === 1 ? "is" : "are"} saved and paid. The rest stay due; nothing is lost.`
+          }
+          footer={
+            <>
+              <Button variant="primary" size="lg" style={{ flex: 1 }} onClick={() => setConfirmOpen(false)} data-autofocus="">
+                Keep going
+              </Button>
+              <Button variant="secondary" size="lg" onClick={leave}>
+                {run.boss ? "Retreat" : "Leave"}
+              </Button>
+            </>
+          }
+        />
+      </>
     );
   }
 
-  return (
-    <div>
-      {initialTotal > 0 && (
-        <div className="mb-6">
-          <div className="mb-1.5 flex items-center justify-between font-mono text-xs tabular-nums text-ink-2">
-            <span className="uppercase tracking-wide">Today&apos;s progress</span>
-            <span>
-              {completed}/{initialTotal}
-            </span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-sub">
-            <div
-              className="h-full rounded-full bg-green transition-[width] duration-500 ease-out"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      <BossPanel
-        bosses={bosses}
-        onChallenge={handleChallengeBoss}
-        pendingFieldId={pendingBossField}
-        error={bossError}
-      />
-
-      <div className="mb-6 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setSelected("ALL")}
-          className={`rounded-chip border px-3 py-1.5 text-xs font-semibold transition ${
-            selected === "ALL"
-              ? "border-[rgba(0,204,122,0.35)] bg-[var(--green-10)] text-green"
-              : "border-[var(--line)] text-ink-2 hover:text-ink-1"
-          }`}
-        >
-          All <span className="ml-1 tabular-nums opacity-70">({totalDue})</span>
-        </button>
-        {allFieldNames.map((name) => {
-          const accent = fieldColor(name);
-          const count = countsByField[name] ?? 0;
-          const active = selected === name;
-          return (
-            <button
-              key={name}
-              type="button"
-              onClick={() => setSelected(name)}
-              className={`rounded-chip border px-3 py-1.5 text-xs font-semibold transition ${
-                count === 0 && !active ? "opacity-40" : ""
-              } ${active ? "" : "border-[var(--line)] text-ink-2 hover:text-ink-1"}`}
-              style={
-                active
-                  ? { borderColor: `${accent}59`, backgroundColor: `${accent}1a`, color: accent }
-                  : undefined
-              }
-            >
-              <span className="max-w-[16ch] truncate align-bottom" title={name}>
-                {name}
-              </span>{" "}
-              <span className="ml-1 tabular-nums opacity-70">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {celebrateField && (
-        <div className="card fade-up mb-6 px-4 py-3 text-center">
-          <p style={{ fontSize: 13, color: "var(--green)" }}>{celebrateField} cleared</p>
-        </div>
-      )}
-
-      {allCaughtUp || (totalDue === 0 && selected === "ALL") ? (
-        <div className="card fade-up px-6 py-10 text-center">
-          <span className={scheduledCount > 0 ? "chip chip-green" : "chip"}>
-            {allCaughtUp ? "Cleared" : scheduledCount > 0 ? "Nothing due" : "Empty"}
-          </span>
-          <p className="mt-3 text-[15px] font-semibold" style={{ color: "var(--ink-0)" }}>
-            {allCaughtUp ? "That is everything for today" : scheduledCount > 0 ? "Nothing due today" : "No ideas yet"}
+  // ── Recap ──
+  if (mode === "recap" && run) {
+    const answeredIds = new Set(run.results.map((r) => r.card.id));
+    const dueIds = new Set(run.dueStart.byField.flatMap(([, ids]) => ids));
+    const fieldsCleared = run.dueStart.byField
+      .filter(([, ids]) => ids.length > 0 && ids.every((id) => answeredIds.has(id)))
+      .map(([name]) => name);
+    const remainingDue = Math.max(0, run.dueStart.total - [...answeredIds].filter((id) => dueIds.has(id)).length);
+    const settled = run.bossResolution;
+    const bossNode =
+      run.boss && (settled || run.bossNote) ? (
+        settled ? (
+          <BossResult resolution={settled} fieldId={run.boss.fieldId} onChoose={(k) => claimBoon(run.boss!.fieldId, k)} />
+        ) : (
+          <section className="card pad-l">
+            <div className="t-eyebrow">{run.boss.name}</div>
+            <p className="t-meta ink-1" style={{ marginTop: 4 }}>
+              {run.bossNote}
+            </p>
+          </section>
+        )
+      ) : run.boss ? (
+        <section className="card pad-l" aria-busy="true">
+          <div className="t-eyebrow">{run.boss.name}</div>
+          <p className="t-meta" style={{ marginTop: 4 }}>
+            Judging the encounter…
           </p>
+        </section>
+      ) : undefined;
+    return (
+      <SessionComplete
+        results={run.results}
+        merged={run.merged}
+        questBefore={questNow(run.questStart, [])}
+        questAfter={questNow(run.questStart, run.results)}
+        startedAt={run.startedAt}
+        endedAt={run.endedAt ?? Date.now()}
+        dayKept={run.results.some((r) => r.result.streakSecured) ? { streak: dayKept ? null : dayStreak + 1 } : null}
+        remainingDue={remainingDue}
+        upcoming={upcoming}
+        fieldsCleared={run.boss ? [] : fieldsCleared}
+        today={today}
+        boss={bossNode}
+        onBackToReview={backToHub}
+      />
+    );
+  }
 
-          {/* The three questions an empty queue has to answer: is anything
-              in here, when does it come back, and what do I do now. */}
-          {scheduledCount > 0 ? (
-            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-              {scheduledCount} idea{scheduledCount === 1 ? "" : "s"} scheduled
-              {upcoming ? (
-                <>
-                  {" · next "}
-                  <span style={{ color: "var(--ink-1)" }}>
-                    {upcoming.count} {upcoming.label}
-                  </span>
-                </>
-              ) : null}
-            </p>
-          ) : (
-            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-2)" }}>
-              Add one and it enters the rotation immediately.
-            </p>
-          )}
-
-          <Link
-            href="/add"
-            className="btn-primary nav-new-idea mt-4 inline-flex"
-            style={{ padding: "9px 18px" }}
-          >
-            New Idea
-          </Link>
-        </div>
-      ) : visibleDueCount === 0 ? (
-        <p style={{ fontSize: 13, color: "var(--ink-2)" }}>
-          Nothing due in this field. Switch to All Fields to see the rest.
-        </p>
-      ) : (
-        <div className="mx-auto max-w-lg">
+  // ── Hub ──
+  const hubFields = fields.map((f) => ({ id: f.id, name: f.name, due: f.cards.length }));
+  const scopeDue = selected === ALL_FIELDS ? totalDue : (hubFields.find((f) => f.name === selected)?.due ?? 0);
+  const boonBoss = boonFor ? bosses.find((b) => b.fieldId === boonFor) : null;
+  return (
+    <div className="page cq-main">
+      <div className="rv-hub">
+        <div className="rv-col">
           <SessionSummary
-            scopeName={selected === "ALL" ? "All Fields" : selected}
-            dueCount={visibleDueCount}
-            domainCount={visibleDomainCount}
-            onStart={handleStart}
+            quest={quest}
+            dueCount={scopeDue}
+            totalDue={totalDue}
+            fields={hubFields}
+            selected={selected}
+            onSelect={setSelected}
+            onStart={start}
+            scheduledCount={scheduledCount}
+            upcoming={upcoming}
           />
+          {loadout && <LoadoutStrip loadout={loadout} />}
+          <PenaltyCard penalties={penalties} />
         </div>
-      )}
+        <div className="rv-col">
+          <BossPanel bosses={bosses} onChallenge={challenge} onChooseBoon={setBoonFor} pendingFieldId={pendingBoss} error={bossError} />
+          <RecentIdeas ideas={recent} />
+        </div>
+      </div>
+      <Sheet
+        open={boonBoss != null && boonBoss.pendingBoon != null}
+        onClose={() => setBoonFor(null)}
+        title="Choose your boon"
+        description={boonBoss ? `${boonBoss.fieldName}: one boon for this victory. There is no wrong choice.` : undefined}
+      >
+        {boonBoss?.pendingBoon && (
+          <BoonChoice choices={[...BOON_KINDS]} claimUntil={boonBoss.pendingBoon.claimUntil} onChoose={(k) => claimBoon(boonBoss.fieldId, k)} />
+        )}
+      </Sheet>
     </div>
   );
 }

@@ -1,0 +1,130 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   YOU — the character sheet, Loadout, Moments and Stats (L4, final-you.html).
+   Imported by src/app/you/layout.tsx and src/app/skills/layout.tsx.
+   Resting styles are final states; the only motion here is the one-shot
+   slot glint (T0 equip) and the kit's own meter / ring transitions.
+   ===================================================================== */
+@layer components {
+  /* ---------- compact tabs (the top bar and sidebar carry them from 600) ---------- */
+  .you-tabs { margin: 2px 0 14px; }
+  @media (min-width: 600px) { .you-tabs { display: none; } }
+  .rdot { width: 7px; height: 7px; border-radius: 50%; background: linear-gradient(#ffe7a3, #c9901f); display: inline-block; flex: none; }
+
+  /* ---------- layout ---------- */
+  .you-grid { display: grid; gap: 16px; }
+  @container main (min-width: 760px) { .you-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; } }
+  .you-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+  /* ---------- hero ---------- */
+  .hero-c { padding: 16px; }
+  .hc-top { display: flex; gap: 16px; align-items: center; }
+  .hc-top .crest { flex: none; }
+  .hc-top h2 { font: 600 30px/34px var(--font-display); margin: 0; overflow-wrap: anywhere; }
+  .lvl-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; margin: 16px 0 8px; }
+  .lvl-line b { font-weight: 600; }
+  .lvl-line .nx { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+  .blurb { font: italic 400 14px/1.45 var(--font-display-italic); color: var(--ink-2); margin: 8px 0 0; }
+  .purse { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-1); }
+  .purse > div + div { border-left: 1px solid var(--line-1); padding-left: 12px; }
+  .purse .v { font: 600 20px/1 var(--font-display); display: flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+  .purse .v small { font: 500 13px var(--font-ui); color: var(--ink-2); }
+  .purse .v svg.g { width: 16px; height: 16px; }
+  .purse .k { font-size: 12px; color: var(--ink-2); margin-top: 5px; }
+
+  /* ---------- ready callout ---------- */
+  .ready-c { display: flex; gap: 12px; align-items: center; padding: 12px 12px 12px 14px; border-color: color-mix(in srgb, var(--gold-m) 40%, transparent); }
+  .ready-c .t { flex: 1; min-width: 0; }
+  .ready-c b { font-weight: 600; display: block; }
+
+  /* ---------- life tracks ---------- */
+  .trk-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 10px; padding: 12px 14px; }
+  .trk-row + .trk-row { border-top: 1px solid var(--line-1); }
+  .trk-row > svg.sig { width: 22px; height: 22px; margin-top: 1px; }
+  .trk-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .trk-h b, .trk-h .lv { font: 600 16px var(--font-display); font-variant-numeric: tabular-nums; }
+  .wk { margin-left: auto; display: flex; gap: 3px; align-items: center; }
+  .wk i { width: 9px; height: 9px; transform: rotate(45deg); border-radius: 1.5px; border: 1.5px solid var(--ink-mute); }
+  .wk i.k { background: var(--kept); border-color: var(--kept); }
+  .wk i.h { background: var(--hatch); border-color: var(--held); }
+  .trk-row .meter { margin: 8px 0 6px; }
+  .trk-row .t-meta b { color: var(--ink-1); font-weight: 600; }
+
+  /* ---------- attribute radar ---------- */
+  .radar-c { padding: 14px; }
+  .radar-c > svg { width: 100%; max-width: 420px; display: block; margin: 0 auto; overflow: visible; }
+  .radar-c text { font: 500 12px var(--font-ui); fill: var(--ink-2); }
+  .radar-c text.lead { fill: var(--ink-0); font-weight: 700; }
+  .rlegend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); justify-content: center; flex-wrap: wrap; margin: 8px 0 4px; }
+  .top3 { margin: 8px 0 0; padding: 0; }
+  .top3 li { list-style: none; display: flex; gap: 10px; align-items: center; min-height: 44px; border-top: 1px solid var(--line-1); font-size: 14px; flex-wrap: wrap; }
+  .top3 li svg { width: 18px; height: 18px; flex: none; }
+  .top3 li b { font-variant-numeric: tabular-nums; }
+  .top3 li .note { margin-left: auto; font-size: 13px; color: var(--ink-2); }
+
+  /* ---------- rows with art (goals, mastery, moments) ---------- */
+  .mo { display: flex; gap: 12px; align-items: center; padding: 12px 14px; min-height: 64px; }
+  .mo + .mo { border-top: 1px solid var(--line-1); }
+  .mo .art { width: 44px; height: 44px; flex: none; display: grid; place-items: center; }
+  .mo .art > svg.sig { width: 22px; height: 22px; }
+  .mo b { font-weight: 600; display: block; }
+  .mo .grow { flex: 1; min-width: 0; }
+
+  /* ---------- loadout grid (5×2) ---------- */
+  .slots { display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 10px; justify-items: center; }
+  .slot {
+    width: 100%; max-width: 64px; aspect-ratio: 1; border-radius: 16px; display: grid; place-items: center;
+    background: var(--sunken); border: 1px solid var(--line-2); position: relative; color: inherit; padding: 0;
+    overflow: hidden;
+  }
+  .slot:hover { background: var(--raised); }
+  .slot.empty { border: 1.5px dashed var(--ink-mute); background: none; color: var(--ink-2); }
+  .slot.dormant .coin > .glyph { opacity: .42; }
+  .slot .slot-n { position: absolute; left: 5px; top: 3px; font: 600 12px/16px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  /* T0: one slot glint. Resting state is no glint at all. */
+  .slot.glint::after {
+    content: ""; position: absolute; inset: 0; border-radius: 16px; pointer-events: none; opacity: 0;
+    background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, .35) 50%, transparent 65%);
+    animation: you-slot-glint 600ms var(--ease-inout) 1;
+  }
+  @keyframes you-slot-glint { from { transform: translateX(-60%); opacity: 1; } to { transform: translateX(60%); opacity: 0; } }
+  html[data-motion="calm"] .slot.glint::after { animation-duration: 240ms; }
+
+  .pick-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+  .pick { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 8px 10px; border-radius: 12px; background: transparent; border: 0; text-align: left; color: inherit; }
+  .pick:hover, .pick:focus-visible { background: var(--raised); }
+  .pick b { font-weight: 600; display: block; }
+
+  /* ---------- stats ---------- */
+  .chart-c { padding: 14px; }
+  .chart-c svg { width: 100%; display: block; overflow: visible; }
+  .chart-c text { font: 500 12px var(--font-ui); fill: var(--ink-2); }
+  .heat { display: grid; grid-template-columns: 64px repeat(12, minmax(0, 1fr)); gap: 4px; align-items: center; font-size: 12px; color: var(--ink-2); }
+  .heat i { height: 16px; border-radius: 3px; border: 1px solid var(--line-2); }
+  .heat i.k { background: var(--kept); border-color: var(--kept); }
+  .heat i.h { background: var(--hatch); border-color: var(--held); }
+  .qbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; }
+  .qbar i { min-width: 3px; }
+  .qbar i.due { background: var(--ink-0); }
+  .qbar i.str { background: repeating-linear-gradient(135deg, var(--owed) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--owed); }
+  .qbar i.lrn { background: var(--kept); }
+  .hbars { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+  .hbars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; font-size: 13px; }
+  .hbars li .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1); }
+  .hbars li .fig { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .hbars li .meter { grid-column: 1 / -1; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @container main (min-width: 760px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @container main (min-width: 1100px) { .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+  .tile { padding: 14px; min-width: 0; }
+  .tile .v { font: 600 24px/1.1 var(--font-display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile .v small { font: 500 13px var(--font-ui); color: var(--ink-2); margin-left: 4px; }
+  .tile .k { font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+  .dist { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; align-items: end; height: 120px; }
+  .dist i { background: var(--ink-0); border-radius: 3px 3px 0 0; min-height: 2px; transform-origin: bottom; }
+  .dist-x { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; margin-top: 6px; text-align: center; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  /* ---------- empty states ---------- */
+  .empty-c { padding: 20px 16px; text-align: center; }
+  .empty-c b { display: block; font-weight: 600; margin-bottom: 4px; }
+}

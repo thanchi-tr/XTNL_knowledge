@@ -1,3 +1,4 @@
+@layer theme, base, components, art, effects, utilities;
 /* ═══ ATMOSPHERE ═════════════════════════════════════════
    The app's decoration is earned, not default.
 
@@ -18,31 +19,16 @@
    targets a class that exists nowhere else, so import order does not matter.
    ═══════════════════════════════════════════════════════ */
 
-html:not([data-res-grade]) body,
-html[data-res-grade="NONE"] body {
-  background-image: none;
+@property --atmos-rarity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
 }
 
-html:not([data-res-grade]) .card,
-html:not([data-res-grade]) .panel,
-html[data-res-grade="NONE"] .card,
-html[data-res-grade="NONE"] .panel {
-  background-image: none;
-  box-shadow: none;
-}
+@layer art {
 
-html:not([data-res-grade]) .section-eyebrow,
-html[data-res-grade="NONE"] .section-eyebrow {
-  color: var(--ink-2);
-  text-shadow: none;
-}
-
-html:not([data-res-grade]) .card-hover:hover,
-html[data-res-grade="NONE"] .card-hover:hover {
-  transform: none;
-  box-shadow: none;
-  border-color: var(--line-hi) !important;
-}
+/* The "bare by default" html:not([data-res-grade]) patches (and their
+   !important) were removed in the layer PR: the new base is bare already. */
 
 /* ── Rarity: the continuous axis ─────────────────────────
    Grade is a five-rung ladder, and it saturates early — a single Apex
@@ -61,11 +47,7 @@ html[data-res-grade="NONE"] .card-hover:hover {
    invalid token; and a typed custom property is *interpolable*, which is the
    only way to transition a gradient at all. Without this, attaching an
    emblem would snap the background; with it, the sky slides. */
-@property --atmos-rarity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
+
 
 html {
   transition: --atmos-rarity 1100ms cubic-bezier(.22, .61, .36, 1);
@@ -246,4 +228,5 @@ html[data-res-grade]:not([data-res-grade="NONE"]) .panel {
   .atmos-sun-core, .atmos-sun-rays,
   .atmos-disk, .atmos-lens, .atmos-infall, .atmos-freeze { animation: none; }
   .atmos-meteor, .atmos-infall, .atmos-freeze { opacity: 0; }
+}
 }

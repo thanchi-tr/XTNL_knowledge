@@ -1,4 +1,5 @@
-import { BANDS, type Band } from "@/lib/life-types";
+import { BANDS, type Band, type Track } from "@/lib/life-types";
+import type { TrackSigil } from "@/components/ui/Icon";
 import { BAND_META } from "@/lib/life-grade";
 
 export { TRACK_LABEL } from "@/lib/life-grade";
@@ -21,3 +22,6 @@ export function fmtMinutes(m: number): string {
 /** The band names and blurbs as life-grade.ts publishes them, so the Size panel and the rules page say the same thing. */
 export const BAND_LABEL = Object.fromEntries(BANDS.map((b) => [b, BAND_META[b].label])) as Record<Band, string>;
 export const BAND_BLURB = Object.fromEntries(BANDS.map((b) => [b, BAND_META[b].blurb])) as Record<Band, string>;
+
+/** Each life track's sigil (told apart by shape, drawn in ink). */
+export const TRACK_SIGIL: Record<Track, TrackSigil> = { BODY: "body", DUTY: "duty", CRAFT: "craft", CARE: "care" };
