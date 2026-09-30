@@ -6,6 +6,7 @@ import type { Receipt } from "@/lib/life-types";
 import { themeFor } from "@/lib/attribute-themes";
 import { habitLine } from "@/lib/habit";
 import { BAND_LABEL, TRACK_LABEL, fmtXp } from "./format";
+import { tickLabelOf } from "./board-ui";
 
 interface Props {
   row: BoardRow;
@@ -15,6 +16,12 @@ interface Props {
   undoable: boolean;
   /** A write for this row is in flight: the tick waits for it rather than queueing a second. */
   busy: boolean;
+  /** The receipt panel under this row is open. */
+  receiptOpen: boolean;
+  /** The receipt panel's id, for aria-controls. */
+  receiptId: string;
+  /** A rename on its way to the server: shown in place of the title until the answer lands. */
+  pendingTitle?: string | null;
   onTick: () => void;
   onUndo: () => void;
   onToggleDrawer: () => void;
@@ -54,12 +61,8 @@ export function TaskRow(props: Props) {
   const paidXp = row.paid ? row.paid.xp : null;
   const shownXp = done && paidXp != null ? paidXp : projection.xp;
   const study = !!row.auto;
-
-  let tickLabel: string;
-  if (row.state === "locked") tickLabel = `${t.title} completes itself at ${row.progress?.label ?? "its target"}`;
-  else if (done) tickLabel = undoable ? `Undo ${t.title}` : `${t.title}, done`;
-  else if (row.state === "skipped") tickLabel = `Complete ${t.title} (skipped today)`;
-  else tickLabel = `Complete ${t.title}`;
+  const tickLabel = tickLabelOf(row, undoable);
+  const title = props.pendingTitle ?? t.title;
 
   const meta: string[] = [];
   // A run that reaches the edge of the history read is a floor, and says so.
@@ -71,6 +74,7 @@ export function TaskRow(props: Props) {
 
   const attribute = t.topAttribute ? themeFor(t.topAttribute) : null;
   const dueTone: Tone = row.late ? "red" : row.dueLabel === "by today" ? "amber" : undefined;
+  const minimum = props.onMinimum && row.state === "open" && t.mvv ? props.onMinimum : null;
 
   return (
     <div className="today-row-wrap">
@@ -80,7 +84,6 @@ export function TaskRow(props: Props) {
           className="today-tick"
           data-state={row.state}
           aria-label={tickLabel}
-          aria-pressed={done}
           disabled={busy || row.state === "locked" || (done && !undoable)}
           onClick={done ? props.onUndo : props.onTick}
         >
@@ -92,7 +95,10 @@ export function TaskRow(props: Props) {
         </button>
 
         <div className="today-row-main">
-          <div className="today-row-title">{t.title}</div>
+          <div className="today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
+            {title}
+            {props.pendingTitle && <span className="today-row-saving"> · saving…</span>}
+          </div>
 
           <div className="today-chips">
             {row.ruleLabel && <Chip>{row.ruleLabel}</Chip>}
@@ -111,16 +117,17 @@ export function TaskRow(props: Props) {
             {t.sizing && <Chip tone="blue">sizing…</Chip>}
           </div>
 
-          {(meta.length > 0 || (done && undoable) || (props.onMinimum && row.state === "open")) && (
+          {(meta.length > 0 || (done && undoable) || minimum) && (
             <div className="today-row-meta">
               {meta.join(" · ")}
-              {props.onMinimum && row.state === "open" && t.mvv && (
-                <button type="button" className="today-undo" style={{ color: "var(--amber)" }} onClick={props.onMinimum} disabled={busy}>
-                  {meta.length > 0 ? " · " : ""}Minimum: {t.mvv}
+              {meta.length > 0 && (minimum || (done && undoable)) ? " · " : ""}
+              {minimum && (
+                <button type="button" className="today-undo" style={{ color: "var(--amber)" }} onClick={minimum} disabled={busy}>
+                  Minimum: {t.mvv}
                 </button>
               )}
               {done && undoable && (
-                <button type="button" className="today-undo" onClick={props.onUndo} disabled={busy}>
+                <button type="button" className="today-undo" onClick={props.onUndo} disabled={busy} aria-label={`Undo ${t.title}`}>
                   Undo
                 </button>
               )}
@@ -135,6 +142,9 @@ export function TaskRow(props: Props) {
             data-paid={done && paidXp != null ? "1" : undefined}
             data-zero={shownXp === 0 ? "1" : undefined}
             onClick={props.onToggleReceipt}
+            aria-expanded={props.receiptOpen}
+            aria-controls={props.receiptOpen ? props.receiptId : undefined}
+            aria-label={`${done && paidXp != null ? "Paid" : "About"} ${fmtXp(shownXp)} XP: receipt for ${t.title}`}
             title={done ? "What this paid" : "What a tick pays now"}
           >
             {done && paidXp != null ? "" : "≈ "}

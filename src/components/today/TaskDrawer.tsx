@@ -5,12 +5,20 @@ import { BANDS, type Band, type Receipt } from "@/lib/life-types";
 import { MINUTE_CHIPS, ruleOf, type BoardRow } from "@/lib/today-board";
 import { SIZING_MAX_ATTEMPTS, effBand } from "@/lib/life-grade";
 import { gradeChipOf } from "@/lib/life-lexicon";
+import type { DayKey } from "@/lib/life-day";
+import { formatExpiry } from "@/lib/format-date";
 import { BAND_BLURB, BAND_LABEL, fmtMinutes, fmtXp } from "./format";
+import { ratingGate, tomorrowOffer } from "./board-ui";
+
+/** A slower write this drawer started and is waiting on. */
+export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string };
 
 interface Props {
   row: BoardRow;
-  /** The board's clock (ms), for the grade chip's 'sizing…' and 'frozen'. */
+  /** The board's clock (ms), for the grade chip's 'sizing…' and 'frozen' and the self-rating cooldown. */
   now: number;
+  /** The board's life day. */
+  today: DayKey;
   /** Minutes picked from the chips; null means 'at the estimate'. */
   minutes: number | null;
   onMinutes: (m: number | null) => void;
@@ -19,6 +27,8 @@ interface Props {
   /** The price as the minimum version, when the task has one. */
   minimumProjection: Receipt | null;
   busy: boolean;
+  /** A resize, self-rating or rename in flight for this task. */
+  working: DrawerWork | null;
   onDone: () => void;
   onMinimum: () => void;
   onSkip: () => void;
@@ -38,9 +48,14 @@ const CHIP_COLOR = { muted: "var(--ink-2)", blue: "var(--blue)", green: "var(--g
  * move to tomorrow, do it again, rename, archive — and the Size panel, which
  * says how the task was graded and lets the player self-rate within the
  * published limits.
+ *
+ * It only offers what the server will accept: no 'Tomorrow' on a deadline
+ * (compulsory ones only move earlier; the others would be pulled in or
+ * shed their late factor), and the size buttons close, with the date they
+ * reopen, while the weekly self-rating cooldown runs.
  */
 export function TaskDrawer(props: Props) {
-  const { row, minutes, projection, busy } = props;
+  const { row, minutes, projection, busy, working } = props;
   const t = row.template;
   const open = row.state === "open" || row.state === "skipped";
   const recurring = !!ruleOf(t);
@@ -49,9 +64,14 @@ export function TaskDrawer(props: Props) {
   const [title, setTitle] = useState(t.title);
 
   const machineIdx = BANDS.indexOf(t.band);
-  const effective: Band = effBand(t.band, t.bandOverride);
+  const pendingRate = working?.kind === "rate" ? working.override : null;
+  const effective: Band = effBand(t.band, pendingRate ?? t.bandOverride);
   const maxIdx = Math.min(BANDS.length - 1, machineIdx + 1);
+  const resizing = working?.kind === "resize";
   const canResize = !t.gradeFrozen && t.gradeAttempts < SIZING_MAX_ATTEMPTS && !t.sizing;
+  const rating = ratingGate(t, props.now);
+  const tomorrow = tomorrowOffer(t, props.today);
+  const locked = busy || working !== null;
   const chip = gradeChipOf(
     {
       gradeSource: t.gradeSource,
@@ -63,6 +83,11 @@ export function TaskDrawer(props: Props) {
     },
     new Date(props.now)
   );
+
+  const closeEditor = () => {
+    setTitle(t.title);
+    setEditing(false);
+  };
 
   return (
     <div className="today-drawer">
@@ -100,7 +125,7 @@ export function TaskDrawer(props: Props) {
             Skip today
           </button>
         )}
-        {open && !recurring && (
+        {open && !recurring && row.lane !== "yesterday" && tomorrow.show && (
           <button type="button" className="today-pill" disabled={busy} onClick={props.onTomorrow}>
             Tomorrow
           </button>
@@ -110,25 +135,56 @@ export function TaskDrawer(props: Props) {
             Again · ≈ {fmtXp(projection.xp)} XP
           </button>
         )}
-        <button type="button" className="today-pill" disabled={busy} onClick={() => setEditing((e) => !e)} aria-expanded={editing}>
-          Edit
+        <button
+          type="button"
+          className="today-pill"
+          disabled={locked}
+          onClick={() => {
+            if (editing) return closeEditor();
+            setTitle(t.title);
+            setEditing(true);
+          }}
+          aria-expanded={editing}
+        >
+          {working?.kind === "rename" ? "Renaming…" : "Edit"}
         </button>
-        <button type="button" className="today-pill" data-tone="red" disabled={busy} onClick={props.onArchive}>
+        <button type="button" className="today-pill" data-tone="red" disabled={busy} onClick={props.onArchive} title="Archive it. Undo stays on screen for 10 seconds.">
           Archive
         </button>
       </div>
+      {open && !recurring && row.lane !== "yesterday" && !tomorrow.show && tomorrow.reason && (
+        <p className="today-drawer-note">{tomorrow.reason}</p>
+      )}
 
       {editing && (
         <form
           className="today-drawer-row"
           onSubmit={(e) => {
             e.preventDefault();
-            if (title.trim() && title.trim() !== t.title) props.onRename(title.trim());
+            const clean = title.trim();
+            if (clean && clean !== t.title) props.onRename(clean);
             setEditing(false);
           }}
         >
-          <input className="input" style={{ flex: "1 1 200px" }} value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
-          <button type="submit" className="today-pill" disabled={busy || !title.trim()}>
+          <input
+            className="input"
+            style={{ flex: "1 1 200px" }}
+            value={title}
+            maxLength={200}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              // Escape cancels the edit, and only the edit: the receipt and
+              // any sheet above stay as they are.
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeEditor();
+              }
+            }}
+            aria-label="Title"
+            // A tap on Edit is asking to type: the keyboard comes up with it.
+            autoFocus
+          />
+          <button type="submit" className="today-pill" disabled={locked || !title.trim()}>
             Save
           </button>
         </form>
@@ -142,10 +198,11 @@ export function TaskDrawer(props: Props) {
           </span>
         </div>
 
-        <div className="today-bands" role="radiogroup" aria-label="Self-rated size">
+        <div className="today-bands" role="radiogroup" aria-label="Self-rated size" aria-busy={pendingRate !== null}>
           {BANDS.map((b, i) => {
             const allowed = i <= maxIdx;
             const current = b === effective;
+            const usable = allowed && rating.open;
             return (
               <button
                 key={b}
@@ -154,16 +211,19 @@ export function TaskDrawer(props: Props) {
                 aria-checked={current}
                 className="today-band"
                 data-current={current ? "1" : undefined}
-                disabled={busy || !allowed || current}
+                disabled={locked || !usable || current}
                 onClick={() => props.onOverride(i - machineIdx)}
-                style={{ textAlign: "left", background: current ? undefined : "transparent", cursor: allowed && !current ? "pointer" : "default", opacity: allowed ? 1 : 0.4 }}
-                title={!allowed ? "A self-rating can go at most one band above the machine's" : undefined}
+                style={{ textAlign: "left", background: current ? undefined : "transparent", cursor: usable && !current ? "pointer" : "default", opacity: allowed ? 1 : 0.4 }}
+                title={!allowed ? "A self-rating can go at most one band above the machine's" : !rating.open ? "Self-rating is closed until the weekly cooldown ends" : undefined}
               >
                 <span style={{ fontSize: 11.5, fontWeight: 600, color: current ? "var(--ink-0)" : "var(--ink-1)", minWidth: 78 }}>
                   {BAND_LABEL[b]}
                   {i === machineIdx ? " ·" : ""}
                 </span>
-                <span style={{ fontSize: 11 }}>{BAND_BLURB[b]}</span>
+                <span style={{ fontSize: 11 }}>
+                  {BAND_BLURB[b]}
+                  {current && pendingRate !== null ? " · saving…" : ""}
+                </span>
               </button>
             );
           })}
@@ -191,19 +251,28 @@ export function TaskDrawer(props: Props) {
 
         <div className="today-drawer-row">
           {t.bandOverride !== 0 && (
-            <button type="button" className="today-pill" disabled={busy} onClick={() => props.onOverride(0)}>
+            <button type="button" className="today-pill" disabled={locked || !rating.open} onClick={() => props.onOverride(0)}>
               Back to the machine&apos;s size
             </button>
           )}
-          {canResize && (
-            <button type="button" className="today-pill" disabled={busy} onClick={props.onResize} title="Ask the AI once more, before the size freezes">
-              Resize
+          {(canResize || resizing) && (
+            <button
+              type="button"
+              className="today-pill"
+              disabled={locked}
+              aria-busy={resizing}
+              onClick={props.onResize}
+              title="Ask the AI once more, before the size freezes"
+            >
+              {resizing ? "Sizing…" : "Resize"}
             </button>
           )}
           <span style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
-            {t.gradeFrozen
-              ? "Frozen. A self-rating applies to later ticks and can change once a week."
-              : "Freezes at the first tick or 24 h after capture."}
+            {!rating.open && rating.nextAt != null
+              ? `Self-rated this week. The size can change again from ${formatExpiry(new Date(rating.nextAt))}.`
+              : t.gradeFrozen
+                ? "Frozen. A self-rating applies to later ticks and can change once a week."
+                : "Freezes at the first tick or 24 h after capture."}
           </span>
         </div>
       </div>

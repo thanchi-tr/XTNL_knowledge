@@ -14,7 +14,7 @@
  * rows into decisions. Nothing here throws on odd data: a template with an
  * unparseable rule falls back to a one-off, a missing stat to zero.
  */
-import { addDays, daysBetween, dayKeyOf, weekdayOf, LIFE_TZ, type DayKey } from "./life-day";
+import { addDays, daysBetween, dayKeyOf, weekdayOf, LIFE_TZ, DAY_START_HOUR, type DayKey } from "./life-day";
 import type {
   ActivityInput,
   AutoMetric,
@@ -35,7 +35,7 @@ import type {
   Track,
 } from "./life-types";
 import type { Attribute } from "@prisma/client";
-import { UNDO_WINDOW_MINUTES, effBand, estEff, payModeOf, priceTask, timingFor } from "./life-grade";
+import { STUDY_AUTO_METRICS, UNDO_WINDOW_MINUTES, effBand, estEff, payModeOf, priceTask, receiptBandOf, timingFor } from "./life-grade";
 import { repeatNOf } from "./life-lexicon";
 import { describeRule, nextDue, occursOn, parseRule, periodProgress, scheduledPerWeek, type Rule } from "./recurrence";
 import {
@@ -69,7 +69,7 @@ export const DEADLINE_LOOKAHEAD_DAYS = 2;
 export const MINUTE_CHIPS = [10, 20, 30, 45, 60, 90] as const;
 
 /** Tasks linked to study pay 0 life XP: the reviews already paid (sink DOMAIN). */
-export const STUDY_METRICS: ReadonlySet<AutoMetric> = new Set<AutoMetric>(["REVIEWS", "IDEAS", "REVIEW_DUE"]);
+export const STUDY_METRICS: ReadonlySet<AutoMetric> = new Set<AutoMetric>(STUDY_AUTO_METRICS);
 
 /** The board's sections, top to bottom on a phone. Desktop splits them into two columns in this order. */
 export const BOARD_SECTIONS = ["quest", "must", "today", "yesterday", "goals", "anytime", "inbox"] as const;
@@ -111,6 +111,12 @@ export interface BoardTemplate extends PricedTemplate {
   kind: TaskKind;
   inbox: boolean;
   startDay: DayKey;
+  /**
+   * A one-off put off to this day ('Move to tomorrow' on a deadline): off
+   * the board until then. It never touches dueDay, so a deadline keeps its
+   * day and its late factor. Absent is the same as null.
+   */
+  planDay?: DayKey | null;
   horizon: Horizon | null;
   parentId: string | null;
   krMetric: KrMetric | null;
@@ -208,6 +214,8 @@ export interface BoardData {
   today: DayKey;
   yesterday: DayKey;
   capacityMin: number;
+  /** Whether the player chose capacityMin (LifeSettings.capacitySetAt); false while it is the default. */
+  capacitySet?: boolean;
   templates: BoardTemplate[];
   /** Instances from the start of the current month or week (whichever is earlier) and yesterday on. */
   instances: BoardInstance[];
@@ -271,6 +279,25 @@ export function ledgerRepeatN(t: PricedTemplate, ledger: DayLedger): number {
 /** V's k: INTRO completions already made that day. */
 export function ledgerIntroBefore(ledger: DayLedger): number {
   return ledger.completions.reduce((n, c) => n + (c.intro ? 1 : 0), 0);
+}
+
+/**
+ * Whether a stored completion counts toward V's INTRO count: the band its
+ * own receipt was paid at. The template's current band (after a later
+ * self-rating, say) is only a fallback for a row with no readable receipt,
+ * so rating a ticked INTRO task +1 cannot take it out of today's count and
+ * let later routine work escape V.
+ */
+export function paidIntroOf(receipt: unknown, template: { band: Band; bandOverride: number } | null): boolean {
+  const paid = receiptBandOf(receipt) ?? (template ? effBand(template.band, template.bandOverride) : null);
+  return paid === "INTRO";
+}
+
+/** A goal's '+n' as it is recorded: rounded to 0.1 and capped, or null when it is not progress (zero, negative, not a number). */
+export function goalProgressQty(qty: unknown): number | null {
+  if (typeof qty !== "number" || !Number.isFinite(qty)) return null;
+  const n = Math.min(1000, Math.round(qty * 10) / 10);
+  return n > 0 ? n : null;
 }
 
 /**
@@ -545,6 +572,138 @@ export function expectedToday(
     return { due: true, carriedFrom: scheduled < today ? scheduled : null };
   }
   return { due: occursOn(rule, t.startDay, today, lastDone), carriedFrom: null };
+}
+
+// ── What may be recorded, and on which day (the board's lanes and the server's gate) ──
+
+/** The last day any of these instances was done, or null. */
+export function lastDoneOf(instances: readonly Pick<BoardInstance, "day" | "status">[]): DayKey | null {
+  let last: DayKey | null = null;
+  for (const i of instances) if (isDoneStatus(i.status) && (!last || i.day > last)) last = i.day;
+  return last;
+}
+
+/** An occurrence already settled some other way: nothing more can be recorded on its day. */
+const SETTLED_STATUSES: ReadonlySet<string> = new Set(["SKIPPED", "EXCUSED", "MISSED", "WRITTEN_OFF"]);
+
+/**
+ * Whether `yesterday` is a day this template can still be recorded on, at
+ * T 1.00, until today's life day ends. The Yesterday lane is built from
+ * this and completeInstanceCore refuses anything it rejects, so the server
+ * accepts exactly what the board offers:
+ *
+ * - a fixed schedule that expected it yesterday (AFTER and TARGET rules
+ *   have no fixed day to miss: they carry forward, or count the week, on
+ *   their own);
+ * - a one-off whose deadline was yesterday, unless it was put off past
+ *   yesterday (planDay) — then it was not done by the deadline;
+ * - never a study task, which only ever completes on its own day.
+ */
+export function yesterdayRecordable(
+  t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay">,
+  rule: Rule | null,
+  yesterday: DayKey,
+  lastDone: DayKey | null
+): boolean {
+  if (t.startDay > yesterday || t.autoMetric) return false;
+  if (!rule) return t.dueKind === "DEADLINE" && t.dueDay === yesterday && !(t.planDay && t.planDay > yesterday);
+  if (rule.kind === "AFTER" || rule.kind === "TARGET") return false;
+  return occursOn(rule, t.startDay, yesterday, lastDone);
+}
+
+/**
+ * Why a completion may not be booked on `day`, or null when it may. The
+ * day is the server's own: today, or yesterday inside the record window —
+ * never another. A one-off may be done on any day it is still open; a
+ * repeating task only on a day its rule expects it (a TARGET any day);
+ * yesterday only as yesterdayRecordable allows. This is what stops a
+ * forged call booking an unscheduled task into yesterday's knee or ticking
+ * a sparse rule every day to farm its consistency.
+ */
+export function completionBlockOf(a: {
+  t: Pick<BoardTemplate, "recurrence" | "startDay" | "autoMetric" | "dueKind" | "dueDay" | "planDay" | "completedAt">;
+  rule: Rule | null;
+  day: DayKey;
+  today: DayKey;
+  lastDone: DayKey | null;
+  /** The template's instances on `day`. */
+  onDay: readonly Pick<BoardInstance, "status">[];
+}): string | null {
+  const { t, rule, day, today } = a;
+  const yesterday = addDays(today, -1);
+  if (day !== today && day !== yesterday) return "Only today, or yesterday until today ends, can be recorded. Refresh the board.";
+  if (t.startDay > day) return "That task didn't exist yet on that day.";
+  if (!rule && t.completedAt) return "Already done.";
+  if (day === today) {
+    if (!rule || rule.kind === "TARGET") return null;
+    return expectedToday(t, rule, today, a.lastDone).due ? null : "It isn't due today.";
+  }
+  if (a.onDay.some((i) => SETTLED_STATUSES.has(i.status))) return "Yesterday is already settled for this task.";
+  return yesterdayRecordable(t, rule, yesterday, a.lastDone) ? null : "Only what was due yesterday can be recorded for yesterday.";
+}
+
+/**
+ * Why a task may not move to `target`, or null when it may. A repeating
+ * task's 'tomorrow' skips today (so a compulsory one cannot); a one-off
+ * moves to any day from today on, except that a compulsory deadline is
+ * never put off past its own day. A deadline that moves keeps its day and
+ * its late factor (it is put off with planDay, see rescheduleCore): moving
+ * is a plan, not a way out of being late.
+ */
+export function moveBlockOf(
+  t: Pick<BoardTemplate, "recurrence" | "compulsory" | "dueKind" | "dueDay" | "completedAt">,
+  target: DayKey,
+  today: DayKey
+): string | null {
+  if (ruleOf(t)) return t.compulsory ? "A compulsory task can't be skipped. Do its minimum version instead." : null;
+  if (t.completedAt) return "Already done.";
+  if (target < today) return "Pick today or a later day.";
+  if (t.compulsory && t.dueKind === "DEADLINE" && t.dueDay && target > t.dueDay) return "A compulsory deadline can't be put off past its day.";
+  return null;
+}
+
+/**
+ * The first day a captured habit runs: its phase when the line gave one
+ * ('every 2 weeks on mon', 'every other sat', 'daily from 15 oct'),
+ * otherwise today. A deadline on a repeating line ('until fri') is not a
+ * start, and a date already past never starts a habit in the past.
+ */
+export function startDayFor(p: { recurrence: string | null; dueDay: DayKey | null; dueKind: DueKind | null }, today: DayKey): DayKey {
+  if (!p.recurrence || !parseRule(p.recurrence)) return today;
+  return p.dueDay && p.dueKind !== "DEADLINE" && p.dueDay > today ? p.dueDay : today;
+}
+
+/**
+ * A set of keys that forgets everything when its epoch changes. The server
+ * keeps a few in-process memos (DAY_OPEN written today, a study task
+ * recorded today) to save round trips; keyed to an epoch that a reset
+ * changes, a memo can never outlive the rows it remembers.
+ */
+export class EpochSet {
+  private epoch: unknown = undefined;
+  private readonly keys = new Set<string>();
+
+  private at(epoch: unknown): Set<string> {
+    if (epoch !== this.epoch) {
+      this.epoch = epoch;
+      this.keys.clear();
+    }
+    return this.keys;
+  }
+
+  has(epoch: unknown, key: string): boolean {
+    return this.at(epoch).has(key);
+  }
+
+  add(epoch: unknown, key: string): void {
+    const keys = this.at(epoch);
+    if (keys.size > 1000) keys.clear();
+    keys.add(key);
+  }
+
+  delete(epoch: unknown, key: string): void {
+    this.at(epoch).delete(key);
+  }
 }
 
 // ── Per-habit history ─────────────────────────────────────────────────────
@@ -826,6 +985,11 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
         (lane === "must" ? must : lane === "yesterday" ? yesterdayRows : todayRows).push(r);
         continue;
       }
+      // Put off to a later day: off the board until then, deadline untouched.
+      if (t.planDay && t.planDay > today) {
+        later += 1;
+        continue;
+      }
       if (!t.dueDay) {
         anytime.push(row(t, "anytime", today));
         continue;
@@ -834,7 +998,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
         const gap = daysBetween(today, t.dueDay);
         // Due yesterday: late if done now, but still on time if it was done
         // yesterday and only the tick is late — the record window's promise.
-        if (t.dueDay === yesterday && t.startDay <= yesterday) {
+        if (yesterdayRecordable(t, null, yesterday, null)) {
           yesterdayRows.push(row(t, "yesterday", yesterday, { dueLabel: "by yesterday" }));
         }
         if (gap <= 0) {
@@ -891,11 +1055,12 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
       (lane === "must" ? must : todayRows).push(r);
     }
 
-    // Yesterday's occurrence, still recordable. AFTER and TARGET rules carry
-    // on their own, and a study task only ever completes on its day.
-    if (rule.kind !== "AFTER" && !t.autoMetric && t.startDay <= yesterday && occursOn(rule, t.startDay, yesterday, lastDone)) {
+    // Yesterday's occurrence, still recordable (yesterdayRecordable: the
+    // server's own gate). AFTER rules carry on their own, and a study task
+    // only ever completes on its day.
+    if (yesterdayRecordable(t, rule, yesterday, lastDone)) {
       const y = insts.filter((i) => i.day === yesterday);
-      const judged = y.some((i) => i.status === "SKIPPED" || i.status === "EXCUSED" || i.status === "MISSED" || i.status === "WRITTEN_OFF");
+      const judged = y.some((i) => SETTLED_STATUSES.has(i.status));
       const doneY = y.find((i) => isDoneStatus(i.status));
       // Open, or recorded this morning (so the tick shows and can be undone).
       if (!judged && (!doneY || doneY.source === "record-yesterday")) {
@@ -943,11 +1108,17 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
   };
 }
 
-/** The lowest projected-XP open card that is safe to move: not compulsory, not a study task. Ties go to the longer card, which frees more time. */
+/**
+ * The lowest projected-XP open card that is safe to move: not compulsory,
+ * not a study task, and not a deadline due today or already past (moving
+ * it cannot make it any less late, so the tile never suggests it). Ties go
+ * to the longer card, which frees more time.
+ */
 export function cheapestMovable(rows: readonly BoardRow[]): BoardRow | null {
   let best: BoardRow | null = null;
   for (const r of rows) {
     if (r.state !== "open" || r.template.compulsory || r.auto) continue;
+    if (r.template.dueKind === "DEADLINE" && r.template.dueDay && r.template.dueDay <= r.day) continue;
     if (
       !best ||
       r.projection.xp < best.projection.xp ||
@@ -1173,7 +1344,7 @@ export function planAutoCompletions(input: {
     const rule = ruleOf(t);
     if (rule) {
       if (rule.kind !== "TARGET" && !expectedToday(t, rule, input.today, input.lastDone[t.id] ?? null).due) continue;
-    } else if (t.completedAt || (t.dueKind === "PLANNED" && t.dueDay && t.dueDay > input.today)) {
+    } else if (t.completedAt || (t.dueKind === "PLANNED" && t.dueDay && t.dueDay > input.today) || (t.planDay && t.planDay > input.today)) {
       continue;
     }
     const state = autoStateOf(t, input.counts);
@@ -1229,6 +1400,8 @@ export function goalMetricOf(title: string): { krMetric: KrMetric; krTarget: num
 // ── The header clock ──────────────────────────────────────────────────────
 
 /** 'Thu 1 Oct', '06:12', 'AEST' for an instant in the life zone. The zone is printed so a wrong one is visible. */
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
 export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; time: string; zone: string; tz: string } {
   try {
     const parts = new Intl.DateTimeFormat("en-AU", {
@@ -1242,8 +1415,13 @@ export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; tim
       timeZoneName: "short",
     }).formatToParts(now);
     const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    // The heading names the life day the board is showing. Between midnight and
+    // 04:00 that is still the day before on the calendar, and says so.
+    const day = dayKeyOf(now, tz);
+    const calendar = `${get("weekday")} ${get("day")} ${get("month")}`;
+    const lifeDate = `${WEEKDAY_SHORT[weekdayOf(day) - 1]} ${shortDate(day)}`;
     return {
-      date: `${get("weekday")} ${get("day")} ${get("month")}`,
+      date: lifeDate === calendar ? calendar : `${lifeDate} · until ${pad2(DAY_START_HOUR)}:00`,
       time: `${get("hour")}:${get("minute")}`,
       zone: get("timeZoneName"),
       tz,

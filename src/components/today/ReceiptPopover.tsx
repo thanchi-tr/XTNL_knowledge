@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import type { Receipt, ReceiptFactor } from "@/lib/life-types";
 import { TRACK_LABEL, kneeNote, shownFactors } from "@/lib/life-grade";
+import { pushEscapeLayer } from "@/components/capture/layers";
 
 /**
  * The receipt behind a row's '≈ N XP': every factor that made the price,
@@ -18,7 +19,9 @@ import { TRACK_LABEL, kneeNote, shownFactors } from "@/lib/life-grade";
  *
  * Rendered inline under its row, not floating, so on a phone it never
  * covers the rows around it or collides with the notification bubble. The
- * board owns whether it is open; Escape closes it when `onClose` is given.
+ * board owns whether it is open; Escape closes it when `onClose` is given —
+ * as one layer of the app's Escape stack, so an Escape meant for a sheet
+ * opened above it closes only that sheet.
  */
 
 interface Props {
@@ -43,14 +46,17 @@ function zeroReason(r: Receipt): string | null {
 }
 
 export function ReceiptPopover({ receipt, paid = false, title, onClose, id }: Props) {
+  // The layer is registered once, when the panel opens; a new onClose from
+  // a re-render must not re-push it above a sheet opened since.
+  const closeRef = useRef(onClose);
   useEffect(() => {
-    if (!onClose) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose?.();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    closeRef.current = onClose;
   }, [onClose]);
+  const closable = !!onClose;
+  useEffect(() => {
+    if (!closable) return;
+    return pushEscapeLayer(() => closeRef.current?.());
+  }, [closable]);
 
   const factors = shownFactors(receipt);
   const zero = zeroReason(receipt);
@@ -84,7 +90,7 @@ export function ReceiptPopover({ receipt, paid = false, title, onClose, id }: Pr
             type="button"
             className="btn-ghost"
             onClick={onClose}
-            style={{ fontSize: 11, padding: "0 12px", minHeight: 34 }}
+            style={{ fontSize: 11, padding: "0 12px", minHeight: 40 }}
           >
             Close
           </button>

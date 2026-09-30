@@ -11,7 +11,7 @@ import { BOON_META } from "./boon-meta";
 import { DEBUFF_META } from "./debuff-meta";
 import { formatExpiry } from "./format-date";
 import { loadTodayCounts, type TodayCounts } from "./tasks";
-import { LIFE_TZ } from "./life-day";
+import { DAY_START_HOUR, LIFE_TZ } from "./life-day";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -19,6 +19,13 @@ import { LIFE_TZ } from "./life-day";
  * still do it.
  */
 const MUSTS_WARN_HOUR = 18;
+
+/**
+ * Where the life day ends, as the feed prints it ('04:00'). Read from the
+ * one clock rather than typed out, so a notice can never name an edge the
+ * day does not actually turn over at.
+ */
+const DAY_EDGE = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
 
 /** The local wall-clock hour, in the life zone. */
 function localHour(now: Date): number {
@@ -125,7 +132,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `${today.musts} must${today.musts === 1 ? "" : "s"} today`,
       detail: evening
         ? "Still open this evening. The minimum version counts if time is short."
-        : "Compulsory items due today. The day runs until 04:00.",
+        : `Compulsory items due today. The day runs until ${DAY_EDGE}.`,
       href: "/today",
     });
   }
@@ -177,7 +184,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       detail:
         focus.boostedBy.length > 0
           ? `Today's focus field. Raised by ${focus.boostedBy.slice(0, 2).join(", ")}${focus.boostedBy.length > 2 ? ` +${focus.boostedBy.length - 2} more` : ""}.`
-          : "Today's focus field — new ideas filed here are worth more until midnight UTC.",
+          : `Today's focus field — new ideas filed here are worth more until ${DAY_EDGE}.`,
       href: "/add",
     });
   }
@@ -203,7 +210,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       group: "Active effects",
       tone: "good",
       title: meta.label,
-      detail: `${meta.effectText(b.magnitude)} · until ${formatExpiry(b.expiresAt)} UTC`,
+      detail: `${meta.effectText(b.magnitude)} · until ${formatExpiry(b.expiresAt)}`,
     });
   }
 
@@ -214,7 +221,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       group: "Active effects",
       tone: "bad",
       title: meta.label,
-      detail: `${meta.effectText(d.magnitude)} · until ${formatExpiry(d.expiresAt)} UTC`,
+      detail: `${meta.effectText(d.magnitude)} · until ${formatExpiry(d.expiresAt)}`,
     });
   }
 

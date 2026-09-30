@@ -24,9 +24,12 @@ import {
   weekdayOf,
   zonedToInstant,
 } from "../src/lib/life-day";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { dueCutoff, isDue, daysUntilDue, formatDue } from "../src/lib/due";
 import { formatExpiry, formatDay } from "../src/lib/format-date";
 import { fieldStreakStep, FIELD_STREAK_CUTOVER_DAY } from "../src/lib/streak-curve";
+import { RESET_SCOPES, RESET_SCOPE_ORDER } from "../src/lib/reset-scopes";
 
 const SYD = "Australia/Sydney";
 const BNE = "Australia/Brisbane";
@@ -183,6 +186,115 @@ for (const tz of [SYD, BNE]) {
   const bne = formatExpiry(d, BNE);
   check("formatExpiry renders local time, not UTC", bne.includes("7 Oct") && bne.includes("07:00"), bne);
   check("formatDay renders the local date", formatDay(d, BNE).includes("7 Oct"), formatDay(d, BNE));
+}
+
+// ── Glue around the clock (source guards) ─────────────────────────────────
+// notifications.ts, DangerZone.tsx and AppNav.tsx load Prisma or React, which
+// a check must not, so these read the files instead of running them.
+{
+  const ROOT = resolve(__dirname, "..");
+  const read = (rel: string) => readFileSync(resolve(ROOT, rel), "utf8");
+  /** Source without comments, so a guard never trips on prose about the old behaviour. */
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  // The feed prints LIFE_TZ times and the 04:00 edge, never UTC or midnight.
+  const feed = code(read("src/lib/notifications.ts"));
+  check("notifications: no time is labelled UTC (formatExpiry renders LIFE_TZ)", !/\bUTC\b/.test(feed));
+  check(
+    "notifications: the day's edge comes from DAY_START_HOUR, not 'midnight'",
+    !/midnight/i.test(feed) && /DAY_START_HOUR/.test(feed) && (feed.match(/until \$\{DAY_EDGE\}/g) ?? []).length >= 2
+  );
+  check("AttestationForm: the limit is described per life day", !/UTC day/.test(read("src/components/skills/AttestationForm.tsx")));
+
+  // Every scope the server accepts has a button, 'life' included.
+  const keys = Object.keys(RESET_SCOPES).sort().join(",");
+  check(
+    "RESET_SCOPE_ORDER lists every reset scope exactly once",
+    [...RESET_SCOPE_ORDER].sort().join(",") === keys && RESET_SCOPE_ORDER.includes("life"),
+    RESET_SCOPE_ORDER.join(",")
+  );
+  const danger = code(read("src/components/taxonomy/DangerZone.tsx"));
+  check(
+    "DangerZone renders the shared RESET_SCOPE_ORDER, not a local list",
+    /RESET_SCOPE_ORDER\.map\(/.test(danger) && !/\bSCOPE_ORDER\s*[:=]/.test(danger)
+  );
+  check(
+    "DangerZone shows the life counts getResetPreview returns",
+    ["tasks", "taskInstances", "activityEvents"].every((k) => danger.includes(`"${k}"`))
+  );
+
+  // The audit stays read-only, and its double-pay query can see a paid auto task.
+  const sql = read("scripts/life-audit.sql").replace(/--.*$/gm, "");
+  const statements = sql.split(";").map((s) => s.trim()).filter(Boolean);
+  check(
+    "life-audit.sql: a READ ONLY transaction, rolled back, with nothing but SELECTs inside",
+    /^BEGIN TRANSACTION READ ONLY$/i.test(statements[0] ?? "") &&
+      /^ROLLBACK$/i.test(statements[statements.length - 1] ?? "") &&
+      statements.slice(1, -1).every((s) => /^(SELECT|WITH)\b/i.test(s)) &&
+      !/\b(INSERT|UPDATE|DELETE|MERGE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE|COPY|CALL)\b/i.test(sql),
+    `${statements.length} statements`
+  );
+  const doublePay = statements.find((s) => s.includes("'shared sourceId'")) ?? "";
+  check(
+    "life-audit.sql: the double-pay query also flags an auto (study-linked) task that paid TRACK",
+    doublePay.includes("'auto task paid'") &&
+      /"autoMetric" IS NOT NULL/.test(doublePay) &&
+      /e\.source = 'TASK'/.test(doublePay) &&
+      /e\.sink = 'TRACK'/.test(doublePay) &&
+      /COALESCE\(e\."templateId", i\."templateId"\)/.test(doublePay)
+  );
+
+  // npm run life:check runs every pure life check, and the backfill has its script.
+  const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
+  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui"].map((n) => `scripts/${n}-check.ts`);
+  const lifeCheck = scripts["life:check"] ?? "";
+  check(
+    "package.json life:check chains every life check with &&, and each exists",
+    lifeCheck === all.map((f) => `tsx ${f}`).join(" && ") && all.every((f) => existsSync(resolve(ROOT, f))),
+    lifeCheck
+  );
+  check(
+    "package.json db:backfill-activity runs the backfill script",
+    scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
+  );
+
+  // The central reduced-motion list names the board's and the sheet's motion,
+  // and every class it names still exists where it is defined.
+  const globals = read("src/app/globals.css");
+  const reduced = globals.slice(globals.indexOf("@media (prefers-reduced-motion: reduce)"));
+  const lifeMotion: [string, string][] = [
+    ["today-tick-ring", "src/components/today/today.css"],
+    ["today-tick-check", "src/components/today/today.css"],
+    ["today-row-title", "src/components/today/today.css"],
+    ["today-bar-fill", "src/components/today/today.css"],
+    ["today-sheet", "src/components/today/today.css"],
+    ["today-toast", "src/components/today/today.css"],
+    ["capture-sheet", "src/app/capture.css"],
+    ["capture-backdrop", "src/app/capture.css"],
+    ["capture-toast", "src/app/capture.css"],
+    ["capture-chip", "src/app/capture.css"],
+    ["capture-fab", "src/app/capture.css"],
+  ];
+  const missing = lifeMotion.filter(([cls, file]) => !new RegExp(`:root [a-z]*\\.${cls}\\b`).test(reduced) || !read(file).includes(`.${cls}`));
+  check(
+    "globals.css reduced motion covers the today and capture motion (with :root, as those sheets load later)",
+    missing.length === 0,
+    missing.map(([c]) => c).join(", ")
+  );
+
+  // The header's More is a disclosure (no half-built ARIA menu), and the row
+  // at md holds no more links than the measured width budget in AppNav.tsx.
+  const nav = code(read("src/components/AppNav.tsx"));
+  check(
+    "AppNav: More is a disclosure — aria-expanded and aria-controls, no menu roles",
+    !/role="menu(item)?"|aria-haspopup/.test(nav) && /aria-expanded=/.test(nav) && /aria-controls=/.test(nav)
+  );
+  const mdLinks = [...nav.matchAll(/href: "([^"]+)", label: "[^"]+", from: "md"/g)].map((m) => m[1]);
+  check(
+    "AppNav: at md the row keeps at most Today, Review and Skills (the rest fold into More)",
+    mdLinks.length > 0 && mdLinks.length <= 3 && mdLinks[0] === "/today",
+    mdLinks.join(" ")
+  );
 }
 
 console.log(failed ? `\n${failed} failed` : "\nall pass");

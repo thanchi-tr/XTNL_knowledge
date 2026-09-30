@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T02:12+10:00 — interactive session: M1 build workflow running (lanes A–D + 3 reviewers)
+    HEARTBEAT: 2026-10-01T03:05+1000 — interactive session: M1 committed; starting the UI/UX redesign
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -32,13 +32,13 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 
 ## Status
 
-- [ ] M1
+- [x] M1
   - [x] Lane 0 (lead): schema models, migration `20261005000000_life_core` (rehearsed locally), `src/lib/life-day.ts`, `src/lib/life-types.ts`, cache tags
-  - [ ] Lanes A–D built (workflow `life-m1-build`), 3 reviews
-  - [ ] Review findings fixed; `tsc`, lint, `next build`, every `scripts/*-check.ts` green
-  - [ ] Browser-verified on the local rehearsal server (port 3100)
-  - [ ] `life_core` applied to Supabase (after the project-ref check), backfill dry-run then `--apply`
-  - [ ] Committed and pushed to `main`
+  - [x] Lanes A–D built (workflow `life-m1-build`), 3 reviews (46 findings)
+  - [x] Review findings fixed; `tsc`, lint, `next build`, every `scripts/*-check.ts` green
+  - [x] Browser-verified on the local rehearsal server (port 3100)
+  - [x] `life_core` applied to Supabase (after the project-ref check), backfill dry-run then `--apply`
+  - [x] Committed and pushed to `main`
 - [ ] Full UI/UX redesign
 - [ ] M2
 - [ ] M3
@@ -52,15 +52,18 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - Test against the **local rehearsal database** only: Docker container `xtnl-rehearsal` (pgvector/pgvector:pg16, port 55432, password `rehearsal`), started with
   `docker start xtnl-rehearsal` (Docker Desktop must be running). Prisma commands against it:
   `DATABASE_URL=postgresql://postgres:rehearsal@localhost:55432/postgres DIRECT_URL=<same> npx prisma …` — always confirm the "Datasource … at localhost:55432" line first.
-  The rehearsal dev server: `node docs/life-plan/dev-rehearsal.mjs` (port 3100; blank GEMINI_API_KEY).
+  The rehearsal dev server: preview config `xtnl-rehearsal` / `node docs/life-plan/dev-rehearsal.mjs` (port 3100; blank GEMINI_API_KEY). Seed it with `npx tsx prisma/seed.ts` under the local DATABASE_URL.
 - Applying a migration to Supabase: the user pre-approved additive migrations once a milestone passes locally. First check the project ref in `DIRECT_URL` is the xtnl-idea project, NOT XTNL_thesis. Then `npx prisma db execute --file prisma/migrations/<name>/migration.sql --schema prisma/schema.prisma`, `npx prisma migrate resolve --applied <name>`, `npx prisma generate`. Never `prisma migrate dev`, `db push` or `migrate reset`.
 - Never test by answering the user's real review cards or writing test rows into production.
 - Browser checks: open your own tab; never act on the user's real data.
 - Commit each finished milestone to `main` and push (the user commits and pushes main themselves too; the old town game lives on the `game` branch). End commit messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Before committing, remove any machine-specific entry from `.claude/launch.json` (the `xtnl-rehearsal` config points at a local path).
+- `.claude/launch.json` has an `xtnl-rehearsal` config that runs `docs/life-plan/dev-rehearsal.mjs` (repo-relative; safe to commit).
 
 ## Log
 
 - 2026-10-01 — Game moved to branch `game`; removed from `main` (b4d2652). Life plan designed (understand → 3 proposals → 3 judges → synthesis).
 - 2026-10-01 — User decisions: Samsung Health + Health Connect; AI sizes once / formula scores; compulsory miss = XP debt + streak hit; capture on phone + desktop; Australia/Sydney; additive migrations pre-approved after local tests; order M1 → redesign → M2–M5; auto-resume after credit resets.
 - 2026-10-01 — M1 lane 0 done; M1 build workflow launched.
+- 2026-10-01 — M1 lanes A–D built; reviews found 46 issues (≈15 major); fix workflow `life-m1-fix` launched (core / UI / glue lanes).
+- 2026-10-01 — M1 fixed (49 review findings, 3 fixer lanes), verified: life:check 110 PASS, tsc, lint, next build, novelty-check, skills:stats; browser on the rehearsal server (capture → chips → toast, tick pays the projection with receipt, undo nets zero, review writes REVIEW/DOMAIN, 375/768/932/1024 px no overflow). life_core applied to Supabase (ref xvlkujmtdcpaoxdftgpl checked); the already-applied idea_difficulty migration was also marked applied; streak backfill applied (1 LEGACY_DAY, rerun inserts 0).
+- 2026-10-01 — Note: the user committed a mid-build snapshot as `a` (2f72f0d) at 02:15, before life_core existed in production; the fix commit follows.

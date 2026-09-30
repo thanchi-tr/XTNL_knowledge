@@ -134,6 +134,21 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
                 tone = "chip-amber";
               }
             }
+            // A study link cannot be undone: in-app reviews and ideas are paid by
+            // the knowledge game, so the parser keeps this span linked either way.
+            if (t.field === "study") {
+              return (
+                <li key={t.id}>
+                  <span
+                    className={`chip ${tone} capture-chip`}
+                    title="Paid by your reviews and ideas, never twice"
+                    aria-label={`${label}. Paid by your reviews and ideas, never twice.`}
+                  >
+                    {label}
+                  </span>
+                </li>
+              );
+            }
             return (
               <li key={t.id}>
                 <button
@@ -141,6 +156,9 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
                   className={`chip ${tone} capture-chip`}
                   data-warn={t.field === "compulsory" && parsed.compulsoryWarning ? "1" : undefined}
                   onClick={() => onRevert(t)}
+                  // The line keeps focus through the tap, so a phone's
+                  // keyboard does not drop and rise again for every chip.
+                  onMouseDown={(e) => e.preventDefault()}
                   title={`Tap to keep “${words}” as text`}
                   aria-label={`${label}. Tap to keep “${words}” as text.`}
                 >

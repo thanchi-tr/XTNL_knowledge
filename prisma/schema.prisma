@@ -596,6 +596,8 @@ model LifeSettings {
   /// The first life day. Nothing earlier ever pays XP.
   epochDay          DateTime  @db.Date
   dailyCapacityMin  Int       @default(240)
+  /// When the player chose dailyCapacityMin. Null: it is still the default, and the Today tile may not warn against it.
+  capacitySetAt     DateTime?
   /// 1 = Mon … 7 = Sun: standing rest days (used from M2).
   restWeekdays      Int[]     @default([])
   /// The last life day settlement has judged (M2).
@@ -680,6 +682,8 @@ model TaskTemplate {
   dueDay             DateTime?      @db.Date
   /// PLANNED (carries forward, never late) | DEADLINE (late after it).
   dueKind            String?
+  /// A one-off put off to this life day ('Move to tomorrow' on a deadline): off the board until then. Never moves dueDay or the late factor.
+  planDay            DateTime?      @db.Date
   /// SHORT | MID | LONG, for goals.
   horizon            String?
   parentId           String?
@@ -736,6 +740,8 @@ model TaskTemplate {
   pendingChangeAt    DateTime?
   /// quick | share | api | form.
   captureSource      String         @default("quick")
+  /// The capture sheet's per-line nonce: a retried save finds the row it already wrote instead of writing a second.
+  captureKey         String?
   sortOrder          Float          @default(0)
   completedAt        DateTime?
   archivedAt         DateTime?
@@ -743,6 +749,7 @@ model TaskTemplate {
   updatedAt          DateTime       @updatedAt
   instances          TaskInstance[]
 
+  @@unique([userId, captureKey])
   @@index([userId, archivedAt])
   @@index([userId, normTitle])
   @@index([parentId])

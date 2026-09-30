@@ -10,7 +10,7 @@ import type {
   Timing,
   Track,
 } from "./life-types";
-import type { DayKey } from "./life-day";
+import { LIFE_TZ, addDays, dayKeyOf, type DayKey } from "./life-day";
 import { STREAK_BONUS_CAP_PERCENT, streakBonusPercent } from "./streak-curve";
 
 /**
@@ -169,8 +169,22 @@ export const SIZING_WINDOW_HOURS = 24;
 export const SIZING_DAILY_CAP = 40;
 /** A grade whose sizing failed is retried while it has made fewer attempts than this. */
 export const SIZING_MAX_ATTEMPTS = 2;
-/** When the lexical grade is at least this confident and the model is 2+ steps away, the band moves one step only. */
-export const SIZING_LOCK_CONFIDENCE = 0.6;
+/**
+ * When the lexical grade is at least this confident and the model is 2+
+ * steps away, the band moves one step only (and the model's duration stays
+ * near the words'; SIZING_LOCK_DURATION_STEPS).
+ *
+ * Calibrated to the confidence formula, score / (score + 5): one hit of a
+ * strength-3 rule — a word that names the task outright, 'bins', 'gym',
+ * 'tax return' — scores 3 and reads 0.375; a strength-2 rule reaches it
+ * only on a second hit (0.444); strength 1 never does (at most 0.341). The
+ * spec's first figure, 0.6, needed three hits of one strength-3 rule, so
+ * the lock that exists to stop an injected or confused answer from
+ * re-pricing 'take out bins' as SEVERE almost never fired.
+ */
+export const SIZING_LOCK_CONFIDENCE = 0.375;
+/** A locked lexical grade also keeps the model's duration within this many duration bands of its own. */
+export const SIZING_LOCK_DURATION_STEPS = 2;
 /** composition = normalise(0.6 · model + 0.4 · lexical). */
 export const SIZING_AI_COMPOSITION_SHARE = 0.6;
 /** Confidence of a model grade: 0.6 + 0.4 × the lexical confidence. */
@@ -244,14 +258,32 @@ export function effBand(band: Band, override: number): Band {
 }
 
 /**
- * Whether the self-rating may change now: freely until the task is first
- * completed, then at most once per BAND_OVERRIDE_COOLDOWN_DAYS — so it is
- * a considered judgment, not a dial turned before each tick. A change
- * made before the first completion does not start the clock.
+ * The life day from which the self-rating may change again, or null when
+ * it may change now regardless of the day: freely until the task is first
+ * completed, then once per BAND_OVERRIDE_COOLDOWN_DAYS *life days* — the
+ * same 04:00 day every other life rule counts in, so 'from 8 Oct' means
+ * from 04:00 on the 8th, never a UTC date that is a day off. A change made
+ * before the first completion does not start the clock.
  */
-export function selfRatingOpen(t: { firstCompletedAt: Date | null; bandOverrideAt: Date | null }, now: Date = new Date()): boolean {
-  if (!t.firstCompletedAt || !t.bandOverrideAt || t.bandOverrideAt < t.firstCompletedAt) return true;
-  return now.getTime() - t.bandOverrideAt.getTime() >= BAND_OVERRIDE_COOLDOWN_DAYS * 86_400_000;
+export function selfRatingOpensOn(
+  t: { firstCompletedAt: Date | null; bandOverrideAt: Date | null },
+  tz: string = LIFE_TZ
+): DayKey | null {
+  if (!t.firstCompletedAt || !t.bandOverrideAt || t.bandOverrideAt < t.firstCompletedAt) return null;
+  return addDays(dayKeyOf(t.bandOverrideAt, tz), BAND_OVERRIDE_COOLDOWN_DAYS);
+}
+
+/**
+ * Whether the self-rating may change now (selfRatingOpensOn): a considered
+ * judgment, not a dial turned before each tick.
+ */
+export function selfRatingOpen(
+  t: { firstCompletedAt: Date | null; bandOverrideAt: Date | null },
+  now: Date = new Date(),
+  tz: string = LIFE_TZ
+): boolean {
+  const opensOn = selfRatingOpensOn(t, tz);
+  return opensOn === null || dayKeyOf(now, tz) >= opensOn;
 }
 
 /**
@@ -425,7 +457,9 @@ export interface RowFacts {
   mvv?: boolean;
 }
 
-const STUDY_METRICS = new Set(["REVIEWS", "IDEAS", "REVIEW_DUE"]);
+/** Auto metrics that count this app's own reviews and ideas: a task linked to one pays 0 (K), since the Domain already paid. */
+export const STUDY_AUTO_METRICS = ["REVIEWS", "IDEAS", "REVIEW_DUE"] as const;
+const STUDY_METRICS: ReadonlySet<string> = new Set<string>(STUDY_AUTO_METRICS);
 
 /** How a template's completion is paid: play and study-linked tasks pay 0; the minimum version pays 0.3. */
 export function payModeOf(t: { intrinsic: boolean; autoMetric: string | null }, mvv = false): PayMode {
@@ -481,6 +515,22 @@ export function kneeNote(r: Pick<Receipt, "kneeBefore" | "raw" | "xp">): string 
   if (r.kneeBefore >= KNEE_CAP_AT_RAW) return `day cap reached (${KNEE_CAP})`;
   if (r.kneeBefore < KNEE_FULL_RATE) return `partly eased: full rate ends at ${KNEE_FULL_RATE} today`;
   return `eased ×${(r.xp / r.raw).toFixed(2)}: past ${KNEE_FULL_RATE} today`;
+}
+
+/**
+ * The band a stored receipt was priced at (its B factor), self-rating
+ * included; null for a receipt that does not say. The INTRO count V reads
+ * this, so a completion counts as the band it was paid as — a later
+ * self-rating of its template cannot move it out of the day's count.
+ */
+export function receiptBandOf(r: unknown): Band | null {
+  if (!r || typeof r !== "object") return null;
+  const factors = (r as { factors?: unknown }).factors;
+  if (!Array.isArray(factors)) return null;
+  const b = factors.find((f): f is ReceiptFactor => !!f && typeof f === "object" && (f as ReceiptFactor).key === "B");
+  if (!b) return null;
+  for (const band of BANDS) if (BAND_META[band].label === b.label || BAND_BASE[band] === b.value) return band;
+  return null;
 }
 
 /**

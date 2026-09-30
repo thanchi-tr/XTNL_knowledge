@@ -7,7 +7,7 @@ import { cached, invalidate } from "@/lib/cache";
 import { getCurrentUserId } from "@/lib/user";
 import { dateColumn, todayKey, type DayKey } from "@/lib/life-day";
 import { parseCapture, sanitizeCaptureInput, type CaptureSpan } from "@/lib/capture-parse";
-import { createTemplateCore } from "@/lib/tasks";
+import { createTemplateCore, loadOpenGoals } from "@/lib/tasks";
 import { applySizing } from "@/lib/life-sizing";
 import { loadStructureWords, loadVocabulary } from "@/lib/vocabulary";
 import type { CaptureMode, TaskKind } from "@/lib/life-types";
@@ -29,21 +29,35 @@ export type CaptureResult<T> = { ok: true; value: T } | { ok: false; error: stri
 export interface CapturedItem {
   id: string;
   title: string;
-  /** What one completion at the estimate pays right now, from the server's own context. */
+  /**
+   * What one completion at the estimate pays right now, priced against
+   * today's real ledger (the knee base, repeat decay, the INTRO count) —
+   * or, for a done-now capture that was ticked, what the tick paid.
+   */
   projectedXp: number;
   /** The parse in the board's words, e.g. 'Mon · Thu · compulsory'. */
   describe: string;
   kind: TaskKind;
   mode: CaptureMode;
+  /** The line was done-now AND the tick went through. */
   doneNow: boolean;
+  /** A done-now line that was saved but not ticked, and why ('It isn't due today.'); null otherwise. */
+  doneNowError: string | null;
+  /** This line was already saved by an earlier send (a retry): nothing new was written. */
+  duplicate: boolean;
   /** Where the item continues, if anywhere: an idea draft opens the full idea form. */
   href: string | null;
 }
 
+/**
+ * Saves one line. `opts.captureKey` is the sheet's per-line nonce: send the
+ * same one on every retry of a line, and a save whose response was lost is
+ * found again rather than written twice.
+ */
 export async function createFromCapture(
   text: string,
   reverted?: CaptureSpan[],
-  opts?: { refresh?: boolean }
+  opts?: { refresh?: boolean; captureKey?: string }
 ): Promise<CaptureResult<CapturedItem>> {
   const input = sanitizeCaptureInput(text, reverted);
   if (!input.text.trim()) return { ok: false, error: "Type something to capture." };
@@ -53,7 +67,11 @@ export async function createFromCapture(
 
   let created: Awaited<ReturnType<typeof createTemplateCore>>;
   try {
-    created = await createTemplateCore(getCurrentUserId(), parsed, { rawText: input.text, captureSource: "quick" });
+    created = await createTemplateCore(getCurrentUserId(), parsed, {
+      rawText: input.text,
+      captureSource: "quick",
+      captureKey: typeof opts?.captureKey === "string" ? opts.captureKey : null,
+    });
   } catch (err) {
     console.error("createFromCapture failed:", err);
     // The sheet keeps the line in local storage until this says ok, so the
@@ -67,8 +85,9 @@ export async function createFromCapture(
   invalidate("life", "activity");
 
   // Sizing only means something for work that pays: an idea draft is filed,
-  // not done, and a goal pays through its steps.
-  if (parsed.kind !== "IDEA_DRAFT" && parsed.kind !== "GOAL") {
+  // not done, and a goal pays through its steps. A retried line was sized
+  // (or is being sized) by its first send; a second call would spend its retry.
+  if (parsed.kind !== "IDEA_DRAFT" && parsed.kind !== "GOAL" && !created.duplicate) {
     const id = created.id;
     after(async () => {
       try {
@@ -92,7 +111,9 @@ export async function createFromCapture(
       describe: created.describe,
       kind: parsed.kind,
       mode: parsed.mode,
-      doneNow: parsed.doneNow,
+      doneNow: parsed.doneNow && created.completed,
+      doneNowError: parsed.doneNow ? created.doneNowError : null,
+      duplicate: created.duplicate,
       href: parsed.kind === "IDEA_DRAFT" ? `/add?draft=${encodeURIComponent(created.id)}` : null,
     },
   };
@@ -109,15 +130,9 @@ export interface CaptureVocabulary {
   day: DayKey;
 }
 
-const loadOpenGoals = (userId: string) =>
-  cached(`captureGoals:${userId}`, ["life"], () =>
-    prisma.taskTemplate.findMany({
-      where: { userId, kind: "GOAL", archivedAt: null, completedAt: null },
-      select: { id: true, title: true },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    })
-  );
+// The open goals come from tasks.ts loadOpenGoals: the same list, in the same
+// order, that createTemplateCore matches '^name' against, so the chip's
+// preview (matchParentGoal over it) is exactly what the server links.
 
 const loadRawBefore = (userId: string, day: DayKey) =>
   cached(`captureRawBefore:${userId}:${day}`, ["activity"], async () => {

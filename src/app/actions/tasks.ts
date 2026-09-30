@@ -1,27 +1,27 @@
 "use server";
 
-import { after } from "next/server";
 import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
-import { parseCapture, type CaptureSpan } from "@/lib/capture-parse";
-import { todayKey, type DayKey } from "@/lib/life-day";
+import type { CaptureSpan } from "@/lib/capture-parse";
+import type { DayKey } from "@/lib/life-day";
 import { applySizing } from "@/lib/life-sizing";
+import { createFromCapture, type CapturedItem } from "./capture";
 import {
   againCore,
   archiveCore,
   clarifyInboxCore,
   completeInstanceCore,
-  createTemplateCore,
   goalProgressCore,
   renameCore,
   rescheduleCore,
   resizableCore,
   setBandOverrideCore,
+  setDailyCapacityCore,
   skipCore,
+  unarchiveCore,
   undoCaptureCore,
   undoCompletionCore,
   type Completion,
-  type CreatedTask,
   type InboxChoice,
   type LifeResult,
 } from "@/lib/tasks";
@@ -60,45 +60,35 @@ async function run<T>(label: string, opts: TaskActionOptions | undefined, fn: (u
 
 const isId = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 64;
 const noId = <T>(): TaskActionResult<T> => ({ ok: false, error: "No task given." });
-
-/** Accepts only what a span can be: a handful of non-negative integer pairs. */
-function cleanSpans(spans: unknown): CaptureSpan[] {
-  if (!Array.isArray(spans)) return [];
-  return spans
-    .slice(0, 50)
-    .filter((s): s is CaptureSpan => !!s && Number.isInteger(s.start) && Number.isInteger(s.end) && s.start >= 0 && s.end >= s.start)
-    .map((s) => ({ start: s.start, end: s.end }));
-}
-
-const TEXT_MAX = 1000;
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Captures one line as a task. The server re-parses the text as the
- * authority (the chips the browser showed were a preview), writes the
- * template with its lexical grade in one insert, and sizes it with the AI
- * after the response: a model outage can slow the grade, never lose the
- * capture.
+ * Captures one line as a task. The same path as the capture sheet's
+ * createFromCapture — one parse, one set of input clamps
+ * (sanitizeCaptureInput), one sizing rule (none for goals and idea drafts)
+ * and the same retry key — so the two entry points cannot drift apart.
  */
-export async function createTask(text: string, reverted?: CaptureSpan[], opts?: TaskActionOptions): Promise<TaskActionResult<CreatedTask>> {
-  if (typeof text !== "string" || !text.trim()) return { ok: false, error: "Type something to add." };
-  const raw = text.slice(0, TEXT_MAX);
-  return run("createTask", opts, async (userId) => {
-    const parsed = parseCapture(raw, { today: todayKey(), reverted: cleanSpans(reverted) });
-    if (!parsed.title.trim()) return { ok: false, error: "That line has no title left once its dates and tags are read." };
-    const created = await createTemplateCore(userId, parsed, { rawText: raw, captureSource: "quick" });
-    after(async () => {
-      try {
-        await applySizing(created.id);
-      } catch (err) {
-        console.error("Task sizing failed:", err);
-      }
-    });
-    return { ok: true, value: created };
-  });
+export async function createTask(
+  text: string,
+  reverted?: CaptureSpan[],
+  opts?: TaskActionOptions & { captureKey?: string }
+): Promise<TaskActionResult<CapturedItem>> {
+  try {
+    return await createFromCapture(text, reverted, { refresh: opts?.refresh === true, captureKey: opts?.captureKey });
+  } catch (err) {
+    console.error("createTask failed:", err);
+    return { ok: false, error: "Couldn't save that. Try again." };
+  }
 }
 
 export interface CompleteTaskInput {
-  day?: "today" | "yesterday";
+  /**
+   * The row's own life day (row.day), or 'today' / 'yesterday'. Send the
+   * DayKey: the server books only today or yesterday by its own clock, so a
+   * board left open across 04:00 is refused rather than booked a day off.
+   */
+  day?: "today" | "yesterday" | DayKey;
+  /** Ignored: the server picks the slot (the first of the day; 'Again' is againTask). Kept so old callers still type-check. */
   slot?: number;
   minutes?: number | null;
   mvv?: boolean;
@@ -107,10 +97,11 @@ export interface CompleteTaskInput {
 /** Ticks a task: today, or yesterday inside the record window. Pays exactly the projected price; a double tap pays once. */
 export async function completeTask(templateId: string, input?: CompleteTaskInput, opts?: TaskActionOptions): Promise<TaskActionResult<Completion>> {
   if (!isId(templateId)) return noId();
+  const day = input?.day;
+  const cleanDay = day === "yesterday" || day === "today" || (typeof day === "string" && DAY_KEY_RE.test(day)) ? day : "today";
   return run("completeTask", opts, (userId) =>
     completeInstanceCore(userId, templateId, {
-      day: input?.day === "yesterday" ? "yesterday" : "today",
-      slot: typeof input?.slot === "number" ? input.slot : 0,
+      day: cleanDay,
       minutes: typeof input?.minutes === "number" ? input.minutes : null,
       mvv: input?.mvv === true,
     })
@@ -159,6 +150,18 @@ export async function archiveTask(templateId: string, opts?: TaskActionOptions):
   return run("archiveTask", opts, (userId) => archiveCore(userId, templateId));
 }
 
+/** Brings back an archived (or dropped) task, history and streak intact: the Undo for Archive and Drop. */
+export async function unarchiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<null>> {
+  if (!isId(templateId)) return noId();
+  return run("unarchiveTask", opts, (userId) => unarchiveCore(userId, templateId));
+}
+
+/** The player's own daily capacity in minutes (clamped 30..960, to 5). Until it is set, the tile's figure is a default. */
+export async function setDailyCapacity(minutes: number, opts?: TaskActionOptions): Promise<TaskActionResult<{ minutes: number }>> {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes)) return { ok: false, error: "Pick a number of minutes." };
+  return run("setDailyCapacity", opts, (userId) => setDailyCapacityCore(userId, minutes));
+}
+
 const INBOX_CHOICES: readonly InboxChoice[] = ["today", "tomorrow", "anytime", "goal", "idea", "drop"];
 
 /** One-tap clarify for an inbox item: Today / Tomorrow / Anytime / Goal ^ / Idea / Drop. */
@@ -173,10 +176,18 @@ export async function clarifyInbox(
   return run("clarifyInbox", opts, (userId) => clarifyInboxCore(userId, templateId, choice, isId(parentId) ? parentId : null));
 }
 
-/** '+1' (or +n) on a goal measured by hand. */
-export async function goalProgress(templateId: string, qty?: number, opts?: TaskActionOptions): Promise<TaskActionResult<{ qty: number }>> {
+/**
+ * '+1' (or +n) on a goal measured by hand. Progress only goes up. Pass a
+ * fresh `opId` per tap: a tap that reaches the server twice then counts once.
+ */
+export async function goalProgress(
+  templateId: string,
+  qty?: number,
+  opts?: TaskActionOptions & { opId?: string }
+): Promise<TaskActionResult<{ qty: number }>> {
   if (!isId(templateId)) return noId();
-  return run("goalProgress", opts, (userId) => goalProgressCore(userId, templateId, typeof qty === "number" ? qty : 1));
+  const opId = typeof opts?.opId === "string" ? opts.opId : null;
+  return run("goalProgress", opts, (userId) => goalProgressCore(userId, templateId, typeof qty === "number" ? qty : 1, new Date(), opId));
 }
 
 /** Renames a task; its grade and repeat-decay group stay. */
@@ -207,6 +218,10 @@ export async function resizeTask(templateId: string, opts?: TaskActionOptions): 
         return { ok: false, error: "The AI didn't answer. The size stays as it was." };
       case "capped":
         return { ok: false, error: "Today's AI sizing limit is reached. Try again tomorrow, or self-rate it." };
+      case "renamed":
+        return { ok: false, error: "A renamed task keeps its size. Self-rate it instead." };
+      case "done":
+        return { ok: false, error: "This isn't something that gets sized." };
       default:
         return { ok: false, error: "The size is frozen now. Self-rate it instead." };
     }

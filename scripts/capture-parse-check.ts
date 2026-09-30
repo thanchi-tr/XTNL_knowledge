@@ -18,6 +18,7 @@ import {
   COMPULSORY_WARNING,
   MAX_CAPTURE_CHARS,
   MAX_REVERTED_SPANS,
+  cleanCaptureKey,
   describeCaptureRule,
   formatMinutes,
   formatXp,
@@ -74,7 +75,8 @@ function standing(text: string, today: string, reverted: CaptureSpan[] = []): st
     const t = spans[i];
     if (t.start < 0 || t.end > text.length || t.start >= t.end) return `token ${t.id} out of bounds`;
     if (i > 0 && spans[i - 1].end > t.start) return `tokens ${spans[i - 1].id} and ${t.id} overlap`;
-    if (reverted.some((r) => r.start < t.end && t.start < r.end)) return `token ${t.id} overlaps a revert`;
+    // A study link is the one chip a revert cannot remove (in-app work is paid once, by reviews).
+    if (t.field !== "study" && reverted.some((r) => r.start < t.end && t.start < r.end)) return `token ${t.id} overlaps a revert`;
   }
 
   // Parity: what the server reads is what the chips showed.
@@ -98,10 +100,16 @@ function standing(text: string, today: string, reverted: CaptureSpan[] = []): st
     if (!filled.has("study") && again.autoMetric !== null) return `re-parsing '${client.title}' adds a study link`;
   }
 
-  // Revert round trip, one chip at a time.
+  // Revert round trip, one chip at a time. A study chip is not revertible:
+  // tapping it must change nothing, so a link to in-app reviews can never
+  // silently become a task that pays for the same work again.
   for (const t of client.tokens) {
     const words = text.slice(t.start, t.end);
     const off = parseCapture(text, { today, reverted: [...reverted, { start: t.start, end: t.end }] });
+    if (t.field === "study") {
+      if (!same(off, client)) return `reverting study link ${t.id} changed the parse (autoMetric ${off.autoMetric})`;
+      continue;
+    }
     if (off.tokens.some((o) => o.start < t.end && t.start < o.end)) return `reverting ${t.id} leaves a token on its span`;
     if (!norm(off.title).includes(norm(words))) return `reverting ${t.id} does not put '${words}' in the title ('${off.title}')`;
     for (const other of client.tokens) {
@@ -230,6 +238,13 @@ fx("clean fridge fortnightly", { title: "Clean fridge", recurrence: "EVERY:14" }
 fx("weekly review", { title: "Review", recurrence: "EVERY:7", labels: { recurrence: "Weekly" } });
 fx("plan week weekly on sun", { title: "Plan week", recurrence: "DOW:7" });
 fx("change sheets every 2 weeks on mon", { title: "Change sheets", recurrence: "EVERY:14", dueDay: "2026-10-05" });
+// 'every other <weekday>' is fortnightly on that weekday, never a one-off
+// ('Every other bins' due Monday was the old reading).
+fx("every other mon bins", { title: "Bins", kind: "HABIT", recurrence: "EVERY:14", dueDay: "2026-10-05", dueKind: "PLANNED", fields: ["recurrence"], labels: { recurrence: "Every 2 weeks · Mon" } });
+fx("bins every second thursday !", { title: "Bins", recurrence: "EVERY:14", dueDay: THU, compulsory: true });
+fx("every alternate sat long run", { title: "Long run", recurrence: "EVERY:14", dueDay: SAT });
+// A monthly 'second Tuesday' is not in the grammar: it stays text rather than becoming a wrong one-off date.
+fx("every second tue of the month bills", { recurrence: null, dueDay: null, fields: [] });
 fx("budget monthly", { title: "Budget", recurrence: "MONTHLY:1" });
 fx("budget monthly", { recurrence: "MONTHLY:17", labels: { recurrence: "Monthly · 17th" } }, "2026-10-17");
 fx("budget monthly from 22 oct", { recurrence: "MONTHLY:22", dueDay: "2026-10-22" });
@@ -347,6 +362,41 @@ fx("review 3 chapters", { title: "Review 3 chapters", autoMetric: null, fields: 
 fx("review 800 daily", { autoMetric: "REVIEWS", autoTarget: 500 });
 fx("review 20", { title: "Review 20", autoMetric: "REVIEWS", autoTarget: 20 });
 
+console.log("\n── Study links: the common phrasings of in-app work link (and pay 0)");
+fx("do reviews daily !", { title: "Do reviews", autoMetric: "REVIEW_DUE", autoTarget: null, recurrence: "DAILY", compulsory: true, fields: ["study", "recurrence", "compulsory"] });
+fx("reviews daily", { title: "Reviews", autoMetric: "REVIEW_DUE", recurrence: "DAILY", fields: ["study", "recurrence"] });
+fx("review cards daily", { title: "Review cards", autoMetric: "REVIEW_DUE", recurrence: "DAILY" });
+fx("add an idea daily", { title: "Add an idea", autoMetric: "IDEAS", autoTarget: 1, recurrence: "DAILY" });
+fx("clear my reviews", { title: "Clear my reviews", autoMetric: "REVIEW_DUE", fields: ["study"] });
+fx("do my reviews tonight", { title: "Do my reviews", autoMetric: "REVIEW_DUE", dueDay: THU });
+fx("finish all my flashcards", { autoMetric: "REVIEW_DUE" });
+fx("review my flashcards weekdays", { title: "Review my flashcards", autoMetric: "REVIEW_DUE", recurrence: "WEEKDAYS" });
+fx("review 20 flashcards", { autoMetric: "REVIEWS", autoTarget: 20 });
+fx("20 flashcards daily", { title: "20 flashcards", autoMetric: "REVIEWS", autoTarget: 20, recurrence: "DAILY" });
+fx("add ideas", { autoMetric: "IDEAS", autoTarget: 1 });
+fx("log two new ideas daily", { title: "Log two new ideas", autoMetric: "IDEAS", autoTarget: 2, recurrence: "DAILY" });
+fx("new idea daily", { title: "New idea", autoMetric: "IDEAS", autoTarget: 1, recurrence: "DAILY" });
+fx("flashcards 20m daily", { title: "Flashcards", autoMetric: "REVIEW_DUE", estMinutes: 20, recurrence: "DAILY" });
+fx("x reviews", { title: "Reviews", doneNow: true, autoMetric: "REVIEW_DUE" });
+
+console.log("\n── Study links: outside study and other people's reviews stay paying work");
+fx("study chapter 5", { title: "Study chapter 5", autoMetric: null, fields: [] });
+fx("revise for the exam", { title: "Revise for the exam", autoMetric: null, fields: [] });
+fx("review chapter 5", { autoMetric: null, fields: [] });
+fx("review lecture notes daily", { title: "Review lecture notes", autoMetric: null, recurrence: "DAILY" });
+fx("weekly review", { title: "Review", autoMetric: null, recurrence: "EVERY:7" });
+fx("write performance reviews by fri", { title: "Write performance reviews", autoMetric: null, dueDay: FRI });
+fx("do the code reviews", { autoMetric: null, fields: [] });
+fx("code reviews daily", { title: "Code reviews", autoMetric: null, recurrence: "DAILY" });
+fx("do anki reviews daily", { title: "Do anki reviews", autoMetric: null, recurrence: "DAILY" });
+fx("anki 20 cards", { autoMetric: null, fields: [] });
+fx("read product reviews", { autoMetric: null, fields: [] });
+fx("write 20 reviews", { autoMetric: null, fields: [] });
+fx("add ideas to the wedding doc", { autoMetric: null, fields: [] });
+fx("brainstorm ideas for the party", { autoMetric: null, fields: [] });
+fx("review the contract", { autoMetric: null, fields: [] });
+fx("idea: do reviews daily", { mode: "IDEA", autoMetric: null });
+
 console.log("\n── Reverted chips");
 {
   const t = "gym legs 60m every mon,thu !";
@@ -358,8 +408,18 @@ console.log("\n── Reverted chips");
   fx(v, { title: "X run", doneNow: false, estMinutes: 30 }, THU, [spanOf(v, "x")]);
   const w = "idea: rest days count 30m";
   fx(w, { mode: "TASK", title: "Idea: rest days count", estMinutes: 30 }, THU, [spanOf(w, "idea:")]);
+  // A study link survives a revert: tapping its chip cannot turn in-app
+  // reviews into a task that pays life XP on top of their Domain points.
   const x = "review 20 daily";
-  fx(x, { title: "Review 20", autoMetric: null, recurrence: "DAILY" }, THU, [spanOf(x, "review 20")]);
+  fx(x, { title: "Review 20", autoMetric: "REVIEWS", autoTarget: 20, recurrence: "DAILY", fields: ["study", "recurrence"] }, THU, [spanOf(x, "review 20")]);
+  const x2 = "review 20 daily !";
+  fx(x2, { autoMetric: "REVIEWS", autoTarget: 20, compulsory: true }, THU, [{ start: 0, end: 9 }]);
+  const x3 = "do reviews daily";
+  fx(x3, { autoMetric: "REVIEW_DUE", recurrence: "DAILY" }, THU, [spanOf(x3, "do reviews")]);
+  // A title-only link holds whether its own noun or its schedule is reverted.
+  const x4 = "reviews daily";
+  fx(x4, { title: "Reviews", autoMetric: "REVIEW_DUE", recurrence: "DAILY" }, THU, [spanOf(x4, "reviews")]);
+  fx(x4, { title: "Reviews daily", autoMetric: "REVIEW_DUE", recurrence: null }, THU, [spanOf(x4, "daily")]);
   const y = "goal: read 12 books by dec";
   fx(y, { mode: "TASK", kind: "TASK", title: "Goal: read 12 books", dueDay: "2026-12-31" }, THU, [spanOf(y, "goal:")]);
 
@@ -398,6 +458,12 @@ console.log("\n── sanitizeCaptureInput");
   report(`at most ${MAX_REVERTED_SPANS} spans`, sanitizeCaptureInput("x".repeat(60), many).reverted.length === MAX_REVERTED_SPANS);
   report("spans are sorted", same(sanitizeCaptureInput("abcdef", [{ start: 3, end: 4 }, { start: 0, end: 1 }]).reverted, [{ start: 0, end: 1 }, { start: 3, end: 4 }]));
   report("a non-array revert list is ignored", sanitizeCaptureInput("abc", { start: 0, end: 1 }).reverted.length === 0);
+  // The retry key: the sheet's per-line nonce ('<ms base36>-<n>') passes;
+  // anything else is dropped (the save still works, it just is not deduped).
+  report(
+    "capture key: the sheet's nonce passes, junk is dropped",
+    cleanCaptureKey("mgb7x2k1-3") === "mgb7x2k1-3" && cleanCaptureKey("x") === null && cleanCaptureKey("a b c d") === null && cleanCaptureKey(42) === null && cleanCaptureKey("k".repeat(65)) === null
+  );
 }
 
 console.log("\n── Parent goals");
@@ -412,6 +478,13 @@ console.log("\n── Parent goals");
   report("'^japanse' (typo) finds 'Learn Japanese'", matchParentGoal("japanse", goals)?.id === "g3");
   report("'^taxes' finds nothing", matchParentGoal("taxes", goals) === null);
   report("an empty hint finds nothing", matchParentGoal("  ", goals) === null);
+  report("a one-letter hint names nothing (it is inside every title)", matchParentGoal("a", goals) === null && matchParentGoal("n", goals) === null);
+  // The server links with this same function over the same list the chip
+  // previews (tasks.ts loadOpenGoals), so the chip's pick is what lands.
+  // The server's old matcher (startsWith, else Dice ≥ 0.35) linked nothing here.
+  const fit = [{ id: "f1", title: "Get fit by summer" }, { id: "f2", title: "Run a marathon" }];
+  const hint = parseCapture("pushups 10m ^fit", { today: THU }).parentHint ?? "";
+  report("'^fit' picks 'Get fit by summer' — chip and server alike", hint === "fit" && matchParentGoal(hint, fit)?.id === "f1", `hint '${hint}'`);
 }
 
 console.log("\n── Hotkey");

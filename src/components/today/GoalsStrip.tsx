@@ -77,7 +77,7 @@ export function GoalsStrip({ goals, busy, onProgress }: Props) {
                           <button
                             type="button"
                             className="today-pill mono"
-                            style={{ minHeight: 34, padding: "0 10px" }}
+                            style={{ minWidth: 44, padding: "0 10px" }}
                             disabled={busy}
                             onClick={() => onProgress(g.template.id)}
                             aria-label={`Add one to ${g.template.title}`}

@@ -861,6 +861,16 @@ code, pre, .mono {
   .tag-particles > .mote { animation: none; opacity: 0; }
   .foil:hover::after { animation: none; opacity: 0; }
   .card-hover:hover { transform: none; }
+  /* The Today board and the capture sheet. today.css and capture.css carry
+     the same rules in their own blocks; they load after this file, so the
+     entries here take `:root` to win on specificity, not on source order. */
+  :root .today-tick-ring, :root .today-tick-check,
+  :root .today-row-title, :root .today-bar-fill,
+  :root button.capture-chip { transition: none; }
+  :root .today-sheet, :root .today-toast, :root .capture-sheet,
+  :root .capture-backdrop, :root .capture-toast { animation: none; }
+  :root .today-tick:active .today-tick-ring,
+  :root .capture-fab:active { transform: none; }
 }
 
 /* ═══ POWER ══════════════════════════════════════════════

@@ -5,7 +5,10 @@
 
    Motion is routine feedback, so every transition is under 300 ms and
    nothing loops: a tick fills and draws its check once. The sheet's entrance
-   is one short slide. Both are listed under reduced motion at the bottom. */
+   is one short slide. Both are listed under reduced motion at the bottom.
+
+   Every control on the board is at least 40 px tall (the tick 44 px) and
+   44 px wide where it is an icon, however small its text reads. */
 
 /* ── Sections ───────────────────────────────────────────── */
 .today-lane { overflow: hidden; }
@@ -42,6 +45,20 @@
 }
 .today-lane > details[open] > summary::after { transform: rotate(225deg) translateY(-1px); }
 .today-empty { padding: 4px 14px 14px; font-size: 12px; color: var(--ink-2); }
+/* A link-like action inside a sentence: 'Capture one now'. */
+.today-inline-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--green);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.today-inline-link:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; border-radius: 6px; }
 
 /* ── Rows ───────────────────────────────────────────────── */
 .today-rows { border-top: 1px solid var(--line); }
@@ -105,6 +122,8 @@
 }
 .today-row[data-state="done"] .today-row-title,
 .today-row[data-state="skipped"] .today-row-title { color: var(--ink-2); }
+.today-row-title[data-pending="1"] { color: var(--ink-1); }
+.today-row-saving { font-size: 11px; color: var(--ink-3); }
 .today-row-meta {
   margin-top: 3px;
   font-size: 11px;
@@ -156,7 +175,7 @@
 .today-xp[data-paid="1"] { color: var(--green); }
 .today-xp[data-zero="1"] { color: var(--ink-3); }
 .today-more {
-  width: 36px;
+  width: 44px;
   height: 44px;
   border: 0;
   background: none;
@@ -170,15 +189,20 @@
 .today-more:hover, .today-more[aria-expanded="true"] { color: var(--ink-0); background: var(--raised); }
 .today-more:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
 .today-undo {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 8px;
   border: 0;
+  border-radius: 8px;
   background: none;
-  padding: 0;
-  margin-left: 6px;
   color: var(--blue);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
+  vertical-align: middle;
 }
+.today-undo:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
 
 /* ── The drawer ─────────────────────────────────────────── */
 .today-drawer {
@@ -191,7 +215,7 @@
 .today-drawer-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .today-drawer-row + .today-drawer-row { margin-top: 8px; }
 .today-pill {
-  min-height: 36px;
+  min-height: 40px;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -227,11 +251,20 @@
   display: flex;
   gap: 8px;
   align-items: baseline;
-  padding: 4px 8px;
+  min-height: 40px;
+  padding: 8px;
   border-radius: 7px;
   border: 1px solid transparent;
 }
 .today-band[data-current="1"] { border-color: var(--line-hi); background: var(--card); }
+.today-drawer-note { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
+
+/* ── Coming up: repeating work not due today ────────────── */
+.today-upcoming { padding: 10px 14px 12px; border-top: 1px solid var(--line); }
+.today-upcoming ul { display: grid; gap: 4px; margin-top: 6px; }
+.today-upcoming li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; }
+.today-upcoming-title { min-width: 0; color: var(--ink-1); overflow-wrap: anywhere; }
+.today-upcoming-day { flex: none; color: var(--blue); font-size: 11px; }
 
 /* ── Bars (quest, goals, capacity) ──────────────────────── */
 .today-bar {
@@ -299,6 +332,73 @@
 .today-inbox-item + .today-inbox-item { border-top: 1px solid var(--line); }
 .today-inbox-item { padding: 10px 0; }
 
+/* ── Undo for Archive and Drop ──────────────────────────────
+   Floats one toast-height above the capture toast's place, so the two can
+   show at once; inside the inbox sheet it is a status line instead, so the
+   sheet's backdrop never hides it. */
+.today-toast {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: min(92vw, 520px);
+  bottom: calc(var(--nav-h, 56px) + 22px + 60px + 58px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 2px 6px 2px 14px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  background: rgba(11, 22, 34, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-hi);
+  box-shadow: var(--shadow-md);
+  animation: today-toast-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (min-width: 640px) {
+  .today-toast { bottom: calc(var(--nav-h, 56px) + 22px + 58px + env(safe-area-inset-bottom)); }
+}
+@keyframes today-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.today-undo-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 2px 6px 2px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--ink-1);
+  background: var(--sub);
+  border: 1px solid var(--line);
+}
+.today-toast-text { min-width: 0; overflow-wrap: anywhere; }
+.today-toast-title { color: var(--ink-0); font-weight: 600; }
+.today-toast-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--green);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.today-toast-action:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+
 /* ── Phone ──────────────────────────────────────────────── */
 @media (max-width: 420px) {
   .today-drawer { margin-left: 6px; margin-right: 6px; }
@@ -312,6 +412,7 @@
   .today-row-title,
   .today-bar-fill,
   .today-lane > details > summary::after { transition: none; }
-  .today-sheet { animation: none; }
+  .today-sheet,
+  .today-toast { animation: none; }
   .today-tick:active .today-tick-ring { transform: none; }
 }

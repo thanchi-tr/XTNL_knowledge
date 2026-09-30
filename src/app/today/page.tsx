@@ -9,6 +9,7 @@ import { getDailyStreak } from "@/lib/streak";
 import { loadWeeklyQuotas } from "@/lib/field-quota";
 import { loadBossStates } from "@/lib/bosses";
 import { TodayBoard } from "@/components/today/TodayBoard";
+import { LiveClock } from "@/components/today/LiveClock";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -54,8 +55,9 @@ export default async function TodayPage() {
         : { line: "Weekly quota met", met: true };
   const bossReady = bosses.filter((b) => b.availability.status === "ready").length;
 
-  // The zone is printed on purpose: a wrong one would silently shift every
-  // day edge in the app, and this is where it would be noticed.
+  // The date once (the heading), then a clock that keeps time and the zone
+  // it keeps it in — printed on purpose: a wrong zone would silently shift
+  // every day edge in the app, and this is where it would be noticed.
   const clock = boardClock(now);
 
   return (
@@ -68,7 +70,7 @@ export default async function TodayPage() {
           </h1>
         </div>
         <p className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {clock.date} · {clock.time} {clock.zone} ({clock.tz}) ·{" "}
+          <LiveClock initialTime={clock.time} zone={clock.zone} tz={clock.tz} /> ·{" "}
           <Link href="/today/rules" style={{ color: "var(--blue)" }}>
             How XP works
           </Link>

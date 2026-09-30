@@ -15,6 +15,8 @@
     "db:backfill-embeddings": "tsx scripts/backfill-embeddings.ts",
     "db:backfill-compositions": "tsx scripts/backfill-compositions.ts",
     "db:backfill-attributes": "tsx scripts/backfill-attributes.ts",
+    "db:backfill-activity": "tsx scripts/backfill-activity.ts",
+    "life:check": "tsx scripts/life-day-check.ts && tsx scripts/streak-check.ts && tsx scripts/life-grade-check.ts && tsx scripts/recurrence-check.ts && tsx scripts/capture-parse-check.ts && tsx scripts/board-check.ts && tsx scripts/today-ui-check.ts",
     "skills:stats": "tsx scripts/print-skill-pool-stats.ts",
     "balance:horizon": "tsx scripts/balance-horizon.ts"
   },

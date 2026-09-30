@@ -97,6 +97,27 @@ const GRAMMAR_WORDS = new Set([
   ...Object.keys(DAY_WORDS), ...Object.keys(DAY_PLURALS), ...Object.keys(MONTH_WORDS),
 ]);
 
+/**
+ * Reviews and ideas that are someone else's, or another app's: a line
+ * naming any of these is ordinary work and pays, never a study link. A
+ * weekly review is planning, a code review is work, and cards in Anki were
+ * never paid by this app's review queue.
+ */
+const EXTERNAL_REVIEW =
+  /\b(?:anki|quizlet|memrise|brainscape|remnote|mochi|(?:weekly|monthly|quarterly|annual|yearly|performance|code|peer|design|pr|pull\s+request|product|book|film|movie|restaurant|google|app\s+store|customer|client|contract|document|doc|paper|literature|salary|mid-?year|end\s+of\s+year|year-?end)\s+reviews?)\b/i;
+
+/** Words before 'N reviews' that make them someone else's reviews: 'write 20 reviews', 'get 5 reviews'. */
+const REVIEWS_OF_OTHERS = new Set(["write", "writing", "read", "reading", "post", "leave", "give", "get", "collect", "answer", "reply", "respond", "moderate", "publish", "request", "ask", "check"]);
+
+/**
+ * A whole title that is only in-app study, once schedules, dates and tags
+ * are read out of it: 'reviews' ('reviews daily'), 'my flashcards', 'a new
+ * idea' ('new idea daily'). Checked last, on the finished title, so a line
+ * with any other words in it ('reviews for the Q3 deck') is never caught.
+ */
+const WHOLE_TITLE_REVIEWS = /^(?:(?:do|clear|finish|complete)\s+)?(?:(?:all\s+)?(?:my|the|today'?s)\s+|all\s+)?(?:due\s+)?(?:reviews|flashcards|review\s+(?:queue|session|backlog)|spaced\s+repetition|srs)$/i;
+const WHOLE_TITLE_IDEAS = /^(?:(?:add|log|capture|file|submit)\s+)?(?:(?:an?|one)\s+)?(?:new\s+)?ideas?$/i;
+
 const TRACK_TAGS: Record<string, Track> = { body: "BODY", duty: "DUTY", craft: "CRAFT", care: "CARE" };
 const HORIZON_TAGS: Record<string, Horizon> = { short: "SHORT", mid: "MID", long: "LONG" };
 
@@ -118,7 +139,10 @@ const ANY_DAY_NAME = new RegExp(`${DAY_PLURAL}|${DAY}`, "gi");
 /** An explicit separator in a list of days: 'mon,thu', 'mon/thu', 'mon & thu', 'mon and thu'. */
 const LIST_SEP = `\\s*(?:,|\\/|&|\\+|\\band\\b)\\s*`;
 /** A day name that belongs to a schedule rather than a date: after every / each, or inside a list. */
-const SCHEDULE_BEFORE = new RegExp(`(?:\\bevery|\\beach|${DAY}${LIST_SEP})\\s*$`, "i");
+const SCHEDULE_BEFORE = new RegExp(
+  `(?:\\bevery(?:\\s+(?:other|second|alternate|first|third|fourth|last|\\d{1,2}(?:st|nd|rd|th)))?|\\beach|${DAY}${LIST_SEP})\\s*$`,
+  "i"
+);
 const LIST_AFTER = new RegExp(`^${LIST_SEP}${DAY}(?![a-z])`, "i");
 
 /**
@@ -407,8 +431,15 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     inbox: false,
   };
 
-  const free = (span: CaptureSpan): boolean =>
-    span.end > span.start && !claims.some((c) => overlaps(c, span)) && !reverted.some((r) => overlaps(r, span));
+  /**
+   * A span no rule has claimed and the user has not reverted. Study links
+   * pass `ignoreReverts`: a link to in-app reviews or ideas is not the
+   * user's to turn into a paying task by tapping its chip (the work is paid
+   * once, by the knowledge engine), so a revert over one is ignored — on
+   * the client and the server alike, which keeps the two parses equal.
+   */
+  const free = (span: CaptureSpan, ignoreReverts = false): boolean =>
+    span.end > span.start && !claims.some((c) => overlaps(c, span)) && (ignoreReverts || !reverted.some((r) => overlaps(r, span)));
 
   const take = (span: CaptureSpan, d: Draft): void => {
     claims.push({ start: span.start, end: span.end, consume: d.consume ?? true });
@@ -420,15 +451,20 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
    * a reverted span, or that its visitor rejects, is skipped one character
    * on, so a later candidate still gets its chance.
    */
-  const scan = (pattern: RegExp, visit: (m: RegExpExecArray, span: CaptureSpan) => Draft | null): void => {
+  const scan = (
+    pattern: RegExp,
+    visit: (m: RegExpExecArray, span: CaptureSpan) => Draft | null,
+    opts: { ignoreReverts?: boolean } = {}
+  ): void => {
+    const ok = (span: CaptureSpan) => free(span, opts.ignoreReverts);
     let from = 0;
     while (from <= text.length) {
       pattern.lastIndex = from;
       const m = pattern.exec(text);
       if (!m) return;
       const span = { start: m.index + (m[1]?.length ?? 0), end: m.index + m[0].length };
-      const draft = free(span) ? visit(m, span) : null;
-      if (draft && free(draft.span ?? span)) {
+      const draft = ok(span) ? visit(m, span) : null;
+      if (draft && ok(draft.span ?? span)) {
         take(draft.span ?? span, draft);
         from = Math.max(span.end, m.index + 1);
       } else {
@@ -532,36 +568,99 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     });
   }
 
-  // 5. Study links. They stay in the title — 'Review 20' is the whole task —
-  // and pay nothing themselves: the reviews they count already paid.
+  // 5. Study links: work on this app's own reviews and ideas. They stay in
+  // the title — 'Review 20' is the whole task — and pay nothing themselves:
+  // the reviews and ideas they count are paid once, by the knowledge engine,
+  // and a life task on top would pay the same work twice. So the grammar
+  // reads the common phrasings ('do reviews', 'clear my reviews', 'review
+  // cards', 'add an idea'), a revert cannot unlink one (see `free`), and
+  // anything naming someone else's reviews or another app ('code reviews',
+  // 'weekly review', 'anki') is left as ordinary, paying work — as is
+  // outside study ('study chapter 5', 'revise for the exam').
   function readStudy(): void {
+    if (EXTERNAL_REVIEW.test(text)) return;
     const study = (metric: AutoMetric, target: number | null, label: string): Draft | null => {
       if (f.autoMetric) return null;
       f.autoMetric = metric;
       f.autoTarget = target;
       return { field: "study", label, consume: false };
     };
+    const reviews = (n: number) => study("REVIEWS", n, `Study · ${n} reviews`);
+    const queue = () => study("REVIEW_DUE", null, "Study · clear the queue");
+    const ideas = (n: number) => study("IDEAS", n, `Study · ${n} idea${n === 1 ? "" : "s"}`);
+    const S = { ignoreReverts: true };
     /** 'review 20' is a count of cards only when nothing but grammar follows it. */
     const nextWordIsGrammar = (end: number): boolean => {
       const next = /^\s+([a-z]+)/i.exec(text.slice(end));
       return !next || GRAMMAR_WORDS.has(next[1].toLowerCase());
     };
-    scan(rx(`review\\s+(\\d{1,3})(\\s+(?:cards?|ideas?|reviews?))?`), (m, span) => {
+    const wordBefore = (start: number): string | null => {
+      const prev = /([a-z]+)\W*$/i.exec(text.slice(0, start));
+      return prev ? prev[1].toLowerCase() : null;
+    };
+    const OWN = `(?:(?:all\\s+)?(?:my|the|today'?s)\\s+|all\\s+)?(?:due\\s+)?`;
+
+    // Counted: 'review 20', 'review 30 cards', 'do 20 reviews', '20 flashcards daily'.
+    scan(rx(`review\\s+(\\d{1,3})(\\s+(?:cards?|flashcards?|ideas?|reviews?))?`), (m, span) => {
       const n = Math.min(MAX_REVIEW_TARGET, Number(m[2]));
       if (n < 1 || (!m[3] && !nextWordIsGrammar(span.end))) return null;
-      return study("REVIEWS", n, `Study · ${n} reviews`);
-    });
-    scan(rx(`(\\d{1,3})\\s+reviews`), (m) => {
+      return reviews(n);
+    }, S);
+    scan(rx(`(\\d{1,3})\\s+(?:reviews|flashcards)`), (m, span) => {
       const n = Math.min(MAX_REVIEW_TARGET, Number(m[2]));
-      return n >= 1 ? study("REVIEWS", n, `Study · ${n} reviews`) : null;
-    });
-    scan(rx(`review\\s+(?:the\\s+)?(?:due|queue|backlog)|clear\\s+(?:the\\s+)?(?:review\\s+)?queue`), () =>
-      study("REVIEW_DUE", null, "Study · clear the queue")
-    );
+      const before = wordBefore(span.start);
+      if (n < 1 || (before !== null && REVIEWS_OF_OTHERS.has(before))) return null;
+      return reviews(n);
+    }, S);
+    // The queue: 'review due', 'clear the queue', 'do reviews', 'clear my
+    // reviews', 'finish all my flashcards', 'review cards', 'review my flashcards'.
+    scan(rx(`review\\s+(?:the\\s+)?(?:due|queue|backlog)|clear\\s+(?:the\\s+)?(?:review\\s+)?queue`), () => queue(), S);
+    scan(rx(`(?:do|clear|finish|complete|catch\\s+up\\s+on|get\\s+through)\\s+${OWN}(?:reviews|flashcards|review\\s+queue)`), () => queue(), S);
+    scan(rx(`review\\s+${OWN}(?:flash)?cards`), () => queue(), S);
+    // Ideas: 'add 3 ideas', 'add an idea', 'log a new idea', 'add ideas'. Not
+    // 'add ideas to the wedding doc', which files them somewhere else.
     scan(rx(`add\\s+(\\d{1,2})\\s+(?:new\\s+)?(?:ideas?|cards?)`), (m) => {
       const n = Math.min(MAX_IDEA_TARGET, Number(m[2]));
-      return n >= 1 ? study("IDEAS", n, `Study · ${n} idea${n === 1 ? "" : "s"}`) : null;
-    });
+      return n >= 1 ? ideas(n) : null;
+    }, S);
+    scan(rx(`(?:add|log|capture|file|submit)\\s+(?:(${alt(NUMBER_WORDS)})\\s+)?(?:new\\s+)?ideas?`), (m, span) => {
+      if (/^\s+(?:to|into|in|onto)\s+(?:the|my|a|an|our|this|that)\b/i.test(text.slice(span.end))) return null;
+      const n = m[2] ? numberOf(m[2]) : 1;
+      return n >= 1 ? ideas(Math.min(MAX_IDEA_TARGET, n)) : null;
+    }, S);
+  }
+
+  /**
+   * A title that is only in-app study once everything else is read out of
+   * it ('reviews daily' → 'Reviews'). Links on the noun's own span, which
+   * no other rule claims, so it stays a chip like any other study link.
+   * Reverted chips' words are left out of the reading too: turning 'daily'
+   * back into text must not quietly unlink the reviews and make them pay.
+   */
+  function readWholeTitleStudy(): void {
+    if (f.autoMetric || EXTERNAL_REVIEW.test(text)) return;
+    scan(
+      rx(`(reviews|flashcards|review\\s+(?:queue|session|backlog)|spaced\\s+repetition|srs|ideas?)`),
+      (m, span) => {
+        if (f.autoMetric) return null;
+        // Every other revert is cut from the reading (its words were a
+        // schedule or a date, not what the task is); a revert over the noun
+        // itself is ignored, as for every study link.
+        const cut: Claim[] = [
+          ...claims,
+          ...reverted.filter((r) => !overlaps(r, span)).map((r) => ({ start: r.start, end: r.end, consume: true })),
+        ];
+        const words = titleFrom(text, cut, f.mode).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+        const isIdea = /^ideas?$/i.test(m[2]);
+        const metric: AutoMetric | null =
+          !isIdea && WHOLE_TITLE_REVIEWS.test(words) ? "REVIEW_DUE" : isIdea && WHOLE_TITLE_IDEAS.test(words) ? "IDEAS" : null;
+        if (!metric) return null;
+        f.autoMetric = metric;
+        f.autoTarget = metric === "IDEAS" ? 1 : null;
+        return { field: "study", label: metric === "IDEAS" ? "Study · 1 idea" : "Study · clear the queue", consume: false };
+      },
+      { ignoreReverts: true }
+    );
   }
 
   // 6. Recurrence. Rules run most specific first (after-completion, targets,
@@ -628,6 +727,19 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     });
 
     // Fixed intervals, phased from the start day.
+    // 'every other mon' is fortnightly, phased on the coming Monday (the
+    // server starts the habit there). Not 'every second tue of the month'.
+    scan(rx(`every\\s+(?:other|second|alternate)\\s+(${DAY})(?![a-z])(?!\\s+of\\b)`), (m) => {
+      if (f.recurrence) return null;
+      const dow = DAY_WORDS[m[2].toLowerCase()];
+      const draft = rule("EVERY:14");
+      if (!draft) return null;
+      if (!f.dueDay) {
+        f.dueDay = comingWeekday(today, dow);
+        f.dueKind = "PLANNED";
+      }
+      return { ...draft, label: `Every 2 weeks · ${WD_SHORT[dow]}` };
+    });
     scan(rx(`every\\s+other\\s+day|every\\s+second\\s+day|(?:on\\s+)?alternate\\s+days`), () => rule("EVERY:2"));
     scan(rx(`every\\s+other\\s+week|every\\s+fortnight|fortnightly`), () => rule("EVERY:14"));
     scan(rx(`every\\s+(\\d{1,3})\\s*(days?|d|weeks?|wks?|w)`), (m) =>
@@ -777,6 +889,11 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     for (const t of tokens) if (t.field === "recurrence") t.label = describeCaptureRule(rule);
   }
 
+  // Study links are non-consuming, so the title is final here; one that is
+  // nothing but in-app study ('reviews daily' → 'Reviews') links last.
+  if (f.mode === "TASK") readWholeTitleStudy();
+  const title = titleFrom(text, claims, f.mode);
+
   const kind = f.mode === "IDEA" ? "IDEA_DRAFT" : f.mode === "GOAL" ? "GOAL" : f.recurrence ? "HABIT" : "TASK";
 
   // A duty needs a day to be judged on: a fixed schedule or a deadline. A
@@ -797,7 +914,7 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   tokens.sort((a, b) => a.start - b.start);
 
   return {
-    title: titleFrom(text, claims, f.mode),
+    title,
     mode: f.mode,
     kind,
     recurrence: f.recurrence,
@@ -845,6 +962,18 @@ export function sanitizeCaptureInput(text: unknown, reverted: unknown): { text: 
   return { text: clean, reverted: spans };
 }
 
+/** A capture key (the sheet's per-line nonce) as the server accepts it: 4-64 plain characters. */
+const CAPTURE_KEY_RE = /^[A-Za-z0-9:_-]{4,64}$/;
+
+/**
+ * The client's capture key, or null when it is not one. The server stores
+ * it unique per user, so every retry of one line — a lost response, then
+ * Retry — finds the row the first send wrote instead of writing another.
+ */
+export function cleanCaptureKey(key: unknown): string | null {
+  return typeof key === "string" && CAPTURE_KEY_RE.test(key) ? key : null;
+}
+
 /**
  * Carries reverted spans across an edit of the line. The edit is the region
  * between the longest common prefix and suffix; a span before it stays, a
@@ -880,7 +1009,8 @@ export const PARENT_MATCH_MIN = 0.5;
  */
 export function matchParentGoal<G extends { id: string; title: string }>(hint: string, goals: readonly G[]): G | null {
   const needle = hint.toLowerCase().trim();
-  if (!needle) return null;
+  // One character is a substring of nearly every title; it names nothing.
+  if (needle.length < 2) return null;
   let best: G | null = null;
   let bestScore = 0;
   for (const g of goals) {

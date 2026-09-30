@@ -14,6 +14,7 @@ import {
   SIZING_CONFIDENCE_BASE,
   SIZING_CONFIDENCE_LEXICAL_SHARE,
   SIZING_LOCK_CONFIDENCE,
+  SIZING_LOCK_DURATION_STEPS,
   SIZING_WINDOW_HOURS,
   bandAt,
   bandIndex,
@@ -406,9 +407,11 @@ export function bandCapFor(machineMinutes: number): Band {
  * - the machine minutes are the model's duration band (the user's typed
  *   estimate is not touched — it stays theirs, bounded by est_eff);
  * - the band is the model's, except that a confident lexical band
- *   (≥ 0.6) two or more steps away moves only one step toward it, and a
- *   task of 5 minutes or less cannot be above STANDARD, 15 or less above
- *   DEMANDING — a short task described dramatically stays short;
+ *   (SIZING_LOCK_CONFIDENCE: one strength-3 hit) two or more steps away
+ *   moves only one step toward it, and a task of 5 minutes or less cannot
+ *   be above STANDARD, 15 or less above DEMANDING — a short task described
+ *   dramatically stays short; a confident lexical grade also keeps the
+ *   model's duration within SIZING_LOCK_DURATION_STEPS bands of its own;
  * - the composition is 0.6 × the model's attributes + 0.4 × lexical,
  *   normalised to 100.
  */
@@ -420,8 +423,21 @@ export function mergeSizing(lexical: Sizing, ai: LifeSizingRaw, opts: { tagTrack
   const tagTrack = opts.tagTrack && isTrack(opts.tagTrack) ? opts.tagTrack : null;
   const track = tagTrack ?? CATEGORY_TRACK[category];
 
+  // A confident lexical grade (a word that names the task) anchors the
+  // model: the band moves at most one step from it, and the duration stays
+  // within a couple of bands of it, so the minutes cap below is read from
+  // the words rather than from whatever the model claimed.
+  const locked = lexical.confidence >= SIZING_LOCK_CONFIDENCE;
+
   if (!isDurationBand(ai.durationBand)) invalid.push("durationBand");
-  const durationBand = isDurationBand(ai.durationBand) ? ai.durationBand : lexical.durationBand;
+  let durationBand = isDurationBand(ai.durationBand) ? ai.durationBand : lexical.durationBand;
+  if (locked && isDurationBand(lexical.durationBand)) {
+    const at = DURATION_BANDS.indexOf(lexical.durationBand);
+    const to = DURATION_BANDS.indexOf(durationBand);
+    const lo = Math.max(0, at - SIZING_LOCK_DURATION_STEPS);
+    const hi = Math.min(DURATION_BANDS.length - 1, at + SIZING_LOCK_DURATION_STEPS);
+    durationBand = DURATION_BANDS[Math.min(hi, Math.max(lo, to))];
+  }
   const machineMinutes = DURATION_BAND_MINUTES[durationBand];
 
   if (!isBand(ai.band)) invalid.push("band");
@@ -431,7 +447,7 @@ export function mergeSizing(lexical: Sizing, ai: LifeSizingRaw, opts: { tagTrack
   if (aiBand) {
     const from = bandIndex(lexicalBand);
     const to = bandIndex(aiBand);
-    if (lexical.confidence >= SIZING_LOCK_CONFIDENCE && Math.abs(to - from) >= 2) {
+    if (locked && Math.abs(to - from) >= 2) {
       band = bandAt(from + Math.sign(to - from));
     }
   }
@@ -486,6 +502,8 @@ export function mergeSizing(lexical: Sizing, ai: LifeSizingRaw, opts: { tagTrack
 export interface GradedTemplate {
   id: string;
   title: string;
+  /** The grade-copy key, fixed at capture: a rename changes `title`, never this. */
+  normTitle: string;
   track: string;
   trackSource: string;
   estMinutes: number;
@@ -537,24 +555,56 @@ export interface GradeUpdate {
   gradeAttemptsIncrement?: 1;
 }
 
-export type SizingSkip = "frozen" | "expired" | "done";
+export type SizingSkip = "frozen" | "expired" | "renamed" | "done";
+
+/**
+ * Whether a template's words are still the words its grade key names. A
+ * rename changes the title but never normTitle (the repeat-decay and
+ * grade-copy key), so after one the two can disagree — and then no model
+ * may size it, or the grade it wrote would be filed under words it was not
+ * made for (see pickCopySource).
+ */
+export function titleMatchesKey(t: { title: string; normTitle: string }): boolean {
+  return normTitleOf(t.title) === t.normTitle;
+}
 
 /**
  * Why a template must not be sized now, or null when it may be. Frozen is
- * final (the first completion, or 24 h); a grade already made by the
+ * final (the first completion, or 24 h); a renamed title is never sized
+ * (its words no longer match its grade key); a grade already made by the
  * current prompt is 'done' unless the caller forces a resize.
  */
 export function sizingSkipReason(
-  t: Pick<GradedTemplate, "gradeFrozenAt" | "createdAt" | "gradeSource" | "gradePromptVersion">,
+  t: Pick<GradedTemplate, "gradeFrozenAt" | "createdAt" | "gradeSource" | "gradePromptVersion" | "title" | "normTitle">,
   now: Date,
   opts: { force?: boolean; promptVersion: number }
 ): SizingSkip | null {
   if (t.gradeFrozenAt) return "frozen";
   if (now.getTime() - t.createdAt.getTime() > SIZING_WINDOW_HOURS * 3_600_000) return "expired";
+  if (!titleMatchesKey(t)) return "renamed";
   if (!opts.force && (t.gradeSource === "COPIED" || (t.gradeSource === "AI" && t.gradePromptVersion === opts.promptVersion))) {
     return "done";
   }
   return null;
+}
+
+/**
+ * The same-title template whose model grade may be copied, from candidates
+ * already filtered to this normTitle and the current prompt, newest first.
+ *
+ * Only one whose *current* title still normalises to the key qualifies.
+ * Together with sizingSkipReason's 'renamed' rule — no model ever sizes a
+ * template whose title has drifted from its key — that makes every copied
+ * grade one the model made for exactly these words. Without it, renaming
+ * 'take out bins' to 'write a thesis chapter draft' and pressing Resize
+ * filed a SEVERE grade under 'take bins', and every later 'take out bins'
+ * copied it.
+ */
+export function pickCopySource<T extends { title: string; normTitle: string }>(
+  t: { normTitle: string },
+  candidates: readonly T[]
+): T | null {
+  return candidates.find((c) => c.normTitle === t.normTitle && titleMatchesKey(c)) ?? null;
 }
 
 /** Minutes the grade itself set follow a new machine grade; minutes the user typed stay theirs. */

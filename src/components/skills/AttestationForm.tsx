@@ -6,7 +6,7 @@ import { submitMasteryAttestation } from "@/app/actions/skills";
 
 /**
  * The one place a user writes free text that a model grades for mastery
- * points — see mastery.ts's rate limit (once per UTC day) for why this
+ * points — see mastery.ts's rate limit (once per life day) for why this
  * can't be spammed into a skill-unlock shortcut.
  */
 export function AttestationForm() {

@@ -39,7 +39,8 @@ export function NotificationBubble({ feed }: { feed: NotificationFeed }) {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
+      // A layer above (the capture sheet, a receipt) already took this Escape.
+      if (e.key === "Escape" && !e.defaultPrevented) {
         setOpen(false);
         buttonRef.current?.focus();
       }

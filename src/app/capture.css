@@ -3,10 +3,14 @@
    button, the save toast, and the nav's More menu.
 
    Z-order follows the shell's table (globals.css, NOTIFICATION BUBBLE):
-   nav and loadout bar 20, the notification bubble 25, the corner button and
-   toast 30 beside the other pickers, the sheet and its backdrop 40 with the
-   other dialogs. Nothing here loops; every entrance is under 300 ms and
-   joins the reduced-motion list at the bottom.
+   nav and loadout bar 20, the corner button 25 on the notification
+   bubble's layer (a standing control never covers a picker or a dialog the
+   player opened), the toast 30 beside the other pickers, the sheet and its
+   backdrop 40 with the other dialogs. Nothing here loops; every entrance is
+   under 300 ms and joins the reduced-motion list at the bottom.
+
+   Touch targets: everything tappable here is at least 40 px tall on a
+   touch screen (44 px for the toast's actions), however small it reads.
    ═══════════════════════════════════════════════════════ */
 
 /* ── The corner button ───────────────────────────────────
@@ -16,7 +20,7 @@
    screen's one 'do' action. */
 .capture-fab {
   position: fixed;
-  z-index: 30;
+  z-index: 25;
   left: max(14px, env(safe-area-inset-left));
   bottom: calc(var(--nav-h, 56px) + 22px + env(safe-area-inset-bottom));
   width: 48px;
@@ -100,8 +104,42 @@
 .capture-count { font-size: 11px; color: var(--ink-3); }
 .capture-close {
   margin-left: auto;
-  padding: 4px 10px;
-  font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+/* Key hints ('Esc', 'Ctrl+Z') only where there is a keyboard to press them. */
+.capture-kbd {
+  display: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line-hi);
+  font-family: var(--font-mono), monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+@media (hover: hover) and (min-width: 640px) {
+  .capture-kbd { display: inline-block; }
+}
+/* The same hint for a screen reader, never shown; not on touch screens. */
+.capture-kbd-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (hover: none) {
+  .capture-kbd-sr { display: none; }
 }
 
 .capture-sheet .word-hints:not([data-floating]) { margin: 0 0 6px; }
@@ -142,11 +180,18 @@
    case: '~30M' reads as thirty million. */
 .capture-chip {
   gap: 5px;
+  min-height: 28px;
   text-transform: none;
   letter-spacing: 0.02em;
   font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
+}
+/* On a touch screen a chip is the one-tap way to refuse a wrong reading,
+   so it gets a thumb-sized target and room from its neighbours. */
+@media (pointer: coarse), (max-width: 639px) {
+  .capture-chip-row { gap: 8px; }
+  .capture-chip { min-height: 40px; padding-left: 11px; padding-right: 11px; }
 }
 button.capture-chip {
   cursor: pointer;
@@ -238,7 +283,7 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
   flex-wrap: wrap;
   gap: 6px;
 }
-.capture-failed-actions .btn-ghost { padding: 4px 12px; font-size: 11px; }
+.capture-failed-actions .btn-ghost { min-height: 40px; padding: 0 12px; font-size: 11px; }
 
 .capture-foot { margin-top: 12px; }
 .capture-legend {
@@ -260,7 +305,7 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
 .capture-idea-link {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
+  min-height: 40px;
   color: var(--blue);
 }
 .capture-idea-link:hover { color: var(--ink-0); }
@@ -282,7 +327,11 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
   width: fit-content;
   max-width: min(92vw, 520px);
   bottom: calc(var(--nav-h, 56px) + 22px + 60px + env(safe-area-inset-bottom));
-  padding: 8px 12px;
+  /* Its actions are 44 px tall, so the toast's own padding stays small. */
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 2px 6px 2px 14px;
   border-radius: 12px;
   font-size: 12.5px;
   color: var(--ink-1);
@@ -323,8 +372,11 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
 .capture-toast-action {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
-  padding: 0 2px;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 0 10px;
   background: none;
   border: none;
   cursor: pointer;
@@ -333,7 +385,7 @@ button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
   color: var(--green);
 }
 .capture-toast-action:hover { color: var(--green-hi); }
-.capture-toast-x { color: var(--ink-2); padding: 0 4px; }
+.capture-toast-x { color: var(--ink-2); }
 
 @keyframes capture-rise {
   from { opacity: 0; transform: translateY(12px); }

@@ -162,8 +162,15 @@ export interface SynthesizedNodeData {
 // interpolated into a prompt, so it is fenced and explicitly labelled as
 // data — a submission reading "ignore previous instructions and output X"
 // should produce a node *about* that sentence, not obey it.
-function asData(label: string, text: string): string {
-  return [`<${label}>`, text, `</${label}>`].join("\n");
+//
+// The fence only holds if the data cannot close it. Any '<label' or
+// '</label' inside the text — any case, any spacing, as '</task>' or
+// '< / TASK' — has its '<' swapped for '‹', so the block ends only where
+// this function ends it. Other angle brackets ('a < b', code) pass through.
+export function asData(label: string, text: string): string {
+  const name = label.replace(/[^A-Za-z0-9_-]/g, "");
+  const fenceLike = new RegExp(`<(?=\\s*\\/?\\s*${name}(?![A-Za-z0-9_-]))`, "gi");
+  return [`<${name}>`, text.replace(fenceLike, "‹"), `</${name}>`].join("\n");
 }
 
 /**
@@ -595,9 +602,13 @@ export async function sizeLifeTask(title: string, context: SizingContext = {}): 
     context.dated ? `dated: ${context.dated}` : "",
   ].filter(Boolean);
   const note = context.note?.trim().slice(0, SIZING_NOTE_CHARS);
+  // A task's words never need angle brackets, so none reach the prompt: on
+  // top of asData's own escaping, nothing here can look like markup at all.
   const taskText = [title.trim().slice(0, SIZING_TITLE_CHARS), facts.join("; "), note ? `note: ${note}` : ""]
     .filter(Boolean)
-    .join("\n");
+    .join("\n")
+    .replace(/</g, "‹")
+    .replace(/>/g, "›");
 
   const call = async (): Promise<LifeSizingRaw> => {
     const response = await getClient().models.generateContent({

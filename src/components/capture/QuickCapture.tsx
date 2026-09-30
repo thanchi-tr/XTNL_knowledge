@@ -26,6 +26,8 @@ import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { CaptureChips } from "./CaptureChips";
 import { CAPTURE_EVENT, CAPTURED_EVENT, CaptureFab, type CaptureRequest } from "./CaptureFab";
+import { isUndoCaptureKey, nextOccurrenceNote } from "./capture-ui";
+import { pushEscapeLayer, trapTab } from "./layers";
 
 /**
  * The one-line capture sheet, mounted once in the shell.
@@ -76,7 +78,8 @@ interface FailedLine extends PendingLine {
 
 type Toast =
   | { kind: "working"; key: number; message: string }
-  | { kind: "added"; key: number; item: CapturedItem }
+  /** `next`: when a repeating capture first falls due, if not today ('Next: Thu'). */
+  | { kind: "added"; key: number; item: CapturedItem; next: string | null }
   | { kind: "removed"; key: number; title: string }
   | { kind: "error"; key: number; message: string };
 
@@ -115,10 +118,14 @@ function addPending(line: PendingLine): void {
 function dropPending(nonce: string): void {
   writeJson(PENDING_KEY, readPending().filter((p) => p.nonce !== nonce));
 }
-/** A line on its way to the server, stamped so a reload can tell a slow save from a lost one. */
+/**
+ * A line on its way to the server, stamped so a reload can tell a slow save
+ * from a lost one. The nonce is also the capture key the server dedupes a
+ * retry on, so it must never repeat — across tabs and devices too.
+ */
 function stamp(line: Line, n: number): PendingLine {
   const now = Date.now();
-  return { ...line, nonce: `${now.toString(36)}-${n.toString(36)}`, at: now };
+  return { ...line, nonce: `${now.toString(36)}-${n.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, at: now };
 }
 
 /**
@@ -165,6 +172,7 @@ export function QuickCapture() {
   const [, startTransition] = useTransition();
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const restored = useRef(false);
   const vocabAt = useRef(0);
@@ -321,16 +329,12 @@ export function QuickCapture() {
     el.setSelectionRange(el.value.length, el.value.length);
   }, [open]);
 
-  // Escape closes from anywhere in the sheet, not only the input.
+  // Escape closes from anywhere in the sheet, not only the input — and only
+  // the sheet: it is the top layer of the app's Escape stack, so a receipt
+  // or the inbox open underneath stays open.
   useEffect(() => {
     if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      e.preventDefault();
-      closeSheet();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return pushEscapeLayer(closeSheet);
   }, [open, closeSheet]);
 
   // ── Saving ──────────────────────────────────────────────────────────────
@@ -346,7 +350,9 @@ export function QuickCapture() {
     startTransition(async () => {
       let res: CaptureResult<CapturedItem>;
       try {
-        res = await createFromCapture(line.text, line.reverted, { refresh: refreshBoard });
+        // The line's nonce is its capture key: a retry of a save whose answer
+        // was lost finds the row it already wrote instead of writing a second.
+        res = await createFromCapture(line.text, line.reverted, { refresh: refreshBoard, captureKey: line.nonce });
       } catch {
         res = { ok: false, error: "Couldn't reach the server. Your line is kept — try again." };
       }
@@ -355,7 +361,16 @@ export function QuickCapture() {
         dropPending(line.nonce);
         setFailed((f) => f.filter((x) => x.nonce !== line.nonce));
         setCaptured((n) => n + 1);
-        showToast({ kind: "added", key: ++seq.current, item });
+        // A habit captured on a day it does not run is on no lane of today's
+        // board; the toast says when it will be, so the line never looks lost.
+        const today = todayKey();
+        let next: string | null = null;
+        try {
+          next = nextOccurrenceNote(parseCapture(line.text, { today, reverted: line.reverted }), today);
+        } catch {
+          next = null;
+        }
+        showToast({ kind: "added", key: ++seq.current, item, next });
         window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
       } else {
         const message = res.error;
@@ -432,6 +447,28 @@ export function QuickCapture() {
     return () => window.clearTimeout(t);
   }, [toast, toastHeld]);
 
+  // The keyboard path to Undo: Ctrl/Cmd+Z while an 'added' toast is showing
+  // and the sheet is closed, from anywhere but a text field or a review
+  // card. A capture made with 'c' and Enter can be taken back the same way.
+  const undoRef = useRef(undo);
+  useEffect(() => {
+    undoRef.current = undo;
+  });
+  const undoTarget = !open && toast?.kind === "added" ? toast.item : null;
+  useEffect(() => {
+    if (!undoTarget) return;
+    const item = undoTarget;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target instanceof Element ? e.target : null;
+      const reviewing = document.querySelector("[data-review-session]") !== null;
+      if (!isUndoCaptureKey(e, target, reviewing)) return;
+      e.preventDefault();
+      undoRef.current(item);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undoTarget]);
+
   // ── Chips ───────────────────────────────────────────────────────────────
 
   const revert = (token: CaptureToken) => {
@@ -442,6 +479,12 @@ export function QuickCapture() {
   };
 
   const onSheetKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // A modal keeps Tab inside itself. A word completion that took the Tab
+    // (the input's own handler, which runs first) has already claimed it.
+    if (e.key === "Tab") {
+      trapTab(e, sheetRef.current);
+      return;
+    }
     // Ctrl+Z brings the last tapped chip back — but only while the line is
     // as it was, so it never fights the input's own undo of typing.
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {
@@ -502,6 +545,7 @@ export function QuickCapture() {
         <>
           <div className="capture-backdrop" onMouseDown={closeSheet} aria-hidden />
           <div
+            ref={sheetRef}
             className="capture-sheet card"
             role="dialog"
             aria-modal="true"
@@ -519,8 +563,11 @@ export function QuickCapture() {
                   {captured} captured
                 </span>
               )}
-              <button type="button" className="btn-ghost capture-close" onClick={closeSheet} aria-label="Close capture">
-                Esc
+              <button type="button" className="btn-ghost capture-close" onClick={closeSheet} aria-label="Close capture" aria-keyshortcuts="Escape">
+                Close
+                <kbd className="capture-kbd" aria-hidden>
+                  Esc
+                </kbd>
               </button>
             </div>
 
@@ -662,7 +709,7 @@ function ToastBody({
       </span>
     );
   }
-  const { item } = toast;
+  const { item, next } = toast;
   const idea = item.kind === "IDEA_DRAFT";
   const head = idea ? "Idea in Inbox" : item.doneNow ? "Done" : item.kind === "GOAL" ? "Goal added" : "Added";
   return (
@@ -670,15 +717,27 @@ function ToastBody({
       <span style={{ color: "var(--green)", fontWeight: 600 }}>{head}</span>
       <span className="capture-toast-title">{item.title}</span>
       {item.describe && <span className="capture-toast-muted">{item.describe}</span>}
+      {next && <span style={{ color: "var(--blue)" }}>{next}</span>}
       {item.projectedXp > 0 && <span className="mono capture-toast-muted">≈{formatXp(item.projectedXp)} XP</span>}
       {idea && item.href && (
         <Link href={item.href} className="capture-toast-action" onClick={onClose}>
           Open form
         </Link>
       )}
-      <button type="button" className="capture-toast-action" onClick={() => onUndo(item)}>
+      <button
+        type="button"
+        className="capture-toast-action"
+        onClick={() => onUndo(item)}
+        aria-keyshortcuts={inSheet ? undefined : "Control+Z Meta+Z"}
+      >
         Undo
+        {!inSheet && (
+          <kbd className="capture-kbd" aria-hidden>
+            Ctrl+Z
+          </kbd>
+        )}
       </button>
+      {!inSheet && <span className="capture-kbd-sr">Press Control+Z to undo.</span>}
     </span>
   );
 }

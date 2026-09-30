@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BoardTemplate, InboxChoice } from "@/lib/today-board";
+import { pushEscapeLayer, trapTab } from "@/components/capture/layers";
 
 interface Props {
   items: BoardTemplate[];
@@ -9,6 +10,8 @@ interface Props {
   busy: boolean;
   onClarify: (templateId: string, choice: InboxChoice, parentId?: string) => void;
   onClose: () => void;
+  /** The Undo line for a Drop made in this sheet, while it lasts. */
+  undo?: ReactNode;
 }
 
 const CHOICES: { choice: Exclude<InboxChoice, "goal">; label: string; tone?: "red" }[] = [
@@ -26,30 +29,44 @@ const CHOICES: { choice: Exclude<InboxChoice, "goal">; label: string; tone?: "re
  * here without a decision — so the decision has to be cheap when it comes:
  * each item gets its six answers as buttons, and nothing needs typing. A
  * bottom sheet on a phone (thumb reach), a centred dialog on a desk; Escape
- * or the backdrop closes it.
+ * or the backdrop closes it. Drop is undoable for ten seconds, in the sheet.
+ *
+ * A modal in behaviour as well as name: Tab stays inside it, Escape closes
+ * only it (the app's Escape stack), and focus goes back to what opened it.
  */
-export function InboxSheet({ items, goals, busy, onClarify, onClose }: Props) {
+export function InboxSheet({ items, goals, busy, onClarify, onClose, undo }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [pickingGoalFor, setPickingGoalFor] = useState<string | null>(null);
 
-  // Focus moves into the sheet once, on open; Escape closes it from anywhere.
   const closeRef = useRef(onClose);
   useEffect(() => {
     closeRef.current = onClose;
   }, [onClose]);
+
+  // Once, on open: focus in, Escape registered as the top layer; on close,
+  // focus back to the Inbox button (or whatever opened the sheet).
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeRef.current();
-    }
-    document.addEventListener("keydown", onKey);
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    const pop = pushEscapeLayer(() => closeRef.current());
+    return () => {
+      pop();
+      if (opener && document.contains(opener)) opener.focus({ preventScroll: true });
+    };
   }, []);
 
   return (
     <>
       <div className="today-sheet-backdrop" onClick={onClose} aria-hidden />
-      <div ref={panelRef} className="today-sheet" role="dialog" aria-modal="true" aria-labelledby="inbox-title" tabIndex={-1}>
+      <div
+        ref={panelRef}
+        className="today-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="inbox-title"
+        tabIndex={-1}
+        onKeyDown={(e) => trapTab(e, panelRef.current)}
+      >
         <div className="flex items-center justify-between gap-3">
           <h2 id="inbox-title" style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-0)" }}>
             Inbox <span className="mono" style={{ color: "var(--ink-3)", fontSize: 13 }}>{items.length}</span>
@@ -58,6 +75,8 @@ export function InboxSheet({ items, goals, busy, onClarify, onClose }: Props) {
             Close
           </button>
         </div>
+
+        {undo}
 
         {items.length === 0 ? (
           <p className="mt-4" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
@@ -80,6 +99,7 @@ export function InboxSheet({ items, goals, busy, onClarify, onClose }: Props) {
                       data-tone={c.tone}
                       disabled={busy}
                       onClick={() => onClarify(t.id, c.choice)}
+                      title={c.choice === "drop" ? "Drop it. Undo stays on screen for 10 seconds." : undefined}
                     >
                       {c.label}
                     </button>

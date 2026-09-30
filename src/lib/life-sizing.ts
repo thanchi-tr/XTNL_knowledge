@@ -5,7 +5,7 @@ import { dayStartOf, todayKey } from "./life-day";
 import { SIZING_PROMPT_VERSION, TASK_SIZING_MODEL, sizeLifeTask } from "./gemini";
 import { SIZING_DAILY_CAP } from "./life-grade";
 import { describeRule } from "./recurrence";
-import { gradeFromCopy, gradeFromModel, sizingSkipReason, type GradeUpdate } from "./life-lexicon";
+import { gradeFromCopy, gradeFromModel, pickCopySource, sizingSkipReason, type GradeUpdate } from "./life-lexicon";
 
 /**
  * The one AI sizing a task gets, run in after() from task creation.
@@ -15,12 +15,14 @@ import { gradeFromCopy, gradeFromModel, sizingSkipReason, type GradeUpdate } fro
  * function never throws. In order:
  *
  * 1. Skip a grade that is frozen (the first completion, or 24 h after
- *    capture) or already made by the current prompt — unless forced by a
- *    resize.
+ *    capture), a template renamed away from its grade key, anything that
+ *    is not paid work (a goal, an idea draft), or a grade already made by
+ *    the current prompt — unless forced by a resize.
  * 2. Copy the model grade of another task with the same normalised title,
- *    if one exists: the per-title cache that makes a recurring or re-typed
- *    chore cost no model call, and makes the same words always size the
- *    same way. A self-rating is never copied.
+ *    if one exists and its title still says those words: the per-title
+ *    cache that makes a recurring or re-typed chore cost no model call, and
+ *    makes the same words always size the same way. A self-rating is never
+ *    copied, and neither is a grade made for other words (pickCopySource).
  * 3. Stop at the day's cap (40 model sizings per life day).
  * 4. Call the model once, and fold its answer in through the merge rules
  *    in life-lexicon.ts.
@@ -35,6 +37,7 @@ export type SizingOutcome =
   | "missing"
   | "frozen"
   | "expired"
+  | "renamed"
   | "done"
   | "copied"
   | "capped"
@@ -71,6 +74,7 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
       select: {
         id: true,
         userId: true,
+        kind: true,
         title: true,
         normTitle: true,
         note: true,
@@ -89,15 +93,18 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
       },
     });
     if (!t) return "missing";
+    // A goal pays through its steps and an idea draft is filed, not done:
+    // neither is priced, so neither spends a model call or a cap slot.
+    if (t.kind === "GOAL" || t.kind === "IDEA_DRAFT") return "done";
 
     const skip = sizingSkipReason(t, now, { force: opts.force, promptVersion: SIZING_PROMPT_VERSION });
     if (skip) return skip;
 
     // Both reads at once: a round trip is the expensive part of this path.
-    const [sibling, sizedToday] = await Promise.all([
+    const [siblings, sizedToday] = await Promise.all([
       opts.force
-        ? null
-        : prisma.taskTemplate.findFirst({
+        ? []
+        : prisma.taskTemplate.findMany({
             where: {
               userId: t.userId,
               normTitle: t.normTitle,
@@ -106,8 +113,12 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
               gradePromptVersion: SIZING_PROMPT_VERSION,
             },
             orderBy: { aiGradedAt: "desc" },
+            // A few, so a renamed newest one does not hide an honest older one.
+            take: 5,
             select: {
               id: true,
+              title: true,
+              normTitle: true,
               category: true,
               band: true,
               aiBand: true,
@@ -124,6 +135,7 @@ export async function applySizing(templateId: string, opts: { force?: boolean; n
       }),
     ]);
 
+    const sibling = pickCopySource(t, siblings);
     if (sibling) return (await write(t.id, gradeFromCopy(t, sibling))) ? "copied" : "frozen";
 
     if (sizedToday >= SIZING_DAILY_CAP) {

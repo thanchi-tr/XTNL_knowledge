@@ -426,7 +426,8 @@ export function LibrarySearch({ ideas, fieldNames, fieldLevels, domainsByField, 
   useEffect(() => {
     if (openKey === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      // A layer above (the capture sheet) already took this Escape.
+      if (e.key === "Escape" && !e.defaultPrevented) {
         setOpenKey(null);
         setOpenSub(null);
       }

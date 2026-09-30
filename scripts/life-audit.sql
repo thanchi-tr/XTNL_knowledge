@@ -15,8 +15,21 @@
 
 BEGIN TRANSACTION READ ONLY;
 
--- 1. Double pay: a TRACK row about the same Idea as a review or Idea row.
-SELECT t.id, t."userId", t.source, t."sourceId", t.xp, t.day
+-- 1. Double pay, in either of its two shapes (the `finding` column says which):
+--    a) 'shared sourceId': a TRACK row about the same Idea as a REVIEW or
+--       IDEA_CREATE row.
+--    b) 'auto task paid': a TASK row that paid life XP (sink TRACK, or any
+--       non-zero xp) for a template that completes itself from activity
+--       (autoMetric set: 'review 20', 'review due', '2 ideas'). The reviews
+--       and ideas that complete it are already paid to their Domain, so its
+--       TASK row must be sink NONE with xp 0. A TASK row's sourceId is its
+--       TaskInstance id, never an Idea id, so (a) alone can never see this.
+--       The template is the row's own, or its TaskInstance's when the row
+--       carries none. No auto task pays under the plan: study tasks are paid
+--       by the reviews and ideas, workout tasks by the workout (M4), and
+--       steps pay 0 (grading.md).
+SELECT 'shared sourceId' AS finding, t.id, t."userId", t.source, t."sourceId",
+       NULL::text AS "autoMetric", t.sink, t.xp, t.day
 FROM "ActivityEvent" t
 WHERE t.sink = 'TRACK'
   AND t."sourceId" IS NOT NULL
@@ -26,7 +39,16 @@ WHERE t.sink = 'TRACK'
     WHERE k."userId" = t."userId"
       AND k."sourceId" = t."sourceId"
       AND k.source IN ('REVIEW', 'IDEA_CREATE')
-  );
+  )
+UNION ALL
+SELECT 'auto task paid' AS finding, e.id, e."userId", e.source, e."sourceId",
+       tt."autoMetric", e.sink, e.xp, e.day
+FROM "ActivityEvent" e
+LEFT JOIN "TaskInstance" i ON i.id = e."sourceId"
+JOIN "TaskTemplate" tt ON tt.id = COALESCE(e."templateId", i."templateId")
+WHERE e.source = 'TASK'
+  AND tt."autoMetric" IS NOT NULL
+  AND (e.sink = 'TRACK' OR e.xp <> 0);
 
 -- 2. Knowledge rows outside the DOMAIN sink, or DOMAIN rows that are not knowledge.
 SELECT id, "userId", source, sink, xp, day
@@ -34,32 +56,24 @@ FROM "ActivityEvent"
 WHERE (source IN ('REVIEW', 'IDEA_CREATE') AND sink <> 'DOMAIN')
    OR (sink = 'DOMAIN' AND source NOT IN ('REVIEW', 'IDEA_CREATE'));
 
--- 3. Study-linked tasks (paid by reviews) that paid life XP anyway.
-SELECT e.id, e."userId", e."templateId", e.xp, e.sink, e.day
-FROM "ActivityEvent" e
-JOIN "TaskTemplate" t ON t.id = e."templateId"
-WHERE e.source = 'TASK'
-  AND t."autoMetric" IN ('REVIEWS', 'IDEAS', 'REVIEW_DUE')
-  AND (e.sink = 'TRACK' OR e.xp <> 0);
-
--- 4. TRACK rows no level can count: no track, or a track outside the four.
+-- 3. TRACK rows no level can count: no track, or a track outside the four.
 SELECT id, "userId", source, track, xp, day
 FROM "ActivityEvent"
 WHERE sink = 'TRACK' AND (track IS NULL OR track NOT IN ('BODY', 'DUTY', 'CRAFT', 'CARE'));
 
--- 5. Rows that must never count toward the streak but do.
+-- 4. Rows that must never count toward the streak but do.
 SELECT id, "userId", source, day
 FROM "ActivityEvent"
 WHERE "countsForStreak"
   AND source IN ('STEPS', 'DAY_OPEN', 'DEBT', 'ADJUST', 'FREEZE_EARN', 'FREEZE_USE', 'REFLECTION', 'UNDO');
 
--- 6. Non-finite amounts, which would poison every sum they join.
+-- 5. Non-finite amounts, which would poison every sum they join.
 SELECT id, "userId", source, xp, "rawXp", qty
 FROM "ActivityEvent"
 WHERE xp = 'NaN'::float8 OR xp IN ('Infinity'::float8, '-Infinity'::float8)
    OR "rawXp" = 'NaN'::float8 OR "rawXp" IN ('Infinity'::float8, '-Infinity'::float8);
 
--- 7. Every passed review since the ledger went live wrote both its mastery
+-- 6. Every passed review since the ledger went live wrote both its mastery
 --    fraction and its REVIEW row in one transaction, so the two counts match.
 --    (Backfilled 'bf:' rows are excluded; the window starts at the first live row.)
 WITH live AS (

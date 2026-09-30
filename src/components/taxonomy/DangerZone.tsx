@@ -3,14 +3,18 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { resetKnowledgeBase } from "@/app/actions/reset";
-import { RESET_SCOPES, type ResetScope, type ResetSummary } from "@/lib/reset-scopes";
+import { RESET_SCOPES, RESET_SCOPE_ORDER, type ResetScope, type ResetSummary } from "@/lib/reset-scopes";
 
 interface Props {
   /** Row counts, so the panel states what is actually at stake. */
   counts: Record<string, number>;
 }
 
-const SCOPE_ORDER: ResetScope[] = ["ideas", "knowledge", "everything"];
+/** A count from getResetPreview, as '12 ideas' / '1 idea'. A missing key reads 0 rather than 'undefined'. */
+function countOf(counts: Record<string, number>, key: string, one: string, many: string): string {
+  const n = counts[key] ?? 0;
+  return `${n} ${n === 1 ? one : many}`;
+}
 
 /**
  * Irreversible resets.
@@ -115,11 +119,23 @@ export function DangerZone({ counts }: Props) {
       {open && (
         <div className="mt-4 space-y-3">
           <p className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-            {counts.ideas} ideas · {counts.domains} domains · {counts.fields} fields · {counts.unlockedSkills}{" "}
-            skills · {counts.masteryEntries} mastery entries
+            {[
+              countOf(counts, "ideas", "idea", "ideas"),
+              countOf(counts, "domains", "domain", "domains"),
+              countOf(counts, "fields", "field", "fields"),
+              countOf(counts, "unlockedSkills", "skill", "skills"),
+              countOf(counts, "masteryEntries", "mastery entry", "mastery entries"),
+              countOf(counts, "capitalEntries", "capital entry", "capital entries"),
+              countOf(counts, "augments", "augment", "augments"),
+              countOf(counts, "tasks", "task", "tasks"),
+              countOf(counts, "taskInstances", "task record", "task records"),
+              countOf(counts, "activityEvents", "activity event", "activity events"),
+            ].join(" · ")}
           </p>
 
-          {SCOPE_ORDER.map((s) => {
+          {/* The shared order, so every scope the server accepts ('life'
+              included) has its button here. */}
+          {RESET_SCOPE_ORDER.map((s) => {
             const meta = RESET_SCOPES[s];
             const on = scope === s;
             return (

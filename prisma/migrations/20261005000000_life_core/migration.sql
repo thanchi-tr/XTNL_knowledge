@@ -10,6 +10,7 @@ CREATE TABLE "LifeSettings" (
     "userId" TEXT NOT NULL,
     "epochDay" DATE NOT NULL,
     "dailyCapacityMin" INTEGER NOT NULL DEFAULT 240,
+    "capacitySetAt" TIMESTAMP(3),
     "restWeekdays" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
     "settledThroughDay" DATE,
     "debtWriteOff" BOOLEAN NOT NULL DEFAULT false,
@@ -61,6 +62,7 @@ CREATE TABLE "TaskTemplate" (
     "startDay" DATE NOT NULL,
     "dueDay" DATE,
     "dueKind" TEXT,
+    "planDay" DATE,
     "horizon" TEXT,
     "parentId" TEXT,
     "krMetric" TEXT,
@@ -100,6 +102,7 @@ CREATE TABLE "TaskTemplate" (
     "pendingChange" JSONB,
     "pendingChangeAt" TIMESTAMP(3),
     "captureSource" TEXT NOT NULL DEFAULT 'quick',
+    "captureKey" TEXT,
     "sortOrder" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "completedAt" TIMESTAMP(3),
     "archivedAt" TIMESTAMP(3),
@@ -153,6 +156,9 @@ CREATE INDEX "ActivityEvent_userId_sourceId_idx" ON "ActivityEvent"("userId", "s
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ActivityEvent_userId_dedupeKey_key" ON "ActivityEvent"("userId", "dedupeKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "TaskTemplate_userId_captureKey_key" ON "TaskTemplate"("userId", "captureKey");
 
 -- CreateIndex
 CREATE INDEX "TaskTemplate_userId_archivedAt_idx" ON "TaskTemplate"("userId", "archivedAt");

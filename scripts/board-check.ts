@@ -11,9 +11,11 @@
  */
 import { addDays, weekdayOf, type DayKey } from "../src/lib/life-day";
 import type { Receipt } from "../src/lib/life-types";
-import { consistencyFactor, estEff, payModeOf, priceTask, roundTo, timingFor } from "../src/lib/life-grade";
+import { KNEE_CAP, consistencyFactor, estEff, kneeG, payModeOf, priceTask, roundTo, timingFor } from "../src/lib/life-grade";
 import { normTitleOf, repeatNOf } from "../src/lib/life-lexicon";
-import { parseRule } from "../src/lib/recurrence";
+import { nextDue, occursOn, parseRule } from "../src/lib/recurrence";
+import { parseCapture } from "../src/lib/capture-parse";
+import { cached, invalidate, invalidateAll } from "../src/lib/cache";
 import { rungOf, strengthAfter, type Outcome } from "../src/lib/habit";
 import { countsForStreakOf, streakUnitsOf } from "../src/lib/streak-curve";
 import {
@@ -22,17 +24,27 @@ import {
   applyOps,
   autoStateOf,
   buildBoard,
+  EpochSet,
   canUndo,
+  cheapestMovable,
+  completionBlockOf,
   goalMetricOf,
+  goalProgressQty,
   groupKeyOf,
   horizonFor,
+  lastDoneOf,
+  moveBlockOf,
+  paidIntroOf,
   planAutoCompletions,
   planCompletion,
   questOf,
+  startDayFor,
   statsFor,
+  streakDaysFor,
   taskDedupeKey,
   taskEventInput,
   undoEventInput,
+  yesterdayRecordable,
   type BoardData,
   type BoardInstance,
   type BoardOp,
@@ -507,5 +519,192 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   check("finished steps stay off the board", laneOf(b, "k1") === "none" && laneOf(b, "k3") === "anytime");
 }
 
-console.log(failed ? `\n${failed} failed` : "\nall pass");
-process.exit(failed ? 1 : 0);
+// ── The server accepts exactly what the board offers ─────────────────────
+{
+  const t = (id: string, p: Partial<BoardTemplate>) => tpl({ id, title: `Task ${id}`, ...p });
+  const templates = [
+    t("planToday", { dueDay: TODAY, dueKind: "PLANNED" }),
+    t("planCarried", { dueDay: ago(2), dueKind: "PLANNED" }),
+    t("planYesterday", { dueDay: YESTERDAY, dueKind: "PLANNED" }),
+    t("dlYesterday", { dueDay: YESTERDAY, dueKind: "DEADLINE" }),
+    t("dlYesterdayPutOff", { dueDay: YESTERDAY, dueKind: "DEADLINE", planDay: TODAY }),
+    t("dlToday", { dueDay: TODAY, dueKind: "DEADLINE" }),
+    t("undated", {}),
+    t("daily", { recurrence: "DAILY" }),
+    t("dailyNew", { recurrence: "DAILY", startDay: TODAY }),
+    t("monOnly", { recurrence: "DOW:1" }),
+    t("wedOnly", { recurrence: "DOW:3" }),
+    t("target", { recurrence: "TARGET:3/W" }),
+    t("after30", { recurrence: "AFTER:30", startDay: ago(40) }),
+    t("every100", { recurrence: "EVERY:100", startDay: ago(40) }),
+    t("studyDaily", { recurrence: "DAILY", autoMetric: "REVIEWS", autoTarget: 20 }),
+    t("skippedY", { recurrence: "DAILY" }),
+  ];
+  const history = [inst("after30", ago(5)), inst("skippedY", YESTERDAY, "SKIPPED")];
+  const d = board(templates, { history, dueNow: 5 });
+  const b = buildBoard(d);
+  const gate = (x: BoardTemplate, day: DayKey) =>
+    completionBlockOf({
+      t: x,
+      rule: parseRule(x.recurrence),
+      day,
+      today: TODAY,
+      lastDone: lastDoneOf(history.filter((i) => i.templateId === x.id)),
+      onDay: history.filter((i) => i.templateId === x.id && i.day === day),
+    });
+  const openOn = (day: DayKey) => [...b.must, ...b.todayRows, ...b.yesterdayRows, ...b.anytime].filter((r) => r.day === day && r.state === "open");
+  const offeredButRefused = [...openOn(TODAY), ...openOn(YESTERDAY)].filter((r) => gate(r.template, r.day) !== null).map((r) => `${r.template.id}@${r.day}`);
+  check("every open row the board offers, today or yesterday, the server accepts", offeredButRefused.length === 0, offeredButRefused.join(", "));
+  const yesterdayOffered = new Set(b.yesterdayRows.map((r) => r.template.id));
+  const mismatched = templates.filter((x) => (gate(x, YESTERDAY) === null) !== yesterdayOffered.has(x.id)).map((x) => x.id);
+  check(
+    "yesterday: the server books exactly the Yesterday lane — nothing unscheduled, put off, skipped or study-linked",
+    mismatched.length === 0 && yesterdayOffered.has("daily") && yesterdayOffered.has("dlYesterday") && yesterdayOffered.has("wedOnly"),
+    mismatched.length ? `mismatch: ${mismatched.join(", ")}` : [...yesterdayOffered].join(", ")
+  );
+  const notDue = ["monOnly", "after30", "every100"].map((id) => [id, gate(templates.find((x) => x.id === id)!, TODAY)] as const);
+  check(
+    "today: a repeating task its rule does not expect today is refused (a board-less forged tick)",
+    notDue.every(([, why]) => why === "It isn't due today."),
+    notDue.map(([id, why]) => `${id}: ${why}`).join("; ")
+  );
+  check("a day that is neither today nor yesterday is refused (a board left open across 04:00)", gate(templates[0], ago(2))?.includes("Refresh") === true);
+  check("a one-off already done is refused on any day", gate({ ...templates[6], completedAt: "2026-09-30T02:00:00.000Z" }, TODAY) === "Already done.");
+
+  // The farm the review found: a sparse rule ticked on consecutive days would
+  // count kept × N day-equivalents (AFTER:30 → 60, EVERY:100 → 100 after two
+  // ticks, against DAILY's 2). The gate refuses the second day outright.
+  const after = templates.find((x) => x.id === "after30")!;
+  const farmed = streakDaysFor(after, parseRule("AFTER:30")!, [inst("after30", ago(2)), inst("after30", ago(1))], TODAY);
+  check("AFTER:30 ticked two days running would farm C (60 day-equivalents); the next day's tick is refused", farmed === 60 && gate(after, TODAY) !== null, `farmed ${farmed}`);
+  check("…and yesterdayRecordable never offers AFTER, TARGET or a study task", !yesterdayRecordable(after, parseRule("AFTER:30"), YESTERDAY, null) && !yesterdayRecordable(templates[11], parseRule("TARGET:3/W"), YESTERDAY, null) && !yesterdayRecordable(templates[14], parseRule("DAILY"), YESTERDAY, null));
+}
+
+// ── Concurrent completions: why each one is priced after the last ─────────
+{
+  // Fifty DEMANDING 60-minute one-offs. Priced one after another against the
+  // ledger each earlier one left (what the per-user lock and freshness guard
+  // guarantee), the day totals g(ΣR) and stops at the 300 cap. Priced all
+  // against the same read (parallel requests without the guard), they paid
+  // 50 × 23.3.
+  // Titles with nothing in common, so repeat decay never applies and only the knee can hold the day.
+  let seed = 11;
+  const letter = () => "abcdefghijklmnopqrstuvwxyz"[(seed = (seed * 48271) % 2147483647) % 26];
+  const word = () => Array.from({ length: 9 }, letter).join("");
+  const tasks = Array.from({ length: 50 }, (_, i) => tpl({ id: `d${i}`, title: `${word()} ${word()}`, band: "DEMANDING", estMinutes: 60, machineMinutes: 60 }));
+  const groups = new Set(tasks.map((x) => repeatNOf({ templateId: x.id, normTitle: x.normTitle }, tasks.filter((y) => y !== x).map((y) => ({ templateId: y.id, normTitle: y.normTitle })))));
+  let l = ledger(TODAY);
+  let serial = 0;
+  let parallel = 0;
+  let rawSum = 0;
+  for (const x of tasks) {
+    const p = planCompletion({ template: x, day: TODAY, today: TODAY, slot: 0, ledger: l, streakDays: 0 });
+    const alone = planCompletion({ template: x, day: TODAY, today: TODAY, slot: 0, ledger: ledger(TODAY), streakDays: 0 });
+    serial += p.receipt.xp;
+    parallel += alone.receipt.xp;
+    rawSum += p.receipt.raw;
+    l = { ...l, rawBefore: l.rawBefore + p.receipt.raw, completions: [...l.completions, { ...p.completion, eventId: `e-${x.id}` }] };
+  }
+  check(
+    "serialised completions: a forged day of 50 demanding tasks pays g(ΣR), never past the 300 cap",
+    groups.size === 1 && groups.has(1) && serial <= KNEE_CAP + 0.05 && serial >= KNEE_CAP - 0.05 && Math.abs(serial - kneeG(rawSum)) <= 0.05,
+    `serial ${serial.toFixed(1)}, g(ΣR) ${kneeG(rawSum).toFixed(1)}, same-read ${parallel.toFixed(1)}`
+  );
+  check("…where pricing them all against one read would have paid 1165", Math.abs(parallel - 1165) < 0.5, parallel.toFixed(1));
+}
+
+// ── V counts the band a completion was paid as ────────────────────────────
+{
+  const introReceipt = planCompletion({ template: tpl({ id: "b", title: "Bins", band: "INTRO", estMinutes: 5, machineMinutes: 5 }), day: TODAY, today: TODAY, slot: 0, ledger: ledger(TODAY), streakDays: 0 }).receipt;
+  check(
+    "a ticked INTRO task self-rated +1 afterwards still counts toward today's INTRO volume",
+    paidIntroOf(introReceipt, { band: "INTRO", bandOverride: 1 }) === true && paidIntroOf(null, { band: "INTRO", bandOverride: 1 }) === false,
+    `receipt band ${introReceipt.factors[0].label}`
+  );
+}
+
+// ── Capture: the habit's phase, and the toast priced like the row ─────────
+{
+  const start = (line: string) => {
+    const p = parseCapture(line, { today: TODAY });
+    return { p, start: startDayFor(p, TODAY) };
+  };
+  const g = start("every 2 weeks on mon clean gutters");
+  const rule = parseRule(g.p.recurrence)!;
+  check(
+    "'every 2 weeks on mon', captured on a Thursday, starts the next Monday and runs on Mondays",
+    g.start === "2026-10-05" && !occursOn(rule, g.start, TODAY) && nextDue(rule, g.start, TODAY) === "2026-10-05" && occursOn(rule, g.start, "2026-10-19") && weekdayOf(nextDue(rule, g.start, "2026-10-06")!) === 1,
+    `start ${g.start}`
+  );
+  check("'every other sat' starts on the coming Saturday", start("every other sat long run").start === "2026-10-03");
+  check("a plain habit starts today; a deadline ('until fri') is not a start", start("stretch daily").start === TODAY && start("stretch daily until fri").start === TODAY);
+
+  // The toast's '≈ N XP' is the row's price against today's real ledger.
+  const busy = ledger(TODAY, { rawBefore: 150, completions: [completion("x", "zzz")] });
+  const x = tpl({ id: "new", title: "Gym legs", band: "DEMANDING", estMinutes: 60, machineMinutes: 60, track: "BODY" });
+  const toast = planCompletion({ template: x, day: TODAY, today: TODAY, slot: 0, ledger: busy, streakDays: 0 }).receipt.xp;
+  const rowXp = rowOf(buildBoard(board([x], { today: busy })), "new")!.projection.xp;
+  const empty = planCompletion({ template: x, day: TODAY, today: TODAY, slot: 0, ledger: ledger(TODAY), streakDays: 0 }).receipt.xp;
+  check("the capture toast's price equals the row's on a busy day (not an empty day's)", toast === rowXp && toast < empty, `toast ${toast}, row ${rowXp}, empty-day ${empty}`);
+}
+
+// ── Moving a deadline keeps its day and its lateness ──────────────────────
+{
+  const sat = addDays(TODAY, 2);
+  const putOff = tpl({ id: "tax2", title: "Tax return", band: "DEMANDING", estMinutes: 120, machineMinutes: 120, dueDay: sat, dueKind: "DEADLINE", planDay: addDays(TODAY, 1) });
+  const b = buildBoard(board([putOff]));
+  check("a deadline put off to tomorrow leaves today's board (counted as later)", laneOf(b, "tax2") === "none" && b.later === 1);
+  const tOn = (day: DayKey) => planCompletion({ template: putOff, day, today: day, slot: 0, ledger: ledger(day), streakDays: 0 }).timing;
+  check("…and keeps its real deadline: on time on Saturday, late on Sunday", tOn(sat) === "ON_TIME" && tOn(addDays(sat, 1)) === "LATE");
+  const late = tpl({ id: "late2", title: "Visa form", dueDay: ago(2), dueKind: "DEADLINE", planDay: TODAY });
+  const lateRow = rowOf(buildBoard(board([late])), "late2");
+  check("a late deadline put off is still late when it comes back (T 0.85)", lateRow?.late === true && lateRow.projection.factors.find((f) => f.key === "T")?.value === 0.85);
+  const mustToday = tpl({ id: "m", title: "Rent", compulsory: true, dueDay: TODAY, dueKind: "DEADLINE" });
+  check(
+    "a compulsory deadline is never put off past its day; an ordinary one may be; a compulsory habit can't be skipped",
+    moveBlockOf(mustToday, addDays(TODAY, 1), TODAY) !== null &&
+      moveBlockOf({ ...mustToday, dueDay: sat }, addDays(TODAY, 1), TODAY) === null &&
+      moveBlockOf({ ...mustToday, compulsory: false }, addDays(TODAY, 1), TODAY) === null &&
+      moveBlockOf(tpl({ id: "h", title: "Meds", recurrence: "DAILY", compulsory: true }), addDays(TODAY, 1), TODAY) !== null
+  );
+  const dueToday = tpl({ id: "dt", title: "Report", estMinutes: 30, machineMinutes: 30, dueDay: TODAY, dueKind: "DEADLINE" });
+  const planned = tpl({ id: "pl", title: "Tidy shed", band: "STANDARD", estMinutes: 300, machineMinutes: 240, dueDay: TODAY, dueKind: "PLANNED" });
+  const cheap = buildBoard(board([dueToday, planned], { capacityMin: 60 }));
+  check("the capacity tile never suggests moving a deadline due today", cheapestMovable(cheap.todayRows)?.template.id === "pl", cheapestMovable(cheap.todayRows)?.template.id ?? "none");
+}
+
+// ── In-process memos forget everything a reset deletes ────────────────────
+{
+  let seq = 0;
+  const epoch = () => cached("board-check:memoEpoch", [], async () => ++seq, 365 * 86_400_000);
+  const memo = new EpochSet();
+  (async () => {
+    const e1 = await epoch();
+    memo.add(e1, "user:2026-10-01");
+    invalidate("life", "activity", "ideas", "fields", "progress");
+    const e2 = await epoch();
+    const keptThroughWrites = e2 === e1 && memo.has(e2, "user:2026-10-01");
+    invalidateAll(); // what every reset does
+    const e3 = await epoch();
+    const forgotten = e3 !== e1 && !memo.has(e3, "user:2026-10-01");
+    check("a memo survives ordinary writes but not a reset (DAY_OPEN is rewritten after one)", keptThroughWrites && forgotten, `epochs ${e1}/${e2}/${e3}`);
+    finish();
+  })();
+}
+
+// ── Goal progress and the nav's study count ───────────────────────────────
+{
+  check(
+    "goal progress only goes up: negatives and zero are refused, the rest rounded and capped",
+    goalProgressQty(-1) === null && goalProgressQty(0) === null && goalProgressQty(Number.NaN) === null && goalProgressQty(1.23) === 1.2 && goalProgressQty(5000) === 1000
+  );
+  const s = tpl({ id: "rq", title: "Reviews", recurrence: "DAILY", autoMetric: "REVIEW_DUE", compulsory: true });
+  const cleared = buildBoard(board([s], { dueNow: 0 })).counts;
+  const unknown = buildBoard(board([s], { dueNow: null })).counts;
+  check("a study task met by an empty queue is not an open must (the nav reads the due count too)", cleared.musts === 0 && unknown.musts === 1, `with count ${cleared.musts}, without ${unknown.musts}`);
+}
+
+function finish(): void {
+  console.log(failed ? `\n${failed} failed` : "\nall pass");
+  process.exit(failed ? 1 : 0);
+}
