@@ -14,28 +14,7 @@ import { SessionSummary } from "@/components/workspace/SessionSummary";
 import { SessionComplete } from "@/components/workspace/SessionComplete";
 import { BossPanel } from "@/components/workspace/BossPanel";
 import { BossResult } from "@/components/workspace/BossResult";
-import { TownCard } from "@/components/workspace/TownCard";
-import { useTownPulse } from "@/components/town/useTownPulse";
 import { fieldColor } from "@/lib/palette";
-import { schoolOf } from "@/lib/town/rules";
-import {
-  MISS_LINE,
-  addGoods,
-  bandOf,
-  forDay,
-  noteAnswer,
-  openReqs,
-  passLine,
-  rawReceipt,
-  ratesLine,
-  receiptFor,
-  reqText,
-  runTown,
-  type FieldRun,
-  type Goods,
-  type RunTown,
-  type TownPulse,
-} from "@/lib/town/pulse-core";
 
 export interface WorkspaceIdea {
   id: string;
@@ -81,16 +60,10 @@ interface Props {
   upcoming: { label: string; count: number } | null;
   /** Ideas that exist but are not due. Zero means the library is empty, which is a different problem. */
   scheduledCount: number;
-  /** A Field's name to open on, from /review?field=<id> (the town links straight to one). */
-  initialField?: string;
-  /** The server's study day (lib/town/pulse-core dayKey): the day the town's requisitions and carts are for. */
-  today: string;
 }
 
 interface RunIdea extends WorkspaceIdea {
   domainName: string;
-  fieldId: string;
-  fieldName: string;
 }
 
 interface RunTally {
@@ -105,16 +78,6 @@ interface RunTally {
   currentCombo: number;
   /** Longest such run seen this session. */
   bestCombo: number;
-  /** Right answers by depth band (lib/town/pulse-core bandOf, on the level each card now sits at). */
-  passesByBand: [number, number, number, number];
-  /** Answers per Field id, and passes by band: the town sends every fourth pass by need. */
-  byField: Record<string, FieldRun>;
-  /** What the passes send the town, unrounded, by Field and band: rounded per batch as the town rounds. */
-  goods: Record<string, Goods>;
-  /** Some passes were sent by what the town lacks most, which shifts as goods land. */
-  approx: boolean;
-  /** Set when the run ends: goods, Fields cleared and requisitions filled, for the recap. */
-  town: RunTown | null;
 }
 
 const EMPTY_TALLY: RunTally = {
@@ -125,19 +88,6 @@ const EMPTY_TALLY: RunTally = {
   mastered: [],
   currentCombo: 0,
   bestCombo: 0,
-  passesByBand: [0, 0, 0, 0],
-  byField: {},
-  goods: {},
-  approx: false,
-  town: null,
-};
-
-const NO_RUN: FieldRun = { passes: 0, misses: 0, bands: [0, 0, 0, 0] };
-
-const bump = (xs: [number, number, number, number], i: number): [number, number, number, number] => {
-  const out: [number, number, number, number] = [...xs];
-  out[i] += 1;
-  return out;
 };
 
 const CELEBRATE_MS = 2600;
@@ -156,17 +106,17 @@ function flattenIdeas(fields: WorkspaceField[]): RunIdea[] {
   for (const field of fields) {
     for (const domain of field.domains) {
       for (const idea of domain.ideas) {
-        out.push({ ...idea, domainName: domain.name, fieldId: field.id, fieldName: field.name });
+        out.push({ ...idea, domainName: domain.name });
       }
     }
   }
   return out;
 }
 
-export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, upcoming, scheduledCount, initialField, today }: Props) {
+export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, upcoming, scheduledCount }: Props) {
   const router = useRouter();
   const { streak } = useStreak();
-  const [selected, setSelected] = useState<string>(initialField ?? "ALL");
+  const [selected, setSelected] = useState<string>("ALL");
   // Captured once on mount, deliberately not re-synced on later prop
   // updates — this is the fixed denominator for "today's progress."
   const [initialTotal] = useState(totalDue);
@@ -177,14 +127,6 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
   const [runQueue, setRunQueue] = useState<RunIdea[]>([]);
   const [runIndex, setRunIndex] = useState(0);
   const [tally, setTally] = useState<RunTally>(EMPTY_TALLY);
-
-  // The town's pulse: what a review is worth to the player's town right now.
-  // A run keeps the pulse it started with, so its receipts and recap add up
-  // against one set of numbers even if the town writes again mid-run.
-  const town = useTownPulse();
-  const pulse = useMemo(() => (town ? forDay(town.pulse, today) : null), [town, today]);
-  const [runPulse, setRunPulse] = useState<TownPulse | null>(null);
-  const [dueAtStart, setDueAtStart] = useState<Record<string, number>>({});
 
   // Boss mode. `bossFieldId` being set is what makes a run an encounter:
   // the cards come from the server's weighted draw instead of the local
@@ -207,12 +149,9 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
         return;
       }
       const boss = bosses.find((b) => b.fieldId === fieldId);
-      const fieldName = boss?.fieldName ?? fieldsWithDue.find((f) => f.id === fieldId)?.name ?? "";
       setBossName(boss?.archetype.name ?? "The encounter");
       setBossFieldId(fieldId);
-      setRunQueue(res.value.cards.map((c) => ({ ...c, dueLabel: "", overdue: false, fieldId, fieldName })));
-      setRunPulse(pulse);
-      setDueAtStart({});
+      setRunQueue(res.value.cards.map((c) => ({ ...c, dueLabel: "", overdue: false })));
       setRunIndex(0);
       setTally(EMPTY_TALLY);
       setMode("running");
@@ -268,27 +207,9 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
   const visibleDueCount = visibleFields.reduce((s, f) => s + f.domains.reduce((s2, d) => s2 + d.ideas.length, 0), 0);
   const visibleDomainCount = visibleFields.reduce((s, f) => s + f.domains.length, 0);
 
-  const dueById = useMemo(
-    () => Object.fromEntries(fieldsWithDue.map((f) => [f.id, f.domains.reduce((s, d) => s + d.ideas.length, 0)])),
-    [fieldsWithDue]
-  );
-  // The rates a right answer pays, and any open requisition this run can fill, stated before it starts.
-  const scope = selected === "ALL" ? null : selected;
-  const townLines = useMemo(() => {
-    if (!pulse) return [];
-    const ids = new Set(fieldsWithDue.filter((f) => !scope || f.name === scope).map((f) => f.id));
-    const reqs = openReqs(pulse).filter((r) => ids.has(r.fieldId));
-    return [
-      ratesLine(pulse, scope, scope ? schoolOf(scope) : null),
-      reqs.length ? `Requisition${reqs.length > 1 ? "s" : ""}: ${reqs.map((r) => reqText(r)).join(" · ")}.` : "",
-    ].filter(Boolean);
-  }, [pulse, scope, fieldsWithDue]);
-
   function handleStart() {
     const queue = shuffle(flattenIdeas(visibleFields));
     if (queue.length === 0) return;
-    setRunPulse(pulse);
-    setDueAtStart(dueById);
     setRunQueue(queue);
     setRunIndex(0);
     setTally(EMPTY_TALLY);
@@ -304,12 +225,6 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
     // last card, and reading it back out of state here would race the
     // pending update.
     const currentCombo = result.correct ? tally.currentCombo + 1 : 0;
-    // The town counts a pass where the ledger does, on an advance, and bands
-    // it by the level the card now sits at, as the town's own tally reads it.
-    const band = advanced ? bandOf(advanced.newLevel) : 0;
-    const was = tally.byField[current.fieldId] ?? NO_RUN;
-    const receipt = advanced && runPulse ? rawReceipt(runPulse, advanced.newLevel, schoolOf(current.fieldName), was.bands[band]) : null;
-    const batch = `${current.fieldId}:${band}`;
     const nextTally: RunTally = {
       correct: tally.correct + (result.correct ? 1 : 0),
       incorrect: tally.incorrect + (result.correct ? 0 : 1),
@@ -318,24 +233,10 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
       mastered: advanced?.mastered ? [...tally.mastered, current.preview] : tally.mastered,
       currentCombo,
       bestCombo: Math.max(tally.bestCombo, currentCombo),
-      passesByBand: advanced ? bump(tally.passesByBand, band) : tally.passesByBand,
-      byField: {
-        ...tally.byField,
-        [current.fieldId]: advanced ? { ...was, passes: was.passes + 1, bands: bump(was.bands, band) } : { ...was, misses: was.misses + 1 },
-      },
-      goods: receipt ? { ...tally.goods, [batch]: addGoods(tally.goods[batch] ?? {}, receipt.goods) } : tally.goods,
-      approx: tally.approx || !!receipt?.approx,
-      town: null,
     };
-    const last = runIndex + 1 >= runQueue.length;
-    if (last && runPulse && !bossFieldId) {
-      nextTally.town = runTown(runPulse, nextTally.byField, nextTally.goods, nextTally.approx, dueAtStart);
-    }
     setTally(nextTally);
-    // So the nav and the Town card see a requisition fill before the town re-reads.
-    noteAnswer(today, current.fieldId, !!advanced);
 
-    if (last) {
+    if (runIndex + 1 >= runQueue.length) {
       if (bossFieldId) {
         finishBossEncounter(nextTally);
       } else {
@@ -410,7 +311,6 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
               level={current.level}
               domainName={current.domainName}
               onComplete={handleCardComplete}
-              townLine={runPulse ? (result) => townLineFor(runPulse, tally, current, result) : undefined}
             />
           )}
           <button
@@ -439,7 +339,6 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
           mastered={tally.mastered}
           bestCombo={tally.bestCombo}
           onDone={handleReturnToSummary}
-          town={tally.town}
         />
       </div>
     );
@@ -470,18 +369,6 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
         pendingFieldId={pendingBossField}
         error={bossError}
       />
-
-      {town && (
-        <TownCard
-          view={town}
-          today={today}
-          dueById={dueById}
-          onPick={(id) => {
-            const name = fieldsWithDue.find((f) => f.id === id)?.name;
-            if (name) setSelected(name);
-          }}
-        />
-      )}
 
       <div className="mb-6 flex flex-wrap gap-2">
         <button
@@ -576,27 +463,9 @@ export function WorkspaceView({ fieldsWithDue, allFieldNames, totalDue, bosses, 
             dueCount={visibleDueCount}
             domainCount={visibleDomainCount}
             onStart={handleStart}
-            townLines={townLines}
           />
         </div>
       )}
     </div>
   );
-}
-
-/**
- * The card's town line for one answer, from the pulse the run started with
- * and the answers before this one: the goods of a pass (by its depth, and its
- * place among the Field's passes at that depth, as the town settles them), or
- * that a miss sends none; and how far it takes the Field's requisition.
- */
-function townLineFor(p: TownPulse, tally: RunTally, idea: RunIdea, result: SubmitReviewResult): string {
-  if (result.outcome.outcome !== "advanced") return MISS_LINE;
-  const was = tally.byField[idea.fieldId] ?? NO_RUN;
-  const band = bandOf(result.outcome.newLevel);
-  const line = passLine(p, receiptFor(p, result.outcome.newLevel, schoolOf(idea.fieldName), was.bands[band]));
-  const req = p.reqs.find((r) => r.fieldId === idea.fieldId && !r.done && r.got < r.need);
-  if (!req) return line;
-  const got = Math.min(req.need, req.got + was.passes + 1);
-  return `${line} · Requisition ${req.field} ${got}/${req.need}${got >= req.need ? ", filled" : ""}`;
 }

@@ -4,8 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { XtnlLogo } from "./Logo";
 import { useStreak } from "./StreakProvider";
-import { useTownPulse } from "./town/useTownPulse";
-import { forDay, openReqs } from "@/lib/town/pulse-core";
 
 const LINKS = [
   { href: "/overview", label: "Overview" },
@@ -14,7 +12,6 @@ const LINKS = [
   { href: "/dashboard", label: "Analytics" },
   { href: "/taxonomy", label: "Taxonomy" },
   { href: "/skills", label: "Skills" },
-  { href: "/town", label: "Town" },
 ];
 
 interface AppNavProps {
@@ -24,31 +21,9 @@ interface AppNavProps {
   reviewSlot?: React.ReactNode;
 }
 
-/**
- * The Town link's dot: amber, and only while a stated reward waits on review
- * (today, an open requisition). Never for raids, peril or a fall, and never a
- * countdown: the nav asks for study, it does not sound the town's alarms.
- * Hidden on /town itself, where the requisitions are on the page.
- */
-function TownDot() {
-  return (
-    <span
-      aria-hidden
-      className="inline-block"
-      style={{ width: 6, height: 6, marginLeft: 5, borderRadius: 3, background: "var(--amber)", verticalAlign: "middle", transform: "translateY(-1px)" }}
-    />
-  );
-}
-
 export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
   const pathname = usePathname();
   const { streak } = useStreak();
-  const town = useTownPulse();
-  // `today` is this device's day; the requisitions lapse at the server's midnight, which it matches whenever the two share a zone.
-  const open = town && pathname !== "/town" ? openReqs(forDay(town.pulse, town.today)) : [];
-  const townNote = open.length
-    ? `${open.length === 1 ? "A requisition is open" : "Requisitions are open"}: ${open.map((r) => `${r.field} ${r.got}/${r.need}`).join(", ")}`
-    : null;
 
   return (
     <header
@@ -86,7 +61,6 @@ export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
                   key={link.href}
                   href={link.href}
                   aria-current={active ? "page" : undefined}
-                  title={link.href === "/town" && townNote ? townNote : undefined}
                   className="relative whitespace-nowrap py-1 no-underline transition-colors"
                   style={{
                     fontSize: 11,
@@ -97,12 +71,6 @@ export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
                   }}
                 >
                   {link.label}
-                  {link.href === "/town" && townNote && (
-                    <>
-                      <TownDot />
-                      <span className="sr-only"> ({townNote})</span>
-                    </>
-                  )}
                   {/* Underline rule, as in the thesis nav — present only on
                       the active item rather than an always-on pill. */}
                   <span
@@ -155,7 +123,6 @@ export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
               key={link.href}
               href={link.href}
               aria-current={active ? "page" : undefined}
-              title={link.href === "/town" && townNote ? townNote : undefined}
               className="whitespace-nowrap no-underline"
               style={{
                 // Padding, not just text. These were bare 19px-tall labels —
@@ -176,12 +143,6 @@ export function AppNav({ titleSlot, reviewSlot }: AppNavProps) {
               }}
             >
               {link.label}
-              {link.href === "/town" && townNote && (
-                <>
-                  <TownDot />
-                  <span className="sr-only"> ({townNote})</span>
-                </>
-              )}
             </Link>
           );
         })}
