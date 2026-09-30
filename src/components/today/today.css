@@ -1,0 +1,317 @@
+/* ═══ TODAY BOARD ════════════════════════════════════════
+   Built from the shared tokens only (globals.css). Colour keeps the app's
+   grammar: green is done, amber is due (the Must lane), red is late, blue is
+   information. Rank colours never appear here.
+
+   Motion is routine feedback, so every transition is under 300 ms and
+   nothing loops: a tick fills and draws its check once. The sheet's entrance
+   is one short slide. Both are listed under reduced motion at the bottom. */
+
+/* ── Sections ───────────────────────────────────────────── */
+.today-lane { overflow: hidden; }
+.today-lane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 8px;
+}
+.today-lane[data-lane="must"] { border-color: rgba(240, 160, 48, 0.22); }
+.today-lane[data-lane="must"] .today-lane-title { color: var(--amber); }
+.today-lane-count { font-size: 11px; color: var(--ink-3); }
+.today-lane > details > summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.today-lane > details > summary::-webkit-details-marker { display: none; }
+.today-lane > details > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.18s ease;
+}
+.today-lane > details[open] > summary::after { transform: rotate(225deg) translateY(-1px); }
+.today-empty { padding: 4px 14px 14px; font-size: 12px; color: var(--ink-2); }
+
+/* ── Rows ───────────────────────────────────────────────── */
+.today-rows { border-top: 1px solid var(--line); }
+.today-row-wrap + .today-row-wrap { border-top: 1px solid var(--line); }
+.today-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 6px 6px 4px;
+  min-height: 56px;
+}
+
+.today-tick {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.today-tick:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.today-tick-ring {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-act);
+  display: grid;
+  place-items: center;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.16s ease;
+}
+.today-tick:hover .today-tick-ring { border-color: rgba(0, 204, 122, 0.55); }
+.today-tick:active .today-tick-ring { transform: scale(0.88); }
+.today-row[data-lane="must"] .today-tick[data-state="open"] .today-tick-ring { border-color: rgba(240, 160, 48, 0.65); }
+.today-tick[data-state="done"] .today-tick-ring { background: var(--green); border-color: var(--green); }
+.today-tick[data-state="skipped"] .today-tick-ring { border-style: dashed; border-color: var(--ink-3); }
+.today-tick[data-state="locked"] { cursor: not-allowed; }
+.today-tick[data-state="locked"] .today-tick-ring { border-style: dotted; border-color: var(--ink-3); }
+.today-tick-check {
+  fill: none;
+  stroke: #04140c;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 16;
+  stroke-dashoffset: 16;
+  transition: stroke-dashoffset 0.22s ease 0.04s;
+}
+.today-tick[data-state="done"] .today-tick-check { stroke-dashoffset: 0; }
+
+.today-row-main { flex: 1; min-width: 0; padding-top: 10px; }
+.today-row-title {
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink-0);
+  overflow-wrap: anywhere;
+  transition: color 0.18s ease;
+}
+.today-row[data-state="done"] .today-row-title,
+.today-row[data-state="skipped"] .today-row-title { color: var(--ink-2); }
+.today-row-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.today-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+/* Inline-block, not flex, so one long chip (a goal's name) ellipsises
+   inside a phone-width row instead of pushing it sideways. */
+.today-chip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--sub);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.today-chip[data-tone="amber"] { color: var(--amber); background: var(--amber-10); border-color: rgba(240, 160, 48, 0.22); }
+.today-chip[data-tone="red"]   { color: var(--red);   background: var(--red-10);   border-color: rgba(240, 58, 87, 0.22); }
+.today-chip[data-tone="blue"]  { color: var(--blue);  background: var(--blue-10);  border-color: rgba(77, 156, 245, 0.22); }
+.today-chip[data-tone="green"] { color: var(--green); background: var(--green-10); border-color: rgba(0, 204, 122, 0.22); }
+.today-dot { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 999px; vertical-align: 1px; }
+
+.today-row-side { display: flex; align-items: center; flex: none; }
+.today-xp {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: 8px;
+}
+.today-xp:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.today-xp[data-paid="1"] { color: var(--green); }
+.today-xp[data-zero="1"] { color: var(--ink-3); }
+.today-more {
+  width: 36px;
+  height: 44px;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+}
+.today-more:hover, .today-more[aria-expanded="true"] { color: var(--ink-0); background: var(--raised); }
+.today-more:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.today-undo {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-left: 6px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── The drawer ─────────────────────────────────────────── */
+.today-drawer {
+  margin: 0 8px 10px 48px;
+  padding: 10px 12px 12px;
+  border-radius: 10px;
+  background: var(--sub);
+  border: 1px solid var(--line);
+}
+.today-drawer-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.today-drawer-row + .today-drawer-row { margin-top: 8px; }
+.today-pill {
+  min-height: 36px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid var(--line-hi);
+  background: var(--card);
+  color: var(--ink-1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.today-pill:hover:not(:disabled) { border-color: var(--line-act); color: var(--ink-0); }
+.today-pill:disabled { opacity: 0.4; cursor: not-allowed; }
+.today-pill[aria-pressed="true"] { border-color: rgba(0, 204, 122, 0.45); color: var(--green); background: var(--green-06); }
+.today-pill[data-tone="green"] { border-color: rgba(0, 204, 122, 0.35); color: var(--green); }
+.today-pill[data-tone="red"] { color: var(--red); }
+.today-pill:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.today-size {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.today-size dt { color: var(--ink-3); }
+.today-size dd { margin: 0 0 4px; color: var(--ink-1); overflow-wrap: anywhere; }
+.today-bands { display: grid; gap: 4px; margin: 6px 0 8px; }
+.today-band {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+}
+.today-band[data-current="1"] { border-color: var(--line-hi); background: var(--card); }
+
+/* ── Bars (quest, goals, capacity) ──────────────────────── */
+.today-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sub);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.today-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--green);
+  transition: width 0.25s ease;
+}
+.today-bar[data-tone="amber"] .today-bar-fill { background: var(--amber); }
+.today-bar[data-tone="blue"] .today-bar-fill { background: var(--blue); }
+
+/* ── Inbox sheet ────────────────────────────────────────── */
+.today-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(2, 5, 8, 0.62);
+  backdrop-filter: blur(2px);
+}
+.today-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  max-height: 82vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border-radius: 16px 16px 0 0;
+  background: var(--card);
+  border: 1px solid var(--line-hi);
+  box-shadow: var(--shadow-lg);
+  animation: today-sheet-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes today-sheet-in {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@media (min-width: 640px) {
+  .today-sheet {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 12vh;
+    width: 560px;
+    max-height: 76vh;
+    transform: translateX(-50%);
+    border-radius: 14px;
+    padding: 16px 18px 18px;
+    animation-name: today-sheet-in-centre;
+  }
+  @keyframes today-sheet-in-centre {
+    from { transform: translate(-50%, 16px); opacity: 0; }
+    to   { transform: translate(-50%, 0);    opacity: 1; }
+  }
+}
+.today-inbox-item + .today-inbox-item { border-top: 1px solid var(--line); }
+.today-inbox-item { padding: 10px 0; }
+
+/* ── Phone ──────────────────────────────────────────────── */
+@media (max-width: 420px) {
+  .today-drawer { margin-left: 6px; margin-right: 6px; }
+  .today-row-title { font-size: 14.5px; }
+  .today-lane.card { padding: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .today-tick-ring,
+  .today-tick-check,
+  .today-row-title,
+  .today-bar-fill,
+  .today-lane > details > summary::after { transition: none; }
+  .today-sheet { animation: none; }
+  .today-tick:active .today-tick-ring { transform: none; }
+}

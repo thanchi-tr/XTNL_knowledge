@@ -18,6 +18,12 @@ const FULL_LABELS = [
  * as gold-glowing blocks. The mechanic is unchanged; the presentation is
  * now a plain activity bar in the ecosystem's green, which reads as a
  * measurement rather than a reward.
+ *
+ * A held day (a freeze or a repair kept the streak through it) is drawn in
+ * the info blue rather than green: it did not add a day, it only kept the
+ * run from breaking, and the strip should not claim work that was not done.
+ * A streak that reaches the edge of what the ledger query reads is shown as
+ * a floor, "70+", never as a number the app did not count.
  */
 export function StreakDisplay({ streak }: { streak: DailyStreak }) {
   return (
@@ -25,7 +31,7 @@ export function StreakDisplay({ streak }: { streak: DailyStreak }) {
       <div className="flex items-start justify-between">
         <div>
           <h2 className="panel-title">Activity</h2>
-          <p className="panel-sub">Consecutive days with review activity</p>
+          <p className="panel-sub">Consecutive days with a review, an idea or a task</p>
         </div>
         <div className="flex items-baseline gap-1.5">
           <span
@@ -38,27 +44,37 @@ export function StreakDisplay({ streak }: { streak: DailyStreak }) {
             }}
           >
             {streak.current}
+            {streak.capped ? "+" : ""}
           </span>
           <span className="label-xs">days</span>
         </div>
       </div>
 
       <div className="mt-auto grid grid-cols-7 gap-1.5 pt-5">
-        {streak.last7Days.map((active, i) => (
-          <div key={i} className="flex flex-col items-center gap-1.5" title={FULL_LABELS[i]}>
+        {streak.last7Days.map((active, i) => {
+          const isHeld = !active && streak.held7Days[i] === true;
+          return (
             <div
-              className="h-9 w-full"
-              style={{
-                borderRadius: 6,
-                background: active ? "var(--green-10)" : "var(--sub)",
-                border: `1px solid ${active ? "rgba(0,204,122,0.35)" : "var(--line)"}`,
-              }}
-            />
-            <span className="mono" style={{ fontSize: 9, color: "var(--ink-3)" }}>
-              {DAY_LABELS[i]}
-            </span>
-          </div>
-        ))}
+              key={i}
+              className="flex flex-col items-center gap-1.5"
+              title={isHeld ? `${FULL_LABELS[i]} · held` : FULL_LABELS[i]}
+            >
+              <div
+                className="h-9 w-full"
+                style={{
+                  borderRadius: 6,
+                  background: active ? "var(--green-10)" : isHeld ? "var(--blue-10)" : "var(--sub)",
+                  border: `1px solid ${
+                    active ? "rgba(0,204,122,0.35)" : isHeld ? "rgba(77,156,245,0.35)" : "var(--line)"
+                  }`,
+                }}
+              />
+              <span className="mono" style={{ fontSize: 9, color: "var(--ink-3)" }}>
+                {DAY_LABELS[i]}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </section>
   );

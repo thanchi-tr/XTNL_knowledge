@@ -1,20 +1,57 @@
 import { loadFieldsForCapture } from "@/lib/queries";
 import { loadVocabulary, loadStructureWords } from "@/lib/vocabulary";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/user";
 import { AddIdeaForm, type AddFormField } from "@/components/AddIdeaForm";
+import { DraftPrefill } from "@/components/capture/DraftPrefill";
 
 export const dynamic = "force-dynamic";
 
 /** Enough of the split to be informative without turning the form into a chart. */
 const COMPOSITION_PREVIEW_COUNT = 4;
 
-export default async function AddIdeaPage() {
+const FORM_ID = "add-idea-form";
+
+interface IdeaDraft {
+  question: string;
+  answer: string;
+}
+
+/**
+ * An 'idea: …' line from the capture sheet, waiting in the Inbox. The line
+ * may carry its answer after '::' ('why do bonds fall :: rates rise'), the
+ * form M3's one-box capture will also write. Fails soft to no draft: a
+ * missing or foreign id just opens the empty form.
+ */
+async function loadIdeaDraft(id: string | undefined): Promise<IdeaDraft | null> {
+  if (!id || id.length > 64) return null;
+  try {
+    const row = await prisma.taskTemplate.findFirst({
+      where: { id, userId: getCurrentUserId(), kind: "IDEA_DRAFT", archivedAt: null },
+      select: { title: true, note: true },
+    });
+    if (!row) return null;
+    const [question, ...rest] = row.title.split(/\s*::\s*/);
+    return { question: question.trim(), answer: (row.note ?? rest.join(" :: ")).trim() };
+  } catch {
+    return null;
+  }
+}
+
+export default async function AddIdeaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { draft: draftParam } = await searchParams;
   // Domains are offered as explicit placement targets in the form. Without
   // them an empty hand-created Domain is unreachable — discovery routes by
   // nearest existing Idea, and an empty Domain has none.
-  const [rows, vocab, structure] = await Promise.all([
+  const [rows, vocab, structure, draft] = await Promise.all([
     loadFieldsForCapture(),
     loadVocabulary(),
     loadStructureWords(),
+    loadIdeaDraft(typeof draftParam === "string" ? draftParam : undefined),
   ]);
 
   // Structure names first: they are words the player committed to rather than
@@ -53,9 +90,27 @@ export default async function AddIdeaPage() {
             Submissions are embedded and checked against existing ideas before anything is written.
           </p>
         </header>
-        <div className="fade-up fade-up-1">
+        {draft && (
+          <div
+            className="fade-up mb-4 px-3 py-2.5"
+            style={{ borderRadius: 10, background: "var(--blue-10)", border: "1px solid rgba(77,156,245,0.26)" }}
+          >
+            <p className="label-xs" style={{ fontSize: 9.5, color: "var(--blue)" }}>
+              From quick capture
+            </p>
+            <p className="mt-1" style={{ fontSize: 13, color: "var(--ink-0)" }}>
+              {draft.question}
+              {draft.answer && <span style={{ color: "var(--ink-2)" }}> · {draft.answer}</span>}
+            </p>
+            <p className="mt-1" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              Filled in below. The line stays in your Inbox until you drop it there.
+            </p>
+          </div>
+        )}
+        <div id={FORM_ID} className="fade-up fade-up-1">
           <AddIdeaForm fields={fields} vocabulary={vocabulary} />
         </div>
+        {draft && <DraftPrefill question={draft.question} answer={draft.answer} targetId={FORM_ID} />}
       </div>
     </main>
   );

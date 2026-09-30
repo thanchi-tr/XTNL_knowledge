@@ -5,6 +5,9 @@ import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
 import { drawBoon, grantBoon, type BoonKind } from "./boons";
 import { loadMaintenanceIds } from "./field-focus";
+import { formatExpiry } from "./format-date";
+import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
+import type { ActivityInput } from "./life-types";
 
 /**
  * Bosses — the chance-and-stakes layer, and the app's one real set-piece.
@@ -221,11 +224,14 @@ async function loadBossStatesUncached(userId: string, now: Date): Promise<BossSt
 }
 
 async function dueCountsByField(now: Date): Promise<Map<string, number>> {
+  // `dueCutoff`, the same line `drawBossBatch` draws from: counting only
+  // cards whose instant has passed could call a Boss short of material the
+  // draw would have found.
   const rows = await prisma.$queryRaw<{ fieldId: string; n: bigint }[]>`
     SELECT d."fieldId" AS "fieldId", COUNT(*) AS n
     FROM "Idea" i
     JOIN "Domain" d ON d.id = i."domainId"
-    WHERE i."isArchived" = false AND i."dueDate" <= ${now}
+    WHERE i."isArchived" = false AND i."dueDate" <= ${dueCutoff(now)}
     GROUP BY d."fieldId"
   `;
   return new Map(rows.map((r) => [r.fieldId, Number(r.n)]));
@@ -352,14 +358,40 @@ export async function resolveBossAttempt(
   const accuracy = total > 0 ? correct / total : 0;
   const required = bossRequiredAccuracy(tier);
 
+  // The fight goes in the life ledger whichever way it ends: it was real
+  // work either way, and it counts toward the daily streak. Keyed by the
+  // encounter's start, so one encounter resolves once — a second resolve
+  // racing this one fails its transaction instead of paying twice.
+  const startedAt = encounter.lastAttemptAt;
+  const event = (won: boolean): ActivityInput => ({
+    source: "BOSS",
+    sink: "NONE",
+    sourceId: fieldId,
+    qty: accuracy,
+    occurredAt: now,
+    detail: `${won ? "victory" : "defeat"} · tier ${tier} · ${correct}/${total}`,
+    dedupeKey: `boss:${fieldId}:${startedAt.toISOString()}`,
+  });
+  const alreadyResolved: BossResolution = { outcome: "rejected", why: "This encounter has already been resolved." };
+
   if (accuracy < required) {
     const cooldownUntil = new Date(now.getTime() + BOSS_COOLDOWN_HOURS_AFTER_LOSS * 3_600_000);
-    await prisma.bossEncounter.update({
-      where: { userId_fieldId: { userId, fieldId } },
-      data: { cooldownUntil },
-    });
+    const lost = event(false);
+    try {
+      await prisma.$transaction([
+        prisma.bossEncounter.update({
+          where: { userId_fieldId: { userId, fieldId } },
+          data: { cooldownUntil },
+        }),
+        activityOp(userId, lost),
+      ]);
+    } catch (err) {
+      if (isDuplicateActivity(err)) return alreadyResolved;
+      throw err;
+    }
     await applyDebuff(userId, "SHAKEN", "BOSS_DEFEAT", now);
     invalidate("progress");
+    invalidateActivity(lost);
 
     return {
       outcome: "defeat",
@@ -375,20 +407,28 @@ export async function resolveBossAttempt(
   const masteryAwarded = bossMasteryReward(tier);
   const cooldownUntil = new Date(now.getTime() + BOSS_COOLDOWN_HOURS_AFTER_WIN * 3_600_000);
 
-  await prisma.$transaction([
-    prisma.bossEncounter.update({
-      where: { userId_fieldId: { userId, fieldId } },
-      data: { tier: newTier, victories: { increment: 1 }, lastVictoryAt: now, cooldownUntil },
-    }),
-    prisma.masteryLedgerEntry.create({
-      data: {
-        userId,
-        delta: masteryAwarded,
-        reason: "BOSS_VICTORY",
-        detail: `${bossFor(fieldId, tier).name} (tier ${tier})`,
-      },
-    }),
-  ]);
+  const won = event(true);
+  try {
+    await prisma.$transaction([
+      prisma.bossEncounter.update({
+        where: { userId_fieldId: { userId, fieldId } },
+        data: { tier: newTier, victories: { increment: 1 }, lastVictoryAt: now, cooldownUntil },
+      }),
+      prisma.masteryLedgerEntry.create({
+        data: {
+          userId,
+          delta: masteryAwarded,
+          reason: "BOSS_VICTORY",
+          detail: `${bossFor(fieldId, tier).name} (tier ${tier})`,
+        },
+      }),
+      activityOp(userId, won),
+    ]);
+  } catch (err) {
+    if (isDuplicateActivity(err)) return alreadyResolved;
+    throw err;
+  }
+  invalidateActivity(won);
 
   // The Spoils Cache. Minted after the mastery award, never instead of it —
   // the payout you were promised before the fight is unconditional, and
@@ -425,7 +465,7 @@ export async function beginBossAttempt(
     case "locked":
       return { ok: false, error: `This field must reach level ${BOSS_UNLOCK_LEVEL} first.` };
     case "cooldown":
-      return { ok: false, error: `On cooldown until ${state.availability.until.toUTCString()}.` };
+      return { ok: false, error: `On cooldown until ${formatExpiry(state.availability.until)}.` };
     case "insufficient_material":
       return {
         ok: false,

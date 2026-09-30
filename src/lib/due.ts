@@ -1,3 +1,5 @@
+import { LIFE_TZ, dayEndOf, dayKeyOf, daysBetween } from "./life-day";
+
 /**
  * One definition of "due", for the whole app.
  *
@@ -28,29 +30,31 @@
  * card unlocking at three in the afternoon, and the queue would refill itself
  * at arbitrary times through the day.
  *
- * ── Timezone ─────────────────────────────────────────────
- * Server-side this resolves against the server's zone, which for a
- * single-user deployment is the deployment's zone rather than the reader's.
- * Both are handled the same way and both are wrong by at most one day-edge;
- * the *previous* behaviour was wrong by up to a full day for every card, on
- * every surface, which is the part worth fixing first. Making this truly
- * local needs the client's offset threaded into the server components, and
- * is worth doing separately rather than smuggling in here.
+ * ── Which day ────────────────────────────────────────────
+ * "Day" means the life day from life-day.ts: 04:00 to 04:00 in the user's own
+ * zone, the same day every other surface in the app counts in. This used to
+ * resolve against the server's zone, which on the deployment is UTC, so the
+ * queue refilled at 10:00 local and a card due "today" could still be locked
+ * at breakfast. Pinning the zone (rather than threading the reader's offset
+ * through every server component) is what a single-user app needs: the
+ * server and the browser now name the same day without being told.
+ *
+ * Starting the day at 04:00 rather than midnight means a late session still
+ * belongs to the evening it started in: cards unlocked at 23:00 stay in the
+ * same queue at 01:00 instead of the queue refilling mid-sitting.
  */
 
 /**
  * The instant a card must be scheduled at or before to count as due: the last
- * millisecond of `now`'s day.
+ * millisecond of `now`'s life day.
  */
-export function dueCutoff(now: Date): Date {
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
-  return end;
+export function dueCutoff(now: Date, tz: string = LIFE_TZ): Date {
+  return new Date(dayEndOf(dayKeyOf(now, tz), tz).getTime() - 1);
 }
 
 /** Whether a card scheduled for `dueDate` is reviewable as of `now`. */
-export function isDue(dueDate: Date, now: Date): boolean {
-  return dueDate.getTime() <= dueCutoff(now).getTime();
+export function isDue(dueDate: Date, now: Date, tz: string = LIFE_TZ): boolean {
+  return dueDate.getTime() <= dueCutoff(now, tz).getTime();
 }
 
 /**
@@ -58,13 +62,11 @@ export function isDue(dueDate: Date, now: Date): boolean {
  *
  * `Math.round` on a raw millisecond difference — the old approach — reports a
  * card due in 13 hours as "in 1d" and one due in 11 hours as "today",
- * depending only on what time it is now. Comparing calendar days instead
- * means the label changes when the date changes and at no other moment.
+ * depending only on what time it is now. Comparing life days instead means
+ * the label changes when the day turns over and at no other moment.
  */
-export function daysUntilDue(dueDate: Date, now: Date): number {
-  const a = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const b = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+export function daysUntilDue(dueDate: Date, now: Date, tz: string = LIFE_TZ): number {
+  return daysBetween(dayKeyOf(now, tz), dayKeyOf(dueDate, tz));
 }
 
 export interface DueLabel {
@@ -73,8 +75,8 @@ export interface DueLabel {
   overdue: boolean;
 }
 
-export function formatDue(dueDate: Date, now: Date): DueLabel {
-  const days = daysUntilDue(dueDate, now);
+export function formatDue(dueDate: Date, now: Date, tz: string = LIFE_TZ): DueLabel {
+  const days = daysUntilDue(dueDate, now, tz);
   if (days < 0) return { label: `Overdue ${Math.abs(days)}d`, overdue: true };
   if (days === 0) return { label: "Due today", overdue: false };
   if (days === 1) return { label: "Due tomorrow", overdue: false };

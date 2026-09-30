@@ -65,7 +65,7 @@ export default function RouteError({
             Try again
           </button>
           <Link href="/" className="btn-secondary no-underline">
-            Back to overview
+            Back to today
           </Link>
         </div>
       </div>

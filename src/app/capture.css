@@ -1,0 +1,380 @@
+/* ═══ QUICK CAPTURE ══════════════════════════════════════
+   The one-line capture sheet (components/capture/*), the phone's corner
+   button, the save toast, and the nav's More menu.
+
+   Z-order follows the shell's table (globals.css, NOTIFICATION BUBBLE):
+   nav and loadout bar 20, the notification bubble 25, the corner button and
+   toast 30 beside the other pickers, the sheet and its backdrop 40 with the
+   other dialogs. Nothing here loops; every entrance is under 300 ms and
+   joins the reduced-motion list at the bottom.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── The corner button ───────────────────────────────────
+   Bottom-left, on the notification bubble's row: the bubble owns
+   bottom-right. Phones only — from 640px the header's '+ Capture' is in
+   reach, and one entry point per width is enough. Green, because it is the
+   screen's one 'do' action. */
+.capture-fab {
+  position: fixed;
+  z-index: 30;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: calc(var(--nav-h, 56px) + 22px + env(safe-area-inset-bottom));
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--green);
+  background: rgba(11, 22, 34, 0.94);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 204, 122, 0.38);
+  box-shadow: 0 6px 20px -8px rgba(0, 0, 0, 0.7), 0 0 14px rgba(0, 204, 122, 0.14);
+  transition: transform 0.14s ease, border-color 0.2s ease;
+}
+.capture-fab:active { transform: scale(0.94); }
+@media (min-width: 640px) {
+  .capture-fab { display: none; }
+}
+
+/* ── The sheet ───────────────────────────────────────────
+   A bottom sheet on phones, lifted by the on-screen keyboard's height
+   (--kb, measured from visualViewport), so the line and its chips sit just
+   above the keys rather than under them. A 560px panel near the top on
+   anything wider. */
+.capture-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(2, 5, 8, 0.62);
+  animation: capture-fade 0.16s ease-out both;
+}
+
+.capture-sheet {
+  position: fixed;
+  z-index: 40;
+  left: 0;
+  right: 0;
+  bottom: var(--kb, 0px);
+  max-height: calc(100vh - var(--kb, 0px) - 16px);
+  max-height: calc(100dvh - var(--kb, 0px) - 16px);
+  overflow-y: auto;
+  padding: 12px max(16px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border-radius: 16px 16px 0 0;
+  border-bottom: none;
+  background-color: var(--card);
+  box-shadow: var(--shadow-lg);
+  /* `.card` skips off-screen content with content-visibility, whose paint
+     containment would also make this the containing block for the word-hint
+     strip's `position: fixed` — pinning the strip to the sheet instead of to
+     the keyboard. A dialog is never off-screen, so none of that applies. */
+  content-visibility: visible;
+  contain: none;
+  animation: capture-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* The keyboard is up: the home-indicator inset is under the keys, not here. */
+.capture-sheet[data-kb="1"] { padding-bottom: 10px; }
+/* The word-hint strip floats against the keyboard, which is where this
+   sheet's bottom edge is; room is made so it sits below the chips, not on them. */
+.capture-sheet[data-hints="1"] { padding-bottom: 60px; }
+
+@media (min-width: 640px) {
+  .capture-sheet {
+    top: 14vh;
+    bottom: auto;
+    margin: 0 auto;
+    width: min(560px, calc(100vw - 32px));
+    max-height: 72vh;
+    padding: 14px 16px;
+    border-radius: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+.capture-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.capture-count { font-size: 11px; color: var(--ink-3); }
+.capture-close {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 10.5px;
+}
+
+.capture-sheet .word-hints:not([data-floating]) { margin: 0 0 6px; }
+
+.capture-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.capture-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  padding: 11px 12px;
+}
+.capture-save {
+  flex-shrink: 0;
+  padding: 10px 16px;
+}
+/* 16px or more stops mobile browsers zooming the page on focus. */
+@media (max-width: 639px) {
+  .capture-input { font-size: 16px; }
+}
+
+/* ── Chips ─────────────────────────────────────────────── */
+.capture-chips { margin-top: 10px; }
+
+.capture-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The chips echo the user's own words and durations, so they keep their
+   case: '~30M' reads as thirty million. */
+.capture-chip {
+  gap: 5px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+button.capture-chip {
+  cursor: pointer;
+  transition: filter 0.12s ease, border-color 0.12s ease;
+}
+button.capture-chip:hover { filter: brightness(1.25); }
+.capture-chip[data-warn="1"] { border-style: dashed; }
+.capture-chip-x {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.55;
+}
+button.capture-chip:hover .capture-chip-x,
+button.capture-chip:focus-visible .capture-chip-x { opacity: 1; }
+
+.capture-grade { color: var(--ink-1); cursor: default; }
+.capture-grade-basis {
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.capture-warning {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--amber);
+}
+
+.capture-feeds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--sub);
+  border: 1px solid var(--line);
+}
+.capture-feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+}
+.capture-feed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.capture-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.capture-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* Lines the server never confirmed: kept, with a way to resend. */
+.capture-failed {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.capture-failed li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--red-10);
+  border: 1px solid rgba(240, 58, 87, 0.26);
+}
+.capture-failed-text {
+  font-size: 12.5px;
+  color: var(--ink-0);
+  overflow-wrap: anywhere;
+}
+.capture-failed-error { font-size: 11px; color: var(--red); }
+.capture-failed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.capture-failed-actions .btn-ghost { padding: 4px 12px; font-size: 11px; }
+
+.capture-foot { margin-top: 12px; }
+.capture-legend {
+  font-family: var(--font-mono), monospace;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.capture-foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.capture-idea-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  color: var(--blue);
+}
+.capture-idea-link:hover { color: var(--ink-0); }
+/* A key hint is noise on a touch screen. */
+@media (hover: none), (max-width: 639px) {
+  .capture-keys { display: none; }
+}
+
+/* ── The toast ───────────────────────────────────────────
+   'Added · Gym legs · Mon · Thu · compulsory · ≈21 XP · Undo'. Floats above
+   the corner row while the sheet is closed; inside the sheet it is a status
+   line instead, so a phone's bottom sheet never hides it. */
+.capture-toast {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: min(92vw, 520px);
+  bottom: calc(var(--nav-h, 56px) + 22px + 60px + env(safe-area-inset-bottom));
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  background: rgba(11, 22, 34, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-hi);
+  box-shadow: var(--shadow-md);
+  animation: capture-toast-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (min-width: 640px) {
+  .capture-toast { bottom: calc(var(--nav-h, 56px) + 22px + env(safe-area-inset-bottom)); }
+}
+
+.capture-status {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--ink-1);
+  background: var(--sub);
+  border: 1px solid var(--line);
+}
+
+.capture-toast-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+}
+.capture-toast-line > * + :not(.capture-toast-x)::before {
+  content: "·";
+  padding-right: 6px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.capture-toast-title { color: var(--ink-0); font-weight: 600; }
+.capture-toast-muted { color: var(--ink-2); }
+.capture-toast-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--green);
+}
+.capture-toast-action:hover { color: var(--green-hi); }
+.capture-toast-x { color: var(--ink-2); padding: 0 4px; }
+
+@keyframes capture-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  /* `none`, not translateY(0): any transform left on the sheet would make it
+     the containing block for the fixed word-hint strip. */
+  to { opacity: 1; transform: none; }
+}
+@keyframes capture-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes capture-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Nav: More ───────────────────────────────────────────
+   Analytics and Taxonomy at medium widths. A picker, so z-30. */
+.nav-more-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: -12px;
+  z-index: 30;
+  min-width: 150px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  content-visibility: visible;
+  background: rgba(11, 22, 34, 0.97);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md);
+}
+.nav-more-item {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.nav-more-item:hover { background: var(--raised); }
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-sheet, .capture-backdrop, .capture-toast { animation: none; }
+  .capture-fab:active { transform: none; }
+  button.capture-chip { transition: none; }
+}

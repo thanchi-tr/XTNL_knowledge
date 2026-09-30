@@ -4,8 +4,10 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { AppNav } from "@/components/AppNav";
 import { NavTitleBadge } from "@/components/NavTitleBadge";
 import { NavReviewLink } from "@/components/NavReviewLink";
+import { NavTodayLink } from "@/components/NavTodayLink";
 import { LoadoutBarSlot } from "@/components/skills/LoadoutBarSlot";
 import { NotificationSlot } from "@/components/notifications/NotificationSlot";
+import { QuickCapture } from "@/components/capture/QuickCapture";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
@@ -19,6 +21,7 @@ import "./powerbar.css";
 import "./insignia.css";
 import "./cataclysm.css";
 import "./cataclysm-extra.css";
+import "./capture.css";
 
 // Inter + JetBrains Mono, matching XTNL_thesis. Was Geist/Geist Mono — the
 // ecosystem's typographic identity is set by the thesis app, and the CSS
@@ -76,6 +79,11 @@ export default function RootLayout({
               {/* Same rule as above — a prop, never inside <Suspense>, or the
                   bubble renders but its button never hydrates. */}
               <NotificationSlot />
+              {/* The capture sheet, on every page: the header button, the
+                  phone's corner button and the 'c' / Ctrl+K hotkey all open
+                  this one instance. Same rule again, and it needs no server
+                  data to render — its word list loads on first open. */}
+              <QuickCapture />
             </>
           }
         >
@@ -85,6 +93,11 @@ export default function RootLayout({
             titleSlot={
               <Suspense fallback={null}>
                 <NavTitleBadge />
+              </Suspense>
+            }
+            todaySlot={
+              <Suspense fallback={null}>
+                <NavTodayLink />
               </Suspense>
             }
             reviewSlot={

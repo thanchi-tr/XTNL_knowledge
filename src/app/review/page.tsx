@@ -1,7 +1,9 @@
+import { after } from "next/server";
 import { loadFieldTree } from "@/lib/queries";
 import { isDue, formatDue, daysUntilDue } from "@/lib/due";
 import { displayQuestion } from "@/lib/idea-display";
 import { loadBossStates } from "@/lib/bosses";
+import { recordDayOpen } from "@/lib/tasks";
 import { getCurrentUserId } from "@/lib/user";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
 
@@ -61,6 +63,12 @@ export default async function WorkspacePage() {
     .filter((field) => field.domains.length > 0);
 
   const totalDue = fieldsWithDue.reduce((sum, f) => sum + f.domains.reduce((s, d) => s + d.ideas.length, 0), 0);
+
+  // The day's first look at the queue fixes the Today quest's target ("clear
+  // the 17 that were due this morning"), so cards falling due later cannot
+  // move it. After the response, once per life day; nothing here waits on it.
+  const userId = getCurrentUserId();
+  after(() => recordDayOpen(userId, totalDue, now));
 
   /**
    * The soonest thing that is *not* due yet, so an empty queue can say when

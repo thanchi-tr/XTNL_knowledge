@@ -3,6 +3,7 @@ import { cached } from "./cache";
 import { loadMaintenanceIds } from "./field-focus";
 import { depthOf } from "./skill-form";
 import type { Skill } from "./skill-pool";
+import { dayKeyOf } from "./life-day";
 
 /**
  * The daily focus Field: one subject a day pays more for new Ideas.
@@ -12,11 +13,11 @@ import type { Skill } from "./skill-pool";
  * clear a Field's quota. It also gives the "add an idea" action a reason to
  * happen today rather than eventually, which nothing else in the app did.
  *
- * **Stored nowhere.** The pick is a pure function of the UTC date and the
- * candidate Fields, so every read agrees without a row, a cron, or any
- * chance of the UI and the reward disagreeing about which Field it is. It
- * also cannot be re-rolled by reloading, which a stored-and-regenerated
- * version would be vulnerable to.
+ * **Stored nowhere.** The pick is a pure function of the life day (04:00
+ * local, life-day.ts) and the candidate Fields, so every read agrees without
+ * a row, a cron, or any chance of the UI and the reward disagreeing about
+ * which Field it is. It also cannot be re-rolled by reloading, which a
+ * stored-and-regenerated version would be vulnerable to.
  *
  * **Skew, not control.** Rare emblems bias the draw toward the Fields they
  * train and raise the payout, but nothing pins it: the weight of a deep
@@ -51,10 +52,6 @@ function hash(input: string): number {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0) / 4294967295;
-}
-
-export function utcDayKey(now: Date): string {
-  return now.toISOString().slice(0, 10);
 }
 
 export interface DailyFocus {
@@ -98,7 +95,7 @@ export async function loadDailyFocus(
   activeSkills: Skill[],
   now: Date = new Date()
 ): Promise<DailyFocus | null> {
-  const dayKey = utcDayKey(now);
+  const dayKey = dayKeyOf(now);
 
   const [fields, maintained] = await Promise.all([
     cached("focusCandidates", ["fields"], () =>

@@ -1,0 +1,511 @@
+/**
+ * The Today board's pure half (src/lib/today-board.ts): which lane a task
+ * lands in, what a row projects, that a tick pays that projection, that an
+ * undo nets it to zero, the capacity line, the review quest and the study
+ * tasks that complete themselves. Also the habit readings the rows print
+ * (src/lib/habit.ts), through the same `statsFor` the server runs.
+ *
+ * No database: every fixture is the shape `tasks.ts` reads in its one wave.
+ *
+ *   npx tsx scripts/board-check.ts
+ */
+import { addDays, weekdayOf, type DayKey } from "../src/lib/life-day";
+import type { Receipt } from "../src/lib/life-types";
+import { consistencyFactor, estEff, payModeOf, priceTask, roundTo, timingFor } from "../src/lib/life-grade";
+import { normTitleOf, repeatNOf } from "../src/lib/life-lexicon";
+import { parseRule } from "../src/lib/recurrence";
+import { rungOf, strengthAfter, type Outcome } from "../src/lib/habit";
+import { countsForStreakOf, streakUnitsOf } from "../src/lib/streak-curve";
+import {
+  BOARD_COLUMNS,
+  BOARD_SECTIONS,
+  applyOps,
+  autoStateOf,
+  buildBoard,
+  canUndo,
+  goalMetricOf,
+  groupKeyOf,
+  horizonFor,
+  planAutoCompletions,
+  planCompletion,
+  questOf,
+  statsFor,
+  taskDedupeKey,
+  taskEventInput,
+  undoEventInput,
+  type BoardData,
+  type BoardInstance,
+  type BoardOp,
+  type BoardRow,
+  type BoardTemplate,
+  type DayLedger,
+  type LedgerCompletion,
+} from "../src/lib/today-board";
+
+// Thursday 1 October 2026.
+const TODAY: DayKey = "2026-10-01";
+const YESTERDAY = addDays(TODAY, -1);
+const ago = (n: number) => addDays(TODAY, -n);
+
+let failed = 0;
+function check(name: string, ok: boolean, detail = "") {
+  if (!ok) failed++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+}
+const near = (a: number, b: number, tol = 1e-9) => Math.abs(a - b) <= tol;
+
+// ── Fixtures ──────────────────────────────────────────────────────────────
+
+function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTemplate {
+  return {
+    normTitle: normTitleOf(p.title),
+    recurrence: null,
+    dueDay: null,
+    dueKind: null,
+    intrinsic: false,
+    autoMetric: null,
+    mvv: null,
+    track: "DUTY",
+    band: "STANDARD",
+    bandOverride: 0,
+    estMinutes: 30,
+    machineMinutes: 30,
+    kind: "TASK",
+    inbox: false,
+    startDay: ago(120),
+    horizon: null,
+    parentId: null,
+    krMetric: null,
+    krTarget: null,
+    krUnit: null,
+    compulsory: false,
+    autoTarget: null,
+    category: "OTHER",
+    lexicalBand: p.band ?? "STANDARD",
+    aiBand: null,
+    gradeSource: "LEXICAL",
+    gradeConfidence: 0.4,
+    gradeBasis: null,
+    gradeModel: null,
+    gradePromptVersion: null,
+    gradeAttempts: 1,
+    gradeFrozen: true,
+    sizing: false,
+    bandOverrideAt: null,
+    gradeFrozenAt: null,
+    topAttribute: null,
+    note: null,
+    completedAt: null,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    sortOrder: 0,
+    ...p,
+  };
+}
+
+function ledger(day: DayKey, p: Partial<DayLedger> = {}): DayLedger {
+  return { day, rawBefore: 0, lifeXp: 0, completions: [], reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null, ...p };
+}
+
+let instSeq = 0;
+function inst(templateId: string, day: DayKey, status: BoardInstance["status"] = "DONE", slot = 0): BoardInstance {
+  return { id: `i${++instSeq}`, templateId, day, slot, status, source: "manual", xpPaid: 0 };
+}
+
+/** Board data as `readBoardCore` assembles it: stats from each recurring template's history, as the server computes them. */
+function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today?: DayLedger; yesterday?: DayLedger; capacityMin?: number; dueNow?: number | null; goalQty?: Record<string, number> } = {}): BoardData {
+  const history = p.history ?? [];
+  const stats: BoardData["stats"] = {};
+  for (const t of templates) {
+    const rule = t.recurrence ? parseRule(t.recurrence) : null;
+    if (rule) stats[t.id] = statsFor(t, rule, history.filter((i) => i.templateId === t.id), TODAY);
+  }
+  return {
+    today: TODAY,
+    yesterday: YESTERDAY,
+    capacityMin: p.capacityMin ?? 240,
+    templates,
+    instances: history.filter((i) => i.day >= ago(40)),
+    stats,
+    ledger: { today: p.today ?? ledger(TODAY), yesterday: p.yesterday ?? ledger(YESTERDAY) },
+    paid: {},
+    goalQty: p.goalQty ?? {},
+    dueNow: p.dueNow === undefined ? 0 : p.dueNow,
+  };
+}
+
+const rowOf = (b: ReturnType<typeof buildBoard>, id: string): BoardRow | undefined =>
+  [...b.must, ...b.todayRows, ...b.yesterdayRows, ...b.anytime].find((r) => r.template.id === id);
+const laneOf = (b: ReturnType<typeof buildBoard>, id: string, day: DayKey = TODAY): string => {
+  if (b.must.some((r) => r.template.id === id && r.day === day)) return "must";
+  if (b.todayRows.some((r) => r.template.id === id && r.day === day)) return "today";
+  if (b.yesterdayRows.some((r) => r.template.id === id && r.day === day)) return "yesterday";
+  if (b.anytime.some((r) => r.template.id === id)) return "anytime";
+  if (b.inbox.some((t) => t.id === id)) return "inbox";
+  return "none";
+};
+
+/** Every day from `from` days ago to `to` days ago (inclusive), newest last. */
+function daysBack(from: number, to: number): DayKey[] {
+  const out: DayKey[] = [];
+  for (let n = from; n >= to; n--) out.push(ago(n));
+  return out;
+}
+
+/** An independent price for a row: priceTask from first principles, not through planCompletion. */
+function priceFrom(t: BoardTemplate, day: DayKey, l: DayLedger, streakDays: number, minutes: number | null = null): Receipt {
+  const recurring = !!t.recurrence;
+  return priceTask(
+    {
+      band: t.band,
+      bandOverride: t.bandOverride,
+      machineMinutes: t.machineMinutes,
+      estMinutes: t.estMinutes,
+      minutes,
+      timing: recurring ? "ON_TIME" : timingFor({ dueKind: t.dueKind, dueDay: t.dueDay, day }),
+      recurring,
+      streakDays: recurring ? streakDays : 0,
+      repeatN: repeatNOf({ templateId: t.id, normTitle: t.normTitle }, l.completions.map((c) => ({ templateId: c.templateId, normTitle: c.groupKey }))),
+      introBefore: l.completions.filter((c) => c.intro).length,
+      mode: payModeOf(t),
+    },
+    { rawBefore: l.rawBefore },
+    t.track
+  );
+}
+
+const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompletion> = {}): LedgerCompletion => ({
+  eventId: `e-${templateId}-${Math.random().toString(36).slice(2)}`,
+  templateId,
+  groupKey,
+  intro: false,
+  raw: 0,
+  xp: 0,
+  sink: "TRACK",
+  ...p,
+});
+
+// ── Habit: rungs, misses, and C from the per-duty streak ──────────────────
+{
+  const kept = (n: number): Outcome[] => Array.from({ length: n }, () => "kept" as const);
+  const rungAt = (n: number) => rungOf(strengthAfter(kept(n)));
+  check("rung: 5 kept is still Seeded, 6 reaches Forming", rungAt(5) === "Seeded" && rungAt(6) === "Forming", `${rungAt(5)} → ${rungAt(6)}`);
+  check("rung: 17 kept Forming, 18 reaches Established", rungAt(17) === "Forming" && rungAt(18) === "Established", `${rungAt(17)} → ${rungAt(18)}`);
+  check("rung: 43 kept Established, 44 reaches Automatic", rungAt(43) === "Established" && rungAt(44) === "Automatic", `${rungAt(43)} → ${rungAt(44)}`);
+  const s66 = strengthAfter(kept(66));
+  check("66 kept from zero gives 0.97", near(s66, 0.97, 0.005), s66.toFixed(4));
+
+  // The same through the board's own path: a daily habit kept the last 66 days.
+  const t = tpl({ id: "h66", title: "Stretch", recurrence: "DAILY", startDay: ago(66) });
+  const d = board([t], { history: daysBack(66, 1).map((day) => inst(t.id, day)) });
+  const s = d.stats[t.id].strength.before;
+  check("statsFor: a daily habit kept 66 days reads 0.97 and Automatic", near(s, 0.97, 0.005) && rungOf(s) === "Automatic", s.toFixed(4));
+}
+{
+  // 20 kept, one missed (no instance, long past the record window), 5 kept.
+  const t = tpl({ id: "hmiss", title: "Journal", recurrence: "DAILY", startDay: ago(26) });
+  const history = daysBack(26, 1)
+    .filter((day) => day !== ago(6))
+    .map((day) => inst(t.id, day));
+  const d = board([t], { history });
+  const st = d.stats[t.id];
+  const expected = strengthAfter([...Array(20).fill("kept"), "missed", ...Array(5).fill("kept")] as Outcome[]);
+  const beforeMiss = strengthAfter(Array(20).fill("kept") as Outcome[]);
+  check(
+    "a miss lowers strength but never resets it",
+    near(st.strength.before, expected, 1e-9) && strengthAfter([...Array(20).fill("kept"), "missed"] as Outcome[]) < beforeMiss && st.strength.before > strengthAfter(Array(5).fill("kept") as Outcome[]),
+    `S ${st.strength.before.toFixed(4)}, kept run ${st.streak.before.kept}`
+  );
+  check("…while the per-duty streak does restart after it", st.streak.before.kept === 5, `kept ${st.streak.before.kept}`);
+}
+{
+  // Mon/Thu: today is a Thursday, so the last ten occurrences before it are
+  // the ten Mondays and Thursdays from 28 Sep back; the eleventh has nothing.
+  const t = tpl({ id: "gym", title: "Gym legs", recurrence: "DOW:1,4", band: "DEMANDING", estMinutes: 60, machineMinutes: 60, track: "BODY", startDay: ago(60) });
+  const occ = daysBack(60, 1).filter((day) => [1, 4].includes(weekdayOf(day)));
+  const last10 = occ.slice(-10);
+  const d = board([t], { history: last10.map((day) => inst(t.id, day)) });
+  const st = d.stats[t.id].streak.before;
+  const row = rowOf(buildBoard(d), t.id)!;
+  const C = row.projection.factors.find((f) => f.key === "C")?.value ?? 0;
+  check("C from perDutyStreak: Mon/Thu kept 10 → 35 days → 1.148", st.kept === 10 && near(st.days, 35) && near(C, 1.148, 0.0005), `kept ${st.kept}, days ${st.days}, C ${C}`);
+  check("…and C equals consistencyFactor(35)", near(C, roundTo(consistencyFactor(35), 3)));
+}
+
+// ── Pricing: the row, the tick and the undo agree ─────────────────────────
+{
+  // Golden 'Dishes': daily INTRO, est 15, a 30-day streak → 4.7.
+  const t = tpl({ id: "dishes", title: "Dishes", recurrence: "DAILY", band: "INTRO", estMinutes: 15, machineMinutes: 15, startDay: ago(30) });
+  const d = board([t], { history: daysBack(30, 1).map((day) => inst(t.id, day)) });
+  const r = rowOf(buildBoard(d), t.id)!;
+  check("golden: 'Dishes' daily INTRO 15 min with a 30-day streak projects 4.7", r.projection.xp === 4.7 && r.streakDays === 30, `xp ${r.projection.xp}, days ${r.streakDays}`);
+}
+{
+  // Golden 'Call mum': STANDARD 20 min, the second call today → 7.7 (D groups by title).
+  const first = tpl({ id: "mum1", title: "Call mum", estMinutes: 20, machineMinutes: 20, track: "CARE" });
+  const second = tpl({ id: "mum2", title: "call Mum", estMinutes: 20, machineMinutes: 20, track: "CARE" });
+  const d = board([second], { today: ledger(TODAY, { completions: [completion(first.id, groupKeyOf(first))] }) });
+  const r = rowOf(buildBoard(d), second.id)!;
+  check("golden: a second 'call mum' today projects 7.7 (repeat decay across templates)", r.projection.xp === 7.7, `xp ${r.projection.xp}`);
+}
+{
+  // Golden: 7th INTRO today ('bins', 5 min) → 2.9.
+  const bins = tpl({ id: "bins", title: "Take out bins", band: "INTRO", estMinutes: 5, machineMinutes: 5 });
+  const six = Array.from({ length: 6 }, (_, i) => completion(`x${i}`, `chore ${i} ${"abcdefghij"[i].repeat(6)}`, { intro: true }));
+  const r = rowOf(buildBoard(board([bins], { today: ledger(TODAY, { completions: six }) })), bins.id)!;
+  check("golden: the 7th INTRO completion today projects 2.9", r.projection.xp === 2.9, `xp ${r.projection.xp}`);
+}
+{
+  const t = tpl({ id: "tax", title: "File tax return", band: "DEMANDING", estMinutes: 120, machineMinutes: 120, dueDay: addDays(TODAY, 3), dueKind: "DEADLINE" });
+  const l = ledger(TODAY, { rawBefore: 12.5 });
+  const plan = planCompletion({ template: t, day: TODAY, today: TODAY, slot: 0, minutes: 150, ledger: l, streakDays: 0 });
+  const direct = priceFrom(t, TODAY, l, 0, 150);
+  check("a tick pays exactly what priceTask prices for the same context", JSON.stringify(plan.receipt) === JSON.stringify(direct), `${plan.receipt.xp} vs ${direct.xp}`);
+  check("golden: 'File tax return' DEMANDING, 150 min, on time → raw 26.7", plan.receipt.raw === 26.7, `raw ${plan.receipt.raw}`);
+
+  const now = new Date("2026-10-01T02:00:00.000Z"); // 12:00 in Sydney
+  const event = taskEventInput(plan, { templateId: t.id, track: t.track, instanceId: "inst1", day: TODAY, slot: 0, attempt: 0, now });
+  const undo = undoEventInput(
+    { id: "ev1", day: TODAY, sink: event.sink ?? "TRACK", track: event.track ?? null, templateId: t.id, sourceId: "inst1", xp: event.xp ?? 0, rawXp: event.rawXp ?? null },
+    new Date(now.getTime() + 60_000)
+  );
+  const units =
+    streakUnitsOf({ source: "TASK", countsForStreak: countsForStreakOf("TASK", event.countsForStreak) }) +
+    streakUnitsOf({ source: "UNDO", countsForStreak: countsForStreakOf("UNDO", undo.countsForStreak) });
+  check(
+    "complete then undo nets zero in XP, knee base and streak units",
+    (event.xp ?? 0) + (undo.xp ?? 0) === 0 && (event.rawXp ?? 0) + (undo.rawXp ?? 0) === 0 && units === 0 && undo.dedupeKey === "undo:ev1",
+    `xp ${event.xp} + ${undo.xp}, units ${units}`
+  );
+
+  const d0 = board([t], { today: l });
+  const done = applyOps(d0, [{ id: "c1", kind: "complete", templateId: t.id, day: TODAY, slot: 0, at: now.toISOString() }]);
+  const instanceId = done.instances.find((i) => i.templateId === t.id)!.id;
+  const undone = applyOps(done, [{ id: "u1", kind: "undo", instanceId }]);
+  check(
+    "optimistic complete then undo returns the day's ledger to where it was",
+    near(undone.ledger.today.rawBefore, l.rawBefore, 1e-9) && near(undone.ledger.today.lifeXp, 0, 1e-9) && undone.ledger.today.completions.length === 0,
+    `rawBefore ${undone.ledger.today.rawBefore}, lifeXp ${undone.ledger.today.lifeXp}`
+  );
+}
+{
+  const a = taskDedupeKey("tpl", TODAY, 0, 0);
+  check("a double tap writes one row: the same slot and attempt give the same dedupe key", a === taskDedupeKey("tpl", TODAY, 0, 0) && a !== taskDedupeKey("tpl", TODAY, 0, 1) && a !== taskDedupeKey("tpl", TODAY, 1, 0));
+  const tick = new Date("2026-10-01T02:00:00.000Z");
+  const lateNight = new Date("2026-10-01T17:55:00.000Z"); // 03:55 Sydney on the 2nd: still life day the 1st
+  check(
+    "undo: 9 minutes on is fine, 11 is too late, and never across the 04:00 edge",
+    canUndo(tick, new Date(tick.getTime() + 9 * 60_000)) &&
+      !canUndo(tick, new Date(tick.getTime() + 11 * 60_000)) &&
+      !canUndo(lateNight, new Date(lateNight.getTime() + 6 * 60_000))
+  );
+}
+{
+  // A task with no minimum version cannot be ticked 'as its minimum'.
+  const t = tpl({ id: "nomvv", title: "Clean garage" });
+  const p = planCompletion({ template: t, day: TODAY, today: TODAY, slot: 0, mvv: true, ledger: ledger(TODAY), streakDays: 0 });
+  const withMvv = planCompletion({ template: { ...t, mvv: "10 min" }, day: TODAY, today: TODAY, slot: 0, mvv: true, ledger: ledger(TODAY), streakDays: 0 });
+  check("the minimum version is only on offer when the task has one", p.mode === "FULL" && withMvv.mode === "MVV" && withMvv.status === "DONE_MVV");
+}
+
+// ── The board: order, lanes, capacity, projections ────────────────────────
+{
+  const flat = [...BOARD_COLUMNS[0], ...BOARD_COLUMNS[1]];
+  check(
+    "ordering: review quest > must > today > yesterday > goals > anytime > inbox",
+    BOARD_SECTIONS.join() === "quest,must,today,yesterday,goals,anytime,inbox" && flat.join() === BOARD_SECTIONS.join()
+  );
+}
+{
+  const t = (id: string, p: Partial<BoardTemplate>) => tpl({ id, title: `Task ${id}`, ...p });
+  const templates = [
+    t("planToday", { dueDay: TODAY, dueKind: "PLANNED" }),
+    t("planCarried", { dueDay: ago(2), dueKind: "PLANNED" }),
+    t("planLater", { dueDay: addDays(TODAY, 3), dueKind: "PLANNED" }),
+    t("dlToday", { dueDay: TODAY, dueKind: "DEADLINE" }),
+    t("dlMust", { dueDay: TODAY, dueKind: "DEADLINE", compulsory: true }),
+    t("dlSoon", { dueDay: addDays(TODAY, 2), dueKind: "DEADLINE" }),
+    t("dlFar", { dueDay: addDays(TODAY, 5), dueKind: "DEADLINE" }),
+    t("dlLate", { dueDay: ago(2), dueKind: "DEADLINE" }),
+    t("dlYesterday", { dueDay: YESTERDAY, dueKind: "DEADLINE" }),
+    t("undated", {}),
+    t("inboxed", { inbox: true }),
+    t("target", { recurrence: "TARGET:3/W" }),
+    t("targetMet", { recurrence: "TARGET:3/W" }),
+    t("daily", { recurrence: "DAILY" }),
+    t("dailyMust", { recurrence: "DAILY", compulsory: true }),
+    t("monOnly", { recurrence: "DOW:1" }),
+  ];
+  // This week began Monday 28 Sep: 'target' has one day done, 'targetMet' three (none today).
+  const history = [
+    inst("target", ago(2)),
+    inst("targetMet", ago(3)),
+    inst("targetMet", ago(2)),
+    inst("targetMet", ago(1)),
+    // Two ticks on one day count once toward a TARGET.
+    inst("target", ago(2), "DONE", 1),
+  ];
+  const b = buildBoard(board(templates, { history }));
+  const lanes = Object.fromEntries(templates.map((x) => [x.id, laneOf(b, x.id)]));
+  const late = rowOf(b, "dlLate")!;
+  const carried = rowOf(b, "planCarried")!;
+  const tgt = rowOf(b, "target")!;
+  check("PLANNED: due today → Today; carried → Today, tagged; later → off the board", lanes.planToday === "today" && lanes.planCarried === "today" && carried.carriedFrom === ago(2) && carried.dueLabel === "from Tue" && lanes.planLater === "none" && b.later === 1, `${lanes.planToday}/${lanes.planCarried} '${carried.dueLabel}'/${lanes.planLater}`);
+  check(
+    "DEADLINE: today → Today (Must when compulsory); within 2 days → Today; further → Anytime",
+    lanes.dlToday === "today" && lanes.dlMust === "must" && lanes.dlSoon === "today" && lanes.dlFar === "anytime",
+    `${lanes.dlToday}/${lanes.dlMust}/${lanes.dlSoon}/${lanes.dlFar}`
+  );
+  check("DEADLINE passed → Today, late, priced at T 0.85", lanes.dlLate === "today" && late.late && late.projection.factors.find((f) => f.key === "T")?.value === 0.85, `late ${late.late}`);
+  const yRow = b.yesterdayRows.find((r) => r.template.id === "dlYesterday");
+  const tRow = b.todayRows.find((r) => r.template.id === "dlYesterday");
+  const tOf = (r?: BoardRow) => r?.projection.factors.find((f) => f.key === "T")?.value;
+  check(
+    "DEADLINE yesterday: recordable as done yesterday at T 1.00, or late today at T 0.85",
+    !!yRow && !!tRow && tOf(yRow) === 1 && tOf(tRow) === 0.85 && laneOf(b, "dlLate", YESTERDAY) === "none",
+    `yesterday T ${tOf(yRow)}, today T ${tOf(tRow)}`
+  );
+  check("TARGET: short of target → Today with '1/3 this week' (two ticks on a day count once)", lanes.target === "today" && tgt.progress?.label === "1/3 this week", `${lanes.target} '${tgt.progress?.label}'`);
+  check("TARGET: already met this week → Anytime", lanes.targetMet === "anytime");
+  check("recurring: due today → Today, compulsory → Must, not scheduled today → off", lanes.daily === "today" && lanes.dailyMust === "must" && lanes.monOnly === "none");
+  check(
+    "yesterday: a daily habit with nothing recorded yesterday is recordable there",
+    laneOf(b, "daily", YESTERDAY) === "yesterday" && laneOf(b, "dailyMust", YESTERDAY) === "yesterday" && laneOf(b, "monOnly", YESTERDAY) === "none"
+  );
+  check("undated → Anytime; inbox → Inbox", lanes.undated === "anytime" && lanes.inboxed === "inbox");
+  // Musts: dlMust, dailyMust. Due: planToday, planCarried, dlToday, dlSoon, dlLate, dlYesterday, target, daily.
+  check("counts: open musts and open due todos, for the nav", b.counts.musts === 2 && b.counts.due === 8 && b.counts.inbox === 1, `musts ${b.counts.musts}, due ${b.counts.due}, inbox ${b.counts.inbox}`);
+}
+{
+  const templates = [
+    tpl({ id: "garage", title: "Clean garage", estMinutes: 90, machineMinutes: 60 }),
+    tpl({ id: "bins2", title: "Take out bins", band: "INTRO", estMinutes: 5, machineMinutes: 5 }),
+    tpl({ id: "report", title: "Write report", band: "DEMANDING", estMinutes: 120, machineMinutes: 90 }),
+    tpl({ id: "meds", title: "Refill prescription", band: "INTRO", estMinutes: 10, machineMinutes: 10, compulsory: true, dueDay: TODAY, dueKind: "DEADLINE" }),
+  ].map((t) => ({ ...t, dueDay: t.dueDay ?? TODAY, dueKind: t.dueKind ?? ("PLANNED" as const) }));
+  const b = buildBoard(board(templates, { capacityMin: 200 }));
+  const planned = templates.reduce((s, t) => s + estEff(t.estMinutes, t.machineMinutes), 0);
+  check("capacity: planned is Σ est_eff over Must and Today", b.planned === planned && b.over === planned - 200, `planned ${b.planned}, over ${b.over}`);
+  const cheapest = [...b.todayRows].filter((r) => !r.template.compulsory).sort((x, y) => x.projection.xp - y.projection.xp)[0];
+  check(
+    "capacity: the suggested move is the lowest projected-XP card, never a compulsory one",
+    b.suggestion?.template.id === cheapest.template.id && b.suggestion.template.id === "bins2",
+    `suggest ${b.suggestion?.template.title} (${b.suggestion?.projection.xp})`
+  );
+  const within = buildBoard(board(templates, { capacityMin: 600 }));
+  check("capacity: within it, no suggestion", within.over === 0 && within.suggestion === null);
+}
+{
+  // Every open row's projection is priceTask for the same context: a busy
+  // day (knee base 96, an earlier 'wash dishes' and INTRO work already done).
+  const templates = [
+    tpl({ id: "dish", title: "Wash the dishes", band: "INTRO", estMinutes: 15, machineMinutes: 15, recurrence: "DAILY", startDay: ago(12) }),
+    tpl({ id: "run", title: "Run 5k", band: "DEMANDING", estMinutes: 30, machineMinutes: 30, track: "BODY", recurrence: "DOW:1,4", startDay: ago(30) }),
+    tpl({ id: "form", title: "Visa paperwork", band: "DEMANDING", estMinutes: 120, machineMinutes: 120, dueDay: ago(1), dueKind: "DEADLINE" }),
+    tpl({ id: "play", title: "Guitar #play", band: "STANDARD", intrinsic: true }),
+    tpl({ id: "self", title: "Tidy desk", band: "STANDARD", bandOverride: 1 }),
+  ];
+  const history = [...daysBack(12, 1).map((d) => inst("dish", d)), inst("run", ago(3)), inst("run", ago(7))];
+  const today = ledger(TODAY, {
+    rawBefore: 96,
+    completions: [completion("other-dish", normTitleOf("wash dishes"), { intro: true }), completion("x1", "zzz", { intro: true })],
+  });
+  const d = board(templates, { history, today });
+  const b = buildBoard(d);
+  let allEqual = true;
+  const diffs: string[] = [];
+  for (const r of [...b.must, ...b.todayRows, ...b.anytime]) {
+    if (r.state !== "open") continue;
+    const direct = priceFrom(r.template, r.day, d.ledger.today, r.streakDays);
+    if (JSON.stringify(direct) !== JSON.stringify(r.projection)) {
+      allEqual = false;
+      diffs.push(r.template.id);
+    }
+  }
+  check("every row's projection equals priceTask for the same context", allEqual, diffs.length ? `differs: ${diffs.join(", ")}` : `${b.todayRows.length + b.anytime.length} rows`);
+
+  // After an optimistic tick of 'run', every other row re-prices on the new knee base.
+  const runRow = rowOf(b, "run")!;
+  const op: BoardOp = { id: "opt1", kind: "complete", templateId: "run", day: TODAY, slot: runRow.slot, at: "2026-10-01T02:00:00.000Z" };
+  const after = buildBoard(d, [op]);
+  const newBase = roundTo(96 + runRow.projection.raw, 3);
+  const dishAfter = rowOf(after, "dish")!;
+  check(
+    "after an optimistic completion the next projections use the new R_before",
+    near(dishAfter.projection.kneeBefore, newBase, 1e-9) && after.lifeXpToday === runRow.projection.xp && rowOf(after, "run")!.state === "done",
+    `kneeBefore ${dishAfter.projection.kneeBefore} (want ${newBase})`
+  );
+  const expectDish = priceFrom(dishAfter.template, TODAY, applyOps(d, [op]).ledger.today, dishAfter.streakDays);
+  check("…and equal priceTask against that new context", JSON.stringify(expectDish) === JSON.stringify(dishAfter.projection), `${dishAfter.projection.xp}`);
+  check("#play projects 0 and a self-rating shows on its receipt", rowOf(b, "play")!.projection.xp === 0 && rowOf(b, "self")!.projection.selfRated === true);
+}
+
+// ── The review quest and study tasks ──────────────────────────────────────
+{
+  const q = questOf({ dayOpenQty: 17, reviews: 12, dueNow: 5, reviewXp: 30 });
+  check("quest: 17 due at DAY_OPEN with 12 reviews reads 12/17, not complete", q.target === 17 && q.progress === 12 && !q.complete, `${q.progress}/${q.target}`);
+  const done = questOf({ dayOpenQty: 17, reviews: 17, dueNow: 0, reviewXp: 47 });
+  check("quest: reviewing everything completes it", done.complete && done.paidByReviews === 47);
+  const noOpen = questOf({ dayOpenQty: null, reviews: 4, dueNow: 9, reviewXp: 8 });
+  const rest = questOf({ dayOpenQty: 0, reviews: 0, dueNow: 0, reviewXp: 0 });
+  check("quest: without DAY_OPEN the target is reviews + due; nothing due reads as rest", noOpen.target === 13 && rest.rest && rest.complete);
+
+  // The quest writes nothing: the day's life XP is untouched by 17 reviews.
+  const b = buildBoard(board([], { today: ledger(TODAY, { reviews: 17, reviewXp: 47, dayOpenQty: 17 }), dueNow: 0 }));
+  check("quest: the Σ TRACK delta of clearing the queue is 0", b.lifeXpToday === 0 && b.reviewXpToday === 47);
+}
+{
+  const t = tpl({ id: "rev20", title: "review 20", recurrence: "DAILY", autoMetric: "REVIEWS", autoTarget: 20, compulsory: true, band: "STANDARD", track: "CRAFT", startDay: ago(5) });
+  const at19 = board([t], { today: ledger(TODAY, { reviews: 19 }), dueNow: 3 });
+  const plan19 = planAutoCompletions({ templates: [t], today: TODAY, counts: { reviews: 19, ideas: 0, dueNow: 3 }, doneToday: new Set(), lastDone: {} });
+  const row19 = rowOf(buildBoard(at19), t.id)!;
+  check("a REVIEWS:20 task stays open (locked) at 19", plan19.length === 0 && row19.state === "locked" && row19.lane === "must", `${row19.state} in ${row19.lane}`);
+
+  const plan20 = planAutoCompletions({ templates: [t], today: TODAY, counts: { reviews: 20, ideas: 0, dueNow: 3 }, doneToday: new Set(), lastDone: {} });
+  const paid = planCompletion({ template: t, day: TODAY, today: TODAY, slot: 0, ledger: ledger(TODAY, { reviews: 20, rawBefore: 40 }), streakDays: 0, auto: true });
+  check(
+    "…and completes at 20 with xp 0, sink NONE, source auto:reviews",
+    plan20.length === 1 && paid.receipt.xp === 0 && paid.receipt.raw === 0 && paid.sink === "NONE" && paid.source === "auto:reviews" && paid.mode === "STUDY",
+    `xp ${paid.receipt.xp}, sink ${paid.sink}`
+  );
+  const cleared = autoStateOf(t, { reviews: 12, ideas: 0, dueNow: 0 });
+  const idle = autoStateOf(t, { reviews: 0, ideas: 0, dueNow: 0 });
+  check("a study task is also met when the queue is clear, and counts for the streak only if work was done", !!cleared?.met && cleared.worked && !!idle?.met && !idle.worked);
+
+  // The audit: no TRACK row ever shares a sourceId with a REVIEW row.
+  const reviews = ["idea-1", "idea-2", "idea-3"].map((id) => ({ source: "REVIEW", sink: "DOMAIN", sourceId: id }));
+  const autoEvent = taskEventInput(paid, { templateId: t.id, track: t.track, instanceId: "inst-auto", day: TODAY, slot: 0, attempt: 0, now: new Date("2026-10-01T02:00:00Z") });
+  const chore = tpl({ id: "chore", title: "Vacuum", band: "INTRO", estMinutes: 15, machineMinutes: 15 });
+  const chorePlan = planCompletion({ template: chore, day: TODAY, today: TODAY, slot: 0, ledger: ledger(TODAY), streakDays: 0 });
+  const choreEvent = taskEventInput(chorePlan, { templateId: chore.id, track: chore.track, instanceId: "inst-chore", day: TODAY, slot: 0, attempt: 0, now: new Date("2026-10-01T02:00:00Z") });
+  const rows = [...reviews, autoEvent, choreEvent];
+  const reviewIds = new Set(reviews.map((r) => r.sourceId));
+  const leaks = rows.filter((r) => r.sink === "TRACK" && r.sourceId && reviewIds.has(r.sourceId));
+  check("audit: no TRACK row has a REVIEW sourceId; the study tick is sink NONE", leaks.length === 0 && autoEvent.sink === "NONE" && choreEvent.sink === "TRACK", `${leaks.length} leaks`);
+}
+
+// ── Goals ─────────────────────────────────────────────────────────────────
+{
+  check(
+    "goal horizon: a tag may lower it, never raise it past what the deadline implies",
+    horizonFor("LONG", "2026-12-31", TODAY) === "MID" && horizonFor("SHORT", "2027-09-01", TODAY) === "SHORT" && horizonFor(null, "2026-10-20", TODAY) === "SHORT" && horizonFor(null, null, TODAY) === "MID"
+  );
+  const books = goalMetricOf("read 12 books");
+  check("'read 12 books' measures itself (MANUAL, 12 books); 'learn piano' is its steps", books.krMetric === "MANUAL" && books.krTarget === 12 && books.krUnit === "books" && goalMetricOf("learn piano").krMetric === "CHILDREN");
+
+  const goal = tpl({ id: "g1", title: "Ship the thesis", kind: "GOAL", horizon: "LONG", krMetric: "CHILDREN" });
+  const kids = [
+    tpl({ id: "k1", title: "Outline", parentId: "g1", completedAt: "2026-09-20T00:00:00.000Z" }),
+    tpl({ id: "k2", title: "Draft ch 1", parentId: "g1", completedAt: "2026-09-25T00:00:00.000Z" }),
+    tpl({ id: "k3", title: "Draft ch 2", parentId: "g1" }),
+    tpl({ id: "k4", title: "Draft ch 3", parentId: "g1" }),
+  ];
+  const manual = tpl({ id: "g2", title: "Read 12 books", kind: "GOAL", horizon: "MID", krMetric: "MANUAL", krTarget: 12, krUnit: "books" });
+  const b = buildBoard(board([goal, ...kids, manual], { goalQty: { g2: 7 } }));
+  const g1 = b.goals.LONG.find((g) => g.template.id === "g1");
+  const g2 = b.goals.MID.find((g) => g.template.id === "g2");
+  check("goal rollup: 2 of 4 one-off steps done; a hand-counted goal reads 7 of 12", g1?.progress === 0.5 && g1.label === "2 of 4 steps" && g2?.label === "7 of 12 books", `${g1?.label} / ${g2?.label}`);
+  check("finished steps stay off the board", laneOf(b, "k1") === "none" && laneOf(b, "k3") === "anytime");
+}
+
+console.log(failed ? `\n${failed} failed` : "\nall pass");
+process.exit(failed ? 1 : 0);

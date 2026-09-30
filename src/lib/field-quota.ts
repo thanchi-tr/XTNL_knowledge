@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { cached } from "./cache";
 import { applyDebuff } from "./debuffs";
 import { loadMaintenanceIds } from "./field-focus";
+import { addDays, dayKeyOf, dayStartOf, weekStartKeyOf, weekStartOf } from "./life-day";
 
 /**
  * The weekly contribution quota: how many new Ideas each Field owes per week,
@@ -29,16 +30,14 @@ export function weeklyQuotaFor(fieldLevel: number): number {
 }
 
 /**
- * Monday 00:00 UTC. Same anchor `tryConsumeWardCharge` uses for its weekly
- * charges, so "this week" means one thing across the whole app rather than
- * drifting by feature.
+ * Monday 04:00 local: the start of the life week (life-day.ts). Same anchor
+ * `tryConsumeWardCharge` uses for its weekly charges and the life system uses
+ * for its weeks, so "this week" means one thing across the whole app rather
+ * than drifting by feature. (It was Monday 00:00 UTC, which for this user is
+ * mid-morning Monday.)
  */
 export function currentWeekAnchor(now: Date = new Date()): Date {
-  const d = new Date(now);
-  const diffToMonday = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - diffToMonday);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+  return weekStartOf(now);
 }
 
 export interface FieldQuota {
@@ -145,8 +144,9 @@ export async function enforceWeeklyQuotas(
   if (alreadyRun) return { status: "skipped", why: "already_run" };
 
   // The week being judged is the one that just closed, not the one underway.
-  const lastWeekStart = new Date(weekStart);
-  lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 7);
+  // Stepped back by calendar days, not by 7 × 24 h, so a DST change inside
+  // the week cannot shift its start by an hour.
+  const lastWeekStart = dayStartOf(addDays(weekStartKeyOf(dayKeyOf(now)), -7));
   const [all, maintained] = await Promise.all([
     loadQuotasUncached(lastWeekStart),
     loadMaintenanceIds(userId),

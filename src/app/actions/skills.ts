@@ -12,6 +12,7 @@ import {
 import { getMasteryBalanceFresh, submitAttestation } from "@/lib/mastery";
 import { invalidate } from "@/lib/cache";
 import { ATTRIBUTE_META } from "@/lib/attributes";
+import { formatExpiry } from "@/lib/format-date";
 
 export type SkillActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -100,7 +101,7 @@ export async function submitMasteryAttestation(
   if (result.status === "rate_limited") {
     return {
       ok: false,
-      error: `Already graded one attestation today — next one available ${result.nextAvailableAt.toUTCString()}.`,
+      error: `Already graded one attestation today — next one available ${formatExpiry(result.nextAvailableAt)}.`,
     };
   }
 

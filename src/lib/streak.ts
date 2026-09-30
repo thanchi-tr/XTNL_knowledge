@@ -1,60 +1,61 @@
 import { cache } from "react";
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached } from "./cache";
+import { getCurrentUserId } from "./user";
+import { keyOfDateColumn, todayKey, type DayKey } from "./life-day";
+import { computeStreak, streakWindowStart, HELD_SOURCES, type DailyStreak } from "./streak-curve";
 
-export interface DailyStreak {
-  current: number;
-  /** Oldest first, today last. */
-  last7Days: boolean[];
-}
-
-function dateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+// The pure half lives in streak-curve.ts so the browser can import it; these
+// re-exports are for server callers. Client code imports streak-curve.ts.
+export type { DailyStreak } from "./streak-curve";
+export { computeStreak, foldStreakDays, streakUnitsOf, STREAK_WINDOW_DAYS } from "./streak-curve";
 
 /**
- * Derives a real daily streak from `Idea.updatedAt` rather than inventing
- * one — there's no activity-log table, but `updatedAt` only changes via a
- * genuine user action (review outcome, creation, linking), so "distinct
- * calendar days with at least one updated Idea" is an honest, if slightly
- * approximate, activity signal. No new schema needed for this.
+ * The daily streak: consecutive life days on which the player did something.
  *
- * A streak stays "alive" through the current day even before today's first
- * review — it only breaks once a full day passes with zero activity.
+ * Read from the life ledger (activity.ts). It used to be derived from
+ * `Idea.updatedAt`, which had two faults: a day spent only on tasks or a
+ * workout broke it, and the midnight degrade cron bumps `updatedAt` on every
+ * overdue Idea, so a day with no activity at all could keep it alive. The
+ * ledger fixes both: every kind of real work writes a row that counts, and
+ * automatic writes (the cron, opening the app, steps) either write nothing or
+ * write rows that never count.
+ *
+ * Days are life days (04:00 local, life-day.ts), so a review at 00:40 counts
+ * for the evening it belongs to.
+ *
+ * A streak stays alive through today even before today's first action; it
+ * only breaks once a whole day passes with nothing in it. That is computed on
+ * every read and never stored.
  */
-export const getDailyStreak = cache(async (): Promise<DailyStreak> => {
-  return cached("dailyStreak", ["ideas"], getDailyStreakUncached);
+export const getDailyStreak = cache(async (userId?: string): Promise<DailyStreak> => {
+  const id = userId ?? getCurrentUserId();
+  return cached(`dailyStreak:${id}`, ["activity"], () => getDailyStreakUncached(id));
 });
 
-async function getDailyStreakUncached(): Promise<DailyStreak> {
-  const rows = await prisma.$queryRaw<{ day: Date }[]>`
-    SELECT DISTINCT date_trunc('day', "updatedAt") AS day
-    FROM "Idea"
-    WHERE "updatedAt" >= now() - interval '60 days'
-    ORDER BY day DESC
+async function getDailyStreakUncached(userId: string, now: Date = new Date()): Promise<DailyStreak> {
+  const today = todayKey(now);
+  // One round trip: each day's net streak units (+1 per counting row, −1 per
+  // UNDO, so a tick that was undone nets to nothing) and whether anything
+  // held it. The same CASE as `streakUnitsOf`, which the checks test.
+  const rows = await prisma.$queryRaw<{ day: Date; units: number; held: number }[]>`
+    SELECT "day",
+           SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END)::int AS units,
+           SUM(CASE WHEN "source" IN (${Prisma.join([...HELD_SOURCES])}) THEN 1 ELSE 0 END)::int AS held
+    FROM "ActivityEvent"
+    WHERE "userId" = ${userId} AND "day" >= ${streakWindowStart(today)}::date
+    GROUP BY "day"
   `;
-  const activeDays = new Set(rows.map((r) => dateKey(new Date(r.day))));
 
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  const cursor = new Date(today);
-  if (!activeDays.has(dateKey(cursor))) {
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  const active = new Set<DayKey>();
+  const held = new Set<DayKey>();
+  for (const r of rows) {
+    const key = keyOfDateColumn(new Date(r.day));
+    if (r.units > 0) active.add(key);
+    if (r.held > 0) held.add(key);
   }
 
-  let current = 0;
-  while (activeDays.has(dateKey(cursor))) {
-    current += 1;
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
-  }
-
-  const last7Days: boolean[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const day = new Date(today);
-    day.setUTCDate(day.getUTCDate() - i);
-    last7Days.push(activeDays.has(dateKey(day)));
-  }
-
-  return { current, last7Days };
+  // Freezes arrive in M2; until then none can have been earned.
+  return computeStreak(active, held, today, { bankedFreezes: 0 });
 }

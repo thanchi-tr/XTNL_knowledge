@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { applyDebuff } from "./debuffs";
+import { dateColumn, dayKeyOf, keyOfDateColumn } from "./life-day";
+import { fieldStreakStep, streakBonusPercent } from "./streak-curve";
 
 /**
  * Per-Field activity streaks feeding the attribute-score substrate.
@@ -10,25 +12,14 @@ import { applyDebuff } from "./debuffs";
  * attribute scores in skill-effects.ts, so which attributes benefit is a
  * function of what the Field trains, never a hardcoded Field name — the
  * same principle `attributes.ts`/`skill-pool.ts` already follow.
+ *
+ * Days are life days (04:00 local, life-day.ts), stored in `lastActiveDay`
+ * as the UTC midnight of the day's date, which is what `dateColumn` writes.
  */
 
-export const STREAK_BONUS_CAP_PERCENT = 20;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-function truncateToUtcMidnight(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-}
-
-/**
- * `2.5 * sqrt(days)`, capped at 20% — reaches its cap at day 64 (~9 weeks of
- * unbroken daily activity on one Field). Matches the sqrt-shaped diminishing
- * curves already used elsewhere in the leveling maths (`domainLevel` in
- * xp.ts) rather than inventing a new curve family for one mechanic.
- */
-export function streakBonusPercent(currentDays: number): number {
-  return Math.min(STREAK_BONUS_CAP_PERCENT, 2.5 * Math.sqrt(Math.max(0, currentDays)));
-}
+// The curve moved to streak-curve.ts, which the browser can import (this
+// module cannot: it loads Prisma). Re-exported so existing callers stand.
+export { STREAK_BONUS_CAP_PERCENT, streakBonusPercent } from "./streak-curve";
 
 /** Every Field the user has an active streak on, keyed by fieldId, as a raw (pre-STREAK_AMPLIFIER) bonus percent. */
 export async function loadFieldStreakBonuses(userId: string): Promise<Record<string, number>> {
@@ -71,10 +62,12 @@ export interface FieldActivityResult {
  * getting it right) from `applyReviewResult` in srs.ts, which always knows
  * the reviewed Idea's Field via `domainId -> fieldId`.
  *
- * Same-day call is a no-op (a streak counts calendar days, not review
- * count). A gap of exactly one day extends it; any larger gap — or no prior
- * row — resets to a fresh 1-day streak, and a gap that killed a streak of
- * at least DOUBT_STREAK_THRESHOLD days also inflicts the DOUBT debuff.
+ * Same-day call is a no-op (a streak counts life days, not review count). A
+ * gap of exactly one day extends it; any larger gap — or no prior row —
+ * resets to a fresh 1-day streak, and a gap that killed a streak of at
+ * least DOUBT_STREAK_THRESHOLD days also inflicts the DOUBT debuff. For one
+ * release a two-day gap across the clock cut-over still continues; see
+ * `fieldStreakStep`.
  *
  * Note the debuff lands on the *return* to a neglected Field, not at the
  * moment of neglect: there is no daily job walking every Field, and adding
@@ -86,7 +79,8 @@ export async function recordFieldActivity(
   fieldId: string,
   now: Date = new Date()
 ): Promise<FieldActivityResult> {
-  const today = truncateToUtcMidnight(now);
+  const todayKey = dayKeyOf(now);
+  const today = dateColumn(todayKey);
 
   const existing = await prisma.fieldStreak.findUnique({
     where: { userId_fieldId: { userId, fieldId } },
@@ -100,13 +94,13 @@ export async function recordFieldActivity(
     return { currentDays: 1, streakBroken: false, previousStreak: 0, debuffApplied: false };
   }
 
-  const daysSinceLastActive = Math.round((today.getTime() - existing.lastActiveDay.getTime()) / MS_PER_DAY);
-  if (daysSinceLastActive <= 0) {
+  const step = fieldStreakStep(keyOfDateColumn(existing.lastActiveDay), todayKey);
+  if (step === "same") {
     // Already recorded today.
     return { currentDays: existing.currentDays, streakBroken: false, previousStreak: existing.currentDays, debuffApplied: false };
   }
 
-  const continued = daysSinceLastActive === 1;
+  const continued = step === "continued";
   const currentDays = continued ? existing.currentDays + 1 : 1;
   const streakBroken = !continued;
   const debuffApplied = streakBroken && existing.currentDays >= DOUBT_STREAK_THRESHOLD;

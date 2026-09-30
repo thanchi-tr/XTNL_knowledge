@@ -27,6 +27,7 @@ import { assignIdeaAttribution } from "@/lib/attribute-assignment";
 import { getCurrentUserId } from "@/lib/user";
 import { recalculateLeveling } from "@/lib/leveling";
 import { invalidate } from "@/lib/cache";
+import { recordActivity } from "@/lib/activity";
 
 /** Same discriminated-result shape the taxonomy and skill actions use. */
 export type SkillFreeResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -79,6 +80,22 @@ export type SubmitIdeaResult =
       similarity: number;
       decision: DedupDecision;
     };
+
+/**
+ * One IDEA_CREATE row in the life ledger (activity.ts) for a new Idea: the
+ * points its creation credited, and a day that counts toward the streak.
+ * Keyed by the Idea, so it can only ever be recorded once.
+ */
+async function recordIdeaCreated(userId: string, ideaId: string, yieldPoints: number, createdAt: Date): Promise<void> {
+  await recordActivity(userId, {
+    source: "IDEA_CREATE",
+    sink: "DOMAIN",
+    xp: yieldPoints,
+    sourceId: ideaId,
+    occurredAt: createdAt,
+    dedupeKey: `idea:${ideaId}`,
+  });
+}
 
 /**
  * Server-authoritative Idea creation.
@@ -254,6 +271,12 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   after(async () => {
     await assignIdeaAttribution(idea.id, domain.id, contentText, questionType);
   });
+  // The life ledger's record of it: sink DOMAIN, because the yield was just
+  // credited to the Domain above and must never be paid again as life XP.
+  // A separate after() so a failed attribution cannot drop the streak row.
+  after(async () => {
+    await recordIdeaCreated(userId, idea.id, yieldPoints, idea.createdAt);
+  });
 
   return {
     status: "created",
@@ -404,9 +427,12 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
   await recalculateLeveling(existing.domainId);
 
   // A linked Idea is a node in its own right, so it earns the same
-  // attribution as one created through submitIdea.
+  // attribution and the same ledger row as one created through submitIdea.
   after(async () => {
     await assignIdeaAttribution(idea.id, existing.domainId, contentText, questionType);
+  });
+  after(async () => {
+    await recordIdeaCreated(userId, idea.id, yieldPoints, idea.createdAt);
   });
 
   return { ideaId: idea.id, domainId: existing.domainId };

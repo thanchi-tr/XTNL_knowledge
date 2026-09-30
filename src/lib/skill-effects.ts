@@ -26,6 +26,7 @@ import {
 } from "./skill-gates";
 import { resolveResonance, foldSetGrants, type LoadoutResonance } from "./loadout-sets";
 import { loadAugments, computeRate, type CapitalRate } from "./capital";
+import { weekStartOf } from "./life-day";
 import type { OwnedAugment } from "./augments";
 
 /**
@@ -290,23 +291,20 @@ export async function loadModifiers(userId: string): Promise<ActiveModifiers> {
   return (await loadProgression(userId)).modifiers;
 }
 
-// ISO week (Monday 00:00 UTC) — arbitrary but fixed, so "N uses per week"
-// means something consistent rather than a rolling 7 days. Carried over
-// from the old skills.ts Shield implementation this replaces.
+// The life week (Monday 04:00 local, life-day.ts) — fixed rather than a
+// rolling 7 days, so "N uses per week" means something consistent, and the
+// same week the quota and the life system count in. `weekAnchor` is compared
+// by equality, so moving the anchor from Monday 00:00 UTC refreshed every
+// ward's charges once, in the player's favour.
 function currentWeekAnchor(now: Date): Date {
-  const d = new Date(now);
-  const day = d.getUTCDay(); // 0 = Sunday
-  const diffToMonday = (day + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - diffToMonday);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+  return weekStartOf(now);
 }
 
 /**
  * Attempts to spend one weekly charge of whichever owned, active
  * DEGRADATION_WARD skill `resolveWardAnchor` picks. Returns that skill on
  * success (caller must not degrade), or `undefined` if no ward is active or
- * its charges are exhausted for the current ISO week — caller proceeds with
+ * its charges are exhausted for the current life week — caller proceeds with
  * the normal degradation.
  */
 export async function tryConsumeWardCharge(

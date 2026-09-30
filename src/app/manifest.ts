@@ -28,9 +28,15 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icon-192-maskable.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
       { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
+    // A long-press on the icon. 'Quick task' opens the board with the
+    // capture sheet already up — the phone's shortest path from pocket to a
+    // saved line. Android shows the first four; the installed TWA only
+    // picks up a change here when its APK is rebuilt.
     shortcuts: [
+      { name: "Today", short_name: "Today", url: "/today" },
+      { name: "Quick task", short_name: "Task", url: "/today?capture=task" },
       { name: "Review due", short_name: "Review", url: "/review" },
-      { name: "New idea", short_name: "Add", url: "/add" },
+      { name: "New idea", short_name: "Idea", url: "/add" },
     ],
   };
 }

@@ -1,0 +1,189 @@
+/**
+ * The one day clock (src/lib/life-day.ts) and the knowledge sites cut over
+ * to it: due.ts, format-date.ts and the per-Field streak shim.
+ *
+ * No database: every case is a fixed instant in a named zone, so the checks
+ * mean the same thing on any machine and in any server zone. Australia/Sydney
+ * has DST (it starts 4 Oct 2026 and ends 4 Apr 2027); Brisbane never does.
+ *
+ *   npx tsx scripts/life-day-check.ts
+ */
+import {
+  LIFE_TZ,
+  DAY_START_HOUR,
+  addDays,
+  dateColumn,
+  dayEndOf,
+  dayKeyOf,
+  dayStartOf,
+  daysBetween,
+  keyOfDateColumn,
+  weekKeyOf,
+  weekStartKeyOf,
+  weekStartOf,
+  weekdayOf,
+  zonedToInstant,
+} from "../src/lib/life-day";
+import { dueCutoff, isDue, daysUntilDue, formatDue } from "../src/lib/due";
+import { formatExpiry, formatDay } from "../src/lib/format-date";
+import { fieldStreakStep, FIELD_STREAK_CUTOVER_DAY } from "../src/lib/streak-curve";
+
+const SYD = "Australia/Sydney";
+const BNE = "Australia/Brisbane";
+const HOUR = 3_600_000;
+const MIN = 60_000;
+
+let failed = 0;
+function check(name: string, ok: boolean, detail = "") {
+  if (!ok) failed++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+}
+const iso = (d: Date) => d.toISOString();
+
+console.log(`LIFE_TZ = ${LIFE_TZ}, DAY_START_HOUR = ${DAY_START_HOUR}\n`);
+
+// ── The 04:00 edge ────────────────────────────────────────────────────────
+for (const tz of [SYD, BNE]) {
+  const four = zonedToInstant(2026, 10, 10, 4, tz);
+  const before = new Date(four.getTime() - MIN);
+  const a = dayKeyOf(before, tz);
+  const b = dayKeyOf(four, tz);
+  check(`${tz}: 03:59 and 04:00 local fall on different days`, a === "2026-10-09" && b === "2026-10-10", `${a} | ${b}`);
+}
+{
+  // 00:40 still belongs to the evening before.
+  const late = zonedToInstant(2026, 10, 10, 0, SYD);
+  const k = dayKeyOf(new Date(late.getTime() + 40 * MIN), SYD);
+  check("00:40 local counts for the previous evening", k === "2026-10-09", k);
+}
+
+// ── Day lengths across DST ────────────────────────────────────────────────
+{
+  const len = (key: string, tz: string) => (dayEndOf(key, tz).getTime() - dayStartOf(key, tz).getTime()) / HOUR;
+  const start = len("2026-10-03", SYD);
+  const end = len("2027-04-03", SYD);
+  check("Sydney: life day 2026-10-03 lasts 23 h (DST starts)", start === 23, `${start} h`);
+  check("Sydney: life day 2027-04-03 lasts 25 h (DST ends)", end === 25, `${end} h`);
+  check("Sydney: an ordinary day lasts 24 h", len("2026-10-06", SYD) === 24);
+
+  let bad = 0;
+  let key = "2026-01-01";
+  for (let i = 0; i < 800; i++, key = addDays(key, 1)) if (len(key, BNE) !== 24) bad++;
+  check("Brisbane: every life day over 800 days lasts 24 h", bad === 0, `${bad} off`);
+}
+
+// ── Weeks ─────────────────────────────────────────────────────────────────
+{
+  const monday4 = zonedToInstant(2026, 10, 12, 4, SYD); // Monday 12 Oct 2026, 04:00 AEDT
+  const monday359 = new Date(monday4.getTime() - MIN);
+  const prevWeek = weekStartOf(monday359, SYD);
+  const thisWeek = weekStartOf(monday4, SYD);
+  check(
+    "Monday 03:59 local belongs to the previous week",
+    iso(prevWeek) === iso(dayStartOf("2026-10-05", SYD)) && weekKeyOf(dayKeyOf(monday359, SYD)) === "2026-W41",
+    `${iso(prevWeek)} ${weekKeyOf(dayKeyOf(monday359, SYD))}`
+  );
+  check(
+    "Monday 04:00 local starts a new week",
+    iso(thisWeek) === iso(monday4) && weekKeyOf(dayKeyOf(monday4, SYD)) === "2026-W42",
+    `${iso(thisWeek)} ${weekKeyOf(dayKeyOf(monday4, SYD))}`
+  );
+  check("weekdayOf: 2026-10-05 is a Monday, 2026-10-11 a Sunday", weekdayOf("2026-10-05") === 1 && weekdayOf("2026-10-11") === 7);
+  check("ISO week across the year edge: 2027-01-01 is 2026-W53", weekKeyOf("2027-01-01") === "2026-W53", weekKeyOf("2027-01-01"));
+
+  // The quota judges "the week that just closed" by stepping calendar days
+  // (field-quota.ts), so a DST change inside the week cannot move its start.
+  const now = zonedToInstant(2026, 10, 7, 12, SYD);
+  const lastWeek = dayStartOf(addDays(weekStartKeyOf(dayKeyOf(now, SYD)), -7), SYD);
+  check(
+    "last week's start is Monday 04:00 local even across the DST change",
+    dayKeyOf(lastWeek, SYD) === "2026-09-28" && iso(lastWeek) === iso(zonedToInstant(2026, 9, 28, 4, SYD)),
+    iso(lastWeek)
+  );
+  const gapHours = (weekStartOf(now, SYD).getTime() - lastWeek.getTime()) / HOUR;
+  check("that week really was 167 h long", gapHours === 167, `${gapHours} h`);
+}
+
+// ── Round trips ───────────────────────────────────────────────────────────
+for (const tz of [SYD, BNE]) {
+  let bad = 0;
+  let key = "2026-01-01";
+  for (let i = 0; i < 800; i++, key = addDays(key, 1)) {
+    if (dayKeyOf(dayStartOf(key, tz), tz) !== key) bad++;
+    if (dayKeyOf(new Date(dayEndOf(key, tz).getTime() - 1), tz) !== key) bad++;
+  }
+  check(`${tz}: dayKeyOf(dayStartOf(k)) == k for 800 consecutive keys`, bad === 0, `${bad} off`);
+}
+{
+  let bad = 0;
+  let key = "2025-12-25";
+  for (let i = 0; i < 800; i++, key = addDays(key, 1)) if (keyOfDateColumn(dateColumn(key)) !== key) bad++;
+  check("dateColumn and keyOfDateColumn round-trip", bad === 0);
+  check("addDays / daysBetween over month and year edges", addDays("2026-12-31", 1) === "2027-01-01" && daysBetween("2026-02-27", "2026-03-02") === 3);
+}
+
+// ── Brisbane is a fixed +10:00 zone ───────────────────────────────────────
+{
+  let bad = 0;
+  const t0 = Date.UTC(2026, 0, 1);
+  // Every 37 minutes for two years: hits every hour of every day.
+  for (let t = t0; t < t0 + 730 * 24 * HOUR; t += 37 * MIN) {
+    const d = new Date(t);
+    if (dayKeyOf(d, BNE) !== dayKeyOf(d, "Etc/GMT-10")) bad++;
+  }
+  check("Brisbane equals a fixed +10:00 zone", bad === 0, `${bad} disagreements`);
+}
+
+// ── Due: a card is reviewable from 04:00 local on its day ─────────────────
+{
+  const due = new Date("2026-10-06T21:00:00Z"); // 07:00 AEST on the 7th
+  check("Brisbane: not due at 03:59:59 AEST", !isDue(due, new Date("2026-10-06T17:59:59.999Z"), BNE));
+  check("Brisbane: due from 04:00 AEST (2026-10-06T18:00Z)", isDue(due, new Date("2026-10-06T18:00:00Z"), BNE));
+  // Sydney is on AEDT by then, so its 04:00 comes an hour earlier.
+  check("Sydney: due from 04:00 AEDT (2026-10-06T17:00Z)", isDue(due, new Date("2026-10-06T17:00:00Z"), SYD) && !isDue(due, new Date("2026-10-06T16:59:59Z"), SYD));
+
+  const now = new Date("2026-10-06T23:30:00Z"); // 09:30 on the 7th, Brisbane
+  const cutoff = dueCutoff(now, BNE);
+  check(
+    "dueCutoff is the last millisecond of the life day",
+    cutoff.getTime() === dayEndOf("2026-10-07", BNE).getTime() - 1,
+    iso(cutoff)
+  );
+  // A card due at 02:00 on the 8th is still the 7th's life day.
+  check("a card due at 02:00 local counts for the day before", isDue(new Date("2026-10-07T16:00:00Z"), now, BNE));
+  check(
+    "daysUntilDue compares life days, not hours",
+    daysUntilDue(new Date("2026-10-07T18:00:00Z"), now, BNE) === 1 && daysUntilDue(new Date("2026-10-05T20:00:00Z"), now, BNE) === -1,
+    `${daysUntilDue(new Date("2026-10-07T18:00:00Z"), now, BNE)} / ${daysUntilDue(new Date("2026-10-05T20:00:00Z"), now, BNE)}`
+  );
+  check("formatDue labels by life day", formatDue(new Date("2026-10-07T12:00:00Z"), now, BNE).label === "Due today");
+}
+
+// ── The per-Field streak shim ─────────────────────────────────────────────
+{
+  const cut = "2026-10-05";
+  check("gap 2 before the cut-over continues", fieldStreakStep("2026-10-03", "2026-10-05", cut) === "continued");
+  check("gap 2 after the cut-over breaks", fieldStreakStep("2026-10-06", "2026-10-08", cut) === "broken");
+  check("gap 1 always continues", fieldStreakStep("2026-10-07", "2026-10-08", cut) === "continued");
+  check("gap 3 before the cut-over still breaks", fieldStreakStep("2026-10-01", "2026-10-04", cut) === "broken");
+  check("same day is a no-op", fieldStreakStep("2026-10-08", "2026-10-08", cut) === "same");
+  check("a UTC date ahead of the life day is a no-op, never a break", fieldStreakStep("2026-10-09", "2026-10-08", cut) === "same");
+  check(
+    `the shipped cut-over day is a real day key (${FIELD_STREAK_CUTOVER_DAY})`,
+    /^\d{4}-\d{2}-\d{2}$/.test(FIELD_STREAK_CUTOVER_DAY) && keyOfDateColumn(dateColumn(FIELD_STREAK_CUTOVER_DAY)) === FIELD_STREAK_CUTOVER_DAY
+  );
+}
+
+// ── Deterministic rendering ───────────────────────────────────────────────
+{
+  const d = new Date("2026-10-06T21:00:00Z");
+  const a = formatExpiry(d);
+  const b = formatExpiry(d, LIFE_TZ);
+  check("formatExpiry: the default equals LIFE_TZ passed explicitly", a === b, `${a} | ${b}`);
+  const bne = formatExpiry(d, BNE);
+  check("formatExpiry renders local time, not UTC", bne.includes("7 Oct") && bne.includes("07:00"), bne);
+  check("formatDay renders the local date", formatDay(d, BNE).includes("7 Oct"), formatDay(d, BNE));
+}
+
+console.log(failed ? `\n${failed} failed` : "\nall pass");
+process.exit(failed ? 1 : 0);

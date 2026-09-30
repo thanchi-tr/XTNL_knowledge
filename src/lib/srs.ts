@@ -17,6 +17,8 @@ import { recalculateLeveling } from "./leveling";
 import { loadProgressionFresh, tryConsumeWardCharge, type ProgressionState } from "./skill-effects";
 import { recordFieldActivity } from "./field-streaks";
 import { mintIdeaMasteryOp, mintReviewFractionOp, comboMasteryBonus } from "./mastery";
+import { activityOp, invalidateActivity, recordActivity } from "./activity";
+import type { ActivityInput } from "./life-types";
 import { getCurrentUserId } from "./user";
 
 // MAX_LEVEL and the interval schedule now live in xp.ts (pure arithmetic,
@@ -62,6 +64,16 @@ export type ReviewOutcome =
   | { outcome: "strike"; failedAttempts: number; /** STRIKE_TOLERANCE-adjusted; the actual limit that triggers a Degradation. */ strikeLimit: number; nextCombo: number }
   | { outcome: "degraded"; newLevel: number; nextCombo: number }
   | { outcome: "shielded"; level: number; /** Which owned skill absorbed the Degradation — never a hardcoded name. */ skillName: string; nextCombo: number };
+
+/**
+ * A review's row in the life ledger (activity.ts). Sink DOMAIN: its points,
+ * if any, were credited to the Domain here, so the row records them and no
+ * life total ever pays them again. Every outcome counts toward the daily
+ * streak — showing up is what a streak measures, not getting it right.
+ */
+function reviewEvent(ideaId: string, now: Date, xp: number, detail: string): ActivityInput {
+  return { source: "REVIEW", sink: "DOMAIN", xp, sourceId: ideaId, countsForStreak: true, occurredAt: now, detail };
+}
 
 /**
  * Degradation (spec section 5): level -1 (floored at 1), yieldPoints *= 0.9
@@ -149,7 +161,9 @@ async function attemptDegradation(
  * GRACE_EXTENSION, INTERVAL_DILATION, COMBO_CEILING/ANCHOR, STRIKE_TOLERANCE,
  * DEGRADATION_WARD) — this is the one place in the engine all of them meet.
  * Also records this Field's daily activity streak (field-streaks.ts) on
- * every real review, correct or not; showing up is what's measured.
+ * every real review, correct or not; showing up is what's measured. And every
+ * review lands once in the life ledger as a REVIEW row, which is what the
+ * daily streak and the Today board read.
  */
 export async function applyReviewResult(
   ideaId: string,
@@ -176,6 +190,26 @@ export async function applyReviewResult(
   // snappy without dropping the write.
   after(async () => {
     await recordFieldActivity(userId, domainBefore.fieldId, now);
+  });
+
+  // The ledger row. A passed review writes it inside the points transaction
+  // below, so its DOMAIN xp is always exactly the Domain's increment and it
+  // can never be lost. A strike, a degradation or a ward pays nothing, so
+  // its row (xp 0) waits for `after`, off the answer's critical path; the
+  // outcome is noted here once it is known. A review that threw before
+  // landing notes nothing, and is not activity.
+  let lateOutcome: ReviewOutcome["outcome"] | null = null;
+  let landed = false;
+  after(async () => {
+    if (lateOutcome) {
+      await recordActivity(userId, reviewEvent(ideaId, now, 0, lateOutcome));
+    }
+    // Study tasks ('review 20 daily') complete themselves from these rows,
+    // so they are checked only once this review's row is in.
+    if (landed) {
+      const { autoCompleteStudyTasks } = await import("./tasks");
+      await autoCompleteStudyTasks(userId, now);
+    }
   });
 
   if (correct) {
@@ -222,7 +256,13 @@ export async function applyReviewResult(
     if (mastered) {
       ops.push(mintIdeaMasteryOp(userId, ideaId, modifiers.masteryMultiplier));
     }
+    const review = reviewEvent(ideaId, now, pointsAwarded, mastered ? "advanced · mastered" : "advanced");
+    ops.push(activityOp(userId, review));
     await prisma.$transaction(ops);
+    // Reviews invalidate 'activity' only (recalculateLeveling below clears
+    // the knowledge tags), so the progression cache stays warm.
+    invalidateActivity(review);
+    landed = true;
     const { domainLevel: newDomainLevel } = await recalculateLeveling(idea.domainId);
 
     const domainAfter = await prisma.domain.findUniqueOrThrow({ where: { id: idea.domainId } });
@@ -262,10 +302,15 @@ export async function applyReviewResult(
     // Same as the shielded path: the Idea moved out of the due window
     // without any points changing, so nothing else will invalidate for us.
     invalidate("ideas");
+    lateOutcome = "strike";
+    landed = true;
     return { outcome: "strike", failedAttempts, strikeLimit, nextCombo };
   }
 
-  return attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);
+  const outcome = await attemptDegradation({ ...idea, failedAttempts }, now, userId, progression, nextCombo);
+  lateOutcome = outcome.outcome;
+  landed = true;
+  return outcome;
 }
 
 /**
@@ -277,8 +322,10 @@ export async function applyReviewResult(
  *
  * Progression is loaded once for the whole batch, not per-Idea — an
  * unattended Cron run is one consistent moment, not N independent ones —
- * and, deliberately, never calls `recordFieldActivity`: an automatic
- * degradation for neglect is the opposite of the thing a streak measures.
+ * and, deliberately, never calls `recordFieldActivity` or writes a ledger
+ * row: an automatic degradation for neglect is the opposite of the thing a
+ * streak measures. (The old daily streak read `Idea.updatedAt`, which this
+ * bumps, so the cron used to keep a streak alive on its own.)
  */
 export async function degradeOverdueIdeas(now: Date = new Date()): Promise<{ ideaId: string; outcome: ReviewOutcome }[]> {
   const overdue = await prisma.idea.findMany({

@@ -30,7 +30,7 @@ export default function NotFound() {
             Search the library
           </Link>
           <Link href="/" className="btn-secondary no-underline">
-            Back to overview
+            Back to today
           </Link>
         </div>
       </div>

@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "xtnl-rehearsal",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/Thanc/AppData/Local/Temp/claude/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/scratchpad/dev-rehearsal.mjs"],
+      "port": 3100
     }
   ]
 }

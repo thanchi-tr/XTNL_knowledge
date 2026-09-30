@@ -4,6 +4,8 @@ import { cached, invalidate } from "./cache";
 import { gradeMasteryAttestation } from "./gemini";
 import { SKILL_POOL } from "./skill-pool";
 import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
+import { dayEndOf, dayKeyOf, dayStartOf } from "./life-day";
+import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
 
 /**
  * The mastery-point economy. `MasteryLedgerEntry` is append-only (see its
@@ -19,7 +21,8 @@ import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
  *   3. **Attestation** — a written account of what the user understands,
  *      graded by the one legitimate model call in this system
  *      (gemini.ts's gradeMasteryAttestation — judges the writing, never
- *      invents a rule). Rate-limited to once per UTC day.
+ *      invents a rule). Rate-limited to once per life day (04:00 local,
+ *      life-day.ts).
  *
  *   4. **Decay** debits idle points — see `decayStaleMastery`.
  *
@@ -116,14 +119,15 @@ export type AttestationResult =
   | { status: "graded"; points: number; rationale: string }
   | { status: "rate_limited"; nextAvailableAt: Date };
 
-function utcDayStart(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-}
-
 /**
  * Grades and records one attestation. The rate-limit check runs, and can
  * reject, before `gradeMasteryAttestation` is ever called — a blocked
  * attempt costs nothing.
+ *
+ * The limit is one per life day. The ledger check above the model call is
+ * the cheap gate; the ATTESTATION activity row, keyed by the day, is the
+ * atomic one: two submissions racing past the check cannot both commit, and
+ * the loser's points roll back with its row.
  */
 export async function submitAttestation(
   userId: string,
@@ -131,15 +135,13 @@ export async function submitAttestation(
   text: string,
   now: Date = new Date()
 ): Promise<AttestationResult> {
-  const todayStart = utcDayStart(now);
+  const today = dayKeyOf(now);
   const usedToday = await prisma.masteryLedgerEntry.findFirst({
-    where: { userId, reason: "ATTESTATION", createdAt: { gte: todayStart } },
+    where: { userId, reason: "ATTESTATION", createdAt: { gte: dayStartOf(today) } },
   });
 
   if (usedToday) {
-    const tomorrow = new Date(todayStart);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    return { status: "rate_limited", nextAvailableAt: tomorrow };
+    return { status: "rate_limited", nextAvailableAt: dayEndOf(today) };
   }
 
   const graded = await gradeMasteryAttestation(text);
@@ -147,10 +149,28 @@ export async function submitAttestation(
   // actually matters, since a returned score is never trusted past it.
   const points = Math.max(0, Math.min(ATTESTATION_MAX_POINTS, Math.round(graded.points)));
 
-  await prisma.masteryLedgerEntry.create({
-    data: { userId, delta: points, reason: "ATTESTATION", detail: graded.rationale, ideaId: ideaId ?? undefined },
-  });
+  const event = {
+    source: "ATTESTATION",
+    sink: "NONE",
+    qty: points,
+    sourceId: ideaId,
+    occurredAt: now,
+    detail: `${points} of ${ATTESTATION_MAX_POINTS}`,
+    dedupeKey: `attestation:${today}`,
+  } as const;
+  try {
+    await prisma.$transaction([
+      prisma.masteryLedgerEntry.create({
+        data: { userId, delta: points, reason: "ATTESTATION", detail: graded.rationale, ideaId: ideaId ?? undefined },
+      }),
+      activityOp(userId, event),
+    ]);
+  } catch (err) {
+    if (isDuplicateActivity(err)) return { status: "rate_limited", nextAvailableAt: dayEndOf(today) };
+    throw err;
+  }
   invalidate("progress");
+  invalidateActivity(event);
 
   return { status: "graded", points, rationale: graded.rationale };
 }
@@ -183,7 +203,7 @@ export type DecayResult =
  * would make the top of the tree mathematically unreachable, since no
  * realistic income rate outruns 5%/day compounding.
  *
- * Idempotent per UTC day, so running the Cron twice cannot double-charge.
+ * Idempotent per life day, so running the Cron twice cannot double-charge.
  */
 export async function decayStaleMastery(userId: string, now: Date = new Date()): Promise<DecayResult> {
   // Fresh throughout: this debits real points, so it must not price the
@@ -191,9 +211,8 @@ export async function decayStaleMastery(userId: string, now: Date = new Date()):
   const balance = await getMasteryBalanceFresh(userId);
   if (balance <= MASTERY_DECAY_FLOOR) return { status: "skipped", why: "no_balance" };
 
-  const todayStart = utcDayStart(now);
   const decayedToday = await prisma.masteryLedgerEntry.findFirst({
-    where: { userId, reason: "DECAY", createdAt: { gte: todayStart } },
+    where: { userId, reason: "DECAY", createdAt: { gte: dayStartOf(dayKeyOf(now)) } },
   });
   if (decayedToday) return { status: "skipped", why: "already_today" };
 

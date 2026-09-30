@@ -1,0 +1,66 @@
+# Life plan — progress log and resume protocol
+
+This file is how work on the "gamify life" plan survives a session ending
+(for example when usage credit runs out). Any session — an interactive one
+or the scheduled `xtnl-life-resume` task — reads it first, and every session
+that works on the plan keeps it current.
+
+## Heartbeat (the lock)
+
+    HEARTBEAT: 2026-10-01T02:12+10:00 — interactive session: M1 build workflow running (lanes A–D + 3 reviewers)
+
+Rules:
+- A session working on the plan rewrites the HEARTBEAT line at the start of
+  every step and at least every 60 minutes while it works (a long workflow
+  counts as work: write the heartbeat when launching it, with its expected
+  finish time).
+- A resuming session must NOT start work if the heartbeat is younger than
+  4 hours, or if any file under `src/` was modified in the last 45 minutes
+  (`git status` / mtimes). Another session is alive; exit quietly.
+- When a step finishes, tick it below and add a line to the log.
+
+## Order (set by the user, 2026-10-01)
+
+1. **M1** — Today board, one clock, one ledger/streak, graded todos, quick capture. Spec: `m1.md`.
+2. **Full UI/UX redesign** — UI, colour scheme, animation, reward-system look and feel, across the whole app. Spec: `redesign.md` (to be written by its design workflow).
+3. **M2** — compulsory duty, debt, forgiveness, close-the-day / weekly review. Spec: `m2.md`. Migration `life_duty`.
+4. **M3** — capture everywhere (share target, token API, desktop hotkey, one-box ideas). Spec: `m3.md`.
+5. **M4** — body: Health Connect / Samsung Health ingest, workout price, /train. Spec: `m4.md`. Migration `life_body`.
+6. **M5** — character: life tracks, attribute seam, goals, mastery. Spec: `m5.md`.
+
+Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, `dropped.md`, and the codebase map `codebase-map.json`.
+
+## Status
+
+- [ ] M1
+  - [x] Lane 0 (lead): schema models, migration `20261005000000_life_core` (rehearsed locally), `src/lib/life-day.ts`, `src/lib/life-types.ts`, cache tags
+  - [ ] Lanes A–D built (workflow `life-m1-build`), 3 reviews
+  - [ ] Review findings fixed; `tsc`, lint, `next build`, every `scripts/*-check.ts` green
+  - [ ] Browser-verified on the local rehearsal server (port 3100)
+  - [ ] `life_core` applied to Supabase (after the project-ref check), backfill dry-run then `--apply`
+  - [ ] Committed and pushed to `main`
+- [ ] Full UI/UX redesign
+- [ ] M2
+- [ ] M3
+- [ ] M4
+- [ ] M5
+
+## Standing rules for any session
+
+- Ultracode: the user opted into multi-agent workflows; use the Workflow tool for substantive steps (build lanes on disjoint files, then independent reviewers).
+- Never run a DB command from a subagent. The lead does all DB work.
+- Test against the **local rehearsal database** only: Docker container `xtnl-rehearsal` (pgvector/pgvector:pg16, port 55432, password `rehearsal`), started with
+  `docker start xtnl-rehearsal` (Docker Desktop must be running). Prisma commands against it:
+  `DATABASE_URL=postgresql://postgres:rehearsal@localhost:55432/postgres DIRECT_URL=<same> npx prisma …` — always confirm the "Datasource … at localhost:55432" line first.
+  The rehearsal dev server: `node docs/life-plan/dev-rehearsal.mjs` (port 3100; blank GEMINI_API_KEY).
+- Applying a migration to Supabase: the user pre-approved additive migrations once a milestone passes locally. First check the project ref in `DIRECT_URL` is the xtnl-idea project, NOT XTNL_thesis. Then `npx prisma db execute --file prisma/migrations/<name>/migration.sql --schema prisma/schema.prisma`, `npx prisma migrate resolve --applied <name>`, `npx prisma generate`. Never `prisma migrate dev`, `db push` or `migrate reset`.
+- Never test by answering the user's real review cards or writing test rows into production.
+- Browser checks: open your own tab; never act on the user's real data.
+- Commit each finished milestone to `main` and push (the user commits and pushes main themselves too; the old town game lives on the `game` branch). End commit messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Before committing, remove any machine-specific entry from `.claude/launch.json` (the `xtnl-rehearsal` config points at a local path).
+
+## Log
+
+- 2026-10-01 — Game moved to branch `game`; removed from `main` (b4d2652). Life plan designed (understand → 3 proposals → 3 judges → synthesis).
+- 2026-10-01 — User decisions: Samsung Health + Health Connect; AI sizes once / formula scores; compulsory miss = XP debt + streak hit; capture on phone + desktop; Australia/Sydney; additive migrations pre-approved after local tests; order M1 → redesign → M2–M5; auto-resume after credit resets.
+- 2026-10-01 — M1 lane 0 done; M1 build workflow launched.

@@ -1,16 +1,20 @@
 import { redirect } from "next/navigation";
 
 /**
- * The root lands on Review.
+ * The root lands on Today.
  *
- * This app is used in short, frequent sittings whose whole purpose is
- * clearing the due queue — the overview is something you consult
- * occasionally, not the thing you came to do. Opening on a dashboard meant
- * every session started with a click that was the same click every time.
+ * It used to land on Review, on the reasoning that the app was used in
+ * short sittings whose whole purpose was clearing the due queue. That is
+ * still the first thing most sittings do — which is why the review queue is
+ * the first card on the Today board, one tap from the same place. But the
+ * app now also carries the day's todos, habits and duties, and a root that
+ * opened on the queue hid every one of them behind a click.
  *
- * A redirect rather than rendering Review here, so the review screen keeps
- * one canonical URL that can be linked, bookmarked and reasoned about.
+ * A redirect rather than rendering the board here, so Today keeps one
+ * canonical URL that can be linked, bookmarked and put on a home screen.
+ * Reverting is this one line, should the board ever stop earning the front
+ * door.
  */
 export default function RootPage() {
-  redirect("/review");
+  redirect("/today");
 }

@@ -579,3 +579,206 @@ model UnlockedSkill {
   @@unique([userId, equippedSlot])
   @@schema("public")
 }
+
+// ── Life: one day clock, one ledger, graded tasks (migration life_core) ─────
+//
+// The life system extends the knowledge game to the rest of a day: todos,
+// habits, compulsory duties, goals, and (later) workouts. Its rules live in
+// src/lib/life-*.ts. Everything here is additive: no existing table is
+// altered, kinds and reasons are TEXT typed by TS unions, and every "life
+// day" column holds the local calendar date that src/lib/life-day.ts
+// `dateColumn` produces (a day turns over at 04:00 local).
+
+/// Per-user life settings. Created lazily on the first capture.
+model LifeSettings {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  /// The first life day. Nothing earlier ever pays XP.
+  epochDay          DateTime  @db.Date
+  dailyCapacityMin  Int       @default(240)
+  /// 1 = Mon … 7 = Sun: standing rest days (used from M2).
+  restWeekdays      Int[]     @default([])
+  /// The last life day settlement has judged (M2).
+  settledThroughDay DateTime? @db.Date
+  /// "Accept the loss" on old debt. Off: debt stays until it is done.
+  debtWriteOff      Boolean   @default(false)
+  hrMax             Int?
+  birthYear         Int?
+  /// Unmapped tracker activity code -> exercise kind (M4).
+  activityMap       Json?
+  /// Per-track weekly targets (M5).
+  weeklyTargets     Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@schema("public")
+}
+
+/// THE append-only life ledger. Every action lands here once: a review, a new
+/// Idea, a completed task, an undo, a debt. `sink` says where its XP counts:
+/// DOMAIN rows only record points srs.ts / ideas.ts already credited to a
+/// Domain (so knowledge is never paid twice), TRACK rows are the life XP, and
+/// NONE rows are records. Life levels read only SUM(xp) WHERE sink = 'TRACK'.
+/// The daily streak, habit strength and levels are derived from these rows on
+/// read; nothing here is a mutable counter. Corrections are new rows.
+model ActivityEvent {
+  id              String   @id @default(cuid())
+  userId          String
+  day             DateTime @db.Date
+  occurredAt      DateTime
+  /// REVIEW, IDEA_CREATE, TASK, UNDO, DAY_OPEN, … (src/lib/life-types.ts).
+  source          String
+  /// DOMAIN | TRACK | NONE.
+  sink            String   @default("NONE")
+  /// BODY | DUTY | CRAFT | CARE, for TRACK rows.
+  track           String?
+  templateId      String?
+  /// The Idea / TaskInstance / Workout this row is about. No FK, like MasteryLedgerEntry.ideaId.
+  sourceId        String?
+  compositionKey  String?
+  /// XP paid, after the daily knee.
+  xp              Float    @default(0)
+  /// XP before the knee; the day's knee base is SUM(rawXp).
+  rawXp           Float?
+  qty             Float?
+  countsForStreak Boolean  @default(false)
+  /// The published price breakdown: {v, factors[], raw, kneeBefore, xp, track}.
+  receipt         Json?
+  detail          String?
+  /// Makes automatic writes idempotent ("task:<tpl>:<day>:<slot>:<n>", "dayopen:<day>", …). NULLs allowed.
+  dedupeKey       String?
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, day])
+  @@index([userId, source, day])
+  @@index([userId, track, day])
+  @@index([userId, templateId, day])
+  @@index([userId, sourceId])
+  @@schema("public")
+}
+
+/// A task, habit, duty or goal: the rule it follows and its frozen grade.
+/// "AI sizes once, formula scores": a lexical grade is written at capture,
+/// Gemini may refine it once within 24 h, and the grade freezes at the first
+/// completion. Templates with history are archived, never deleted.
+model TaskTemplate {
+  id                 String         @id @default(cuid())
+  userId             String
+  title              String
+  /// Lowercase, parse tokens, digits and stop-words stripped: the repeat-decay and grade-copy key.
+  normTitle          String
+  /// The original capture line, for audit and re-parse.
+  rawText            String
+  note               String?
+  /// TASK | HABIT | GOAL | IDEA_DRAFT.
+  kind               String
+  inbox              Boolean        @default(false)
+  /// DAILY | WEEKDAYS | DOW:1,4 | EVERY:3 | AFTER:3 | TARGET:3/W | TARGET:2/M | MONTHLY:15 (src/lib/recurrence.ts).
+  recurrence         String?
+  startDay           DateTime       @db.Date
+  dueDay             DateTime?      @db.Date
+  /// PLANNED (carries forward, never late) | DEADLINE (late after it).
+  dueKind            String?
+  /// SHORT | MID | LONG, for goals.
+  horizon            String?
+  parentId           String?
+  parent             TaskTemplate?  @relation("GoalTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children           TaskTemplate[] @relation("GoalTree")
+  /// CHILDREN | MANUAL | REVIEWS | IDEAS | WORKOUTS | RUN_KM.
+  krMetric           String?
+  krTarget           Float?
+  krUnit             String?
+  /// Mastery points a goal pays, frozen when stated (M5).
+  goalMp             Float?
+  closedScore        Float?
+  compulsory         Boolean        @default(false)
+  compulsoryOnRest   Boolean        @default(false)
+  /// #play: logged and streak-counting, pays 0.
+  intrinsic          Boolean        @default(false)
+  /// The minimum viable version, e.g. "10 pushups".
+  mvv                String?
+  mvvMinutes         Int?
+  /// REVIEWS | IDEAS | REVIEW_DUE | STEPS | WORKOUT: completes itself from activity.
+  autoMetric         String?
+  autoTarget         Float?
+  autoFamily         String?
+  /// BODY | DUTY | CRAFT | CARE.
+  track              String
+  /// CATEGORY | TAG.
+  trackSource        String         @default("CATEGORY")
+  category           String
+  /// The machine band after the merge: INTRO | STANDARD | DEMANDING | SEVERE.
+  band               String
+  lexicalBand        String
+  aiBand             String?
+  /// Self-rating, −3..+1 steps; never above machine + 1.
+  bandOverride       Int            @default(0)
+  bandOverrideAt     DateTime?
+  estMinutes         Int
+  machineMinutes     Int
+  /// USER | AI | LEXICAL.
+  minutesSource      String
+  /// Record<Attribute, int> summing to 100; a frozen snapshot.
+  composition        Json
+  /// LEXICAL | AI | COPIED.
+  gradeSource        String
+  gradeConfidence    Float
+  gradeBasis         String?
+  gradeModel         String?
+  gradePromptVersion Int?
+  gradeAttempts      Int            @default(0)
+  aiGradedAt         DateTime?
+  gradeCopiedFrom    String?
+  gradeFrozenAt      DateTime?
+  /// A weakening change waiting out its delay (M2).
+  pendingChange      Json?
+  pendingChangeAt    DateTime?
+  /// quick | share | api | form.
+  captureSource      String         @default("quick")
+  sortOrder          Float          @default(0)
+  completedAt        DateTime?
+  archivedAt         DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  instances          TaskInstance[]
+
+  @@index([userId, archivedAt])
+  @@index([userId, normTitle])
+  @@index([parentId])
+  @@schema("public")
+}
+
+/// One occurrence of a template, materialised only when it is acted on or
+/// judged. Expected occurrences are a pure function of the rule and the day
+/// (src/lib/recurrence.ts) and are never pre-created. Its status is a
+/// projection of the ledger.
+model TaskInstance {
+  id          String       @id @default(cuid())
+  userId      String
+  templateId  String
+  template    TaskTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  day         DateTime     @db.Date
+  /// "Again" completions use slot n + 1.
+  slot        Int          @default(0)
+  /// DONE | DONE_LATE | DONE_MVV | MISSED | EXCUSED | SKIPPED | UNDONE | WRITTEN_OFF.
+  status      String
+  /// manual | record-yesterday | make-up | auto:reviews | auto:ideas | auto:steps | auto:workout.
+  source      String       @default("manual")
+  completedAt DateTime?
+  minutes     Int?
+  rpe         Int?
+  xpPaid      Float        @default(0)
+  debtXp      Float        @default(0)
+  debtOpen    Boolean      @default(false)
+  repaired    Boolean      @default(false)
+  judgedAt    DateTime?
+  workoutId   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([templateId, day, slot])
+  @@index([userId, day])
+  @@index([userId, debtOpen])
+  @@schema("public")
+}

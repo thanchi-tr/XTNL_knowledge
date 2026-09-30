@@ -10,6 +10,24 @@ import { loadActiveDebuffs } from "./debuffs";
 import { BOON_META } from "./boon-meta";
 import { DEBUFF_META } from "./debuff-meta";
 import { formatExpiry } from "./format-date";
+import { loadTodayCounts, type TodayCounts } from "./tasks";
+import { LIFE_TZ } from "./life-day";
+
+/**
+ * From this local hour an open compulsory item turns from a note into a
+ * warning: late enough that the evening is what is left, early enough to
+ * still do it.
+ */
+const MUSTS_WARN_HOUR = 18;
+
+/** The local wall-clock hour, in the life zone. */
+function localHour(now: Date): number {
+  try {
+    return Number(new Intl.DateTimeFormat("en-GB", { timeZone: LIFE_TZ, hour: "2-digit", hourCycle: "h23" }).format(now)) % 24;
+  } catch {
+    return now.getHours();
+  }
+}
 
 /**
  * The notification feed: everything currently asking something of the player,
@@ -49,7 +67,7 @@ export interface NotificationFeed {
 }
 
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
-  const [dueCount, overdueCount, quotas, bosses, boons, debuffs] = await Promise.all([
+  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today] = await Promise.all([
     // `dueCutoff`, not `now`: the bubble and the review queue have to agree
     // about what is due, or the badge sends you to an empty page.
     prisma.idea.count({ where: { isArchived: false, dueDate: { lte: dueCutoff(now) } } }),
@@ -58,6 +76,9 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     loadBossStates(userId),
     loadActiveBoons(userId, now),
     loadActiveDebuffs(userId, now),
+    // The same cached count the nav's Today button reads. A failure here is a
+    // missing line, not a missing bubble.
+    loadTodayCounts(userId, now).catch((): TodayCounts | null => null),
   ]);
 
   const progression = await loadProgression(userId);
@@ -88,6 +109,35 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       title: `${overdueCount} past grace`,
       detail: "These degrade a level on the next daily sweep unless reviewed.",
       href: "/review",
+    });
+  }
+
+  // ── Today's board ────────────────────────────────────
+  // Compulsory items are a note through the day and a warning in the
+  // evening. Never red: an open duty at 18:00 is still doable, and the board
+  // itself keeps misses out of its top line.
+  if (today && today.musts > 0) {
+    const evening = localHour(now) >= MUSTS_WARN_HOUR;
+    notices.push({
+      id: "musts",
+      group: "Due",
+      tone: evening ? "warn" : "info",
+      title: `${today.musts} must${today.musts === 1 ? "" : "s"} today`,
+      detail: evening
+        ? "Still open this evening. The minimum version counts if time is short."
+        : "Compulsory items due today. The day runs until 04:00.",
+      href: "/today",
+    });
+  }
+
+  if (today && today.inbox > 0) {
+    notices.push({
+      id: "inbox",
+      group: "Due",
+      tone: "info",
+      title: `Inbox ${today.inbox}`,
+      detail: "Captured, not yet sorted. One tap each on Today.",
+      href: "/today",
     });
   }
 
@@ -178,5 +228,5 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
 export async function loadNotifications(userId: string, now: Date = new Date()): Promise<NotificationFeed> {
   // Same tags the underlying reads already invalidate, so submitting an Idea
   // or finishing a review updates the bubble without its own bookkeeping.
-  return cached(`notifications:${userId}`, ["fields", "ideas", "progress"], () => buildFeed(userId, now));
+  return cached(`notifications:${userId}`, ["fields", "ideas", "progress", "life", "activity"], () => buildFeed(userId, now));
 }

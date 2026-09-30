@@ -33,9 +33,13 @@ export type CacheTag =
   /** Idea and Domain rows: due counts, points, the review queue. */
   | "ideas"
   /** Per-user progression: unlocked skills, mastery ledger, debuffs, streaks, bosses. */
-  | "progress";
+  | "progress"
+  /** The life system's slow-moving rows: task templates, life settings, tracks, workouts. */
+  | "life"
+  /** The life ledger and everything read from it: the daily streak, the Today board, day totals. */
+  | "activity";
 
-export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress"];
+export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity"];
 
 /**
  * Short by design. The cache exists to collapse the several round trips of

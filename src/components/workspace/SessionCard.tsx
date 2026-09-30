@@ -8,6 +8,19 @@ import { FormatAnswer } from "./FormatAnswer";
 import { MathText } from "@/components/math/MathText";
 import type { DomainProgress } from "@/lib/srs";
 import { baseIntervalDays, MASTERY_LEVEL, MASTERY_BONUS, COMBO_CAP, COMBO_STEP } from "@/lib/xp";
+import { isTypingTarget } from "@/lib/capture-parse";
+
+/**
+ * Whether a key or tap belongs to something other than this card: a field
+ * being typed in, or the capture sheet and its buttons, which can be opened
+ * mid-session from the header or the corner. Both global handlers below
+ * treat any key as theirs, so without this, typing '3x/week' into the sheet
+ * would answer a multiple choice, and tapping the sheet would skip a result.
+ */
+function belongsElsewhere(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return isTypingTarget(target) || target.closest("[data-capture-ui]") !== null;
+}
 
 interface Props {
   ideaId: string;
@@ -145,6 +158,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
     if (questionType !== "MULTI" || result || isPending || multiOptions.length === 0) return;
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (belongsElsewhere(e.target)) return;
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > Math.min(9, multiOptions.length)) return;
       e.preventDefault();
@@ -185,18 +199,22 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
       done = true;
       onComplete(result);
     };
+    const onUserAdvance = (e: Event) => {
+      if (belongsElsewhere(e.target)) return;
+      advance();
+    };
 
     const t = setTimeout(advance, hold);
     const arm = setTimeout(() => {
-      window.addEventListener("keydown", advance);
-      window.addEventListener("pointerdown", advance);
+      window.addEventListener("keydown", onUserAdvance);
+      window.addEventListener("pointerdown", onUserAdvance);
     }, DISMISS_ARM_MS);
 
     return () => {
       clearTimeout(t);
       clearTimeout(arm);
-      window.removeEventListener("keydown", advance);
-      window.removeEventListener("pointerdown", advance);
+      window.removeEventListener("keydown", onUserAdvance);
+      window.removeEventListener("pointerdown", onUserAdvance);
     };
     // onComplete intentionally excluded — it closes over stale run state by
     // design each render, and re-firing this timer on every parent render
@@ -212,6 +230,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
     if (advanced?.mastered) {
       return (
         <div
+          data-review-session=""
           className="fade-up rounded-card border px-6 py-12 text-center"
           style={{ borderColor: "rgba(0,204,122,0.4)", background: "var(--green-06)" }}
         >
@@ -234,7 +253,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
 
     if (advanced?.domainLeveledUp) {
       return (
-        <div className="card fade-up px-6 py-12 text-center">
+        <div data-review-session="" className="card fade-up px-6 py-12 text-center">
           <p className="chip chip-green mx-auto">Level up</p>
           <p className="mt-3 text-[17px] font-semibold" style={{ color: "var(--ink-0)" }}>
             {domainName} reached level {advanced.newDomainLevel}
@@ -246,6 +265,7 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
 
     return (
       <div
+        data-review-session=""
         className={`relative rounded-card border px-6 py-12 text-center ${
           result.correct
             ? "fade-up border-[rgba(0,204,122,0.28)] bg-[var(--green-10)] text-green"
@@ -289,8 +309,10 @@ export function SessionCard({ ideaId, questionType, question, preview, level, do
     );
   }
 
+  // `data-review-session` on every root: while a card is mounted the global
+  // capture hotkey stands down, because this card treats keys as answers.
   return (
-    <div className="card arcane-circle px-6 py-7">
+    <div data-review-session="" className="card arcane-circle px-6 py-7">
       <div className="mb-5 flex items-center justify-between">
         <span className={`shrink-0 ${TYPE_STYLES[questionType]}`}>{questionType}</span>
         <span className="font-mono text-xs text-ink-2">

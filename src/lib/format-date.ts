@@ -1,3 +1,5 @@
+import { LIFE_TZ } from "./life-day";
+
 /**
  * Deterministic date formatting for server-rendered markup.
  *
@@ -9,29 +11,34 @@
  * date; it is that every click handler on the page silently stops working.
  *
  * Pinning both locale and time zone makes the string a pure function of the
- * instant, so both passes agree. UTC is the honest choice here because
- * every deadline in this app (`dueDate`, `graceEndsAt`, boon/debuff
- * expiry) is computed in UTC to begin with — rendering them in local time
- * would misreport when they actually land.
+ * instant, so both passes agree. The zone is the user's own (`LIFE_TZ`, the
+ * one clock in life-day.ts): a NEXT_PUBLIC_ value inlined at build time, so
+ * the server and browser bundles carry the same literal and SkillHub and
+ * BossPanel still hydrate. It used to be UTC, which was honest about the
+ * instant but made the player convert every expiry in their head; the
+ * instants themselves (`dueDate`, `graceEndsAt`, boon and debuff expiry) are
+ * unchanged, only the reading of them is local now.
+ *
+ * `tz` exists for the checks; the app never passes it.
  */
 const LOCALE = "en-GB";
 
-export function formatExpiry(date: Date): string {
+export function formatExpiry(date: Date, tz: string = LIFE_TZ): string {
   return date.toLocaleString(LOCALE, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
+    timeZone: tz,
     hour12: false,
   });
 }
 
 /** Date only — no clock. */
-export function formatDay(date: Date): string {
+export function formatDay(date: Date, tz: string = LIFE_TZ): string {
   return date.toLocaleString(LOCALE, {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
+    timeZone: tz,
   });
 }

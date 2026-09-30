@@ -1,0 +1,28 @@
+# Deliberately left out
+
+- body-mastery's Disciplines ladder, AI-graded practice 'trials' that pay MP, CharacterSnapshot and the separate /mastery page. The last two are out of scope for the four pillars. The trials are dropped because a model grading hobby prose would mint MP, which rewards verbosity. Mastery lives in the CharacterPanel on /overview.
+- body-mastery's strength-set grammar ('squat 5x5 100kg'), Epley e1RM PRs and double-progression suggestions. They are deferred: sets are not in Health Connect and the manual weight PRs cannot be checked for plausibility.
+- 13-track (body-mastery) and 8-track (daily-board, including a MIND track that overlaps Fields) track sets. Replaced by 4 fixed tracks that start at level 0.
+- A separate 'Life level' shown apart from the character (body-mastery), and daily-board's knowledge-only account level. Replaced by one characterLevel over Fields and tracks.
+- daily-board's tracks with max(1, …) floors, milestones paying +10 XP outside the cap plus linear 'outcomes' depth, HABIT_AUTOMATIC 2 MP per habit, and uncapped SHORT-goal MP.
+- daily-board's RPE intensity multiplier I on non-exercise tasks. It was a free +16% for answering 'rpe10'.
+- Any life-XP token for study-linked or review-linked tasks: daily-board's K = 0.2 and body-mastery's 5 × C. They pay 0 and credit progress only.
+- Early-completion bonuses keyed to a deadline the user chooses (one-ledger's T 1.10, body-mastery's 1.05).
+- one-ledger's free INTEGER estimatedMinutes from the model. Replaced by the durationBand enum mapped in code.
+- one-ledger's 12 h judgement window, daily-board's 0.9 pay for recorded-yesterday, and body-mastery's 7-day backdating. Replaced by the whole next day at T 1.00, then judgement.
+- Debt scaled by the streak multiplier C (one-ledger), and uncapped total debt (daily-board). Replaced by min(20, B × E), at most 3 open per template and at most 100 in total.
+- Steps paying XP bands or keeping the streak alive (one-ledger). Steps pay 0 and never count for the streak.
+- Per-session saturating workout pay with only mild cross-session decay, which rewarded splitting a session (one-ledger, body-mastery). Also workout XP outside the daily cap, and one-ledger's 0.7 overload cliff on the whole session.
+- daily-board's 1 MB / 500-session ingest cap, its always-refuse numeric HC codes, and the wrong 'exercise_sessions' key. one-ledger's steps rule max(existing, batch sum), which undercounts incremental batches.
+- kas-cor HealthConnect Export as a preferred source. It has 1 star and is APK-only. Only the HC Webhook, generic v1 and Tasker adapters ship.
+- body-mastery's new columns and partial unique index on MasteryLedgerEntry. Idempotency comes from a paired ActivityEvent dedupe row in the same $transaction array.
+- Mutable counters as the source of truth: DayLog increments in after(), LifeTask.streakDays/strength, freezesHeld, and LifeTrack.keptWeeks/outcomes. The streak, freezes, habit strength and levels are all derived from the ledger.
+- Multi-statement interactive $transaction on hot paths (daily-board, body-mastery). Batch arrays plus unique conflicts are used instead.
+- Any variance roll, loot, random boon or random freeze on life actions. Also new debuff kinds for life misses (FATIGUED/DOUBT reuse); debt is XP, not a modifier.
+- New emblem effect kinds and archetypes for life (TASK_YIELD, HABIT_GRACE, …). Deferred until the life economy has run for a while, because Apex and Ultimate costs would shift.
+- Goal 'bosses', the AI goal-milestone planner (suggestGoalMilestones), LLM voice parsing, and chrono-node/rrule dependencies. The deterministic in-house parser with visible chips is the primary and only path.
+- A daily XP bar or '100 full-rate' target on the board, which reads as a quota. The knee position appears only on receipts.
+- Exporting maxDuration = 60 on the cron or ingest routes. It would lower the Fluid default of 300 s.
+- Moving the existing 00:00 UTC degrade cron. It stays; a second life cron is added instead.
+- Manual test rows in the shared production database (the 'zz test' templates and curl-created inbox rows the proposals planned). Verification uses pure scripts, dry-run modes and the local Docker rehearsal DB.
+- Pinning a Monday deploy for the clock cut-over. Its one-off effects all favour the user: ward charges refresh, the quota week starts 6 h earlier, and a field-streak shim prevents false breaks and false DOUBT.
