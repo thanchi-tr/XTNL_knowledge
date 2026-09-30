@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="en" data-theme="night" data-motion="full">
+<head>
+<script>window.__errs=[];addEventListener('error',e=>__errs.push(e.message+' @'+e.lineno));</script><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark light"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap"><style>
+/* =====================================================================
+   XTNL · SIGIL & SLATE (final) — tokens
+   This block is what src/app/styles/tokens.css ships (inside @layer theme).
+   Six colour families, one meaning each:
+     Ink      structure, text, numbers, actions
+     Signal   state of a thing in time: kept · owed · held
+     Currency life XP (--xp) · review points (--pts) · mastery points (--mp)
+     Material rarity, depth and the character band: iron → astral
+     Light    earned, and only for now
+     Art      attribute hues (attribute-themes.ts, unchanged) — inside emblem
+              art, radar vertices and path headers only
+   ===================================================================== */
+:root, .theme-night {
+  color-scheme: dark;
+  /* surfaces */
+  --canvas:#050609; --page:#0a0d13; --sunken:#07090e; --card:#11151d; --raised:#171c26; --overlay:#1d2330;
+  --bar:#0c0f15;                 /* sticky top bar, tab bar, rail, sidebar: opaque, never blurred */
+  --scrim:rgba(3,4,7,.66); --curtain:#05060a; --face:#0d1017;
+  /* ink (text steps are all ≥ 4.5:1 on every surface incl. overlay) */
+  --ink-0:#f1f3f8; --ink-1:#c3cad8; --ink-2:#9aa3b5;
+  --ink-mute:#6f788c;            /* NON-TEXT: disabled glyphs, placeholders' icons, locked rims */
+  /* lines */
+  --line-1:rgba(255,255,255,.065); --line-2:rgba(255,255,255,.11); --line-ctl:#76819a; --hi:rgba(255,255,255,.04);
+  /* signal */
+  --kept:#5fd38d; --on-kept:#0b1a12;
+  --owed:#e07a95; --on-owed:#26060e;
+  --held:#72d2ec; --on-held:#06161c;
+  --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
+  /* currency: glyph marks; the figure beside a glyph is always ink */
+  --xp:#fdaf3a;  --on-xp:#221400;     /* life XP · spark */
+  --pts:#8ea6ff; --on-pts:#07103a;    /* review points · faceted lozenge */
+  --mp:#ffe08a;  --on-mp:#2a1d00;     /* mastery points · hex nut */
+  /* light (earned only) */
+  --light:#fff1cf; --light-glow:rgba(255,222,150,.34);
+  /* materials (shapes only, never text on page, never status) */
+  --iron-a:#c3c9d4; --iron-m:#8a93a4; --iron-b:#434a5a;
+  --bronze-a:#f3c08f; --bronze-m:#c0834f; --bronze-b:#8a5530;
+  --silver-a:#ffffff; --silver-m:#c9d1de; --silver-b:#7d889c;
+  --gold-a:#fff0bd; --gold-m:#f0c75e; --gold-b:#c9901f;
+  --astral-a:#d8f3ff; --astral-m:#c7b5ff; --astral-b:#ffd9ee;
+  --focus:var(--ink-0);
+  --shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);
+}
+:root[data-theme="vellum"] {
+  color-scheme: light;
+  --canvas:#e2dccf; --page:#f3efe6; --sunken:#e9e3d6; --card:#fffdf8; --raised:#faf6ee; --overlay:#ffffff;
+  --bar:#f3efe6; --scrim:rgba(30,26,18,.38); --face:#0d1017;
+  --ink-0:#17191f; --ink-1:#3a404d; --ink-2:#595f6e; --ink-mute:#777d8a;
+  --line-1:rgba(40,32,16,.08); --line-2:rgba(40,32,16,.14); --line-ctl:#7f7868; --hi:rgba(255,255,255,.7);
+  --kept:#196b3d; --on-kept:#ffffff; --owed:#9c2f6b; --on-owed:#ffffff; --held:#0e6480; --on-held:#ffffff;
+  --xp:#a33d00; --on-xp:#ffffff; --pts:#3450c2; --on-pts:#ffffff; --mp:#b47308; --on-mp:#1f1500;  /* Vellum --mp is a glyph colour only (3.8:1); figures stay ink */
+  --light:#b8801f; --light-glow:rgba(184,128,31,.22);
+  --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
+}
+/* type, space, radius, motion, layers (theme-independent) */
+:root {
+  --font-ui:"Inter","Segoe UI Variable Text","Segoe UI",system-ui,Roboto,sans-serif;
+  --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --s-1:2px; --s-2:4px; --s-3:6px; --s-4:8px; --s-5:12px; --s-6:16px; --s-7:20px; --s-8:24px; --s-9:32px; --s-10:40px; --s-11:56px;
+  --r-chip:8px; --r-ctl:12px; --r-card:16px; --r-sheet:24px; --r-pill:999px;
+  --hit:44px; --hit-min:40px;
+  --topbar-h:56px; --tabbar-h:64px; --rail-w:84px; --sidebar-w:232px;
+  --t-press:90ms; --t-quick:160ms; --t-base:240ms; --t-slow:420ms; --t-flight:560ms; --t-seal:1400ms; --t-ceremony:2000ms;
+  --ease-out:cubic-bezier(.16,1,.3,1); --ease-inout:cubic-bezier(.65,0,.35,1); --ease-stamp:cubic-bezier(.34,1.56,.64,1);
+  --ambient-play:running;
+  --z-sky:-1; --z-bar:20; --z-toast:30; --z-sheet:50; --z-ceremony:70; --z-fx:80;
+}
+html[data-motion="calm"], html[data-motion="still"], html[data-power="save"] { --ambient-play:paused; }
+/* Still: nothing animates. Every animated rule is written so its resting style is the final state. */
+html[data-motion="still"] *, html[data-motion="still"] *::before, html[data-motion="still"] *::after { animation:none !important; transition:none !important; }
+
+/* =====================================================================
+   XTNL · SIGIL & SLATE (final) — primitives, shell and reward layers.
+   Mirrors src/components/ui/* and src/app/styles/{base,components,effects}.css
+   ===================================================================== */
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;background:var(--page)}
+body{background:var(--page);color:var(--ink-0);font:400 15px/1.45 var(--font-ui);-webkit-font-smoothing:antialiased;min-height:100vh;min-height:100dvh}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:inherit}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+[tabindex="-1"]:focus{outline:none}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+[hidden]{display:none!important}
+
+/* ---------- type roles (replace the 313 inline {fontSize,color} objects) ---------- */
+.t-display-xl{font:600 34px/38px var(--font-display);letter-spacing:.003em}
+.t-display-l{font:600 30px/34px var(--font-display);letter-spacing:.003em}
+.t-display-m{font:600 21px/26px var(--font-display)}
+.t-display-s{font:600 19px/23px var(--font-display)}
+.t-epithet{font:italic 400 17px/1.3 var(--font-display);color:var(--ink-1)}
+.t-body-l{font:500 15px/20px var(--font-ui)}
+.t-meta{font:400 13px/18px var(--font-ui);color:var(--ink-2)}
+.t-eyebrow{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.t-mono{font:500 12.5px/1.4 var(--font-mono)}
+.t-num,.num{font-variant-numeric:tabular-nums lining-nums}
+.t-numeral{font:600 28px/1 var(--font-display);font-variant-numeric:tabular-nums lining-nums}
+.ink-0{color:var(--ink-0)} .ink-1{color:var(--ink-1)} .ink-2{color:var(--ink-2)}
+
+/* ---------- icons & glyphs ---------- */
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.g{width:14px;height:14px;flex:none}
+svg.sig{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;flex:none}
+.c-xp{color:var(--xp)} .c-pts{color:var(--pts)} .c-mp{color:var(--mp)}
+.cur{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums}
+.cur svg.g{width:13px;height:13px}
+
+/* ---------- surfaces ---------- */
+.card{background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card);box-shadow:inset 0 1px 0 var(--hi)}
+.pad{padding:14px}
+.pad-l{padding:16px}
+.sunk{background:var(--sunken);border:1px solid var(--line-2);border-radius:12px}
+.divide>*+*{border-top:1px solid var(--line-1)}
+
+/* ---------- buttons: one base, five voices ---------- */
+.btn{min-height:44px;border-radius:var(--r-ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1.2 var(--font-ui);padding:0 14px;
+  transition:transform var(--t-press) var(--ease-out),background var(--t-quick),border-color var(--t-quick),color var(--t-quick);white-space:nowrap;text-decoration:none}
+.btn:active{transform:scale(.98)}
+.btn.lg{min-height:48px;font-size:15px;padding:0 18px}
+.btn.block{width:100%}
+.btn-primary{background:var(--ink-0);color:var(--page)}
+.btn-primary:hover{background:#fff}
+:root[data-theme="vellum"] .btn-primary:hover{background:#000}
+.btn-secondary{border:1px solid var(--line-ctl);color:var(--ink-0)}
+.btn-secondary:hover{background:var(--raised)}
+.btn-quiet{color:var(--ink-1);padding:0 10px}
+.btn-quiet:hover{color:var(--ink-0);background:var(--raised)}
+.btn-gold{background:linear-gradient(180deg,#ffe7a3,#f0c75e 55%,#c9901f);color:#2a1d00;box-shadow:inset 0 1px 0 rgba(255,255,255,.55)}
+.btn-danger{border:1px solid var(--owed);color:var(--owed)}
+.kbd{font:600 12px/1 var(--font-mono);padding:3px 5px;border-radius:5px;border:1px solid currentColor;opacity:.75}
+@media (hover:none){.kbd{display:none}}
+.icon-btn{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;position:relative;color:var(--ink-1);flex:none}
+.icon-btn:hover{background:var(--raised);color:var(--ink-0)}
+.link{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;display:inline-flex;align-items:center}
+
+/* ---------- badge: ink for counts that ask; owed only for debt; never at 0 ---------- */
+.badge{position:absolute;top:5px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink-0);color:var(--page);font:700 12px/18px var(--font-ui);text-align:center;box-shadow:0 0 0 2px var(--bar)}
+.badge.owed{background:var(--owed);color:var(--on-owed)}
+.badge:empty{display:none}
+
+/* ---------- chips: one dialect ---------- */
+.chip{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip svg.g,.chip svg.sig{width:12px;height:12px}
+.chip.kept{color:var(--kept);background:color-mix(in srgb,var(--kept) 12%,transparent);border-color:color-mix(in srgb,var(--kept) 34%,transparent)}
+.chip.owed{color:var(--owed);background:color-mix(in srgb,var(--owed) 12%,transparent);border-color:color-mix(in srgb,var(--owed) 36%,transparent)}
+.chip.held{color:var(--held);background:color-mix(in srgb,var(--held) 11%,transparent);border-color:color-mix(in srgb,var(--held) 34%,transparent)}
+.chip.ready{color:#2a1d00;background:linear-gradient(180deg,#ffe7a3,#f0c75e);border-color:transparent}
+.chip.btn-chip{min-height:40px;padding:0 12px;border-color:var(--line-ctl);color:var(--ink-0);font-size:13px}
+.chip.btn-chip[aria-pressed="true"]{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+
+/* ---------- price pill ---------- */
+.price{min-height:44px;display:inline-flex;align-items:center;padding:0 2px 0 4px;flex:none}
+.pill{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--line-2);font:600 13px var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-1);display:inline-flex;gap:5px;align-items:center;transition:background var(--t-base),color var(--t-base),border-color var(--t-base)}
+.pill svg.g{width:12px;height:12px;color:var(--xp)}
+.price:hover .pill{border-color:var(--line-ctl);color:var(--ink-0)}
+.done .pill,.pill.paid{color:var(--ink-0);background:color-mix(in srgb,var(--xp) 14%,transparent);border-color:color-mix(in srgb,var(--xp) 38%,transparent)}
+
+/* ---------- tick: circle for todos, diamond for musts ---------- */
+.tick{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tick .ring{width:24px;height:24px;border-radius:50%;border:2px solid var(--line-ctl);display:grid;place-items:center;transition:background var(--t-quick),border-color var(--t-quick),transform var(--t-press) var(--ease-out)}
+.tick .ring svg{width:15px;height:15px;fill:none;stroke:var(--on-kept);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.tick .ring path{stroke-dasharray:22;stroke-dashoffset:22;transition:stroke-dashoffset 220ms var(--ease-out) 40ms}
+.tick:hover .ring{border-color:var(--ink-1)}
+.tick:active .ring{transform:scale(.88)}
+.must .tick .ring{width:21px;height:21px;border-radius:4px;transform:rotate(45deg)}
+.must .tick .ring svg{transform:rotate(-45deg)}
+.must .tick:active .ring{transform:rotate(45deg) scale(.88)}
+.done .tick .ring{background:var(--kept);border-color:var(--kept)}
+.done .tick .ring path{stroke-dashoffset:0}
+.min-kept .tick .ring{background:linear-gradient(90deg,var(--kept) 50%,transparent 50%);border-color:var(--kept)}
+
+/* ---------- rows & lanes ---------- */
+.row{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;column-gap:6px;padding:8px 6px 8px 4px;min-height:64px;position:relative}
+.row+.row,.row+.makeup,.makeup+.row,.makeup+.makeup{border-top:1px solid var(--line-1)}
+.r-main{min-width:0;padding:4px 0}
+.r-title{font:500 15px/20px var(--font-ui);transition:color var(--t-base)}
+.done .r-title{color:var(--ink-2)}
+.r-meta{font-size:13px;line-height:18px;color:var(--ink-2);display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;margin-top:2px}
+.r-meta>span{display:inline-flex;gap:5px;align-items:center}
+.r-meta .kept-at{color:var(--kept)}
+.r-meta .due{color:var(--ink-0);font-weight:600}
+.undo{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;padding:0 4px;font-size:13px}
+.lane{position:relative}
+.lane-h{display:flex;align-items:center;gap:9px;padding:0 4px 8px;position:relative;min-height:28px}
+.lane-mark{width:9px;height:9px;transform:rotate(45deg);border:1.5px solid var(--ink-2);border-radius:1.5px;flex:none;transition:background var(--t-base),border-color var(--t-base)}
+.lane-must .lane-mark{border-color:var(--ink-0)}
+.lane-h h3{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1)}
+.lane-count{margin-left:auto;font-size:13px;color:var(--ink-2)}
+.lane.kept .lane-mark{background:var(--kept);border-color:var(--kept)}
+.stamp{position:absolute;font:700 12px/1 var(--font-display);letter-spacing:.18em;color:var(--kept);border:1.5px solid var(--kept);border-radius:6px;padding:5px 6px 4px 8px;transform:rotate(-7deg);opacity:0;pointer-events:none;text-transform:uppercase;white-space:nowrap}
+.lane .stamp{right:96px;top:-4px}
+.lane.kept .stamp{opacity:1;animation:stamp 380ms var(--ease-stamp) 1}
+@keyframes stamp{0%{opacity:0;transform:rotate(-7deg) scale(1.7)}60%{opacity:1}100%{opacity:1;transform:rotate(-7deg) scale(1)}}
+.lane-body{overflow:hidden;position:relative}
+.lane-body::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--kept),transparent);transform:translateX(-100%);opacity:0;z-index:1}
+.lane.fresh .lane-body::before{animation:line 800ms var(--ease-out) 1}
+@keyframes line{0%{opacity:1;transform:translateX(-100%)}100%{opacity:0;transform:translateX(100%)}}
+
+/* ---------- meters: one component ---------- */
+.meter{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));box-shadow:inset 0 0 0 1px var(--line-2);position:relative;overflow:hidden}
+.meter>i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:4px;background:var(--ink-0);transform-origin:left;transform:scaleX(var(--v,0));transition:transform 700ms var(--ease-out)}
+.meter>i.gain{background:var(--xp);transform:scaleX(var(--v,0));z-index:0}
+.meter>i.gain.pts{background:var(--pts)}
+.meter>i.base{z-index:1}
+.meter .cap{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--ink-1);left:var(--at);z-index:2}
+.meter.thin{height:6px}
+/* segment strip: quests and runs. A miss is hatched, never colour-only. */
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.segs i{height:6px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 9%,transparent)}
+.segs i.on{background:var(--ink-0);box-shadow:none}
+.segs i.miss{background:repeating-linear-gradient(135deg,var(--owed) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--owed)}
+.segs i.cur{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.segs.tall i{height:8px}
+
+/* ---------- promise ring (fixed targets only: musts, quest, life deed, weekly move) ---------- */
+.pring{position:relative;width:var(--sz,44px);height:var(--sz,44px);flex:none}
+.pring svg{width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.pring .trk{fill:none;stroke:color-mix(in srgb,var(--ink-0) 10%,transparent);stroke-width:var(--sw,4.5)}
+.pring .trk-line{fill:none;stroke:var(--line-2);stroke-width:1}
+.pring .val{fill:none;stroke:var(--ink-0);stroke-width:var(--sw,4.5);stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--p,0));transition:stroke-dashoffset 600ms var(--ease-out),stroke var(--t-base)}
+.pring .lap{fill:none;stroke:var(--ink-0);stroke-width:var(--sw,4.5);stroke-linecap:butt;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--p2,0));opacity:.55}
+.pring .glint{fill:none;stroke:#fff;stroke-width:var(--sw,4.5);stroke-linecap:round;stroke-dasharray:6 94;stroke-dashoffset:100;opacity:0}
+.pring.closed .val{stroke:var(--kept)}
+.pring .ctr{position:absolute;inset:0;display:grid;place-items:center;text-align:center;line-height:1}
+.pring .ctr svg.i{width:16px;height:16px;transform:none;color:var(--kept);stroke-width:2.6;opacity:0;transition:opacity var(--t-base)}
+.pring.closed .ctr svg.i{opacity:1}
+.pring.closed .ctr .n{display:none}
+.pring .ctr .n{font:600 12px/1 var(--font-ui);font-variant-numeric:tabular-nums}
+.pring.dashed .trk{stroke-dasharray:2 3}
+.pring.glinting .glint{animation:glint 900ms var(--ease-inout) 1}
+.pring.glinting svg{animation:overshoot 520ms var(--ease-stamp) 1}
+@keyframes glint{0%{opacity:0;stroke-dashoffset:100}15%{opacity:.9}100%{opacity:0;stroke-dashoffset:0}}
+@keyframes overshoot{0%{transform:rotate(-90deg) scale(1)}45%{transform:rotate(-90deg) scale(1.045)}100%{transform:rotate(-90deg) scale(1)}}
+
+/* ---------- the day seal ---------- */
+.seal{width:52px;height:52px;flex:none;position:relative}
+.seal svg{width:52px;height:52px;overflow:visible}
+.seal .ring-dash{stroke:var(--ink-mute);stroke-width:1.5;stroke-dasharray:3 4.2;fill:none;transition:opacity var(--t-base)}
+.seal .ring-lit{stroke:var(--light);stroke-width:2;fill:none;stroke-dasharray:132;stroke-dashoffset:132;transition:stroke-dashoffset 620ms var(--ease-out)}
+.seal .flame{fill:var(--ink-mute);transform-origin:26px 30px;transition:fill var(--t-base),transform 420ms var(--ease-stamp)}
+.seal .halo{fill:var(--light-glow);opacity:0;transform-origin:26px 26px;transform:scale(.5);transition:opacity 500ms,transform 700ms var(--ease-out)}
+.seal.lit .ring-dash{opacity:0}
+.seal.lit .ring-lit{stroke-dashoffset:0}
+.seal.lit .flame{fill:var(--light);transform:scale(1.06)}
+.seal.lit .halo{opacity:1;transform:scale(1)}
+.seal.broken .flame{fill:none;stroke:var(--ink-mute);stroke-width:1.4}
+.sweep{position:relative;overflow:hidden}
+.sweep::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;background:linear-gradient(105deg,transparent 35%,var(--light-glow) 50%,transparent 65%);transform:translateX(-100%)}
+.sweep.go::after{animation:sweep 900ms var(--ease-inout) 1}
+@keyframes sweep{0%{opacity:1;transform:translateX(-100%)}100%{opacity:1;transform:translateX(100%)}}
+.bump{animation:bump 320ms var(--ease-stamp) 1}
+@keyframes bump{0%{transform:scale(1)}45%{transform:scale(1.3)}100%{transform:scale(1)}}
+
+/* ---------- crest & coins ---------- */
+.crest{display:block;flex:none}
+.crest text{font-family:var(--font-display);font-weight:700;fill:#f1f3f8}
+.coin{--c:56px;width:var(--c);height:var(--c);border-radius:50%;position:relative;display:grid;place-items:center;flex:none}
+.coin svg.face{width:100%;height:100%;position:absolute;inset:0;overflow:visible}
+.coin .glyph{position:relative;width:calc(var(--c) * .5);height:calc(var(--c) * .5)}
+.coin.locked .rim{stroke:var(--ink-mute)!important;stroke-dasharray:3 3.4}
+.coin.locked .glyph{opacity:.42;filter:saturate(.3)}
+.coin .orbit{position:absolute;inset:-6px;border-radius:50%;border:1.5px dashed #f0c75e;animation:orbit 14s linear infinite;animation-play-state:var(--ambient-play)}
+@keyframes orbit{to{transform:rotate(360deg)}}
+
+/* ---------- tabs / segmented ---------- */
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.tabs::-webkit-scrollbar{display:none}
+.tab-s{min-height:40px;padding:0 14px;border-radius:10px;font:600 14px var(--font-ui);color:var(--ink-2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
+.tab-s:hover{color:var(--ink-0);background:var(--raised)}
+.tab-s[aria-current="page"],.tab-s[aria-selected="true"]{color:var(--ink-0);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-2)}
+.segc{display:inline-flex;border:1px solid var(--line-ctl);border-radius:12px;padding:2px;gap:2px;flex-wrap:wrap}
+.segc button{min-height:40px;min-width:56px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;color:var(--ink-1)}
+.segc button[aria-pressed="true"]{background:var(--ink-0);color:var(--page)}
+.switch{width:52px;height:32px;border-radius:16px;background:var(--sunken);border:1px solid var(--line-ctl);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--ink-2);transition:transform var(--t-quick) var(--ease-out),background var(--t-quick)}
+.switch[aria-checked="true"]{background:color-mix(in srgb,var(--held) 30%,var(--sunken));border-color:var(--held)}
+.switch[aria-checked="true"]::after{transform:translateX(20px);background:var(--held)}
+.switch-hit{min-width:44px;min-height:44px;display:grid;place-items:center}
+
+/* =====================================================================
+   SHELL: chrome by viewport (media), content by container (@container main).
+   Never put container-type on an ancestor of fixed layers (it makes a
+   containing block) or on a shrink-to-fit flex child (it collapses to 0).
+   ===================================================================== */
+.app{min-height:100vh;min-height:100dvh}
+.col{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;min-width:0}
+.main{flex:1;container:main/inline-size;min-width:0}
+.page{padding:6px 16px 28px;margin:0 auto;max-width:1240px}
+.page.narrow{max-width:640px}
+@container main (min-width:600px){.page{padding:8px 24px 40px}}
+@container main (min-width:1000px){.page{padding:12px 32px 48px}}
+.topbar{position:sticky;top:0;z-index:var(--z-bar);height:var(--topbar-h);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;background:var(--bar);border-bottom:1px solid transparent;transition:border-color var(--t-quick)}
+.topbar.scrolled{border-bottom-color:var(--line-1)}
+.crest-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.crest-btn svg{width:38px;height:40px}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font:600 19px/23px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-tabs{display:none;flex:1;min-width:0}
+.mini-ledger{position:absolute;right:52px;top:50%;margin-top:-16px;height:32px;padding:0 8px 0 18px;display:flex;gap:10px;align-items:center;font:600 14px var(--font-ui);background:linear-gradient(90deg,transparent,var(--bar) 14px);opacity:0;transform:translateY(4px);transition:opacity var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out);pointer-events:none}
+.mini-ledger.show{opacity:1;transform:none}
+.tabbar{position:sticky;bottom:0;z-index:var(--z-bar);height:calc(var(--tabbar-h) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;background:var(--bar);border-top:1px solid var(--line-1)}
+.tab{text-decoration:none;height:var(--tabbar-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 12px/14px var(--font-ui);color:var(--ink-2);position:relative}
+.tab svg.i{width:22px;height:22px}
+.tab[aria-current="page"]{color:var(--ink-0)}
+.tab[aria-current="page"]::before{content:"";position:absolute;top:0;left:30%;right:30%;height:2px;border-radius:0 0 2px 2px;background:var(--ink-0)}
+.tab .badge{top:7px;right:calc(50% - 24px)}
+.tab-plus{display:grid;place-items:center}
+.tab-plus span{width:52px;height:52px;border-radius:18px;background:var(--ink-0);color:var(--page);display:grid;place-items:center;box-shadow:0 6px 18px -6px rgba(0,0,0,.5)}
+.tab-plus svg.i{width:24px;height:24px;stroke-width:2.2}
+.tab .crest-mini{width:24px;height:26px}
+.rail,.sidebar{display:none}
+.rail{position:sticky;top:0;height:100vh;height:100dvh;width:var(--rail-w);background:var(--bar);border-right:1px solid var(--line-1);flex-direction:column;align-items:center;padding:10px 0 12px;gap:4px;z-index:var(--z-bar)}
+.rail a,.rail button{width:72px;min-height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 12px/14px var(--font-ui);color:var(--ink-2);text-decoration:none;position:relative}
+.rail a:hover{background:var(--raised);color:var(--ink-0)}
+.rail a[aria-current="page"]{color:var(--ink-0);background:var(--raised)}
+.rail .r-plus span{width:48px;height:48px;border-radius:16px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.rail .r-plus{margin-bottom:10px}
+.rail .grow{flex:1}
+.rail .badge{top:6px;right:14px}
+.sidebar{position:sticky;top:0;height:100vh;height:100dvh;width:var(--sidebar-w);background:var(--bar);border-right:1px solid var(--line-1);flex-direction:column;padding:14px 12px;gap:6px;overflow-y:auto;z-index:var(--z-bar)}
+.sb-char{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:var(--card);border:1px solid var(--line-1);text-decoration:none}
+.sb-char .who{min-width:0;flex:1}
+.sb-char .who b{font:600 16px/20px var(--font-display);display:block}
+.sb-char .who span{font-size:12px;color:var(--ink-2)}
+.sb-cap{display:flex;gap:6px;margin:6px 0 4px}
+.sb-sec{margin-top:10px}
+.sb-sec>a{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-radius:12px;font:600 14px var(--font-ui);color:var(--ink-1);text-decoration:none;position:relative}
+.sb-sec>a:hover{background:var(--raised);color:var(--ink-0)}
+.sb-sec>a[aria-current="page"]{background:var(--raised);color:var(--ink-0)}
+.sb-sec .n{margin-left:auto;min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--ink-0);color:var(--page);font:700 12px/20px var(--font-ui);text-align:center}
+.sb-sec .n.owed{background:var(--owed);color:var(--on-owed)}
+.sb-sub{display:flex;flex-direction:column;padding-left:40px}
+.sb-sub a{min-height:40px;display:flex;align-items:center;font-size:14px;color:var(--ink-2);text-decoration:none;border-radius:10px;padding:0 10px;margin-left:-10px}
+.sb-sub a:hover{color:var(--ink-0);background:var(--raised)}
+.sb-sub a[aria-current="page"]{color:var(--ink-0)}
+.sb-capture{margin-top:4px}
+@media (min-width:600px){
+  .app{display:grid;grid-template-columns:var(--rail-w) minmax(0,1fr)}
+  .rail{display:flex}
+  .tabbar{display:none}
+  .topbar{padding:0 12px 0 20px;height:60px}
+  .topbar .crest-btn{display:none}
+  .tb-tabs{display:flex}
+  .tb-title{flex:0 1 auto;margin-right:12px}
+}
+@media (min-width:1280px){
+  .app{grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+  .rail{display:none}
+  .sidebar{display:flex}
+  .topbar{padding:0 20px 0 32px}
+  .tb-tabs{display:none;flex:1;min-width:0}
+  .tb-title{flex:1}
+}
+@media (max-height:760px) and (min-width:600px){.topbar{height:52px}}
+
+/* ---------- page header ---------- */
+.ph{display:flex;align-items:flex-end;gap:12px;padding:10px 0 14px}
+.ph .t{flex:1;min-width:0}
+.ph h1{font:600 26px/30px var(--font-display);margin-top:2px}
+.sec-h{display:flex;align-items:baseline;gap:4px 9px;padding:0 4px 8px;flex-wrap:wrap}
+.sec-h h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);white-space:nowrap}
+.sec-h .aside{margin-left:auto;font-size:13px;color:var(--ink-2);text-align:right}
+
+/* =====================================================================
+   OVERLAYS: sheets, toasts, fx, seal card (T2), curtain (T3)
+   ===================================================================== */
+.layer{position:fixed;inset:0;z-index:var(--z-sheet);pointer-events:none}
+.scrim{position:fixed;inset:0;background:var(--scrim);opacity:0;transition:opacity var(--t-base);pointer-events:none;z-index:var(--z-sheet)}
+.scrim.show{opacity:1;pointer-events:auto;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:calc(var(--z-sheet) + 1);pointer-events:auto;background:var(--overlay);border-radius:var(--r-sheet) var(--r-sheet) 0 0;
+  padding:8px 16px calc(20px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform 300ms var(--ease-out),visibility 0s linear 300ms;visibility:hidden;border-top:1px solid var(--line-2);max-height:88vh;max-height:88dvh;overflow:auto;box-shadow:var(--shadow-pop)}
+.sheet.show{transform:none;visibility:visible;transition:transform 300ms var(--ease-out)}
+.grabber{width:40px;height:4px;border-radius:2px;background:var(--line-ctl);margin:0 auto 12px}
+.sheet-h{display:flex;align-items:flex-start;gap:8px}
+.sheet-h .t{flex:1;min-width:0}
+.sheet h2{font:600 21px/26px var(--font-display)}
+.sheet .sub{font-size:14px;color:var(--ink-2);margin-top:4px}
+@media (min-width:600px){
+  .sheet{left:auto;top:0;width:420px;max-height:none;height:100%;border-radius:var(--r-sheet) 0 0 var(--r-sheet);transform:translateX(105%);border-top:0;border-left:1px solid var(--line-2);padding:20px 20px 24px}
+  .sheet .grabber{display:none}
+  .sheet.center{left:50%;top:50%;right:auto;bottom:auto;height:auto;max-height:86vh;width:560px;border-radius:var(--r-sheet);transform:translate(-50%,-46%);opacity:0;border:1px solid var(--line-2)}
+  .sheet.center.show{transform:translate(-50%,-50%);opacity:1;transition:transform 300ms var(--ease-out),opacity var(--t-base)}
+}
+.dock{position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));z-index:var(--z-toast);display:flex;flex-direction:column;gap:8px;pointer-events:none}
+@media (min-width:600px){.dock{left:auto;right:20px;bottom:20px;width:380px}}
+.toast{pointer-events:auto;background:var(--overlay);border:1px solid var(--line-2);border-radius:14px;padding:12px 12px 12px 14px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow-pop);transform:translateY(12px);opacity:0;transition:transform var(--t-base) var(--ease-out),opacity var(--t-base)}
+.toast.show{transform:none;opacity:1}
+.toast .tt{flex:1;font-size:14px;line-height:1.4;min-width:0}
+.toast .tt b{font:600 16px/20px var(--font-display);display:block}
+.toast .pring{--sz:34px;--sw:4}
+.fx{position:fixed;inset:0;pointer-events:none;z-index:var(--z-fx);overflow:hidden}
+.token{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 9px 0 7px;border-radius:999px;font:700 13px var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-0);white-space:nowrap;
+  background:color-mix(in srgb,var(--tok,var(--xp)) 24%,var(--overlay));border:1px solid color-mix(in srgb,var(--tok,var(--xp)) 55%,transparent);box-shadow:0 6px 16px -6px rgba(0,0,0,.6)}
+.token svg.g{width:13px;height:13px;color:var(--tok,var(--xp))}
+.mote{position:absolute;left:0;top:0;width:6px;height:6px;border-radius:1.5px;background:var(--tok,var(--light));transform-origin:center}
+.floater{position:absolute;font:700 13px var(--font-ui);color:var(--ink-0);background:color-mix(in srgb,var(--tok,var(--xp)) 22%,var(--overlay));border:1px solid color-mix(in srgb,var(--tok,var(--xp)) 40%,transparent);padding:3px 8px;border-radius:999px;white-space:nowrap}
+
+/* ---------- T2 Seal: medallion card, at the dock or inside a result panel ---------- */
+.seal-card{pointer-events:auto;background:var(--overlay);border:1px solid var(--line-2);border-radius:18px;padding:16px;box-shadow:var(--shadow-pop);position:relative;overflow:hidden;transform:translateY(16px);opacity:0;transition:transform 320ms var(--ease-out),opacity var(--t-base)}
+.seal-card.show{transform:none;opacity:1}
+.seal-card .sc-top{display:flex;gap:14px;align-items:center}
+.seal-card .sc-t{flex:1;min-width:0}
+.seal-card h3{font:600 20px/24px var(--font-display)}
+.seal-card .facts{margin-top:10px;font-size:13px;color:var(--ink-1);display:flex;flex-direction:column;gap:6px}
+.seal-card .facts li{list-style:none;display:flex;gap:8px;align-items:baseline}
+.seal-card .facts li::before{content:"";width:6px;height:6px;flex:none;transform:rotate(45deg) translateY(-1px);background:var(--ink-2);border-radius:1px}
+.seal-card .acts{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+.medal{width:64px;height:64px;flex:none;position:relative}
+.medal svg{width:100%;height:100%;overflow:visible}
+.medal .num-wrap{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;border-radius:50%}
+.medal .num-wrap b{font:600 24px/1 var(--font-display);color:#f1f3f8;font-variant-numeric:tabular-nums}
+.what{margin-top:12px;border-top:1px solid var(--line-1);padding-top:10px}
+.what .t-eyebrow{margin-bottom:6px}
+.what li{list-style:none;display:flex;justify-content:space-between;gap:10px;font-size:13px;line-height:18px;padding:3px 0;color:var(--ink-1)}
+.what li b{color:var(--ink-0);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* ---------- T3 Ascension: opaque night curtain in both themes ---------- */
+.curtain{position:fixed;inset:0;z-index:var(--z-ceremony);background:var(--curtain);display:none;overflow-y:auto;color:var(--ink-0)}
+.curtain.show{display:block}
+.curtain .rays{position:fixed;left:50%;top:22%;width:1400px;height:1400px;margin:-700px 0 0 -700px;pointer-events:none;opacity:0;
+  background:repeating-conic-gradient(from 0deg,var(--ray,rgba(255,214,140,.11)) 0 4deg,transparent 4deg 13deg);
+  -webkit-mask:radial-gradient(circle,#000 0,rgba(0,0,0,.6) 20%,transparent 52%);mask:radial-gradient(circle,#000 0,rgba(0,0,0,.6) 20%,transparent 52%);
+  transition:opacity 900ms var(--ease-out);animation:spin 90s linear infinite;animation-play-state:var(--ambient-play)}
+.curtain.final .rays{opacity:1}
+@keyframes spin{to{transform:rotate(360deg)}}
+.curtain .skyband{position:fixed;inset:0 0 auto 0;height:60%;pointer-events:none;opacity:.55;background:var(--sky,radial-gradient(120% 70% at 50% 0%,rgba(80,60,30,.45),transparent 70%))}
+.cur-in{position:relative;max-width:520px;margin:0 auto;padding:max(56px,8vh) 20px 40px;text-align:center}
+.cur-skip{position:fixed;top:10px;right:10px;z-index:2}
+.cur-art{width:168px;height:168px;margin:0 auto 18px;position:relative}
+.cur-art svg{width:100%;height:100%;overflow:visible}
+.cur-kick{font:700 12px/16px var(--font-ui);letter-spacing:.16em;text-transform:uppercase;color:var(--cur-kick,var(--gold-m))}
+.cur-in h2{font:600 34px/38px var(--font-display);margin:8px 0 6px;text-wrap:balance}
+.cur-in .t-epithet{color:var(--ink-1)}
+.cur-lore{font:italic 400 15px/1.45 var(--font-display);color:var(--ink-2);margin:10px auto 0;max-width:34ch}
+.grants{list-style:none;margin:18px 0 0;display:flex;flex-direction:column;gap:8px;text-align:left}
+.grants li{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);font-size:14px;line-height:1.4}
+.grants li::before{content:"";width:8px;height:8px;margin-top:6px;flex:none;transform:rotate(45deg);background:var(--cur-kick,var(--gold-m));border-radius:1px}
+.cur-cost{font-size:13px;color:var(--ink-2);margin-top:14px}
+.cur-acts{display:flex;gap:10px;margin-top:18px;align-items:center;justify-content:center;flex-wrap:wrap}
+.cur-acts .btn-gold{min-width:200px}
+.cur-stage>*{opacity:1}
+.curtain .flash{position:fixed;inset:0;background:radial-gradient(circle at 50% 30%,rgba(255,244,214,.85),rgba(255,244,214,0) 55%);opacity:0;pointer-events:none}
+.curtain .wave{position:fixed;left:50%;top:0;width:320px;height:320px;margin-left:-160px;border-radius:50%;border:1.5px solid rgba(255,236,190,.75);opacity:0;pointer-events:none}
+
+/* ---------- receipt with diverging factor bars ---------- */
+.rc-amt{display:flex;align-items:baseline;gap:8px;margin:10px 0 4px}
+.rc-amt b{font:600 30px/1 var(--font-display);font-variant-numeric:tabular-nums}
+.rc-row{display:grid;grid-template-columns:78px minmax(0,1fr) 84px 52px;align-items:center;gap:8px;min-height:36px;border-top:1px solid var(--line-1);font-size:13px}
+.rc-row .k{color:var(--ink-2)} .rc-row .d{color:var(--ink-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc-row .x{text-align:right;font:600 13px var(--font-mono);color:var(--ink-2)}
+.rc-row.moved .x,.rc-row.moved .k{color:var(--ink-0)}
+.dbar{height:6px;border-radius:3px;background:var(--sunken);position:relative;box-shadow:inset 0 0 0 1px var(--line-2)}
+.dbar::before{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--line-ctl)}
+.dbar i{position:absolute;top:0;bottom:0;border-radius:3px;background:var(--ink-0)}
+.dbar i.down{background:var(--ink-2)}
+.rc-total{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0 4px;border-top:1px solid var(--line-2);font:600 14px var(--font-ui)}
+.rc-total .t-mono{font-size:13px}
+.rc-note{font-size:13px;color:var(--ink-2);line-height:1.45;margin-top:6px}
+
+/* ---------- demo panel (mockup chrome only; not part of the app) ---------- */
+.demo-btn{position:fixed;left:10px;bottom:calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));z-index:90;min-height:40px;padding:0 12px;border-radius:999px;border:1px dashed #9aa3b5;background:rgba(10,13,19,.9);color:#e6e9f0;font:600 13px var(--font-ui);display:inline-flex;align-items:center;gap:6px}
+@media (min-width:600px){.demo-btn{bottom:16px;left:calc(var(--rail-w) + 12px)}}
+@media (min-width:1280px){.demo-btn{left:calc(var(--sidebar-w) + 12px)}}
+html.no-demo .demo-btn{display:none}
+.demo{position:fixed;inset:0;z-index:95;display:none}
+.demo.show{display:block}
+.demo .dscrim{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+.demo .dpanel{position:absolute;left:0;right:0;bottom:0;max-height:86vh;overflow:auto;background:#12151c;color:#e6e9f0;border-top:1px solid #2a2f3a;border-radius:20px 20px 0 0;padding:16px 16px 24px;font-size:14px;line-height:1.5}
+@media (min-width:600px){.demo .dpanel{left:auto;top:0;width:440px;border-radius:0;border-left:1px solid #2a2f3a;max-height:none}}
+.dpanel h2{font:600 20px/1.2 var(--font-display);margin:2px 0 6px}
+.dpanel h3{font:600 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:#9aa3b5;margin:18px 0 8px}
+.dpanel p{color:#c3cad8;margin:6px 0}
+.dpanel ol,.dpanel ul{padding-left:18px;color:#c3cad8}
+.dpanel li{margin:4px 0}
+.dpanel b{color:#f1f3f8}
+.dctl{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0}
+.dctl .segc{border-color:#76819a}
+.dctl .segc button{color:#c3cad8}
+.dctl .segc button[aria-pressed="true"]{background:#f1f3f8;color:#0a0d13}
+.dacts{display:flex;flex-wrap:wrap;gap:6px}
+.dacts button,.dacts a{min-height:40px;padding:0 12px;border-radius:10px;border:1px solid #76819a;color:#f1f3f8;font-weight:600;font-size:13px;display:inline-flex;align-items:center;text-decoration:none}
+.dlog{font:500 12px/1.5 var(--font-mono);color:#c3cad8;background:#07090e;border:1px solid #2a2f3a;border-radius:10px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap}
+.notch,.edge{transform-box:fill-box;transform-origin:center}
+
+a.card,a.idea,a.collapsed,a.loadout-strip,a.sb-char{text-decoration:none;color:inherit}
+.pring.empty .val,.pring.empty .glint{visibility:hidden}
+
+</style>
+<title>XTNL Train (final)</title>
+<meta name="description" content="Final redesign reference for M4: the weekly movement ring with an unpaid second lap, strength pips, sessions with receipts and optional effort ratings, fitness gauges or calibrating, and PRs as Seals.">
+<style>
+.tboard{display:grid;gap:16px}
+@container main (min-width:760px){.tboard{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.move{padding:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.move .pring{--sz:128px;--sw:9}
+.move .ctr b{font:600 30px/1 var(--font-display);display:block}
+.move .ctr span{font-size:13px;color:var(--ink-2)}
+.move .facts{flex:1;min-width:170px;display:flex;flex-direction:column;gap:10px}
+.move .facts b{font-weight:600}
+.pip{width:12px;height:12px;transform:rotate(45deg);border:1.5px solid var(--ink-2);border-radius:2px;display:inline-block;margin-right:4px}
+.pip.on{background:var(--ink-0);border-color:var(--ink-0)}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1);width:100%}
+.day{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.day .bar{width:100%;max-width:26px;height:56px;border-radius:6px;background:color-mix(in srgb,var(--ink-0) 7%,transparent);position:relative;overflow:hidden}
+.day .bar i{position:absolute;left:0;right:0;bottom:0;background:var(--ink-0);border-radius:6px;transform-origin:bottom;height:100%;transform:scaleY(var(--v))}
+.day.rest .bar{background:var(--hatch);box-shadow:inset 0 0 0 1px var(--held)}
+.sess{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:4px 10px;padding:12px 14px;align-items:center}
+.sess+.sess{border-top:1px solid var(--line-1)}
+.sess .ic{width:40px;height:40px;border-radius:12px;background:var(--sunken);display:grid;place-items:center;color:var(--ink-1)}
+.sess b{font-weight:500;display:block}
+.rate{grid-column:2/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.gauge{padding:12px 14px}
+.gauge+.gauge{border-top:1px solid var(--line-1)}
+.gauge .gl{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.gauge .gl b{font-weight:600}
+.gauge .gl span{font:600 17px var(--font-display);font-variant-numeric:tabular-nums}
+.div{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));position:relative;box-shadow:inset 0 0 0 1px var(--line-2)}
+.div::before{content:"";position:absolute;left:50%;top:-4px;bottom:-4px;width:1.5px;background:var(--line-ctl)}
+.div i{position:absolute;top:0;bottom:0;border-radius:4px;background:var(--ink-1)}
+.pr{display:flex;gap:12px;align-items:center;padding:12px 14px;min-height:64px}
+.pr+.pr{border-top:1px solid var(--line-1)}
+.pr b{font-weight:600;display:block}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+  <!-- UI icons: 24 px, stroke 1.75, round caps, currentColor -->
+  <symbol id="i-today" viewBox="0 0 24 24"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v2.2M5.3 9.3l1.5 1.5M18.7 9.3l-1.5 1.5M8 21h8"/></symbol>
+  <symbol id="i-study" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <symbol id="i-train" viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h6.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.6 2H4.4zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3.5 13.5l2.5-8h12l2.5 8v5h-17zM3.5 13.5h5l1 2h5l1-2h5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2L5.5 5.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4.5v4h4"/><path d="M10.5 9.5l4 2.5-4 2.5z"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><path d="M12 2.8l7.5 4.3v9.8L12 21.2l-7.5-4.3V7.1z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-7"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24"><path d="M5 4v16M9.5 4v16M14 5l4.5 15"/></symbol>
+  <symbol id="i-tree" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="19" r="2.2"/><path d="M12 7.2v4.3M12 11.5l-5 5.4M12 11.5l5 5.4"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4.5h11l-2 4 2 4H5"/></symbol>
+  <symbol id="i-sword" viewBox="0 0 24 24"><path d="M14.5 4.5H19.5v5L10 19l-5-5zM7.5 16.5l-3 3M6 13l5 5"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4M5 12v7.5h14V12"/></symbol>
+  <symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12.2 2.5c.6 3-1 4.8-2.6 6.6C8 10.9 6.5 12.6 6.5 15.4a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.7-1.9-5-.3 1.3-1 2.3-2 2.8.6-3.6-.2-7.9-1.4-10.7z"/></symbol>
+
+  <!-- Currency glyphs (filled). Always paired with a figure; never summed. -->
+  <symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
+  <symbol id="c-pts" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8.5 10L12 22 3.5 12zm0 4.6L7.4 12 12 17.4 16.6 12z"/><path fill="currentColor" d="M12 9.2l2.4 2.8-2.4 2.8-2.4-2.8z"/></symbol>
+  <symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>
+
+  <!-- Life-track sigils (stroke, drawn in ink). Tracks are told apart by shape, never hue. -->
+  <symbol id="s-body" viewBox="0 0 24 24"><path d="M12 3.5l8.5 15.5h-17z"/></symbol>
+  <symbol id="s-duty" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z"/></symbol>
+  <symbol id="s-craft" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 12h14"/></symbol>
+  <symbol id="s-care" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="s-know" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+
+  <!-- Held glyphs: always with a word -->
+  <symbol id="h-freeze" viewBox="0 0 24 24"><path d="M12 2.5v19M3.8 7.25l16.4 9.5M3.8 16.75l16.4-9.5M9.6 3.9L12 6.3l2.4-2.4M9.6 20.1L12 17.7l2.4 2.4"/></symbol>
+  <symbol id="h-rest" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="h-sick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="h-away" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M9 8V5.5h6V8M4 13h16"/></symbol>
+
+  <!-- Materials -->
+  <linearGradient id="m-iron" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c3c9d4"/><stop offset=".45" stop-color="#8a93a4"/><stop offset="1" stop-color="#434a5a"/></linearGradient>
+  <linearGradient id="m-bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3c08f"/><stop offset=".5" stop-color="#c0834f"/><stop offset="1" stop-color="#8a5530"/></linearGradient>
+  <linearGradient id="m-silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".5" stop-color="#c9d1de"/><stop offset="1" stop-color="#7d889c"/></linearGradient>
+  <linearGradient id="m-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff0bd"/><stop offset=".45" stop-color="#f0c75e"/><stop offset="1" stop-color="#a8721a"/></linearGradient>
+  <linearGradient id="m-astral" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d8f3ff"/><stop offset=".5" stop-color="#c7b5ff"/><stop offset="1" stop-color="#ffd9ee"/></linearGradient>
+</defs>
+</svg>
+
+<script>window.SHELL={level:14,title:'Adept',epithet:'of the Deep Archive',next:'Practitioner at 15',pct:.86,badges:{today:3,study:17,train:1},owed:true,asks:3};</script>
+<div class="app" data-section="train" data-sub="this week" data-eyebrow="Train" data-title="This week">
+<main id="main"><div class="page">
+  <p class="t-meta" style="padding:4px 0 12px">Mon 28 Sep – Sun 4 Oct · synced from Samsung Health 12 min ago</p>
+  <div class="tboard">
+    <div class="col">
+      <section class="card move" aria-labelledby="mv-h">
+        <div class="pring" id="moveRing" style="--p:63.3;--p2:0"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="lap" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="glint" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><div><b class="num" id="mvN">95</b><span>of 150 min</span></div></div></div>
+        <div class="facts"><div><div class="t-eyebrow">Movement</div><b id="mv-h" style="font:600 19px/24px var(--font-display);display:block;margin-top:2px">55 active minutes to go</b></div>
+          <div class="t-meta">Strength days <span class="pip on"></span><span class="pip"></span> 1 of 2</div>
+          <div class="t-meta">Past 150 a second lap runs to 300. It shows, and pays nothing extra.</div></div>
+        <div class="days" id="days"></div>
+      </section>
+      <div><div class="sec-h"><span class="lane-mark"></span><h2>Sessions</h2><span class="aside">4 this week</span></div>
+      <section class="card" id="sessions">
+        <div class="sess"><span class="ic"><svg class="i"><use href="#i-train"/></svg></span><div><b>Run · 32 min · 5.4 km</b><span class="t-meta">Yesterday 18:10 · heart rate avg 148</span></div><span class="pill paid num">+11.6<svg class="g"><use href="#c-xp"/></svg></span>
+          <div class="rate" id="rate"><span class="t-meta" style="width:100%">How hard was it? Optional, one tap. Capped by heart rate.</span><button class="chip btn-chip">Easy · 3</button><button class="chip btn-chip">Moderate · 5</button><button class="chip btn-chip">Hard · 7</button><button class="chip btn-chip">All out · 10</button></div></div>
+        <div class="sess"><span class="ic"><svg class="i"><use href="#s-body"/></svg></span><div><b>Strength · 40 min</b><span class="t-meta">Tue · RPE 7 (you) · strength day</span></div><span class="pill paid num">+14.2<svg class="g"><use href="#c-xp"/></svg></span></div>
+        <div class="sess"><span class="ic"><svg class="i"><use href="#i-train"/></svg></span><div><b>Walk · 23 min</b><span class="t-meta">Mon · estimated from heart rate</span></div><span class="pill paid num">+3.1<svg class="g"><use href="#c-xp"/></svg></span></div>
+      </section></div>
+    </div>
+    <div class="col">
+      <div><div class="sec-h"><span class="lane-mark"></span><h2>Gauges</h2><span class="aside" id="gAside">42 days of history</span></div>
+      <section class="card" id="gauges">
+        <div class="gauge"><div class="gl"><b>Fitness</b><span>42</span></div><div class="meter"><i style="--v:.52"></i></div><p class="t-meta" style="margin-top:6px">6-week load (CTL)</p></div>
+        <div class="gauge"><div class="gl"><b>Fatigue</b><span>51</span></div><div class="meter"><i style="--v:.63"></i></div><p class="t-meta" style="margin-top:6px">1-week load (ATL)</p></div>
+        <div class="gauge"><div class="gl"><b>Form</b><span>−9</span></div><div class="div"><i style="right:50%;width:11%"></i></div><p class="t-meta" style="margin-top:6px">Below zero means you trained harder than usual lately. Not a medical or injury signal.</p></div>
+      </section>
+      <section class="card" id="calib" hidden><div class="gauge" style="display:flex;gap:14px;align-items:center"><div class="pring dashed" style="--sz:56px;--sw:5;--p:64"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n num" style="font-size:13px">18</span></div></div><div><b>Calibrating 18 of 28 days</b><p class="t-meta">Fitness, Fatigue and Form appear after 28 days of history. Older sessions from an import count, and pay no XP.</p></div></div></section></div>
+      <div><div class="sec-h"><span class="lane-mark"></span><h2>Personal records</h2><span class="aside">sensor sessions only</span></div>
+      <section class="card" id="prs">
+        <div class="pr"><div class="medal" style="width:44px;height:44px"></div><div><b>5 km in 27:41</b><span class="t-meta">PR · 12 Sep · 38 s faster · paid +10 raw, +0.5 MP</span></div></div>
+        <div class="pr"><div class="medal" style="width:44px;height:44px"></div><div><b>Longest run: 12.1 km</b><span class="t-meta">PR · 30 Aug · baseline from 9 prior runs</span></div></div>
+      </section></div>
+      <section class="card"><a class="collapsed" style="display:flex;align-items:center;gap:10px;padding:0 14px;min-height:52px" href="#history"><svg class="i ink-1"><use href="#i-chart"/></svg><b style="flex:1;font-weight:600">History</b><span class="t-meta">312 sessions</span></a>
+        <a class="collapsed" style="display:flex;align-items:center;gap:10px;padding:0 14px;min-height:52px;border-top:1px solid var(--line-1)" href="#sync"><svg class="i ink-1"><use href="#i-share"/></svg><b style="flex:1;font-weight:600">Import and sync</b><span class="t-meta">Health Connect</span></a></section>
+    </div>
+  </div>
+</div></main></div>
+
+<template id="demo-tpl">
+  <h2>Train (M4) · final reference</h2>
+  <p>A Board. The ring measures a fixed weekly promise (150 active minutes, pro-rated for rest days), never XP volume.</p>
+  <h3>Play</h3>
+  <div class="dacts"><button data-dgo="close">Tier 1: ring closes</button><button data-dgo="pr">Tier 2: a new PR</button><a href="?state=calibrating">Calibrating</a><a href="?">Default</a></div>
+  <h3>Rules on this screen</h3>
+  <ul><li>One session, one payment. The effort chip only adjusts it, capped by heart rate.</li><li>PRs pay only from sensor sessions, with a baseline after 3 prior sessions.</li><li>Rest and vacation days are hatched and shrink the target.</li></ul>
+</template>
+<script>
+/* XTNL · Sigil & Slate (final) — shared mockup runtime.
+   Mirrors: src/lib/motion.ts (gateway), src/components/ui/*, src/lib/celebrate.ts (queue + tiers). */
+(() => {
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const root = document.documentElement;
+const QS = new URLSearchParams(location.search);
+
+/* ------------------------------------------------------------------ prefs */
+const prefs = { theme: 'night', motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'still' : 'full', sound: 'off', haptics: 'off' };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem('xtnl-final-prefs') || '{}')); } catch (e) {}
+['theme', 'motion', 'sound', 'haptics'].forEach(k => { if (QS.get(k)) prefs[k] = QS.get(k); });
+if (QS.get('demo') === '0') root.classList.add('no-demo');
+function applyPrefs() {
+  root.dataset.theme = prefs.theme; root.dataset.motion = prefs.motion;
+  $$('.segc[data-pref]').forEach(seg => $$('button', seg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === prefs[seg.dataset.pref]))));
+  try { localStorage.setItem('xtnl-final-prefs', JSON.stringify(prefs)); } catch (e) {}
+}
+applyPrefs();
+const motion = () => prefs.motion;
+
+/* ------------------------------------------------------------------ feedback channels (opt-in, deterministic) */
+let ac;
+const TONES = { mark: [[1318, 0, .07]], chime: [[784, 0, .32], [1175, .08, .38]], seal: [[523, 0, .5], [784, .09, .5], [1047, .18, .6]], ascend: [[392, 0, .7], [587, .12, .7], [784, .24, .8], [1175, .4, .9]] };
+function sound(kind) {
+  if (prefs.sound !== 'soft' || motion() === 'still') return;
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const t = ac.currentTime;
+    TONES[kind].forEach(([f, d, len]) => { const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(.04, t + d + .012); g.gain.exponentialRampToValueAtTime(.0001, t + d + len);
+      o.connect(g).connect(ac.destination); o.start(t + d); o.stop(t + d + len + .02); });
+  } catch (e) {}
+}
+const HAPTIC = { mark: 8, chime: [12, 40, 18], seal: [14, 50, 22, 50, 40], ascend: [20, 80, 20, 80, 40, 120, 60] };
+function haptic(kind) { if (prefs.haptics === 'on' && motion() !== 'still' && navigator.vibrate) navigator.vibrate(HAPTIC[kind]); }
+
+/* ------------------------------------------------------------------ live region */
+const live = document.createElement('div'); live.className = 'sr-only'; live.setAttribute('aria-live', 'polite'); live.setAttribute('role', 'status'); document.body.appendChild(live);
+function announce(t) { live.textContent = ''; setTimeout(() => (live.textContent = t), 30); }
+
+/* ------------------------------------------------------------------ motion gateway */
+function mulberry(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hash(s) { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
+const fx = document.createElement('div'); fx.className = 'fx'; fx.setAttribute('aria-hidden', 'true'); document.body.appendChild(fx);
+const M = {
+  /** Every animation goes through here. Still: nothing runs (resting style is final). Calm: opacity only, ≤ 260 ms. */
+  play(el, frames, opts = {}) {
+    if (!el || motion() === 'still') return Promise.resolve();
+    if (motion() === 'calm') {
+      if (opts.flourish) return Promise.resolve();
+      frames = frames.map(f => { const g = { ...f }; delete g.transform; return g; });
+      opts = { ...opts, duration: Math.min(opts.duration || 240, 260), delay: Math.min(opts.delay || 0, 200) };
+    }
+    return el.animate(frames, { fill: 'both', easing: 'cubic-bezier(.16,1,.3,1)', ...opts }).finished.catch(() => {});
+  },
+  center(el) { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; },
+  /** Tier 0: the +N token flies on a curve from where it was earned to its own ledger. */
+  fly(fromEl, toEl, { text = '', glyph = 'c-xp', tok = 'var(--xp)' } = {}) {
+    if (motion() !== 'full' || !fromEl || !toEl) return Promise.resolve();
+    const [x0, y0] = M.center(fromEl), [x1, y1] = M.center(toEl);
+    const cx = (x0 + x1) / 2 - 60, cy = Math.min(y0, y1) - 50;
+    const mk = (html, cls, delay, w = 0) => {
+      const s = document.createElement('div'); s.className = cls; s.style.setProperty('--tok', tok); s.innerHTML = html; fx.appendChild(s);
+      const bw = s.offsetWidth || w, bh = s.offsetHeight || w;
+      const frames = []; for (let i = 0; i <= 16; i++) { const t = i / 16, x = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t * t * x1, y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t * t * y1;
+        frames.push({ transform: `translate(${x - bw / 2}px,${y - bh / 2}px) scale(${cls === 'token' ? 1 - .35 * t * t : .6 + .5 * Math.sin(Math.PI * t)})`, opacity: t > .9 ? .2 : 1 }); }
+      return s.animate(frames, { duration: 600, delay, easing: 'cubic-bezier(.55,0,.25,1)', fill: 'both' }).finished.then(() => s.remove());
+    };
+    mk('', 'mote', 70, 6); mk('', 'mote', 35, 6);
+    return mk(`<svg class="g"><use href="#${glyph}"/></svg>${text}`, 'token', 0);
+  },
+  /** A small seeded burst (T1: 8, T2: 14, T3: ≤ 26). Same event id → same burst. */
+  burst(x, y, n, seed = 1, color = 'var(--light)', spread = 60) {
+    if (motion() !== 'full') return;
+    const r = mulberry(hash(seed));
+    for (let i = 0; i < n; i++) {
+      const m = document.createElement('div'); m.className = 'mote'; m.style.setProperty('--tok', color); fx.appendChild(m);
+      const a = (i / n) * Math.PI * 2 + r() * .5, d = spread * (.55 + r() * .6), rot = (r() * 240 - 120) | 0;
+      m.animate([{ transform: `translate(${x - 3}px,${y - 3}px) scale(.4) rotate(0deg)`, opacity: 1 },
+        { transform: `translate(${x - 3 + Math.cos(a) * d}px,${y - 3 + Math.sin(a) * d}px) scale(${.7 + r() * .6}) rotate(${rot}deg)`, opacity: 0 }],
+        { duration: 700 + r() * 180, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }).finished.then(() => m.remove());
+    }
+  },
+  countTo(els, from, to, { dur = 420, dp = 1 } = {}) {
+    els = [].concat(els).filter(Boolean);
+    const fmt = v => v.toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    if (motion() === 'still') { els.forEach(e => (e.textContent = fmt(to))); return; }
+    const d = motion() === 'calm' ? Math.min(dur, 260) : dur, t0 = performance.now();
+    const step = now => { const p = Math.min(1, (now - t0) / d), e = 1 - Math.pow(1 - p, 3); els.forEach(el => (el.textContent = fmt(from + (to - from) * e))); if (p < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  },
+  /** Rolls a numeral old → new (stamp ease). */
+  roll(el, text) {
+    if (motion() !== 'full') { el.textContent = text; return; }
+    el.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-60%)', opacity: 0, offset: .45 }, { transform: 'translateY(60%)', opacity: 0, offset: .5 }, { transform: 'none', opacity: 1 }], { duration: 480, easing: 'ease-out' });
+    setTimeout(() => (el.textContent = text), 215);
+  },
+  bump(el) { if (!el || motion() !== 'full') return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); },
+  floater(near, text, tok = 'var(--xp)') {
+    if (motion() === 'full' || !near) return;
+    const r = near.getBoundingClientRect(), f = document.createElement('div'); f.className = 'floater'; f.style.setProperty('--tok', tok); f.textContent = text; fx.appendChild(f);
+    f.style.left = Math.max(8, r.left - 6) + 'px'; f.style.top = (r.bottom + 6) + 'px';
+    setTimeout(() => f.remove(), 1800);
+  },
+};
+
+/* ------------------------------------------------------------------ art: crest, medal, coin */
+const BANDS = [[1, 'iron'], [15, 'bronze'], [28, 'silver'], [46, 'gold'], [70, 'astral']];
+const bandOf = lvl => BANDS.filter(b => lvl >= b[0]).pop()[1];
+/** The crest: a hex coin in the band's material. From 56 px its four diagonal edges carry the four life tracks (level ÷ depth cap). */
+function crestSVG(level, { size = 38, band = bandOf(level), tracks = null, cls = '' } = {}) {
+  const hx = (r, cx = 50, cy = 52) => [0, 1, 2, 3, 4, 5].map(i => { const a = (-90 + 60 * i) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; });
+  const p = hx(44), q = hx(36), pts = a => a.map(v => v.map(n => n.toFixed(2)).join(',')).join(' ');
+  let edges = '';
+  if (tracks) { // edges: 0→1 upper-right, 2→3 lower-right, 3→4 lower-left, 5→0 upper-left
+    const e = [[0, 1, 'Duty'], [2, 3, 'Craft'], [3, 4, 'Care'], [5, 0, 'Body']];
+    const r2 = hx(39.5);
+    edges = e.map(([a, b, k]) => { const v = tracks[k] || 0; const [x1, y1] = r2[a], [x2, y2] = r2[b];
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/>` +
+        `<line class="edge" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${(x1 + (x2 - x1) * v).toFixed(1)}" y2="${(y1 + (y2 - y1) * v).toFixed(1)}" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>`; }).join('');
+  }
+  const fs = level >= 100 ? 26 : 32;
+  return `<svg class="crest ${cls}" viewBox="0 0 100 104" width="${size}" height="${size * 1.04}" aria-hidden="true">
+    <polygon class="rim" pathLength="100" points="${pts(p)}" fill="#0d1017" stroke="url(#m-${band})" stroke-width="6" stroke-linejoin="round"/>
+    <polygon points="${pts(q)}" fill="none" stroke="url(#m-${band})" stroke-opacity=".38" stroke-width="1.6"/>
+    ${edges}<text x="50" y="${52 + fs * .36}" text-anchor="middle" font-size="${fs}">${level}</text></svg>`;
+}
+function medalSVG(band, notches = 8) {
+  let n = ''; for (let i = 0; i < notches; i++) { const a = i * 360 / notches; n += `<g transform="rotate(${a} 32 32)"><rect class="notch" x="31" y="1.5" width="2" height="5" rx="1" fill="url(#m-${band})"/></g>`; }
+  return `<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="26" fill="#0d1017"/><circle class="rim" pathLength="100" cx="32" cy="32" r="26" fill="none" stroke="url(#m-${band})" stroke-width="3.5"/><circle cx="32" cy="32" r="21" fill="none" stroke="url(#m-${band})" stroke-opacity=".35"/>${n}</svg>`;
+}
+/* Emblem stand-in: SkillLogo (unchanged, attribute-themes.ts hues) renders the face; the new part is the material rim + notches = depth. */
+const ATTR = { MIND: ['#4d9cf5', 6], PHYSICAL: ['#f0554d', 3], CRITICAL_THINKING: ['#f0a030', 4], COMPASSION: ['#ff8fb0', 8], ABSTRACT: ['#9b6bff', 7], LOGIC: ['#2fd0ff', 4], REASON: ['#7fa8d4', 8],
+  REBUTTAL: ['#ff7a3d', 3], SELF_RESPECT: ['#ffd24d', 6], FAITH: ['#7b6bff', 9], CREATIVITY: ['#ff5eb0', 7], STUBBORNNESS: ['#c96a4a', 4], STATISTIC: ['#00cc7a', 5] };
+const RANK_MAT = { PURE: 'iron', SYNERGY: 'bronze', CAPSTONE: 'silver', APEX: 'gold', ULTIMATE: 'astral' };
+function polyPts(n, r, cx = 50, cy = 50) { return [...Array(n)].map((_, i) => { const a = (-90 + 360 / n * i) * Math.PI / 180; return (cx + r * Math.cos(a)).toFixed(2) + ',' + (cy + r * Math.sin(a)).toFixed(2); }).join(' '); }
+function emblemSVG(attr, rank, depth = 4, { motif = 'bell', big = false } = {}) {
+  const [hue, sides] = ATTR[attr]; const mat = RANK_MAT[rank];
+  const motifs = {
+    bell: `<path d="M34 62c6 0 8-20 16-20s10 20 16 20" fill="none" stroke="${hue}" stroke-width="2.6" stroke-linecap="round"/>`,
+    eye: `<path d="M33 50c9-10 25-10 34 0-9 10-25 10-34 0z" fill="none" stroke="${hue}" stroke-width="2.4"/><circle cx="50" cy="50" r="4.5" fill="${hue}"/>`,
+    ring: `<circle cx="50" cy="50" r="10" fill="none" stroke="${hue}" stroke-width="2.4"/><circle cx="50" cy="50" r="3.5" fill="${hue}"/>`,
+    bars: `<path d="M38 60V52M46 60V44M54 60V48M62 60V40" stroke="${hue}" stroke-width="3" stroke-linecap="round"/>`,
+    sigma: `<path d="M60 40H40l10 10-10 10h20" fill="none" stroke="${hue}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`,
+  };
+  let notches = ''; for (let i = 0; i < depth; i++) { const a = -90 + (i - (depth - 1) / 2) * 11; notches += `<g transform="rotate(${a + 90} 50 50)"><rect class="notch" x="49" y="0" width="2" height="5.5" rx="1" fill="url(#m-${mat})"/></g>`; }
+  const spokes = big ? [...Array(sides)].map((_, i) => { const a = (-90 + 360 / sides * i) * Math.PI / 180; return `<line class="spoke" x1="50" y1="50" x2="${(50 + 26 * Math.cos(a)).toFixed(1)}" y2="${(50 + 26 * Math.sin(a)).toFixed(1)}" stroke="${hue}" stroke-opacity=".35" stroke-width="1"/>`; }).join('') : '';
+  return `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="44" fill="#0d1017"/>
+    <circle class="rim" pathLength="100" cx="50" cy="50" r="44" fill="none" stroke="url(#m-${mat})" stroke-width="${big ? 4.5 : 5}"/>
+    <circle cx="50" cy="50" r="38" fill="none" stroke="url(#m-${mat})" stroke-opacity=".3" stroke-width="1"/>
+    ${spokes}<polygon class="poly" pathLength="100" points="${polyPts(sides, 26)}" fill="${hue}1f" stroke="${hue}" stroke-width="2.4" stroke-linejoin="round"/>${motifs[motif] || ''}${notches}</svg>`;
+}
+
+/* ------------------------------------------------------------------ shell (one per page: tab bar < 600, rail 600–1279, sidebar ≥ 1280) */
+const SHELL = window.SHELL || { level: 14, title: 'Adept', epithet: 'of the Deep Archive', next: 'Practitioner at 15', pct: .86, badges: { today: 3, study: 17, train: 1 }, owed: true };
+function buildShell() {
+  const app = $('.app'); if (!app) return;
+  const sec = app.dataset.section, sub = app.dataset.sub || '';
+  const L = { today: 'final-today.html', study: 'final-review.html', train: 'final-train.html', you: 'final-you.html' };
+  const b = SHELL.badges;
+  const cur = s => (s === sec ? ' aria-current="page"' : '');
+  const crest = (sz) => crestSVG(SHELL.level, { size: sz });
+  const tabbar = `<nav class="tabbar" aria-label="Sections">
+    <a class="tab" href="${L.today}"${cur('today')}><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">${b.today || ''}</span></a>
+    <a class="tab" href="${L.study}"${cur('study')}><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">${b.study || ''}</span></a>
+    <button class="tab tab-plus" data-capture aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+    <a class="tab" href="${L.train}"${cur('train')}><svg class="i"><use href="#i-train"/></svg>Train<span class="badge num">${b.train || ''}</span></a>
+    <a class="tab" href="${L.you}"${cur('you')} aria-label="You, character level ${SHELL.level}">${crestSVG(SHELL.level, { size: 24, cls: 'crest-mini' })}You</a></nav>`;
+  const rail = `<nav class="rail" aria-label="Sections">
+    <button class="r-plus" data-capture aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+    <a href="${L.today}"${cur('today')}><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">${b.today || ''}</span></a>
+    <a href="${L.study}"${cur('study')}><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">${b.study || ''}</span></a>
+    <a href="${L.train}"${cur('train')}><svg class="i"><use href="#i-train"/></svg>Train<span class="badge num">${b.train || ''}</span></a>
+    <span class="grow"></span>
+    <a href="${L.you}"${cur('you')} aria-label="You, character level ${SHELL.level}">${crest(34)}You</a></nav>`;
+  const subs = {
+    today: [['Board', L.today], ['Weekly review', 'final-week.html'], ['Rules', L.today + '?sheet=rules']],
+    study: [['Review', L.study], ['Library', L.study + '?view=library'], ['New idea', L.study + '?view=add'], ['Fields & Domains', L.study + '?view=structure']],
+    train: [['This week', L.train], ['History', L.train + '#history'], ['Import & sync', L.train + '#sync']],
+    you: [['Sheet', L.you], ['Skills', L.you + '?tab=skills'], ['Loadout', L.you + '?tab=loadout'], ['Moments', L.you + '?tab=moments'], ['Stats', L.you + '?tab=stats'], ['Settings', L.you + '?tab=settings']],
+  };
+  const sbSec = (s, label, icon, n, owed) => `<div class="sb-sec"><a href="${L[s]}"${cur(s)}><svg class="i"><use href="#${icon}"/></svg>${label}${n ? `<span class="n num">${n}</span>` : ''}${owed ? '<span class="n owed num" title="Debt open">1 owed</span>' : ''}</a>
+    ${s === sec ? `<div class="sb-sub">${subs[s].map(([t, h]) => `<a href="${h}"${t.toLowerCase() === sub ? ' aria-current="page"' : ''}>${t}</a>`).join('')}</div>` : ''}</div>`;
+  const sidebar = `<nav class="sidebar" aria-label="Sections">
+    <a class="sb-char" href="${L.you}">${crestSVG(SHELL.level, { size: 48, tracks: SHELL.tracks || { Body: .55, Duty: .8, Craft: .62, Care: .4 } })}
+      <div class="who"><b>${SHELL.title}</b><span>${SHELL.epithet}</span><div class="meter thin" style="margin-top:6px"><i style="--v:${SHELL.pct}"></i></div><span>${Math.round(SHELL.pct * 100)}% to ${SHELL.next}</span></div></a>
+    <button class="btn btn-primary block sb-capture" data-capture><svg class="i"><use href="#i-plus"/></svg>Capture <span class="kbd">C</span></button>
+    ${sbSec('today', 'Today', 'i-today', b.today, SHELL.owed)}${sbSec('study', 'Study', 'i-study', b.study)}${sbSec('train', 'Train', 'i-train', b.train)}${sbSec('you', 'You', 'i-sheet')}</nav>`;
+  const col = document.createElement('div'); col.className = 'col';
+  const tabsHtml = (subs[sec] || []).map(([t, h]) => `<a class="tab-s" href="${h}"${t.toLowerCase() === sub ? ' aria-current="page"' : ''}>${t}</a>`).join('');
+  const topbar = `<header class="topbar" id="topbar">
+    <a class="crest-btn" href="${L.you}" aria-label="Character level ${SHELL.level}, ${SHELL.title} ${SHELL.epithet}. Open your sheet">${crest(38)}</a>
+    <div class="tb-title">${app.dataset.eyebrow ? `<div class="t-eyebrow">${app.dataset.eyebrow}</div>` : ''}<h1>${app.dataset.title || ''}</h1></div>
+    <div class="tb-tabs tabs" role="navigation" aria-label="${sec} pages">${tabsHtml}</div>
+    <div class="mini-ledger num" id="miniLedger" aria-hidden="true"><span class="cur"><svg class="g c-xp"><use href="#c-xp"/></svg><b class="xp-val">0.0</b></span><span class="cur"><svg class="g c-pts"><use href="#c-pts"/></svg><b class="pts-val">0.0</b></span></div>
+    <button class="icon-btn" data-asks aria-label="Asks: ${SHELL.asks ?? 2} waiting"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">${SHELL.asks ?? 2}</span></button></header>`;
+  const main = $('main', app); main.classList.add('main');
+  app.insertAdjacentHTML('afterbegin', rail + sidebar);
+  app.appendChild(col); col.insertAdjacentHTML('beforeend', topbar); col.appendChild(main); col.insertAdjacentHTML('beforeend', tabbar);
+  if (app.dataset.chrome === 'none') { $('.topbar', col).hidden = true; $('.tabbar', col).hidden = true; }
+}
+
+/* ------------------------------------------------------------------ sheets (one component; Escape stack; focus returns) */
+const stack = [];
+let scrim = document.createElement('div'); scrim.className = 'scrim'; document.body.appendChild(scrim);
+function openSheet(id) {
+  const s = typeof id === 'string' ? document.getElementById(id) : id; if (!s) return;
+  s._ret = document.activeElement; s.classList.add('show'); s.setAttribute('aria-hidden', 'false'); scrim.classList.add('show'); stack.push(s);
+  setTimeout(() => { const f = s.querySelector('[autofocus],button,a,input,textarea,[tabindex]'); if (f) f.focus(); }, 60);
+}
+function closeSheet(s = stack[stack.length - 1]) {
+  if (!s) return; s.classList.remove('show'); s.setAttribute('aria-hidden', 'true'); stack.splice(stack.indexOf(s), 1);
+  if (!stack.length) scrim.classList.remove('show'); if (s._ret) s._ret.focus();
+}
+scrim.addEventListener('click', () => closeSheet());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (C.curtainOpen()) return C.escape(); if (stack.length) closeSheet(); }
+  if (e.key === 'Tab' && stack.length) { const s = stack[stack.length - 1], f = $$('button,a[href],input,textarea,select,[tabindex="0"]', s).filter(x => !x.disabled && x.offsetParent);
+    if (!f.length) return; const i = f.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); } }
+});
+document.addEventListener('click', e => { const c = e.target.closest('[data-close]'); if (c) closeSheet(c.closest('.sheet') || undefined); const o = e.target.closest('[data-open]'); if (o) openSheet(o.dataset.open); });
+
+/* ------------------------------------------------------------------ toasts + dock */
+const dock = document.createElement('div'); dock.className = 'dock'; document.body.appendChild(dock);
+function toast(html, { action = 'OK', onAction = null, hold = 6000, ring = null } = {}) {
+  const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status');
+  t.innerHTML = `${ring != null ? `<div class="pring closed glinting" style="--p:100"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="glint" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div>` : ''}<div class="tt">${html}</div><button class="btn btn-quiet">${action}</button>`;
+  dock.appendChild(t); requestAnimationFrame(() => t.classList.add('show'));
+  let timer; const arm = () => (timer = setTimeout(kill, hold)); const kill = () => { t.classList.remove('show'); setTimeout(() => t.remove(), 260); };
+  t.addEventListener('mouseenter', () => clearTimeout(timer)); t.addEventListener('mouseleave', arm); t.addEventListener('focusin', () => clearTimeout(timer)); t.addEventListener('focusout', arm);
+  $('button', t).addEventListener('click', () => { if (onAction) onAction(); kill(); }); arm(); return t;
+}
+
+/* ------------------------------------------------------------------ celebration queue: one T2/T3 at a time; lower tiers never stack */
+const LOG = [];
+function log(tier, kind, text) { const d = new Date(); LOG.push(`${d.toTimeString().slice(0, 8)}  T${tier} ${kind}  ${text}`); $$('.dlog').forEach(el => { el.textContent = LOG.slice(-40).join('\n'); el.scrollTop = 1e6; }); }
+const Q = []; let busy = false;
+function enqueue(fn) { Q.push(fn); if (!busy) next(); }
+function next() { const fn = Q.shift(); if (!fn) { busy = false; return; } busy = true; fn(() => next()); }
+const C = {
+  log,
+  mark(kind, text) { sound('mark'); haptic('mark'); log(0, kind, text); },
+  /** T1 Chime: in place, under a second. */
+  chime({ kind, text, sweepEl = null, burstEl = null, seed = kind, say = text }) {
+    if (sweepEl) { sweepEl.classList.add('sweep'); sweepEl.classList.remove('go'); void sweepEl.offsetWidth; sweepEl.classList.add('go'); }
+    if (burstEl) { const [x, y] = M.center(burstEl); M.burst(x, y, 8, seed, 'var(--light)', 46); }
+    sound('chime'); haptic('chime'); announce(say); log(1, kind, text);
+  },
+  /** T2 Seal: medallion with a rolling numeral, the exact number and what moved. */
+  seal(o) { enqueue(done => C._seal(o, done)); },
+  _seal({ kind, band = 'bronze', from, to, eyebrow, title, facts = [], what = [], id = kind, target = null, actions = [] }, done) {
+    const card = document.createElement('div'); card.className = 'seal-card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', title);
+    card.innerHTML = `<div class="sc-top"><div class="medal">${medalSVG(band)}<div class="num-wrap"><b class="num">${to}</b></div></div>
+      <div class="sc-t"><div class="t-eyebrow">${eyebrow}</div><h3>${title}</h3></div></div>
+      ${facts.length ? `<ul class="facts">${facts.map(f => `<li>${f}</li>`).join('')}</ul>` : ''}
+      ${what.length ? `<div class="what"><div class="t-eyebrow">What moved</div><ul>${what.map(([k, v]) => `<li><span>${k}</span><b>${v}</b></li>`).join('')}</ul></div>` : ''}
+      ${target ? '' : `<div class="acts">${actions.map((a, i) => `<button class="btn ${a.cls || 'btn-secondary'}" data-i="${i}">${a.label}</button>`).join('')}<button class="btn btn-primary" data-done>Done</button></div>`}`;
+    (target || dock).appendChild(card); requestAnimationFrame(() => card.classList.add('show'));
+    const numEl = $('.num-wrap b', card); numEl.textContent = from ?? to;
+    const med = $('.medal', card);
+    M.play($('.rim', med), [{ strokeDasharray: '100', strokeDashoffset: 100 }, { strokeDasharray: '100', strokeDashoffset: 0 }], { duration: 520, flourish: true });
+    $$('.notch', med).forEach((n, i) => M.play(n, [{ opacity: 0 }, { opacity: 1 }], { duration: 120, delay: 300 + i * 32 }));
+    setTimeout(() => { if (from != null) M.roll(numEl, String(to)); const [x, y] = M.center(med); M.burst(x, y, 14, id, 'var(--light)', 64); }, motion() === 'full' ? 380 : 0);
+    card.classList.add('sweep'); setTimeout(() => card.classList.add('go'), 400);
+    sound('seal'); haptic('seal'); announce(`${eyebrow}. ${title}. ${facts.join(' ')}`); log(2, kind, `${title} ${from != null ? from + '→' + to : to}`);
+    let t; const close = () => { clearTimeout(t); card.classList.remove('show'); setTimeout(() => { card.remove(); done(); }, 280); };
+    const arm = () => (t = setTimeout(close, 9000));
+    card.addEventListener('mouseenter', () => clearTimeout(t)); card.addEventListener('mouseleave', arm); card.addEventListener('focusin', () => clearTimeout(t));
+    if (target) { setTimeout(done, 1400); return card; } // in-panel Seal: the panel's own button moves on; the hold is a ceiling
+    $('[data-done]', card).addEventListener('click', close); $$('[data-i]', card).forEach(b => b.addEventListener('click', () => { actions[+b.dataset.i].onClick?.(); close(); }));
+    arm(); setTimeout(() => $('[data-done]', card).focus({ preventScroll: true }), 240);
+    return card;
+  },
+  /** T3 Ascension: opaque night curtain, skippable from the first frame, still tableau identical in words. */
+  ascend(o) { enqueue(done => C._ascend(o, done)); },
+  _curtain: null,
+  curtainOpen() { return C._curtain && C._curtain.classList.contains('show'); },
+  escape() { const c = C._curtain; if (!c.classList.contains('final')) C._final(); else C._close(); },
+  _final() { const c = C._curtain; c.getAnimations({ subtree: true }).forEach(a => { try { a.finish(); } catch (e) {} }); $$('.fx > *').forEach(n => n.remove()); c.classList.add('final'); $('.cur-skip', c).textContent = 'Close'; const f = $('.cur-acts .btn', c); if (f) f.focus({ preventScroll: true }); },
+  _close() { const c = C._curtain; c.classList.remove('show', 'final'); document.body.style.overflow = ''; if (c._ret) c._ret.focus(); const d = c._done; c._done = null; d && d(); },
+  _ascend({ kind, art, fromEl = null, kicker, title, epithet = '', lore = '', grants = [], cost = '', cause = '', actions = [], ray = null, kickColor = null, sky = null, id = kind }, done) {
+    let c = C._curtain;
+    if (!c) { c = C._curtain = document.createElement('div'); c.className = 'curtain theme-night'; c.setAttribute('role', 'dialog'); c.setAttribute('aria-modal', 'true'); document.body.appendChild(c); }
+    c._ret = document.activeElement; c._done = done;
+    c.style.setProperty('--ray', ray || 'rgba(255,214,140,.11)'); c.style.setProperty('--cur-kick', kickColor || 'var(--gold-m)'); c.style.setProperty('--sky', sky || '');
+    c.setAttribute('aria-label', `${kicker}: ${title}`);
+    c.innerHTML = `<div class="skyband"></div><div class="rays"></div><div class="flash"></div><div class="wave"></div>
+      <button class="btn btn-quiet cur-skip">Skip</button>
+      <div class="cur-in" tabindex="-1"><div class="cur-art">${art}</div><div class="cur-kick">${kicker}</div><h2>${title}</h2>${epithet ? `<div class="t-epithet">${epithet}</div>` : ''}${lore ? `<p class="cur-lore">${lore}</p>` : ''}
+      <ul class="grants">${grants.map(g => `<li><span>${g}</span></li>`).join('')}</ul>${cost ? `<p class="cur-cost">${cost}</p>` : ''}${cause ? `<p class="cur-cost">${cause}</p>` : ''}
+      <div class="cur-acts">${actions.map((a, i) => `<button class="btn ${a.cls || 'btn-quiet'}" data-i="${i}">${a.label}</button>`).join('')}</div></div>`;
+    c.classList.remove('final'); c.classList.add('show'); document.body.style.overflow = 'hidden'; c.scrollTop = 0;
+    $('.cur-in', c).focus({ preventScroll: true });
+    $('.cur-skip', c).addEventListener('click', () => C.escape());
+    $$('[data-i]', c).forEach(b => b.addEventListener('click', () => { const a = actions[+b.dataset.i]; C._close(); a.onClick?.(); }));
+    let armed = false; setTimeout(() => (armed = true), 220);
+    c.onpointerdown = e => { if (armed && !c.classList.contains('final') && !e.target.closest('button')) C._final(); };
+    sound('ascend'); haptic('ascend'); announce(`${kicker}. ${title}. ${grants.join('. ')} ${cost}`); log(3, kind, title);
+    const m = motion();
+    if (m === 'still') { C._final(); return; }
+    const artEl = $('.cur-art', c), inner = $$('.cur-in > *:not(.cur-art)', c);
+    M.play(c, [{ opacity: 0 }, { opacity: 1 }], { duration: 320 });
+    if (m === 'calm') { M.play(artEl, [{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120 }); inner.forEach((el, i) => M.play(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 200 + i * 40 })); setTimeout(() => C.curtainOpen() && C._final(), 900); return; }
+    // FULL choreography — transform, opacity and stroke-dashoffset only.
+    if (fromEl) { const a = fromEl.getBoundingClientRect(), b = artEl.getBoundingClientRect(); const dx = a.left + a.width / 2 - (b.left + b.width / 2), dy = a.top + a.height / 2 - (b.top + b.height / 2), s = Math.max(.2, a.width / b.width);
+      artEl.animate([{ transform: `translate(${dx}px,${dy}px) scale(${s})` }, { transform: 'none' }], { duration: 640, delay: 200, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'both' }); }
+    else artEl.animate([{ transform: 'scale(.6)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 600, delay: 200, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' });
+    $$('.rim,.poly', artEl).forEach(r => r.animate([{ strokeDasharray: '100', strokeDashoffset: 100 }, { strokeDasharray: '100', strokeDashoffset: 0 }], { duration: 760, delay: 480, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }));
+    $$('.spoke', artEl).forEach((r, i) => r.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 820 + i * 40, fill: 'both' }));
+    $$('.notch,.edge', artEl).forEach((n, i) => n.animate([{ opacity: 0, transform: 'scale(0)' }, { opacity: 1, transform: 'none' }], { duration: 240, delay: 900 + i * 32, easing: 'cubic-bezier(.34,1.56,.64,1)', fill: 'both' }));
+    $('.flash', c).animate([{ opacity: 0 }, { opacity: 0, offset: .01 }, { opacity: .9, offset: .15 }, { opacity: 0 }], { duration: 900, delay: 1000, fill: 'both' });
+    setTimeout(() => { if (!C.curtainOpen() || c.classList.contains('final')) return; const [x, y] = M.center(artEl); const w = $('.wave', c); w.style.top = y - 160 + 'px';
+      w.animate([{ transform: 'scale(.12)', opacity: .9 }, { transform: 'scale(1.5)', opacity: 0 }], { duration: 900, easing: 'cubic-bezier(.16,1,.3,1)' }); M.burst(x, y, 26, id, 'var(--gold-a)', 150); c.classList.add('final-rays'); $('.rays', c).style.opacity = 1; }, 1000);
+    inner.forEach((el, i) => el.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: 1150 + i * 80, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }));
+    setTimeout(() => { if (C.curtainOpen() && !c.classList.contains('final')) { c.classList.add('final'); $('.cur-skip', c).textContent = 'Close'; } }, 1900);
+  },
+};
+
+/* ------------------------------------------------------------------ demo panel (mockup chrome) */
+function buildDemo() {
+  const tpl = $('#demo-tpl'); if (!tpl) return;
+  const btn = document.createElement('button'); btn.className = 'demo-btn'; btn.innerHTML = '<svg class="i" style="width:16px;height:16px"><use href="#i-gear"/></svg>Demo'; btn.setAttribute('aria-label', 'Open the mockup demo panel (not part of the app)');
+  const d = document.createElement('div'); d.className = 'demo theme-night'; d.innerHTML = `<div class="dscrim"></div><div class="dpanel" role="dialog" aria-label="Mockup demo panel">${tpl.innerHTML}
+    <h3>Feedback settings (Settings › Feedback)</h3>
+    <div class="dctl"><span>Theme</span><div class="segc" data-pref="theme"><button data-v="night">Night</button><button data-v="vellum">Vellum</button></div></div>
+    <div class="dctl"><span>Motion</span><div class="segc" data-pref="motion"><button data-v="full">Full</button><button data-v="calm">Calm</button><button data-v="still">Still</button></div></div>
+    <div class="dctl"><span>Sound</span><div class="segc" data-pref="sound"><button data-v="off">Off</button><button data-v="soft">Soft</button></div></div>
+    <div class="dctl"><span>Haptics</span><div class="segc" data-pref="haptics"><button data-v="off">Off</button><button data-v="on">On</button></div></div>
+    <h3>Celebration log (dev check: every tier is logged)</h3><div class="dlog">(nothing yet)</div>
+    <div class="dacts" style="margin-top:14px"><button data-dclose>Close</button><button onclick="location.href=location.pathname">Reset</button></div></div>`;
+  document.body.append(btn, d);
+  btn.addEventListener('click', () => { d.classList.add('show'); $('.dpanel button', d)?.focus(); });
+  d.addEventListener('click', e => { if (e.target.classList.contains('dscrim') || e.target.closest('[data-dclose]') || e.target.closest('[data-dgo]')) d.classList.remove('show'); });
+  $$('.segc[data-pref]', d).forEach(seg => seg.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; prefs[seg.dataset.pref] = b.dataset.v; applyPrefs(); if (seg.dataset.pref === 'sound' && b.dataset.v === 'soft') sound('mark'); }));
+  applyPrefs();
+}
+
+/* ------------------------------------------------------------------ boot */
+buildShell(); buildDemo();
+// top bar border + compact ledger once the page's ledger scrolls away (a flying spark always has a visible target)
+const topbar = $('#topbar'), mini = $('#miniLedger'), watch = $('[data-ledger-watch]');
+if (watch && mini) new IntersectionObserver(([e]) => { mini.classList.toggle('show', !e.isIntersecting); }, { rootMargin: '-60px 0px 0px 0px' }).observe(watch);
+addEventListener('scroll', () => topbar && topbar.classList.toggle('scrolled', scrollY > 4), { passive: true });
+document.addEventListener('click', e => { if (e.target.closest('[data-capture]') && window.openCapture) window.openCapture(); if (e.target.closest('[data-asks]') && window.openAsks) window.openAsks(); });
+document.addEventListener('keydown', e => { if ((e.key === 'c' && !e.ctrlKey && !e.metaKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) || (e.key.toLowerCase() === 'k' && (e.ctrlKey || e.metaKey))) { if (window.openCapture && !C.curtainOpen()) { e.preventDefault(); window.openCapture(); } } });
+
+window.X = { $, $$, prefs, motion, M, C, sound, haptic, announce, openSheet, closeSheet, toast, crestSVG, medalSVG, emblemSVG, bandOf, ATTR, RANK_MAT, QS, LOG };
+})();
+
+</script>
+<script>
+(() => {
+const { $, $$, M, C, QS, medalSVG, announce, toast } = X;
+$$('#prs .medal').forEach((m, i) => (m.innerHTML = medalSVG('bronze') + `<div class="num-wrap"><b style="font-size:13px">PR</b></div>`));
+const D = [['M', 23, 0], ['T', 40, 0], ['W', 0, 0], ['T', 32, 0], ['F', 0, 0], ['S', 0, 1], ['S', 0, 0]];
+$('#days').innerHTML = D.map(([d, m, rest]) => `<div class="day ${rest ? 'rest' : ''}"><div class="bar"><i style="--v:${Math.min(1, m / 45)}"></i></div>${d}</div>`).join('');
+$('#rate').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $$('#rate button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); C.mark('rate', 'Run rated ' + b.textContent); announce('Rated. The receipt now says RPE (you), capped by heart rate.'); });
+if (QS.get('state') === 'calibrating') { $('#gauges').hidden = true; $('#calib').hidden = false; $('#gAside').textContent = '18 days of history'; }
+const go = {
+  close: () => { const r = $('#moveRing'); M.countTo($('#mvN'), 95, 152, { dp: 0, dur: 600 }); r.style.setProperty('--p', 100); r.style.setProperty('--p2', 1.3); setTimeout(() => { r.classList.add('closed', 'glinting'); $('#mv-h').textContent = 'Week kept: 152 of 150'; C.chime({ kind: 'move-week', text: 'Weekly movement 152 of 150', sweepEl: $('.move') }); }, 620); },
+  pr: () => C.seal({ kind: 'pr', band: 'bronze', to: 'PR', eyebrow: 'Personal record', title: '10 km in 54:12', facts: ['48 s faster than your best, from 11 prior runs.', 'Sensor session, so it pays: +10 raw XP and +0.5 MP.'], what: [['Body depth', '+0.1 (PRs, capped at 3)'], ['Goal · 10K under 55:00', '62% → 100%']], actions: [] }),
+};
+document.addEventListener('click', e => { const g = e.target.closest('[data-dgo]'); if (g && go[g.dataset.dgo]) setTimeout(go[g.dataset.dgo], 150); });
+if (QS.get('play') && go[QS.get('play')]) setTimeout(go[QS.get('play')], 400);
+})();
+</script>
+</body>
+</html>

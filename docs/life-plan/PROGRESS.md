@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T03:06+1000 — interactive session: redesign design workflow running (map → 3 directions with mockups → 3 judges → synthesis; ~1.5-2.5 h)
+    HEARTBEAT: 2026-10-01T06:36+1000 — interactive session: redesign BUILD workflow running until 2026-10-01T12:36+1000 (L0 foundation, then L1-L5 in parallel, then 3 reviewers)
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -15,7 +15,7 @@ Rules:
   counts as work: write the heartbeat when launching it, with its expected
   finish time).
 - A resuming session must NOT start work if the heartbeat is younger than
-  4 hours, or if any file under `src/` was modified in the last 45 minutes
+  4 hours, or if it says "until <time>" and that time (+60 min) has not passed, or if any file under `src/` was modified in the last 45 minutes
   (`git status` / mtimes). Another session is alive; exit quietly.
 - When a step finishes, tick it below and add a line to the log.
 
@@ -39,7 +39,12 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
   - [x] Browser-verified on the local rehearsal server (port 3100)
   - [x] `life_core` applied to Supabase (after the project-ref check), backfill dry-run then `--apply`
   - [x] Committed and pushed to `main`
-- [ ] Full UI/UX redesign
+- [ ] Full UI/UX redesign — spec `redesign.md`, mockups `redesign/final-*.html`
+  - [x] Design round (map → 3 directions → 3 judges → synthesis): "Sigil & Slate"
+  - [ ] Build: L0 foundation, L1 Today, L2 Review, L3 Celebrate (+ migration), L4 You, L5 Study/Settings
+  - [ ] Reviews fixed; gates (contrast, UI audit at 344/375/932/1440, motion, perf, layers) green
+  - [ ] Celebrations migration rehearsed locally, applied to Supabase
+  - [ ] Browser-verified; committed and pushed
 - [ ] M2
 - [ ] M3
 - [ ] M4
@@ -69,3 +74,4 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — Note: the user committed a mid-build snapshot as `a` (2f72f0d) at 02:15, before life_core existed in production; the fix commit follows.
 - 2026-10-01 — Redesign: design workflow `redesign-design` launched. Its spec and mockups will be copied to docs/life-plan/redesign.md and docs/life-plan/redesign/.
 - RESUME NOTE (redesign): the design workflow's results land in C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_62a96a5f-71d/journal.jsonl (one "result" line per agent; the last is the synthesised spec) and its HTML mockups in C:/Users/Thanc/AppData/Local/Temp/claude/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/scratchpad/redesign/. If the journal has the synthesis result, copy the spec to docs/life-plan/redesign.md and the final-*.html mockups to docs/life-plan/redesign/, then build it in lanes (foundation lane first). If not, rerun the workflow from its script: C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/workflows/scripts/redesign-design-wf_62a96a5f-71d.js (change its OUTDIR to docs/life-plan/redesign).
+- 2026-10-01 — Redesign design round done: "Sigil & Slate" (A base + B instruments + C daily hooks). Spec docs/life-plan/redesign.md, mockups docs/life-plan/redesign/. Build workflow launched.
