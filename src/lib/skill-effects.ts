@@ -197,9 +197,13 @@ async function loadLifeRows(userId: string, now?: Date): Promise<FieldContributi
 /**
  * Raw attribute scores — streak bonus included at its base (1x, pre-STREAK_AMPLIFIER) strength, no RESONANCE applied.
  * Life rows included (M5), so the Seal's epithet (celebrations.ts) follows a PHYSICAL lead from Body.
+ * Life is read with a fresh Date (M5 review C1): React cache() keys a Date by
+ * identity, so the call never shares the page render's pre-judge memo; a
+ * week judged in after() (and its band or title moment) reads the ledger the
+ * judge just invalidated.
  */
 export async function loadAttributeScores(userId: string): Promise<AttributeScores> {
-  const [rows, streakBonuses, lifeRows] = await Promise.all([loadFieldRows(), loadFieldStreakBonuses(userId), loadLifeRows(userId)]);
+  const [rows, streakBonuses, lifeRows] = await Promise.all([loadFieldRows(), loadFieldStreakBonuses(userId), loadLifeRows(userId, new Date())]);
   return scoresWithStreak(rows, streakBonuses, 1, lifeRows);
 }
 

@@ -3,9 +3,9 @@
  * once life counts, its track edges (each track's level over its depth cap),
  * the title and epithet, "Character level 14 · Mind leads", the meter to the
  * next level with the next title named, that title's blurb, and the purse:
- * mastery points, life MP this week against the weekly cap (once life
- * counts), ideas mastered and emblems. Every figure is real; a missing one is
- * left out rather than faked.
+ * mastery points, life MP last week against the weekly cap (once life
+ * counts: the last judged week, sheet-math lifeMpCell), ideas mastered and
+ * emblems. Every figure is real; a missing one is left out rather than faked.
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTE_META } from "@/lib/attributes";
@@ -14,7 +14,7 @@ import { Crest } from "@/components/ui/Crest";
 import { CurrencyGlyph } from "@/components/ui/Icon";
 import type { TrackEdges } from "@/components/ui/Crest";
 import { cx } from "@/components/ui/cx";
-import { mpFigure, type TitleDistance } from "./sheet-math";
+import { mpFigure, type LifeMpCell, type TitleDistance } from "./sheet-math";
 import { LastSeenMeter } from "./LastSeenMeter";
 
 const whole = (v: number) => Math.floor(v).toLocaleString("en-GB");
@@ -28,8 +28,12 @@ interface Props {
   dominant: Attribute | null;
   distance: TitleDistance;
   tracks: TrackEdges | null;
-  /** Capped life MP minted this life week, against the cap. Null before life counts: no cell. */
-  lifeMp?: { used: number; cap: number } | null;
+  /**
+   * Capped life MP of the last judged week, against the cap, with its label
+   * (sheet-math lifeMpCell: 'life MP last week'; used null before any week is
+   * judged). Null before life counts: no cell.
+   */
+  lifeMp?: LifeMpCell | null;
   balance: number;
   mastered: number;
   owned: number;
@@ -94,10 +98,17 @@ export function CharacterHero(p: Props) {
           <div>
             <div className="v">
               <CurrencyGlyph kind="mp" />
-              {mpFigure(p.lifeMp.used)}
+              {p.lifeMp.used == null ? (
+                <>
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">none</span>
+                </>
+              ) : (
+                mpFigure(p.lifeMp.used)
+              )}
               <small>/ {mpFigure(p.lifeMp.cap)}</small>
             </div>
-            <div className="k">life MP this week</div>
+            <div className="k">{p.lifeMp.label}</div>
           </div>
         )}
         <div>

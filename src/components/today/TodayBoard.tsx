@@ -24,13 +24,17 @@ import { announce, chime, mark } from "@/lib/celebrate";
 import type { T1Kind } from "@/lib/celebration-types";
 import type { PlaceLane } from "@/lib/life-types";
 import { motionLevel } from "@/lib/motion";
+import { GOAL_ALREADY_CLOSED } from "@/lib/goals";
 import type { CapturedItem } from "@/app/actions/capture";
 import {
   againTask,
   archiveTask,
   clarifyInbox,
+  closeGoal,
   completeTask,
   goalProgress,
+  previewGoalClose,
+  rescheduleGoal,
   renameTask,
   rescheduleTask,
   resizeTask,
@@ -50,7 +54,8 @@ import { cx } from "@/components/ui/cx";
 import { TaskRow } from "./TaskRow";
 import { TaskDrawer, type DrawerWork } from "./TaskDrawer";
 import { NextUp } from "./NextUp";
-import { GoalsStrip } from "./GoalsStrip";
+import { GOALS_HEADING_ID, GOAL_CLOSE_CHIP, GoalsStrip } from "./GoalsStrip";
+import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview } from "./GoalSheets";
 import { InboxSheet } from "./InboxSheet";
 import { CapacityPanel } from "./CapacityTile";
 import { ReceiptSheet } from "./ReceiptSheet";
@@ -67,6 +72,9 @@ import {
   capacityChosen,
   closeDayProminent,
   dayMomentsOf,
+  goalAfterClose,
+  goalClosedNotice,
+  goalRescheduledNotice,
   hhmmOf,
   keptAtOf,
   laneTally,
@@ -101,6 +109,31 @@ interface Props {
   /** The clock line under the board (LiveClock, the zone, the rules link). */
   /** The live clock line under the board: plain strings, so no server-made JSX crosses into this client tree. */
   footClock?: { time: string; zone: string; tz: string };
+  /**
+   * Whether life counts yet (the page's isLaunched(today)). Before, goals
+   * show progress only: no stated MP and no Close.
+   */
+  launched?: boolean;
+}
+
+/** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */
+interface GoalCloseTarget {
+  id: string;
+  title: string;
+  preview: GoalClosePreview;
+  error: string | null;
+  /** False while the sheet slides away: the target stays so its title does not change mid-exit. */
+  open: boolean;
+}
+
+/** The goal the Reschedule sheet is open on. */
+interface GoalReschedTarget {
+  id: string;
+  title: string;
+  error: string | null;
+  open: boolean;
+  /** One per opening: the date field starts fresh each time. */
+  nonce: number;
 }
 
 interface Pending {
@@ -180,7 +213,7 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
  * and a Full day are Tier 1, once, after a tap, never on arrival. Every
  * number is the real one.
  */
-export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<Pending[]>([]);
@@ -197,6 +230,19 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   const [closeOpen, setCloseOpen] = useState(false);
   const [anytimeOpen, setAnytimeOpen] = useState(false);
   const [busyGoals, setBusyGoals] = useState(false);
+  /** The Close sheet (M5, launched only) and whether its close is in flight. */
+  const [goalClose, setGoalClose] = useState<GoalCloseTarget | null>(null);
+  const [goalClosing, setGoalClosing] = useState(false);
+  /**
+   * After a close, where focus goes once the sheet has shut: the next
+   * goal's Close chip (by its goal id), else the Goals heading (null). The
+   * sheet hands focus back to its opener, the closed card's chip, which
+   * the refreshed board removes; without this, focus would fall to <body>.
+   */
+  const [focusAfterClose, setFocusAfterClose] = useState<{ next: string | null } | null>(null);
+  /** The Reschedule sheet (a goal carried past its due day) and whether its save is in flight. */
+  const [goalResched, setGoalResched] = useState<GoalReschedTarget | null>(null);
+  const [reschedBusy, setReschedBusy] = useState(false);
   /** Resizes, self-ratings and renames in flight, by template. */
   const [working, setWorking] = useState<Record<string, DrawerWork>>({});
   const [removal, setRemoval] = useState<Removal | null>(null);
@@ -692,6 +738,122 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     );
   }
 
+  const goalTitleOf = (goalId: string): string =>
+    Object.values(board.goals)
+      .flat()
+      .find((g) => g.template.id === goalId)?.template.title ?? "Goal";
+
+  /**
+   * Reads what closing now pays (read-only) into the open Close sheet, if it
+   * is still open on this goal. A null preview means the goal is not open
+   * any more (closed on another device or tab): the board is refreshed, so
+   * its card and Close chip leave the strip.
+   */
+  function loadGoalPreview(goalId: string) {
+    const put = (preview: GoalClosePreview) => setGoalClose((c) => (c && c.id === goalId ? { ...c, preview } : c));
+    previewGoalClose(goalId).then(
+      (res) => {
+        put(res.ok ? { state: "ready", payout: res.value } : { state: "error", error: res.error });
+        if (res.ok && res.value === null) router.refresh();
+      },
+      () => put({ state: "error", error: "Couldn't reach the server. Check the connection and try again." })
+    );
+  }
+
+  // After a successful close, once the sheet has shut (its own effect hands
+  // focus to the closed card's chip first), move focus to a target that
+  // outlives the refresh: the next goal's Close chip, else the Goals heading.
+  useEffect(() => {
+    if (!focusAfterClose) return;
+    const raf = window.requestAnimationFrame(() => {
+      const card = focusAfterClose.next
+        ? Array.from(document.querySelectorAll<HTMLElement>(".today-goals [data-template-id]")).find((el) => el.dataset.templateId === focusAfterClose.next)
+        : undefined;
+      const target = card?.querySelector<HTMLElement>(GOAL_CLOSE_CHIP) ?? document.getElementById(GOALS_HEADING_ID);
+      target?.focus({ preventScroll: false });
+      setFocusAfterClose(null);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [focusAfterClose]);
+
+  /** Close: the sheet opens on the exact figure closing now pays, and why. */
+  function openGoalClose(goalId: string) {
+    if (!launched) return;
+    setError(null);
+    setNotice(null);
+    setGoalClose({ id: goalId, title: goalTitleOf(goalId), preview: { state: "loading" }, error: null, open: true });
+    loadGoalPreview(goalId);
+  }
+
+  /**
+   * Confirm: closeGoal decides again as it writes (the same rule), pays
+   * once, and returns its moments (a Seal stating the MP), presented the way
+   * a tick's are. A refusal stays in the sheet with a fresh figure; a close
+   * that paid other than the sheet said says both.
+   */
+  function confirmGoalClose() {
+    const target = goalClose;
+    if (!target || !target.open || target.preview.state !== "ready" || !target.preview.payout || goalClosing) return;
+    const shown = target.preview.payout;
+    setGoalClosing(true);
+    setGoalClose({ ...target, error: null });
+    startTransition(async () => {
+      let res: Awaited<ReturnType<typeof closeGoal>>;
+      try {
+        res = await closeGoal(target.id, REFRESH);
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      } finally {
+        setGoalClosing(false);
+      }
+      if (!res.ok) {
+        const error = res.error;
+        setGoalClose((c) => (c && c.id === target.id ? { ...c, error, preview: { state: "loading" } } : c));
+        // Closed elsewhere (another device or tab): the card leaves the strip now, not on a manual reload.
+        if (error === GOAL_ALREADY_CLOSED) router.refresh();
+        loadGoalPreview(target.id);
+        return;
+      }
+      const v = res.value;
+      const drawn = Array.from(document.querySelectorAll<HTMLElement>(".today-goals [data-template-id]")).map((el) => el.dataset.templateId ?? "");
+      setFocusAfterClose({ next: goalAfterClose(drawn, target.id) });
+      setGoalClose((c) => (c && c.id === target.id ? { ...c, open: false } : c));
+      presentAll(v.celebrations);
+      setNotice(goalClosedNotice(target.title, shown, { paid: v.paid, why: v.why }));
+    });
+  }
+
+  function openGoalResched(goalId: string) {
+    setError(null);
+    setNotice(null);
+    setGoalResched((c) => ({ id: goalId, title: goalTitleOf(goalId), error: null, open: true, nonce: (c?.nonce ?? 0) + 1 }));
+  }
+
+  /** Reschedule: only the due day moves (no MP, so it is offered before launch too). */
+  function saveGoalResched(day: string) {
+    const target = goalResched;
+    if (!target || !target.open || reschedBusy) return;
+    setReschedBusy(true);
+    setGoalResched({ ...target, error: null });
+    startTransition(async () => {
+      let res: Awaited<ReturnType<typeof rescheduleGoal>>;
+      try {
+        res = await rescheduleGoal(target.id, day, REFRESH);
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      } finally {
+        setReschedBusy(false);
+      }
+      if (!res.ok) {
+        const error = res.error;
+        setGoalResched((c) => (c && c.id === target.id ? { ...c, error } : c));
+        return;
+      }
+      setGoalResched((c) => (c && c.id === target.id ? { ...c, open: false } : c));
+      setNotice(goalRescheduledNotice(target.title, res.value.dueDay, current.today));
+    });
+  }
+
   function setCapacity(minutes: number) {
     setCapacityBusy(true);
     dispatch(null, async () => {
@@ -1077,7 +1239,15 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
         <div className="c3">
           <div className="o9">
-            <GoalsStrip goals={board.goals} busy={busyGoals} onProgress={progressGoal} justAdded={justAdded} />
+            <GoalsStrip
+              goals={board.goals}
+              busy={busyGoals || goalClosing || reschedBusy}
+              onProgress={progressGoal}
+              launched={launched}
+              onClose={launched ? openGoalClose : undefined}
+              onReschedule={openGoalResched}
+              justAdded={justAdded}
+            />
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
@@ -1215,6 +1385,31 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           onSetCapacity={setCapacity}
         />
       </Sheet>
+
+      <GoalCloseSheet
+        open={!!goalClose?.open}
+        title={goalClose?.title ?? "Goal"}
+        preview={goalClose?.preview ?? { state: "loading" }}
+        busy={goalClosing}
+        error={goalClose?.error ?? null}
+        onConfirm={confirmGoalClose}
+        onClose={() => {
+          if (!goalClosing) setGoalClose((c) => (c ? { ...c, open: false } : c));
+        }}
+      />
+
+      <GoalRescheduleSheet
+        open={!!goalResched?.open}
+        formKey={goalResched?.nonce ?? 0}
+        title={goalResched?.title ?? "Goal"}
+        today={current.today}
+        busy={reschedBusy}
+        error={goalResched?.error ?? null}
+        onSave={saveGoalResched}
+        onClose={() => {
+          if (!reschedBusy) setGoalResched((c) => (c ? { ...c, open: false } : c));
+        }}
+      />
 
       <CloseDaySheet
         open={closeOpen}

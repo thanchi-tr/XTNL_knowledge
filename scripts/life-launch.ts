@@ -8,22 +8,30 @@
  *
  * The dry run prints:
  *   - the datasource host (check the project ref before any --apply) and the launch day;
- *   - the WEEK plan judgeClosedWeeks({dryRun}) would write: each week, backfill or not,
- *     each track's verdict and reason, and its mints (none for a week before the launch day);
+ *   - the WEEK plan judgeClosedWeeks({dryRun, maxWeeks}) would write: every remaining week
+ *     (up to DRY_RUN_MAX_WEEKS, with a warning if more remain), backfill or not, each
+ *     track's verdict and reason, and its mints (none for a week before the launch day);
  *   - open goals with no goalMp and the stated amount each will get;
  *   - the character level from Fields alone and with the tracks, and the title before and after;
  *   - each attribute's life contribution;
  *   - emblems whose attribute gates life alone newly opens;
  *   - the MP balance, the last SKILL_UNLOCK and whether decay would start.
+ * Everything after the plan is computed from the ledger WITH the plan folded in
+ * (life-weeks ledgerWithPlans): the WEEK rows and mints --apply is about to write,
+ * so the figures approved are the figures applied (M5 review C2).
  *
- * --apply, in this order (every write is idempotent and independent of order):
- *   1. judgeClosedWeeks(force): the closed weeks, oldest first (12 per run; rerun until none are left);
+ * --apply, in this order (every write is idempotent):
+ *   1. judgeClosedWeeks(force, moments: false), looped until the plan is empty: every
+ *      closed week, oldest first, 12 per pass, with no per-week Seals (they would claim
+ *      the launch moment's track and level keys first);
  *   2. stateGoalMp: goalMp = statedGoalMp(horizon) on open goals that have none;
- *   3. one zero-delta DECAY_GRACE MasteryLedgerEntry (skipped when this launch day's exists),
- *      because life can make an emblem affordable and start the 5%/day decay sooner;
- *   4. the launch moment: after = a fresh ['levels', 'tracks'] snapshot; before = the same
- *      with every track at 0; detectCelebrations(before, after, {cause: 'launch'}). Its
- *      dedupe keys make a second run write nothing.
+ *   3. the ONE launch moment: after = a fresh ['levels', 'tracks'] snapshot; before = the
+ *      same with every track at 0; detectCelebrations(before, after, {cause: 'launch'}).
+ *      Its dedupe keys make a second run write nothing;
+ *   4. last, one zero-delta DECAY_GRACE MasteryLedgerEntry, detail 'life launch <day>'
+ *      (skipped when it exists), because life can make an emblem affordable and start the
+ *      5%/day decay sooner. It is also the launch-finished marker: until it exists, page
+ *      loads (maybeJudgeWeeks) judge nothing, so none can pre-empt steps 1 and 3 (C4).
  * A second --apply writes 0 rows.
  */
 import "dotenv/config";
@@ -34,8 +42,9 @@ import { characterLevel } from "../src/lib/character";
 import { todayKey, weekStartKeyOf } from "../src/lib/life-day";
 import { DECAY_GRACE_REASON, isLaunched, lifeLaunchDay, statedGoalMp, withoutBackfill } from "../src/lib/life-economy";
 import { readLifeLedger, loadLifeTracks } from "../src/lib/life-tracks-server";
-import { judgedWeekKeys, lifeContributionRows, lifeMpInWeek, trackStateAt, DISPLAY_ORDER, TRACK_NAME } from "../src/lib/life-tracks";
-import { judgeClosedWeeks } from "../src/lib/life-weeks-server";
+import { judgedWeekKeys, lifeContributionRows, lifeTracksView, trackStateAt, DISPLAY_ORDER, TRACK_NAME } from "../src/lib/life-tracks";
+import { ledgerWithPlans } from "../src/lib/life-weeks";
+import { judgeClosedWeeks, launchGraceDetail } from "../src/lib/life-weeks-server";
 import { stateGoalMp } from "../src/lib/goals-server";
 import { getMasteryBalanceFresh, MASTERY_DECAY_FLOOR, MASTERY_IDLE_GRACE_DAYS } from "../src/lib/mastery";
 import { loadAttributeScores } from "../src/lib/skill-effects";
@@ -48,6 +57,10 @@ import type { Horizon } from "../src/lib/life-types";
 
 const APPLY = process.argv.includes("--apply");
 const HORIZONS: readonly Horizon[] = ["SHORT", "MID", "LONG"];
+/** The dry run plans every remaining week, up to ten years of them. */
+const DRY_RUN_MAX_WEEKS = 520;
+/** --apply's judge passes (12 weeks each) before it gives up and asks for a rerun. */
+const APPLY_MAX_PASSES = 100;
 
 function datasource(): string {
   const raw = process.env.DATABASE_URL ?? "";
@@ -98,9 +111,11 @@ async function main() {
   const launched = isLaunched(today, launchDay);
   console.log(`Launch day: ${launchDay} · today ${today} · ${launched ? "launched" : "NOT launched yet (nothing can be written before the launch day)"}`);
 
-  // ── The WEEK plan ──
-  const dry = await judgeClosedWeeks(userId, now, { dryRun: true });
-  console.log(`\nWEEK plan (${dry.plans.length} week${dry.plans.length === 1 ? "" : "s"} this run; at most 12 per run)`);
+  // ── The WEEK plan: every remaining week ──
+  const dry = await judgeClosedWeeks(userId, now, { dryRun: true, maxWeeks: DRY_RUN_MAX_WEEKS });
+  const capped = dry.plans.length >= DRY_RUN_MAX_WEEKS;
+  console.log(`\nWEEK plan (${dry.plans.length} week${dry.plans.length === 1 ? "" : "s"}; --apply writes them 12 per pass, looping until none are left)`);
+  if (capped) console.log(`  !! WARNING: more than ${DRY_RUN_MAX_WEEKS} weeks remain. The figures below cover the first ${DRY_RUN_MAX_WEEKS} weeks only.`);
   for (const p of dry.plans) {
     console.log(`  ${p.weekKey} (${p.monday} – ${p.sunday})${p.backfill ? " · BACKFILL: no MP, no Seal" : ""}`);
     for (const t of p.tracks) console.log(`    ${t.track.padEnd(5)} ${t.kept ? "kept    " : "not kept"}  ${withoutBackfill(t.detail)}`);
@@ -119,8 +134,8 @@ async function main() {
     console.log(`  ${g.title.slice(0, 60).padEnd(60)} ${h.padEnd(5)} → goalMp ${statedGoalMp(h)}${g.archivedAt ? " (archived)" : ""}`);
   }
 
-  // ── Character, title, attributes ──
-  const ledger = await readLifeLedger(userId);
+  // ── Character, title, attributes: from the ledger with the plan folded in ──
+  const ledger = ledgerWithPlans(await readLifeLedger(userId), dry.plans);
   const states = trackStateAt(ledger, today);
   const lifeRows = lifeContributionRows(states);
   const lifeScores = computeAttributeScores(lifeRows);
@@ -130,17 +145,21 @@ async function main() {
     loadLifeTracks(userId, now),
     loadAttributeScores(userId),
   ]);
-  // Once launched, the attribute seam already adds the life rows to the loaded scores.
-  const fieldScores = view.launched ? minus(loaded, lifeScores) : loaded;
-  const withLife = view.launched ? loaded : plus(loaded, lifeScores);
+  // Once launched, the attribute seam already adds the life rows it reads now (before
+  // this plan is written) to the loaded scores: take those off, then add the planned life.
+  const fieldScores = view.launched ? minus(loaded, computeAttributeScores(view.contributions)) : loaded;
+  const withLife = plus(fieldScores, lifeScores);
   const fieldLevels = fields.map((f) => f.level);
   const trackLevels = states.map((s) => s.level);
   const ultimates = owned.filter((o) => getSkill(o.skillCode)?.rank === "ULTIMATE").length;
   const before = characterLevel(fieldLevels);
   const after = characterLevel(fieldLevels, trackLevels);
+  const planned = lifeTracksView(ledger, today, launchDay);
   console.log(`\nEpoch day: ${ledger.epochDay ?? "(none: this user has no LifeSettings, so nothing launches for them)"}`);
-  console.log(`Judged weeks so far: ${judgedWeekKeys(ledger).length} · life MP this week: ${lifeMpInWeek(ledger, weekStartKeyOf(today))}`);
-  console.log("Tracks:");
+  console.log(
+    `Judged weeks once the plan is written: ${judgedWeekKeys(ledger).length} · life MP in the last judged week (${planned.mpLastWeek.weekKey ?? "none"}): ${planned.mpLastWeek.used} of ${planned.mpLastWeek.cap} · this week (${weekStartKeyOf(today)}): ${planned.mpThisWeek.used}`
+  );
+  console.log("Tracks (with the plan written):");
   for (const t of DISPLAY_ORDER) {
     const s = states.find((x) => x.track === t)!;
     console.log(
@@ -175,7 +194,7 @@ async function main() {
     prisma.masteryLedgerEntry.findFirst({ where: { userId, reason: "SKILL_UNLOCK" }, orderBy: { createdAt: "desc" }, select: { createdAt: true, detail: true } }),
     prisma.masteryLedgerEntry.findFirst({ where: { userId, reason: { in: ["SKILL_UNLOCK", "DECAY", DECAY_GRACE_REASON] } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
     prisma.masteryLedgerEntry.findFirst({ where: { userId, reason: { not: "REVIEW_MISS" } }, orderBy: { createdAt: "asc" }, select: { createdAt: true } }),
-    prisma.masteryLedgerEntry.findFirst({ where: { userId, reason: DECAY_GRACE_REASON, detail: `life launch ${launchDay}` }, select: { id: true } }),
+    prisma.masteryLedgerEntry.findFirst({ where: { userId, reason: DECAY_GRACE_REASON, detail: launchGraceDetail(launchDay) }, select: { id: true } }),
   ]);
   const since = lastClock?.createdAt ?? firstEntry?.createdAt ?? now;
   const idleDays = Math.floor((now.getTime() - since.getTime()) / 86_400_000);
@@ -196,20 +215,38 @@ async function main() {
   }
 
   // ── Apply ──
-  const judged = await judgeClosedWeeks(userId, now, { force: true });
-  console.log(`\n1. Weeks committed: ${judged.committed.length ? judged.committed.join(", ") : "none"}${judged.plans.length > judged.committed.length ? " (another run judged the rest: rerun to see)" : ""}`);
+  // 1. Every closed week, silently (no per-week Seals), 12 per pass until the plan is empty.
+  const committed: string[] = [];
+  let empty = false;
+  for (let pass = 0; pass < APPLY_MAX_PASSES; pass++) {
+    const judged = await judgeClosedWeeks(userId, now, { force: true, moments: false });
+    committed.push(...judged.committed);
+    if (judged.plans.length === 0) {
+      empty = true;
+      break;
+    }
+    // Planned but nothing written: another writer judged the first week in between. Re-read on the next pass.
+    if (judged.committed.length === 0 && pass > 0) break;
+  }
+  console.log(`\n1. Weeks committed: ${committed.length ? committed.join(", ") : "none"}`);
+  if (!empty) {
+    console.log("   !! The plan is not empty yet (see above). Nothing else is written: rerun --apply.");
+    process.exitCode = 1;
+    return;
+  }
   const stated = await stateGoalMp(userId);
   console.log(`2. Goals given their stated MP: ${stated}`);
-  if (grace) {
-    console.log("3. DECAY_GRACE: already written for this launch day");
-  } else {
-    await prisma.masteryLedgerEntry.create({ data: { userId, delta: 0, reason: DECAY_GRACE_REASON, detail: `life launch ${launchDay}` } });
-    console.log("3. DECAY_GRACE: written (0 MP; resets the decay idle clock)");
-  }
+  // 3. The one launch moment, with every track level-up folded in.
   const afterSnap = await captureSnapshot(userId, { scope: ["levels", "tracks"], fresh: true, now });
   const moments = await detectCelebrations(withTracksAtZero(afterSnap), afterSnap, { cause: "launch", now });
-  console.log(`4. Launch moment: ${moments.length ? moments.map((m) => `${m.kind} (${m.facts.title})`).join("; ") : "none (already written, or no track level above 0)"}`);
-  if (judged.plans.length >= 12) console.log("\nMore weeks may remain: rerun --apply until the plan is empty.");
+  console.log(`3. Launch moment: ${moments.length ? moments.map((m) => `${m.kind} (${m.facts.title})`).join("; ") : "none (already written, or no track level above 0)"}`);
+  // 4. Last: the decay grace, which is also the marker that lets page loads judge weeks.
+  if (grace) {
+    console.log("4. DECAY_GRACE: already written for this launch day");
+  } else {
+    await prisma.masteryLedgerEntry.create({ data: { userId, delta: 0, reason: DECAY_GRACE_REASON, detail: launchGraceDetail(launchDay) } });
+    console.log("4. DECAY_GRACE: written (0 MP; resets the decay idle clock; page loads may now judge weeks)");
+  }
 }
 
 main()

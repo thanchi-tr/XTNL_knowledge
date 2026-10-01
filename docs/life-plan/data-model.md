@@ -282,21 +282,32 @@ LEDGER VOCABULARY (ActivityEvent.source → sink):
 - WEEK → NONE (M5). The week judge writes one row per track per judged week:
   - track set; day = the judged week's Sunday; occurredAt = when it was judged;
   - qty 1 when kept, 0 when not;
-  - detail = the reason line, for example 'Kept · 4 days · 52.0 raw XP · 180 effort min' or 'Not kept · 2 of 3 days · 12.0 of 30 raw XP' (grading F);
+  - detail = the reason line, for example 'Kept · 4 days · 52.0 raw XP · 180 effort min', 'Kept · 3 days · 41.0 raw XP · 4 musts kept, 1 held', 'Not kept · 2 of 3 days · 12.0 of 30 raw XP' or 'Not kept · 1 must missed (weekly target)' (grading F);
   - a week whose Sunday is before LIFE_LAUNCH_DAY is prefixed 'backfill · '. It counts for depth, never mints MP and plays no Seal (the snapshot test is detail starting with 'backfill').
 - MP_MINT → NONE (M5). One decision row per life mint, written with its MasteryLedgerEntry in one $transaction array:
   - track kept (the kept track, or the goal's track);
   - templateId and sourceId = the goal id for a goal, null for a kept week;
   - day = the week's Sunday for a kept week, the close day for a goal;
   - qty = the MP paid. 0 is allowed: a goal closed for nothing still writes its row;
-  - detail = '<REASON> · <why>', or the reason alone. The reason is the text before the first ' · ', for example 'GOAL_MID · 2 Mid goals paid in the last 30 days'.
+  - detail = '<REASON> · <why>', or the reason alone. The reason is the text before the first ' · ', for example 'GOAL_MID · 2 Mid goals paid in the last 30 days';
+  - occurredAt = when it was decided. Two goal closes on one day are ordered by (day, occurredAt, dedupeKey), both in the ladder's 'depth added' (goals.ts goalDepthAdded) and in the Seal (snapshot readGoals).
+- Every transaction that writes MP_MINT rows opens with the life-mint lock, pg_advisory_xact_lock(hashtext('life-mint:<user>')) (life-tracks-server lifeMintLockOp; released at commit or rollback). That covers a goal close and each judged week.
+  - A goal close that pays then runs a guard op (goals-server closeGuardOp). It re-counts the paying 'mp:GOAL:*' rows of its reason in its limit window, its own key excluded (goals.ts goalLimitWindow: the close day's life week for SHORT, otherwise (close − 30 or 91, close]). For a SHORT it also re-sums the capped MP of the close week, ROUND(Σ qty, 2).
+  - If either figure differs from what the decision read, the guard divides by zero (SQLSTATE 22012, isStaleGuard). Everything rolls back and the close returns GOAL_CLOSE_STALE, 'Something changed; try again.'
+  - A close that pays 0 takes the lock but needs no guard: other writes can only raise the counts it was refused on.
+- GOAL_PROGRESS: the Today board sums it by (templateId, day) (phase B, goalDays), so a goal is measured as of min(today, due day). Goal +1 and linking an Inbox step to a goal refuse a closed goal ('That goal is closed or no longer exists.').
 - WEEK and MP_MINT never count for the streak (NEVER_STREAK_SOURCES), so a WEEK row dated Sunday never makes Sunday active after the fact.
 - DEBT → TRACK DUTY (negative). DEBT_REPAID → TRACK DUTY (positive).
 - ADJUST → TRACK. The detail names the cause: KNEE_RECONCILE, RPE_RATED, HR_LATE, MERGE or TEST_REVERSAL.
 - WORKOUT and PR → TRACK BODY.
 Invariant: DOMAIN rows only record points srs.ts or ideas.ts already credited to Domain.totalPoints. Life levels read ONLY SUM(xp) WHERE sink='TRACK'.
 - The level reader is src/lib/life-tracks-server.ts loadLifeLedger (cached 'lifeLedger:<user>' on ['life']). It does five reads in one round trip: XP by (track, day), XP and compositions by (track, compositionKey), WEEK rows, MP_MINT rows and LifeSettings.epochDay. loadLifeTracks builds every level view from it.
-- The week judge, src/lib/life-weeks-server.ts, reads TASK and UNDO rows (sink TRACK) for its floors only, never for levels.
+  - loadLifeLedger is the empty ledger, with no query, until isLaunched(today), and while the user has no epochDay. That keeps every reader inert before launch: the attribute seam, progress rates, the You sheet, Stats and the snapshot.
+  - readLifeLedger is the same five reads, uncached and ungated. Only scripts/life-launch.ts uses it, so its dry run can read the real ledger before the launch day.
+  - The celebration snapshot's life parts are built from loadLifeLedger directly (lifeTracksView), never through the React-cached loadLifeTracks. A before and an after snapshot that share one Date would otherwise get the same memoised view.
+- The week judge, src/lib/life-weeks-server.ts, reads TASK and UNDO rows (sink TRACK) for its floors only, never for levels. It reads in two round trips:
+  1. LifeSettings.epochDay and every WEEK dedupe key;
+  2. then, in one Promise.all over exactly the planned weeks' days, the TASK and UNDO rows, the compulsory templates, their instances and the MP_MINT rows.
 - Goal closes write only NONE rows, never a TRACK row.
 - Audit query: 0 TRACK rows share a sourceId with any REVIEW or IDEA_CREATE row.
 
@@ -319,6 +330,8 @@ MASTERY LEDGER (M5):
   - LIFE_FULL_DAY: minted from M2, through the same helper and the same 8 MP weekly cap;
   - LIFE_PR: reserved, never minted (M4 is dropped).
 - DECAY_GRACE is a zero-delta reason that resets decay's idle clock. decayStaleMastery's idle query counts SKILL_UNLOCK, DECAY and DECAY_GRACE. The launch writes one, because life can make an emblem affordable and so start the 5%/day decay sooner.
+  - Its detail is 'life launch <day>' (life-weeks-server launchGraceDetail). That detail is the launch script's idempotency key.
+  - `--apply` writes it last, so it also marks the launch as finished. Until it exists, maybeJudgeWeeks judges nothing on page loads. Once it is seen, the result is held in memory for the life of the process.
 - mastery.ts mintLifeMasteryOps(userId, {reason, delta, why?, dedupeKey, day, track?, templateId?, now}) returns the ops for a $transaction array:
   - the MP_MINT activityOp, with qty = delta and detail = '<reason> · <why>';
   - then masteryLedgerEntry.create({userId, delta, reason, detail}), only when delta > 0. A delta of 0 writes the decision row alone.
@@ -334,8 +347,9 @@ CACHE:
 - M5:
   - loadProgression's tags become ['fields','progress','life'], because life rows join the attribute scores. A tick recomputes progression once; its inner loaders stay warm.
   - loadProgressRates adds 'life'.
-  - 'lifeLedger:<user>' is cached on ['life'], and 'goalLadder:<user>' on ['life','activity'].
-  - The celebration snapshot's tracks part reads ['life','activity'], and its levels part adds 'life'.
+  - 'lifeLedger:<user>' is cached on ['life'] (only once launched; before, nothing is read or cached), and 'goalLadder:<user>:<today>' on ['life','activity'], so a ladder built before 04:00 is never reused after it.
+  - The Today board core 'boardCore:<user>:<day>' stays on ['life','activity'] and now carries goalMp, closedScore and GOAL_PROGRESS by day (phase B).
+  - The celebration snapshot's tracks part reads ['life','activity'], and its levels part adds 'life'. SNAPSHOT_SCOPES.tick is streak, habits, goals, levels and tracks; settle is streak, ledger, habits, goals, tracks and levels. readGoals reads only goals with closedScore set, with their 'mp:GOAL' decision rows; readLedger attaches each kept week's 'mp:LIFE_WEEK_KEPT' amount.
   - The week judge and goal closes invalidate 'life', 'progress' and 'activity' after commit. TRACK writes already invalidate 'life'.
 
 RESET (reset-scopes.ts plus actions/reset.ts):

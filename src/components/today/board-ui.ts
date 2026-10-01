@@ -14,6 +14,9 @@
 import { selfRatingOpen, selfRatingOpensOn } from "../../lib/life-grade";
 import { LIFE_TZ, addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../../lib/life-day";
 import { minutesFor } from "../../lib/review-facts";
+import { GOAL_RULES, round2, statedGoalMp } from "../../lib/life-economy";
+import { goalPercent, statedPayoutCopy, type GoalPayout } from "../../lib/goals";
+import { TRACK_LABEL } from "../../lib/life-grade";
 import {
   UNDO_WINDOW_MS,
   dayName,
@@ -23,6 +26,7 @@ import {
   type BoardData,
   type BoardRow,
   type BoardTemplate,
+  type GoalCard,
 } from "../../lib/today-board";
 
 // ── The tick ──────────────────────────────────────────────────────────────
@@ -498,4 +502,140 @@ export function momentText(m: DayMoment, ctx: { streak: number; musts: number })
     case "full-day":
       return "Full day. Musts, quest and a life deed, all kept.";
   }
+}
+
+// ── Goals (M5, phase B) ───────────────────────────────────────────────────
+
+/** An MP figure as it is paid: 2 dp at most, no trailing zeros ('4.8', '1.5', '0'). The You sheet's mpFigure. */
+export function goalMpFigure(v: number): string {
+  const r = round2(v);
+  return (Object.is(r, -0) ? 0 : r).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+}
+
+/** 0.55 → '0.55': g to 2 dp, rounded down like the percentage (the You sheet's Carried figure). */
+export function carriedFigure(g: number): string {
+  return (Math.floor(Math.max(0, Math.min(1, g)) * 100 + 1e-9) / 100).toFixed(2);
+}
+
+/** What one goal card says, before and after life counts. */
+export interface GoalCardCopy {
+  /** 'Mid' (GOAL_RULES' name). */
+  horizon: string;
+  /** 'Duty': the track the goal is filed under, beside its sigil. */
+  track: string;
+  /** '62%' (goals.ts goalPercent, floored, as on the You sheet) for a measured goal that is not counted by hand; else null. */
+  percent: string | null;
+  /**
+   * Once life counts, the MP it stated when it was set: 'pays ⬡ 6 × progress
+   * from 70%', 'pays ⬡ 1 when done'. Before, null (goals pay nothing of their
+   * own yet; the card says their steps pay).
+   */
+  pays: string | null;
+  /** Past due and below 100%: 'Carried 0.55 · Reschedule or close?' (before launch: 'Carried 0.55 · Reschedule?'). No debt. */
+  carried: string | null;
+  /** Close is offered only once life counts: a close before launch would write a permanent paid-nothing row. */
+  canClose: boolean;
+}
+
+/**
+ * The copy of one goal card (GoalsStrip). Before launch a goal shows its
+ * progress only (and, carried, the offer to reschedule, which writes no
+ * MP); from launch it also states its payout and offers Close.
+ */
+export function goalCardCopy(card: Pick<GoalCard, "horizon" | "metric" | "progress" | "carried"> & { template: Pick<BoardTemplate, "goalMp" | "track"> }, launched: boolean): GoalCardCopy {
+  const h = card.horizon;
+  const stated = typeof card.template.goalMp === "number" && Number.isFinite(card.template.goalMp) ? card.template.goalMp : statedGoalMp(h);
+  return {
+    horizon: GOAL_RULES[h].name,
+    track: TRACK_LABEL[card.template.track],
+    percent: card.progress != null && card.metric !== "MANUAL" ? `${goalPercent(card.progress)}%` : null,
+    pays: launched ? statedPayoutCopy(h, stated) : null,
+    carried: card.carried != null ? `Carried ${carriedFigure(card.carried)} · ${launched ? "Reschedule or close?" : "Reschedule?"}` : null,
+    canClose: launched,
+  };
+}
+
+/** What the Close sheet says: the exact figure closing now pays, and why it is that. */
+export interface GoalCloseCopy {
+  /** 'Closing now pays ⬡ 4.8', 'Closing now pays 0', or 'This goal is already closed.' */
+  head: string;
+  /** The reason it pays less than its stated rule ('below 70%', 'a Mid goal needs 21 days'), or null when it pays in full. */
+  why: string | null;
+  /** '80% done · pays ⬡ 6 × progress from 70%', or 'not measured · …'. */
+  basis: string | null;
+  /** 'Duty depth +1' when the close adds track depth; else null. */
+  depth: string | null;
+  /** The Confirm button: 'Close and take ⬡ 4.8', 'Close for 0'. null when there is nothing to close. */
+  confirm: string | null;
+}
+
+/**
+ * The Close sheet's fixed description. It must hold for a close that pays
+ * and one that pays 0 alike (the head and the button state the figure), so
+ * it says the goal is settled once, not that it is paid.
+ */
+export const GOAL_CLOSE_FINAL = "Closing is final. The goal leaves Today and is settled once, even when it pays 0; its steps stay where they are.";
+
+export function goalCloseCopy(p: GoalPayout | null): GoalCloseCopy {
+  if (!p) return { head: "This goal is already closed.", why: null, basis: null, depth: null, confirm: null };
+  const pays = p.pays > 0;
+  return {
+    head: pays ? `Closing now pays ⬡ ${goalMpFigure(p.pays)}` : "Closing now pays 0",
+    why: p.why,
+    basis: `${p.g == null ? "not measured" : `${goalPercent(p.g)}% done`} · ${statedPayoutCopy(p.horizon, p.stated)}`,
+    depth: p.depth > 0 ? `${TRACK_LABEL[p.track]} depth +${p.depth}` : null,
+    confirm: pays ? `Close and take ⬡ ${goalMpFigure(p.pays)}` : "Close for 0",
+  };
+}
+
+/**
+ * What the board says once a close is written. The server decides again
+ * when it writes; when that differs from the sheet's figure (a close or a
+ * kept week landed in between), the line says both, never only the new one.
+ * The board shows notices as plain text in a role=status line, so the unit
+ * is the word 'MP' ('It paid 4.8 MP'), never the ⬡ glyph: the line reads
+ * the same aloud as on screen.
+ */
+export function goalClosedNotice(title: string, shown: GoalPayout | null, paid: { paid: number; why: string | null }): string {
+  const mp = (v: number) => (v > 0 ? `${goalMpFigure(v)} MP` : "0");
+  const reason = paid.why ? `: ${paid.why}` : "";
+  if (shown && round2(shown.pays) !== round2(paid.paid)) {
+    return `${title} closed. It paid ${mp(paid.paid)}, not ${mp(shown.pays)}${reason}. Something changed after the sheet opened.`;
+  }
+  return `${title} closed. It paid ${mp(paid.paid)}${reason}.`;
+}
+
+/**
+ * Where focus goes once a closed goal's card leaves the strip: the goal
+ * drawn after it (its Close chip), else the one before, else null (the
+ * Goals heading). `ids` are the strip's goals in the order drawn.
+ */
+export function goalAfterClose(ids: readonly string[], closedId: string): string | null {
+  const rest = ids.filter((id) => id !== closedId);
+  if (rest.length === 0) return null;
+  const at = ids.indexOf(closedId);
+  if (at < 0) return rest[0];
+  return ids.slice(at + 1).find((id) => id !== closedId) ?? rest[rest.length - 1];
+}
+
+/** The furthest a goal's due day may move (goals-server rescheduleGoalCore's limit): ten years out. */
+export const GOAL_RESCHEDULE_MAX_DAYS = 3650;
+
+/** The Reschedule sheet's date bounds and its first pick: a week from today. */
+export function goalRescheduleRange(today: DayKey): { min: DayKey; max: DayKey; initial: DayKey } {
+  return { min: today, max: addDays(today, GOAL_RESCHEDULE_MAX_DAYS), initial: addDays(today, 7) };
+}
+
+/** Why a picked day cannot be sent, or null when it can (the server checks the same). */
+export function goalRescheduleError(day: string, today: DayKey): string | null {
+  const { min, max } = goalRescheduleRange(today);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "Pick a day.";
+  if (day < min) return "Pick today or a later day.";
+  if (day > max) return "Pick a day within ten years.";
+  return null;
+}
+
+/** 'Run a marathon is now due 15 Oct. Nothing else changed.' */
+export function goalRescheduledNotice(title: string, day: DayKey, today: DayKey): string {
+  return `${title} is now due ${dayName(day, today)}. Nothing else changed.`;
 }

@@ -18,7 +18,13 @@ import { parseCapture } from "../src/lib/capture-parse";
 import { cached, invalidate, invalidateAll } from "../src/lib/cache";
 import { rungOf, strengthAfter, type Outcome } from "../src/lib/habit";
 import { countsForStreakOf, streakUnitsOf } from "../src/lib/streak-curve";
-import { upcomingOf } from "../src/components/today/board-ui";
+import { goalCardCopy, upcomingOf } from "../src/components/today/board-ui";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { goalAsOf, goalPercent, goalProgress, type GoalLadderItem, type GoalProgressInput } from "../src/lib/goals";
+import { goalRowCopy } from "../src/components/home/GoalLadder";
+import { captureShapeOf } from "../src/lib/capture-shape";
+import { captureGoalFields } from "../src/lib/tasks";
 import { PLACE_LANES } from "../src/lib/life-types";
 import {
   BOARD_COLUMNS,
@@ -132,7 +138,10 @@ function inst(templateId: string, day: DayKey, status: BoardInstance["status"] =
 const fixtureBoards: BoardData[] = [];
 
 /** Board data as `readBoardCore` assembles it: stats from each recurring template's history, as the server computes them. */
-function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today?: DayLedger; yesterday?: DayLedger; capacityMin?: number; dueNow?: number | null; goalQty?: Record<string, number> } = {}): BoardData {
+function board(
+  templates: BoardTemplate[],
+  p: { history?: BoardInstance[]; today?: DayLedger; yesterday?: DayLedger; capacityMin?: number; dueNow?: number | null; goalQty?: Record<string, number>; goalDays?: BoardData["goalDays"] } = {}
+): BoardData {
   const history = p.history ?? [];
   const stats: BoardData["stats"] = {};
   for (const t of templates) {
@@ -149,6 +158,7 @@ function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today
     ledger: { today: p.today ?? ledger(TODAY), yesterday: p.yesterday ?? ledger(YESTERDAY) },
     paid: {},
     goalQty: p.goalQty ?? {},
+    ...(p.goalDays ? { goalDays: p.goalDays } : {}),
     dueNow: p.dueNow === undefined ? 0 : p.dueNow,
   };
   fixtureBoards.push(d);
@@ -527,6 +537,120 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   const g2 = b.goals.MID.find((g) => g.template.id === "g2");
   check("goal rollup: 2 of 4 one-off steps done; a hand-counted goal reads 7 of 12", g1?.progress === 0.5 && g1.label === "2 of 4 steps" && g2?.label === "7 of 12 books", `${g1?.label} / ${g2?.label}`);
   check("finished steps stay off the board", laneOf(b, "k1") === "none" && laneOf(b, "k3") === "anytime");
+}
+
+// ── Goals on Today, M5 phase B (m5-refit F15) ─────────────────────────────
+{
+  // A Mid goal due five days ago: one step done before its due day, one
+  // after (which never counts), two open. A hand-counted goal due three days
+  // ago with 4 logged before and 5 after. A Long goal due ahead, 2 of 3.
+  const due = ago(5);
+  const late = tpl({ id: "gl", title: "Ship the paper", kind: "GOAL", horizon: "MID", krMetric: "CHILDREN", dueDay: due, track: "CRAFT", goalMp: 6 });
+  const lateKids = [
+    tpl({ id: "gl1", title: "Outline", parentId: "gl", completedAt: "2026-09-20T00:00:00.000Z" }),
+    tpl({ id: "gl2", title: "Draft", parentId: "gl", completedAt: "2026-09-29T00:00:00.000Z" }),
+    tpl({ id: "gl3", title: "Edit", parentId: "gl" }),
+    tpl({ id: "gl4", title: "Submit", parentId: "gl" }),
+  ];
+  const counted = tpl({ id: "gm", title: "Run 10 km", kind: "GOAL", horizon: "SHORT", krMetric: "MANUAL", krTarget: 10, krUnit: "km", dueDay: ago(3), goalMp: 1 });
+  const ahead = tpl({ id: "ga", title: "Learn piano", kind: "GOAL", horizon: "LONG", krMetric: "CHILDREN", dueDay: addDays(TODAY, 200), goalMp: 20, track: "CARE" });
+  const aheadKids = [
+    tpl({ id: "ga1", title: "Scales", parentId: "ga", completedAt: "2026-09-10T00:00:00.000Z" }),
+    tpl({ id: "ga2", title: "Chords", parentId: "ga", completedAt: "2026-09-12T00:00:00.000Z" }),
+    tpl({ id: "ga3", title: "A piece", parentId: "ga" }),
+  ];
+  const closed = tpl({ id: "gc", title: "Old goal", kind: "GOAL", horizon: "MID", krMetric: "CHILDREN", closedScore: 0.8, completedAt: "2026-09-30T00:00:00.000Z", goalMp: 6 });
+  const closedKid = tpl({ id: "gc1", title: "Old step", parentId: "gc", completedAt: "2026-09-01T00:00:00.000Z" });
+  const goalDays = { gm: [{ day: ago(10), qty: 4 }, { day: ago(1), qty: 5 }] };
+  const d = board([late, ...lateKids, counted, ahead, ...aheadKids, closed, closedKid], { goalQty: { gm: 9 }, goalDays });
+  const b = buildBoard(d);
+  const card = (id: string) => Object.values(b.goals).flat().find((g) => g.template.id === id);
+
+  // goals.ts goalProgress over an input built here, by hand, from the same fixture.
+  const stepsOf = (days: (DayKey | null)[]): GoalProgressInput["steps"] => days.map((completedDay) => ({ completedDay }));
+  const expected: [string, GoalProgressInput, DayKey | null][] = [
+    ["gl", { krMetric: "CHILDREN", krTarget: null, steps: stepsOf(["2026-09-20", "2026-09-29", null, null]), progress: [] }, due],
+    ["gm", { krMetric: "MANUAL", krTarget: 10, steps: [], progress: goalDays.gm }, ago(3)],
+    ["ga", { krMetric: "CHILDREN", krTarget: null, steps: stepsOf(["2026-09-10", "2026-09-12", null]), progress: [] }, addDays(TODAY, 200)],
+  ];
+  const off = expected.filter(([id, input, dueDay]) => card(id)?.progress !== goalProgress(input, goalAsOf(TODAY, dueDay)));
+  check(
+    "goal card: progress is goals.ts goalProgress as of min(today, due day) (0.25, 0.4, 2/3)",
+    off.length === 0 && card("gl")?.progress === 0.25 && card("gm")?.progress === 0.4 && near(card("ga")?.progress ?? 0, 2 / 3),
+    off.map(([id]) => `${id}: ${card(id)?.progress}`).join("; ")
+  );
+  check("goal card: a step done after the due day never counts (1 of 4, not 2 of 4)", card("gl")?.label === "1 of 4 steps", card("gl")?.label);
+  check("goal card: a number logged after the due day never counts (4 of 10 km, not 9)", card("gm")?.label === "4 of 10 km", card("gm")?.label);
+  check(
+    "goal card: carried is g when past due and below 1, else null",
+    card("gl")?.carried === 0.25 && card("gm")?.carried === 0.4 && card("ga")?.carried === null,
+    `${card("gl")?.carried} / ${card("gm")?.carried} / ${card("ga")?.carried}`
+  );
+  const done = buildBoard(board([tpl({ ...late, id: "gd" }), ...lateKids.map((k) => tpl({ ...k, id: `d${k.id}`, parentId: "gd", completedAt: "2026-09-20T00:00:00.000Z" }))]));
+  check("goal card: past due at 100% is not carried", done.goals.MID[0]?.progress === 1 && done.goals.MID[0]?.carried === null);
+
+  // A closed goal leaves the strip (and placeOf agrees: it is closed, not on the board).
+  check("closed goal: off the strip", !card("gc") && Object.values(b.goals).flat().length === 3);
+  const place = placeOf(closed, TODAY);
+  check("closed goal: placeOf files it as Closed, not Goals", place.lane === "done" && place.label === "Closed", `${place.lane} '${place.label}'`);
+  check("closed goal: its steps stay off the board too", laneOf(b, "gc1") === "none");
+
+  // Older fixtures without goalDays: goalQty counts from the day the goal was set.
+  const legacy = buildBoard(board([tpl({ ...counted, id: "gq", dueDay: null })], { goalQty: { gq: 7 } }));
+  check("goal card: without goalDays, goalQty counts (7 of 10 km)", legacy.goals.SHORT[0]?.progress === 0.7 && legacy.goals.SHORT[0]?.label === "7 of 10 km");
+
+  // A metric goals.ts does not measure says so, with no meter.
+  const reviews = buildBoard(board([tpl({ id: "gr", title: "Review 500 cards", kind: "GOAL", horizon: "MID", krMetric: "REVIEWS" }), tpl({ id: "gr1", title: "Step", parentId: "gr" })]));
+  check("goal card: a REVIEWS goal is not measured (no meter, 'not measured')", reviews.goals.MID[0]?.progress === null && reviews.goals.MID[0]?.label === "not measured");
+
+  // Percentages: goalPercent (floored), so Today and the You sheet print one number. 2 of 3 is 66%, never 67%.
+  const pianoCopy = goalCardCopy(card("ga")!, true);
+  check("goal card: the percentage is goalPercent, floored (2 of 3 → 66%)", pianoCopy.percent === `${goalPercent(card("ga")!.progress!)}%` && pianoCopy.percent === "66%", pianoCopy.percent ?? "null");
+  const ladderItem: GoalLadderItem = {
+    id: "ga",
+    title: "Learn piano",
+    horizon: "LONG",
+    track: "CARE",
+    stated: 20,
+    copy: "",
+    g: goalProgress(expected[2][1], goalAsOf(TODAY, expected[2][2])),
+    progressLabel: "2 of 3 steps",
+    dueDay: addDays(TODAY, 200),
+    pastDue: false,
+    carried: null,
+    preview: null,
+    closed: null,
+  };
+  const youMeta = goalRowCopy(ladderItem, true, TODAY).meta;
+  check("goal card: Today and the You sheet read the same percentage", youMeta.includes(` ${pianoCopy.percent} `), youMeta);
+  const manualCopy = goalCardCopy(card("gm")!, true);
+  check("goal card: a hand-counted goal shows its count, not a percentage", manualCopy.percent === null);
+  const sixtyNine = goalCardCopy({ ...card("ga")!, progress: 0.695 }, true);
+  check("goal card: 0.695 reads 69%, never 70% (it pays 0 below 70%)", sixtyNine.percent === "69%", sixtyNine.percent ?? "null");
+
+  // A new goal states its MP, frozen at creation: Short 1, Mid 6, Long 20.
+  const goalOf = (text: string) => {
+    const parsed = parseCapture(text, { today: TODAY });
+    const shape = captureShapeOf(parsed, TODAY);
+    return captureGoalFields(shape.kind, parsed.title, parsed.horizon, shape.dueDay, TODAY);
+  };
+  const short = goalOf("goal: file the tax return by 20 oct");
+  const mid = goalOf("goal: read 12 books by 15 dec");
+  const long = goalOf("goal: learn piano #long");
+  const task = goalOf("buy milk");
+  check(
+    "new goal: stores goalMp = statedGoalMp(horizon): Short 1, Mid 6, Long 20",
+    short.horizon === "SHORT" && short.goalMp === 1 && mid.horizon === "MID" && mid.goalMp === 6 && long.horizon === "LONG" && long.goalMp === 20,
+    `${short.horizon} ${short.goalMp} / ${mid.horizon} ${mid.goalMp} / ${long.horizon} ${long.goalMp}`
+  );
+  check("new goal: a task stores no goal fields (goalMp null)", task.goalMp === null && task.horizon === null && task.krMetric === null);
+  check("new goal: 'read 12 books' still measures itself (MANUAL, 12 books)", mid.krMetric === "MANUAL" && mid.krTarget === 12 && mid.krUnit === "books");
+  const tasksSrc = readFileSync(resolve(__dirname, "../src/lib/tasks.ts"), "utf8");
+  const select = /const TEMPLATE_SELECT = \{([\s\S]*?)\} satisfies/.exec(tasksSrc)?.[1] ?? "";
+  check("new goal: the INSERT writes goalMp; TEMPLATE_SELECT reads goalMp and closedScore", /goalMp: goal\.goalMp,/.test(tasksSrc) && /goalMp: true/.test(select) && /closedScore: true/.test(select));
+  check("board read: toBoardTemplate carries goalMp and closedScore", /goalMp: r\.goalMp,/.test(tasksSrc) && /closedScore: r\.closedScore,/.test(tasksSrc));
+  check("board read: GOAL_PROGRESS is grouped by goal and day (goalDays)", /by: \["templateId", "day"\],\s*where: \{ userId, source: "GOAL_PROGRESS" \}/.test(tasksSrc) && /goalDays,\r?\n/.test(tasksSrc));
+  check("closed goal: +1 and linking a step refuse it (closedScore: null in both reads)", (tasksSrc.match(/kind: "GOAL", archivedAt: null, closedScore: null \}/g) ?? []).length >= 2);
 }
 
 // ── The server accepts exactly what the board offers ─────────────────────

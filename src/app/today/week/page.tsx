@@ -15,7 +15,7 @@ import {
 } from "@/lib/life-tracks";
 import { loadLifeLedger, loadLifeTracks } from "@/lib/life-tracks-server";
 import { maybeJudgeWeeks } from "@/lib/life-weeks-server";
-import { firstWeekJudgement, longDayLabel, mpFigure, weekdayDayLabel } from "@/components/home/sheet-math";
+import { firstWeekJudgement, longDayLabel, mpFigure, pendingWeek, weekReviewPromise, weekdayDayLabel } from "@/components/home/sheet-math";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { CurrencyGlyph, Sigil } from "@/components/ui/Icon";
@@ -33,7 +33,9 @@ export const dynamic = "force-dynamic";
  * wrote (every figure from its WEEK rows and mints: the stored reason, the
  * MP paid, the kept-week streak, the week's life MP against the cap). Before
  * a week is judged it says when the first one will be, computed from the
- * judging rule. Before launch it shows the review's placeholder only: kept
+ * judging rule. While the week that just ended is not judged yet (Monday,
+ * Tuesday, Wednesday before the judge runs) the card is headed 'Last judged
+ * week' and says when that week is. Before launch it shows the review's placeholder only: kept
  * weeks are not judged yet, and a card with made-up tracks would be a
  * dishonest number. The five-step review runner arrives with daily
  * settlement.
@@ -55,6 +57,7 @@ interface WeekRow {
 interface LastWeek {
   weekKey: string;
   monday: DayKey;
+  sunday: DayKey;
   backfill: boolean;
   rows: WeekRow[];
   /** Capped life MP dated in that week. */
@@ -85,18 +88,29 @@ function lastWeekOf(ledger: LifeLedger, weekKey: string): LastWeek | null {
       streak: streakOf.get(track) ?? 0,
     });
   }
-  return { weekKey, monday, backfill: rows.some((r) => r.backfill), rows, used: lifeMpInWeek(ledger, monday) };
+  return { weekKey, monday, sunday, backfill: rows.some((r) => r.backfill), rows, used: lifeMpInWeek(ledger, monday) };
 }
 
-function LastWeekCard({ week }: { week: LastWeek }) {
+function LastWeekCard({ week, today }: { week: LastWeek; today: DayKey }) {
   const kept = week.rows.filter((r) => r.kept).length;
+  // The week that just ended, while it is not judged yet: this card is then the week before.
+  const pending = pendingWeek(week.sunday, today);
   return (
     <section aria-labelledby="lw-h">
-      <SectionHeader title="Last week" />
+      <SectionHeader title={pending ? "Last judged week" : "Last week"} />
       <div className="card">
         <h2 id="lw-h" className="lw-head">
           Week of {longDayLabel(week.monday)} · {kept} of {week.rows.length} {week.rows.length === 1 ? "track" : "tracks"} kept
         </h2>
+        {pending && (
+          <p className="t-meta lw-pending">
+            {pending.due
+              ? lifeWritesEnabled()
+                ? `The week of ${longDayLabel(pending.monday)} can be judged now: it is judged in the background as this page opens.`
+                : `The week of ${longDayLabel(pending.monday)} can be judged now; this server only reads weeks.`
+              : `The week of ${longDayLabel(pending.monday)} is judged on ${weekdayDayLabel(pending.judgeDay)}.`}
+          </p>
+        )}
         <ul className="lw-rows">
           {week.rows.map((r) => (
             <li key={r.track} className="lw-row">
@@ -171,16 +185,14 @@ export default async function WeekPage() {
   return (
     <div className="page narrow today-week">
       <div style={{ paddingTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
-        {life.launched && ledger && (week ? <LastWeekCard week={week} /> : <FirstWeekCard epochDay={ledger.epochDay} today={life.today} />)}
+        {life.launched && ledger && (week ? <LastWeekCard week={week} today={life.today} /> : <FirstWeekCard epochDay={ledger.epochDay} today={life.today} />)}
         <section className="card pad-l" aria-labelledby="week-h">
           <p className="t-eyebrow">Weekly review · arrives with daily settlement</p>
           <h2 id="week-h" className="t-display-m" style={{ marginTop: 6 }}>
             A short review of the week that ended
           </h2>
           <p className="t-meta" style={{ marginTop: 8 }}>
-            Once each day is settled at 04:00, Monday opens a short review of the week that ended: what each track kept and
-            why, the inbox to zero, a goals check-in, anything owed, and the shape of next week. It ends on the week card,
-            which states the exact mastery points paid for each kept track.
+            {weekReviewPromise(life.launched)}
           </p>
           <p className="t-meta" style={{ marginTop: 8 }}>
             Until then, every tick on Today is already counted, and nothing is lost.

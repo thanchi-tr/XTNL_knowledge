@@ -27,6 +27,8 @@
  *   Lane A (F4)   planWeeks(state)
  *   Added (lane A, compatible) WeekToJudge · weeksToJudge(today, epochDay, judged, maxWeeks?):
  *                 the weeks a run covers, so the server reads exactly their days
+ *   Added (M5 review C2) ledgerWithPlans(ledger, plans): the ledger as it will read once the
+ *                 plans are written, for the launch script's dry run
  *
  * M2's rest days arrive as heldDays: an occurrence on a held day with no
  * instance holds instead of missing (empty, so inert, in M5).
@@ -54,6 +56,7 @@ import {
   type LifeMintInput,
 } from "./life-economy";
 import { TRACKS, type Category, type InstanceStatus, type Receipt, type TaskKind, type Track } from "./life-types";
+import type { LifeLedger } from "./life-tracks";
 import { WEEKDAY_SHORT, occurrencesBetween, parseRule } from "./recurrence";
 
 // ── State (one fresh read per run) ────────────────────────────────────────
@@ -188,6 +191,35 @@ export function weeksToJudge(
     if (missing.length > 0) out.push({ weekKey, monday, sunday: addDays(monday, 6), missing });
   }
   return out;
+}
+
+/**
+ * The ledger as loadLifeLedger will read it once `plans` are written: a copy
+ * with each planned WEEK row (kept or not, its reason line) and each planned
+ * LIFE_WEEK_KEPT mint (dated the Sunday) folded in. A row the ledger already
+ * holds (by week and track, or by mint key) is not added twice. The launch
+ * script's dry run computes its tracks, character level, title, attributes,
+ * emblems and decay from this, so its figures are what --apply writes.
+ */
+export function ledgerWithPlans(ledger: LifeLedger, plans: readonly WeekPlan[]): LifeLedger {
+  const haveWeek = new Set(ledger.weeks.map((w) => weekRowKey(w.track, w.weekKey)));
+  const haveMint = new Set(ledger.mints.map((m) => m.key));
+  const weeks = [...ledger.weeks];
+  const mints = [...ledger.mints];
+  for (const p of plans) {
+    for (const t of p.tracks) {
+      const key = weekRowKey(t.track, p.weekKey);
+      if (haveWeek.has(key)) continue;
+      haveWeek.add(key);
+      weeks.push({ track: t.track, weekKey: p.weekKey, sunday: p.sunday, kept: t.kept, detail: t.detail });
+    }
+    for (const m of p.mints) {
+      if (haveMint.has(m.dedupeKey)) continue;
+      haveMint.add(m.dedupeKey);
+      mints.push({ key: m.dedupeKey, track: m.track ?? null, templateId: m.templateId ?? null, day: m.day, qty: m.delta, reason: m.reason, why: m.why ?? null });
+    }
+  }
+  return { ...ledger, weeks, mints };
 }
 
 /** What one track did in one week, from its live TASK rows (undone ticks excluded). */

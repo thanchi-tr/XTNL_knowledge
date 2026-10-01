@@ -31,6 +31,7 @@
   /* ---------- /today/week: the last judged week ---------- */
   .today-week .lw-head { margin: 0; padding: 14px 14px 6px; font: 600 19px/24px var(--font-display); overflow-wrap: anywhere; }
   .today-week .lw-head-plain { margin: 0; font: 600 19px/24px var(--font-display); }
+  .today-week .lw-pending { margin: 0; padding: 0 14px 8px; overflow-wrap: anywhere; }
   .today-week .lw-rows { list-style: none; margin: 0; padding: 0; }
   .today-week .lw-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 12px 14px; }
   .today-week .lw-row + .lw-row { border-top: 1px solid var(--line-1); }

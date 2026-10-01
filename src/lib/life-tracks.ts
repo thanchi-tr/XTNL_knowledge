@@ -28,6 +28,11 @@
  *     trackLine(state) — one row's line copy (F3), for the checks and fixtures
  *     lifeTracksView(ledger, today, launchDay?) — the whole view loadLifeTracks returns,
  *       pure, so the not-launched rule is checkable without a database
+ *   Added by the M5 review (lead decisions)
+ *     LifeTracksView.mpLastWeek {used, cap, weekKey, backfill} — capped MP of the last judged week (U1);
+ *       backfill when that week closed before launch (phase B review)
+ *     clampTrackComposition(track, composition) — a track's mix within TRACK_SHARE_CAP (C6)
+ *     trackShareCap(track, attribute) — max(seed share, TRACK_SHARE_CAP)
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, emptyComposition, normaliseComposition, type Composition as FullComposition, type FieldContribution } from "./attributes";
@@ -41,8 +46,10 @@ import {
   GOAL_RULES,
   KEPT_WEEK_STREAK_DAYS,
   LIFE_MP_WEEK_CAP,
+  TRACK_SHARE_CAP,
   depthCap,
   goalIdOfMintKey,
+  isBackfillDetail,
   isCappedReason,
   isLaunched,
   lifeLaunchDay,
@@ -216,8 +223,21 @@ export interface LifeTracksView {
   contributions: LifeContribution[];
   /** null when not launched. */
   edges: LifeEdges | null;
-  /** Σ capped MP minted in today's life week, against LIFE_MP_WEEK_CAP. */
+  /**
+   * Σ capped MP minted in today's life week, against LIFE_MP_WEEK_CAP. Kept
+   * weeks mint on their Sunday but only from the Wednesday after, so this is
+   * near 0 most of the week: show mpLastWeek instead.
+   */
   mpThisWeek: { used: number; cap: number };
+  /**
+   * Σ capped MP minted in the last judged life week (lifeMpInWeek of its
+   * Monday), against LIFE_MP_WEEK_CAP: what the hero's 'life MP last week'
+   * shows, the same figure as /today/week's footer. weekKey null (used 0)
+   * until a week is judged. backfill is true when that week's WEEK rows carry
+   * the 'backfill · ' prefix (it closed before launch, so it paid nothing by
+   * rule, and its 0 is no verdict); false with no judged week and before launch.
+   */
+  mpLastWeek: { used: number; cap: number; weekKey: string | null; backfill: boolean };
   /** Week keys with a WEEK row for every track, oldest first (judgedWeekKeys). */
   judgedWeeks: string[];
   lastJudgedWeek: string | null;
@@ -263,6 +283,7 @@ export function notLaunchedView(today: DayKey): LifeTracksView {
     contributions: [],
     edges: null,
     mpThisWeek: { used: 0, cap: LIFE_MP_WEEK_CAP },
+    mpLastWeek: { used: 0, cap: LIFE_MP_WEEK_CAP, weekKey: null, backfill: false },
     judgedWeeks: [],
     lastJudgedWeek: null,
   };
@@ -310,12 +331,53 @@ function attributeValue(c: Composition, a: Attribute): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0;
 }
 
+/** The most of one attribute a track's mix may carry: max(its seed share, TRACK_SHARE_CAP), in points of 100. */
+export function trackShareCap(track: Track, attribute: Attribute): number {
+  return Math.max(TRACK_SEED[track][attribute] ?? 0, TRACK_SHARE_CAP);
+}
+
+/**
+ * A track's mix within its share caps (trackShareCap): the pull away from
+ * the seed is scaled back, by one factor for every attribute, until no
+ * attribute is above its cap. The seed itself is within every cap, so the
+ * result always exists, sums to 100 and keeps the direction of the pull.
+ * A mix already within the caps is returned unchanged. This bounds what
+ * life alone can lift one attribute to (balance-horizon assertion 9): four
+ * tracks never carry more than Σ max(seed, 16) = 96 points of any attribute.
+ */
+export function clampTrackComposition(track: Track, composition: FullComposition): FullComposition {
+  const seed = TRACK_SEED[track];
+  let scale = 1;
+  for (const a of ATTRIBUTES) {
+    const cap = trackShareCap(track, a);
+    const v = composition[a];
+    const from = seed[a] ?? 0;
+    if (v > cap && v > from) scale = Math.min(scale, (cap - from) / (v - from));
+  }
+  if (scale >= 1) return composition;
+  const pulled = emptyComposition();
+  for (const a of ATTRIBUTES) pulled[a] = Math.max(0, (seed[a] ?? 0) + scale * (composition[a] - (seed[a] ?? 0)));
+  const out = normaliseComposition(pulled);
+  // normaliseComposition rounds to whole points; never let a remainder point land above a cap.
+  for (const a of ATTRIBUTES) {
+    const cap = trackShareCap(track, a);
+    if (out[a] > cap) {
+      const spare = ATTRIBUTES.find((b) => b !== a && out[b] < trackShareCap(track, b));
+      if (!spare) break;
+      out[spare] += out[a] - cap;
+      out[a] = cap;
+    }
+  }
+  return out;
+}
+
 /**
  * A track's attribute mix: its seed, moved toward the XP-weighted mix of the
  * compositions its tasks carried (attribute-inference effectiveFieldComposition,
- * the Field rule). Keys with xp ≤ 0 or no parseable composition are dropped;
- * with none left it is the seed. Not replayed by day: past days use today's
- * mix, as the Field ghost does.
+ * the Field rule), then held within its share caps (clampTrackComposition).
+ * Keys with xp ≤ 0 or no parseable composition are dropped; with none left
+ * it is the seed. Not replayed by day: past days use today's mix, as the
+ * Field ghost does.
  */
 function trackComposition(ledger: LifeLedger, track: Track): FullComposition {
   const domains: { composition: FullComposition; totalPoints: number }[] = [];
@@ -326,7 +388,7 @@ function trackComposition(ledger: LifeLedger, track: Track): FullComposition {
     if (!ATTRIBUTES.some((a) => full[a] > 0)) continue;
     domains.push({ composition: normaliseComposition(full), totalPoints: c.xp });
   }
-  return { ...effectiveFieldComposition(TRACK_SEED[track], domains) };
+  return { ...clampTrackComposition(track, effectiveFieldComposition(TRACK_SEED[track], domains)) };
 }
 
 function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: FullComposition): TrackState {
@@ -389,17 +451,17 @@ function meterOf(s: TrackState): number {
 const int = (n: number): string => Math.floor(Math.max(0, n)).toLocaleString("en-GB");
 
 /**
- * A track row's line:
+ * A track row's line (the spec's strings, F3):
  *   no XP   'No Body tasks yet · 49 XP reaches level 1'
  *   capped  'Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked'
  *   else    '1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it'
- * with ' (or a paid Mid goal)' after the kept-weeks phrase while the track's
- * goal depth is below 2 and one more goal depth would raise the cap.
+ * No per-row goal clause (lead decision, review U7): with whole goal depths
+ * it would be on nearly every row. The Life tracks aside says once that
+ * levels are capped by kept weeks and paid goals.
  */
 export function trackLine(s: Pick<TrackState, "track" | "xp" | "level" | "cap" | "atCap" | "keptWeeks" | "goalDepth">): string {
   if (!(s.xp > 0)) return `No ${TRACK_NAME[s.track]} tasks yet · ${int(xpForLevel(1))} XP reaches level 1`;
-  let raise = keptWeeksRaiseCopy(moreKeptWeeks(s.keptWeeks, s.goalDepth));
-  if (s.goalDepth < GOAL_DEPTH_CAP && depthCap(trackDepth(s.keptWeeks, s.goalDepth + 1)) > s.cap) raise += " (or a paid Mid goal)";
+  const raise = keptWeeksRaiseCopy(moreKeptWeeks(s.keptWeeks, s.goalDepth));
   if (s.atCap) return `Capped at ${int(s.cap)} · ${raise} · ${int(s.xp)} XP banked`;
   return `${int(s.xp)} / ${int(xpForLevel(s.level + 1))} XP · depth cap ${int(s.cap)} · ${raise}`;
 }
@@ -510,7 +572,8 @@ export function keptWeekGrid(ledger: LifeLedger, n: number = 12): KeptWeekGrid {
  * The whole view as of today: not launched (isLaunched(today, launchDay)
  * false) or no epochDay gives notLaunchedView(today), so nothing changes
  * before launch. Otherwise levels, rows, attribute contributions, crest
- * edges, the life week's capped MP and the judged weeks.
+ * edges, the capped MP of this life week and of the last judged one, and
+ * the judged weeks.
  * life-tracks-server.ts loadLifeTracks returns this.
  */
 export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: DayKey | null = lifeLaunchDay()): LifeTracksView {
@@ -520,7 +583,9 @@ export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: Day
   for (const s of states) levels[s.track] = s.level;
   const rows = trackRowsView(ledger, today);
   const edgeOf = (t: Track) => rows.find((r) => r.track === t)?.edge ?? 0;
-  const judgedWeeks = judgedWeekKeys(ledger);
+  const judgedList = judgedWeekList(ledger);
+  const judgedWeeks = judgedList.map((w) => w.weekKey);
+  const last = judgedList.length > 0 ? judgedList[judgedList.length - 1] : null;
   return {
     launched: true,
     today,
@@ -529,6 +594,12 @@ export function lifeTracksView(ledger: LifeLedger, today: DayKey, launchDay: Day
     contributions: lifeContributionRows(states),
     edges: { body: edgeOf("BODY"), duty: edgeOf("DUTY"), craft: edgeOf("CRAFT"), care: edgeOf("CARE") },
     mpThisWeek: { used: lifeMpInWeek(ledger, weekStartKeyOf(today)), cap: LIFE_MP_WEEK_CAP },
+    mpLastWeek: {
+      used: last ? lifeMpInWeek(ledger, addDays(last.sunday, -6)) : 0,
+      cap: LIFE_MP_WEEK_CAP,
+      weekKey: last?.weekKey ?? null,
+      backfill: last != null && ledger.weeks.some((w) => w.weekKey === last.weekKey && isBackfillDetail(w.detail)),
+    },
     judgedWeeks,
     lastJudgedWeek: judgedWeeks.length > 0 ? judgedWeeks[judgedWeeks.length - 1] : null,
   };

@@ -16,6 +16,11 @@
  * Added by lane A (compatible):
  *   readLifeLedger(userId)       the same five reads, uncached and ungated: the launch script's
  *                                dry run reads the real ledger before the launch day.
+ * Added by the M5 review (C3):
+ *   lifeMintLockOp(userId)       the first op of every transaction that mints life MP (a goal
+ *                                close, a judged week): a per-user advisory lock, released at
+ *                                commit, so a guard after it reads every mint committed before
+ *   isStaleGuard(err)            a guard op's deliberate division by zero (SQLSTATE 22012)
  *
  * Inert before launch: until isLaunched(today) holds, loadLifeLedger returns
  * the empty ledger without a query, so every caller (the attribute seam, the
@@ -24,6 +29,7 @@
  * (no epochDay) reads the same way.
  */
 import { cache } from "react";
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached } from "./cache";
 import { keyOfDateColumn, todayKey } from "./life-day";
@@ -147,6 +153,26 @@ export async function loadLifeLedger(userId: string): Promise<LifeLedger> {
     const ledger = await readLifeLedger(userId);
     return ledger.epochDay ? ledger : emptyLifeLedger();
   });
+}
+
+/**
+ * Serialises a player's life-MP writes (tasks.ts lifeLockOp's pattern, its
+ * own key): pg_advisory_xact_lock, transaction-scoped, so it releases at
+ * commit or rollback. Put it first in the $transaction array; a guard op
+ * after it then reads every row committed by the write that held it before.
+ */
+export function lifeMintLockOp(userId: string) {
+  return prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`life-mint:${userId}`}::text))`;
+}
+
+/** A guard op's failure (SELECT 1 / 0): someone else's write landed between this one's read and its commit. */
+export function isStaleGuard(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    const meta = (err.meta ?? {}) as Record<string, unknown>;
+    if (String(meta.code ?? "") === "22012") return true;
+  }
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /division by zero|22012/i.test(message);
 }
 
 /** The life tracks as of today (now defaults to the current instant). */

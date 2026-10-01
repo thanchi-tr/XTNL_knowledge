@@ -97,17 +97,22 @@ export function SectionHeader({
   as: Tag = "h2",
   id,
   className,
+  tabIndex,
 }: {
   title: ReactNode;
   aside?: ReactNode;
   as?: "h2" | "h3";
   id?: string;
   className?: string;
+  /** -1 makes the heading a focus target a page can move focus to (never a Tab stop). */
+  tabIndex?: -1;
 }) {
   return (
     <div className={cx("sec-h", className)}>
       <span className="lane-mark" aria-hidden="true" />
-      <Tag id={id}>{title}</Tag>
+      <Tag id={id} tabIndex={tabIndex}>
+        {title}
+      </Tag>
       {aside != null && <span className="aside">{aside}</span>}
     </div>
   );

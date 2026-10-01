@@ -21,6 +21,7 @@ import {
   TRACK_DEPTH_GRACE,
   TRACK_DEPTH_WEEK_COEF,
   TRACK_LEVEL_STEP,
+  TRACK_SHARE_CAP,
   WEEK_JUDGE_LAG_DAYS,
   WEEK_JUDGE_MAX_WEEKS,
   depthCap,
@@ -178,8 +179,8 @@ const WEEKDAY_AFTER_SUNDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thurs
 
 /** What each life MP reason pays, in words built from the constants. */
 const MP_ROWS: { reason: LifeMpReason; amount: number; per: string; note?: string }[] = [
-  { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "paid on the week's Sunday" },
-  { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "when finished" },
+  { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged" },
+  { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "at 100%" },
   { reason: "GOAL_MID", amount: GOAL_RULES.MID.stated, per: "× progress" },
   { reason: "GOAL_LONG", amount: GOAL_RULES.LONG.stated, per: "× progress" },
   { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
@@ -241,18 +242,19 @@ function TracksRules() {
       </p>
       <ul className="rules-bullets">
         <li>
-          Every track keeps its week with completions on at least {KEPT_MIN_DAYS} days and at least {KEPT_MIN_RAW} raw XP.{" "}
-          {TRACK_LABEL.CRAFT} and {TRACK_LABEL.CARE} need nothing more.
+          {TRACK_LABEL.CRAFT} and {TRACK_LABEL.CARE} keep their week with completions on at least {KEPT_MIN_DAYS} days and at
+          least {KEPT_MIN_RAW} raw XP.
         </li>
         <li>
-          {TRACK_LABEL.BODY} also needs {BODY_EFFORT_MINUTES} effort minutes from {CATEGORY_LABEL[EFFORT_CATEGORY]} tasks: minutes ×{" "}
+          {TRACK_LABEL.BODY} needs the same, plus {BODY_EFFORT_MINUTES} effort minutes from {CATEGORY_LABEL[EFFORT_CATEGORY]} tasks: minutes ×{" "}
           {EFFORT_WEIGHT.STANDARD} at {BAND_META.STANDARD.label}, × {EFFORT_WEIGHT.DEMANDING} at {BAND_META.DEMANDING.label} or{" "}
           {BAND_META.SEVERE.label}, × {EFFORT_WEIGHT.INTRO} at {BAND_META.INTRO.label}.
         </li>
         <li>
-          {TRACK_LABEL.DUTY}: any missed must breaks the week. With {DUTY_MIN_OCCURRENCES} or more musts due that week, the raw XP
-          floor is all it needs; with fewer, it needs {DUTY_FALLBACK_COMPLETIONS} {TRACK_LABEL.DUTY} completions on {KEPT_MIN_DAYS}{" "}
-          days. A must done at its minimum holds; #play and study tasks never count.
+          {TRACK_LABEL.DUTY}: any missed must breaks the week. With {DUTY_MIN_OCCURRENCES} or more musts due that week,{" "}
+          {KEPT_MIN_RAW} raw XP is all it needs, on any number of days; with fewer, it needs {DUTY_FALLBACK_COMPLETIONS}{" "}
+          {TRACK_LABEL.DUTY} completions on {KEPT_MIN_DAYS} days and {KEPT_MIN_RAW} raw XP. A must done at its minimum holds;
+          #play and study tasks never count.
         </li>
       </ul>
       <p>
@@ -261,7 +263,9 @@ function TracksRules() {
       </p>
       <p>
         A run of kept weeks lifts the track&apos;s share of its attributes: +{pct(keptWeekBonusPercent(1))}% after one, and
-        +{pct(keptWeekBonusPercent(fullAt))}% (the most) from {fullAt} in a row. Streak amplifiers never touch it.
+        +{pct(keptWeekBonusPercent(fullAt))}% (the most) from {fullAt} in a row. Streak amplifiers never touch it. A
+        track&apos;s tasks shift which attributes it feeds, but its share of any one attribute is at most its starting share
+        or {TRACK_SHARE_CAP}%, whichever is more.
       </p>
       <div className="rules-scroll">
         <table className="rules-table">
@@ -273,6 +277,7 @@ function TracksRules() {
                   <span className="cur">
                     <CurrencyGlyph kind="mp" />
                     {mpFigure(r.amount)}
+                    <span className="sr-only"> MP</span>
                   </span>
                 </td>
                 <td className="ink-2">
@@ -319,6 +324,7 @@ function TracksRules() {
                   <span className="cur">
                     <CurrencyGlyph kind="mp" />
                     {mpFigure(g.stated)}
+                    <span className="sr-only"> MP</span>
                   </span>
                 </td>
                 <td className="ink-1">{g.binary ? "when finished" : `× progress, from ${pct(g.bar * 100)}%`}</td>
@@ -335,8 +341,9 @@ function TracksRules() {
         </table>
       </div>
       <p>
-        A goal states its MP when it is set, and that figure never changes. Closing is final: a goal closed short of its bar
-        pays nothing and is carried, never owed. Goal depth is capped at {GOAL_DEPTH_CAP} per track. Goals never pay XP.
+        A goal states its MP when it is set, and that figure never changes. Closing is final: a goal closed below its bar
+        pays nothing. A goal past its due day is carried, never owed, until you reschedule or close it. Goal depth is capped
+        at {GOAL_DEPTH_CAP} per track. Goals never pay XP.
       </p>
     </Card>
   );

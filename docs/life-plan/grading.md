@@ -172,7 +172,8 @@ F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tr
 - Judging kept weeks (lazy and idempotent; it replaces M2's Sunday settlement step, which will call the same function):
   - Week W is its Monday–Sunday life days. It is judged from Wednesday 04:00 after its Sunday: the latest judgeable week is the one whose Sunday is on or before today − 3 (WEEK_JUDGE_LAG_DAYS).
     - That is one day later than the record window strictly needs, so M2's 48-hour make-ups never come too late.
-    - The judge runs in after() on page reads, at most 12 weeks per run, oldest first. Rendering twice never judges twice.
+    - The judge runs in after() on page reads (/you, /today/week and /today), at most 12 weeks per run, oldest first. Rendering twice never judges twice.
+    - Page loads judge nothing until the launch script has finished: its DECAY_GRACE row 'life launch <day>' must exist. The launch judges the backfill weeks itself, with no per-week Seals, and then plays the one launch moment.
   - The epoch week is judged on its days ≥ epochDay.
   - Inputs are live TASK rows with sink TRACK:
     - An UNDO 'undo:<id>' removes row <id>.
@@ -194,13 +195,18 @@ F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tr
     - An MVV holds the must and still needs the floor.
   - Held days (rest, vacation) are an input that M2 fills. In M5 there are none, so no week is 'held'.
   - Each judgement is one WEEK row per track: 'week:<TRACK>:<YYYY-Www>', qty 1 when kept or 0, day = the week's Sunday.
-    - Its detail is the reason line. Kept: 'Kept · 4 days · 52.0 raw XP'; BODY adds ' · 180 effort min', and DUTY adds ' · 5 musts kept' when there were musts.
-    - Not kept: 'Not kept · ' plus only the failing parts, from '2 of 3 days', '12.0 of 30 raw XP', '90 of 150 effort min', '1 must missed (Tue)' and '4 of 5 completions'.
+    - Its detail is the reason line. Kept: 'Kept · 4 days · 52.0 raw XP'; BODY adds ' · 180 effort min'. When there were musts, DUTY adds ' · 5 musts kept', ' · 4 musts kept, 1 held' or ' · 7 musts held'.
+    - Not kept: 'Not kept · ' plus only the failing parts, from '2 of 3 days', '12.0 of 30 raw XP', '90 of 150 effort min', '4 of 5 completions' and the missed musts. Any missed must is stated alone: '1 must missed (Tue)', '3 musts missed (Mon, Thu)', or '1 must missed (weekly target)' for a TARGET:n/W shortfall.
   - Backfill: a week whose Sunday is before LIFE_LAUNCH_DAY is written 'backfill · <reason>'. It counts for depth, but it mints no MP and plays no Seal.
 - keptWeeks counts every kept week, backfill included. keptStreak is the trailing run of kept weeks ending at the latest judged week. A not-kept week ends it; the unjudged current week does not.
 - Attribute contribution, one row per track with level > 0:
   - {fieldName: 'Life · Body', level: L × (1 + streakBonusPercent(7 × keptStreak)/100), composition, source: 'LIFE'}.
   - composition = effectiveFieldComposition(TRACK_SEED[track], the XP-weighted compositions of the track's compositionKeys). Keys with XP ≤ 0 are dropped; with none left, it is the seed.
+  - The share clamp (TRACK_SHARE_CAP 16, life-tracks clampTrackComposition):
+    - No attribute may carry more than max(its seed share, 16) points of the track's 100.
+    - When the tasks pull the mix past that, the pull away from the seed is scaled back by one factor until every attribute is within its cap. The result still sums to 100 and keeps the pull's direction.
+    - A mix already within the caps is unchanged. For example, Craft tasks that are all MIND leave Craft at its seed.
+    - Without the clamp, tasks that name one attribute at 100 would lift life alone to SELF_RESPECT 42.34, far past the tier-5 gate. With it, any mix gives at most Σ max(seed, 16) = 96 points of any attribute across the four tracks, the same ceiling the seeds give.
   - The bonus reaches its +20% cap after 10 kept weeks. It is not amplified by STREAK_AMPLIFIER (COVENANT), which multiplies Field streak bonuses only.
 - characterLevel = floor(Σ over Fields and tracks of L^0.75). It uses the plain track level, never the bonus-scaled one. With no tracks it equals xp.fieldLevel exactly.
 - Golden values (scripts/character-check.ts §1), as trackLevel(xp, keptWeeks[, goal depth]):
@@ -213,7 +219,7 @@ F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tr
 
 G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants in src/lib/life-economy.ts)
 - Reasons (LIFE_MP):
-  - LIFE_WEEK_KEPT pays 1.5 per kept track, minted on the week's Sunday: 'mp:LIFE_WEEK_KEPT:<TRACK>:<YYYY-Www>', why 'kept week <weekKey>'.
+  - LIFE_WEEK_KEPT pays 1.5 per kept track, dated the week's Sunday and written when the week is judged (from the Wednesday after): 'mp:LIFE_WEEK_KEPT:<TRACK>:<YYYY-Www>', why 'kept week <weekKey>'.
   - GOAL_SHORT pays 1, GOAL_MID 6 × g and GOAL_LONG 20 × g, minted on the close day: 'mp:GOAL:<goalId>'.
   - LIFE_FULL_DAY (0.5) is minted from M2's settlement, through the same helper and cap.
   - LIFE_PR is dropped with M4. It stays reserved and is never minted.
@@ -241,13 +247,22 @@ G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants i
     1. 'before life MP began';
     2. 'not measured: add a step or a number';
     3. 'not finished' (SHORT) or 'below 70%';
-    4. 'set N days ago (21 needed)';
+    4. 'set 5 days ago (21 needed)' ('set today (3 needed)', 'set 1 day ago (3 needed)');
     5. '2 Short goals already paid this week', '2 Mid goals paid in the last 30 days' or 'a Long goal paid in the last 91 days'.
-  - A SHORT that passes pays 1, trimmed to the room left in the close day's life week ('the life week's 8 MP cap is reached' when there is none).
+  - A SHORT that passes pays 1, trimmed to the room left in the close day's life week. A partial trim's why is 'trimmed by the life week's 8 MP cap'; with no room left it pays 0, 'the life week's 8 MP cap is reached'.
+  - A goal whose goalMp was set to 0 pays 0 with the why 'it states 0 MP'.
   - Depth added = min(GOAL_DEPTH[h], 2 − the track's current goal depth) when it pays, else 0.
 - Every close writes exactly one MP_MINT decision row 'mp:GOAL:<id>', with qty = MP paid. A qty-0 row records a close that paid nothing, with its why.
   - A MasteryLedgerEntry is written only when it pays.
   - A double tap hits the dedupe key ('Already closed.').
+  - Closes are serial per player. Each goal close, and each judged week, takes the life-mint advisory lock first.
+    - A paying close then re-checks what its decision counted: the limit window's paying rows and, for a SHORT, the week's capped MP.
+    - If another close or a judged week changed them in between, it writes nothing and returns 'Something changed; try again.' A retry decides afresh.
+    - So two Shorts closed at once on two devices can never both pay past the limit or the cap.
+- The percentage shown for a goal is goals.ts goalPercent(g) = floor(g × 100), the same on Today and You. A goal never reads as reaching a bar it has not: 2 of 3 steps reads 66%, and 0.695 reads 69% (closing pays 0, 'below 70%').
+- A closed goal is shown as it stood at its close: g and its progress label are both measured as of min(close day, due day). A close decided while the goal was not measured shows no percentage.
+- Once launched, Today offers Close on every open goal. Before launch it offers none, because a close then would write a permanent qty-0 'before life MP began' row.
+- Reschedule is offered on a carried goal, before and after launch. It moves only the due day.
 - A missed goal reads 'Carried 0.55', with no debt.
 - Goals never pay XP and never write TRACK rows; their children pay as tasks.
 - No MP is paid for a week whose Sunday is before LIFE_LAUNCH_DAY (backfill), and no goal pays before launch.
@@ -255,7 +270,12 @@ G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants i
   - Knowledge income is 61.964 MP/day (25 × 0.1 × 10.5 + 10/7 × 25).
   - The worst case is 8/7 + 6 × 2/30 + 20 × 1/91 = 1.7626 MP/day, 2.845% of knowledge: within 3% (1.8589). The whole-pool horizon moves from 13.71 to 13.33 years.
   - The committed case (the cap every week plus a Mid a quarter) is 1.209 MP/day, giving 13.45 years.
-  - It also asserts that M5's weekly maximum fills the cap exactly; the steady basket's volume; pacing (steady level 10 at week 49, light at 81, heavy volume at most one level above steady at week 52, and the worst case not before week 32); and that life alone stays below every tier-5 attribute gate (worst SELF_RESPECT 13.82 < 14.2).
+  - It also asserts:
+    - that M5's weekly maximum fills the cap exactly (4 × 1.5 + 2 × 1 = 8);
+    - the steady basket's volume;
+    - pacing: steady reaches level 10 at week 49 and light at week 81, heavy volume is at most one level above steady at week 52, and the worst case is not at level 10 before week 32;
+    - that life alone stays below every tier-5 attribute gate on the seed compositions (assertion 9: worst SELF_RESPECT 13.82 < 14.2);
+    - that it stays below the gate under the 65% task pull too (assertion 9b): with the share clamp, any mix reaches at most SELF_RESPECT 13.82, and the all-in mixes run through the code agree. Unclamped it would be 42.34.
 
 H. CALIBRATION
 - scripts/life-grade-check.ts (PASS/FAIL, exit 1, novelty-check style):

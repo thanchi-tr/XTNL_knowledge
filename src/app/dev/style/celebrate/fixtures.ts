@@ -114,21 +114,21 @@ export function fixtures(): Fixture[] {
     },
     {
       name: "goal-finished",
-      note: "A Short goal closed at its key result; it pays its frozen 1 MP.",
+      note: "A Short goal closed at its key result; its decision row paid the 1 MP it stated (Body, no depth).",
       ...only(
         "goals",
         { done: [] },
-        { done: [{ id: "goal-5k", title: "Run a 5K", horizon: "SHORT", goalMp: 1, closedScore: 1, krTarget: 5, krUnit: "km" }] }
+        { done: [{ id: "goal-5k", title: "Run a 5K", horizon: "SHORT", goalMp: 1, closedScore: 1, krTarget: 5, krUnit: "km", paid: 1, why: null, track: "BODY", depth: 0 }] }
       ),
       expect: ["goal:goal-5k"],
     },
     {
       name: "goal-long",
-      note: "A Long goal finished at 90%: an Ascension.",
+      note: "A Long goal finished at 90%: an Ascension. It paid 18 of the 20 MP it stated (20 × 0.9) and added Craft depth +2.",
       ...only(
         "goals",
         { done: [] },
-        { done: [{ id: "goal-book", title: "Finish the statistics book", horizon: "LONG", goalMp: 6, closedScore: 0.9, krTarget: 12, krUnit: "chapters" }] }
+        { done: [{ id: "goal-book", title: "Finish the statistics book", horizon: "LONG", goalMp: 20, closedScore: 0.9, krTarget: 12, krUnit: "chapters", paid: 18, why: null, track: "CRAFT", depth: 2 }] }
       ),
       expect: ["goal:goal-book"],
     },
@@ -144,12 +144,21 @@ export function fixtures(): Fixture[] {
     },
     {
       name: "week-kept",
-      note: "Settlement wrote three kept WEEK rows: one Seal for the week card, not three.",
+      note: "The week judge wrote three kept WEEK rows, each paid 1.5 MP: one Seal for the week card, not three.",
       ...only(
         "ledger",
         { weeks: [], prs: [] },
         {
-          weeks: ["DUTY", "CRAFT", "BODY"].map((t) => ({ key: `week:${t}:2026-W40`, week: "2026-W40", track: t, day: "2026-10-04", xp: 0, qty: 1, detail: null })),
+          weeks: ["DUTY", "CRAFT", "BODY"].map((t) => ({
+            key: `week:${t}:2026-W40`,
+            week: "2026-W40",
+            track: t,
+            day: "2026-10-04",
+            xp: 0,
+            qty: 1,
+            detail: "Kept · 4 days · 52.0 raw XP",
+            mp: 1.5,
+          })),
           prs: [],
         }
       ),

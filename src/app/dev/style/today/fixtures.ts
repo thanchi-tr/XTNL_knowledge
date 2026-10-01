@@ -59,7 +59,7 @@ function ledger(day: DayKey): DayLedger {
   return { day, rawBefore: 0, lifeXp: 0, completions: [], reviews: 0, reviewXp: 0, ideas: 0, dayOpenQty: null };
 }
 
-/** A small board: three musts, two planned, one habit, two goals. */
+/** A small board: three musts, two planned, one habit, three goals (one carried past its due day). */
 export function fixtureBoardData(): BoardData {
   const t = FIXTURE_TODAY;
   const templates = [
@@ -69,6 +69,8 @@ export function fixtureBoardData(): BoardData {
     fixtureTemplate({ id: "groceries", title: "Groceries", estMinutes: 20, machineMinutes: 20, dueKind: "PLANNED", dueDay: t }),
     fixtureTemplate({ id: "run-goal", title: "Run 10K under 55:00", kind: "GOAL", horizon: "MID", dueDay: "2026-11-30", krMetric: "CHILDREN" }),
     fixtureTemplate({ id: "read-goal", title: "Read 12 books", kind: "GOAL", horizon: "LONG", krMetric: "MANUAL", krTarget: 12, krUnit: "books" }),
+    // Past its due day at 2 of 4: the card shows 'Carried 0.50 · Reschedule or close?' (launched).
+    fixtureTemplate({ id: "garage-goal", title: "Clear out the garage", kind: "GOAL", horizon: "SHORT", krMetric: "MANUAL", krTarget: 4, krUnit: "shelves", dueDay: addDays(t, -3), goalMp: 1 }),
   ];
   return {
     today: t,
@@ -79,7 +81,7 @@ export function fixtureBoardData(): BoardData {
     stats: {},
     ledger: { today: ledger(t), yesterday: ledger(addDays(t, -1)) },
     paid: {},
-    goalQty: { "read-goal": 5 },
+    goalQty: { "read-goal": 5, "garage-goal": 2 },
     dueNow: 17,
   };
 }

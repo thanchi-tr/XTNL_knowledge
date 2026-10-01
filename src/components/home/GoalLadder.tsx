@@ -7,9 +7,11 @@
  *   is visible); how far it has got (%, '3 of 5 steps'); its due day; once
  *   life counts, the MP it stated when it was set (statedPayoutCopy) and what
  *   closing now would pay, with the reason when that is less; and, past due
- *   and unfinished, 'Carried 0.55 · reschedule or close it on Today' (no debt).
- *   Goals closed in the last 30 days: 'Closed · paid ⬡ 4.8 · Duty depth +1',
- *   or 'Closed · paid 0: <why>'.
+ *   and unfinished, 'Carried 0.55' (no debt), with '· reschedule or close it
+ *   on Today' once life counts (Today shows Close only then).
+ *   Goals closed in the last 30 days, measured as of their close: 'Closed ·
+ *   paid ⬡ 4.8 · Duty depth +1', or 'Closed · paid 0: <why>'.
+ *   Percentages are goals.ts goalPercent, the one floored figure Today shows too.
  *   Then ideas mastered, Field tiers and habits by rung. No PRs.
  *
  * Before life counts, nothing here states or previews MP: goals show their
@@ -17,7 +19,7 @@
  * (goalRowCopy, rungsLine) so scripts/you-check.ts holds it.
  */
 import Link from "next/link";
-import type { GoalLadder as GoalLadderData, GoalLadderItem, GoalPayout } from "@/lib/goals";
+import { goalPercent, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout } from "@/lib/goals";
 import type { HabitRung } from "@/lib/habit";
 import type { DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
@@ -39,14 +41,9 @@ export function rungsLine(rungs: RungCounts | null): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-/** g as a whole percentage, never rounded up past a bar (0.6999 is 69%). */
-function percentOf(g: number): string {
-  return `${Math.floor(Math.max(0, Math.min(1, g)) * 100 + 1e-9)}%`;
-}
-
-/** 0.55 → '0.55': g to 2 dp, rounded down like the percentage. */
+/** 0.55 → '0.55': g to 2 dp, rounded down like the percentage (goalPercent / 100). */
 function carriedFigure(g: number): string {
-  return (Math.floor(Math.max(0, Math.min(1, g)) * 100 + 1e-9) / 100).toFixed(2);
+  return (goalPercent(g) / 100).toFixed(2);
 }
 
 export interface GoalRowCopy {
@@ -54,7 +51,7 @@ export interface GoalRowCopy {
   meta: string;
   /** The stated payout, once life counts ('pays ⬡ 6 × progress from 70%'). */
   pays: string | null;
-  /** 'Carried 0.55 · reschedule or close it on Today' (open, past due, g < 1). */
+  /** 'Carried 0.55' (open, past due, g < 1), with '· reschedule or close it on Today' once life counts. */
   carried: string | null;
   /** What closing now pays, once life counts: 'Closing now pays 0: below 70%', 'Closing now pays ⬡ 4.8'. */
   preview: string | null;
@@ -70,7 +67,8 @@ function previewCopy(p: GoalPayout | null): string | null {
 
 export function goalRowCopy(item: GoalLadderItem, launched: boolean, today: DayKey): GoalRowCopy {
   const parts = [GOAL_RULES[item.horizon].name, TRACK_NAME[item.track]];
-  if (item.g != null) parts.push(percentOf(item.g));
+  // g is null when the goal is not measured (a closed one too: never an invented 0%).
+  if (item.g != null) parts.push(`${goalPercent(item.g)}%`);
   if (item.progressLabel) parts.push(item.progressLabel);
   if (!item.closed && item.dueDay) parts.push(`${item.pastDue ? "was due" : "due"} ${shortDayLabel(item.dueDay, today)}`);
   const c = item.closed;
@@ -82,7 +80,8 @@ export function goalRowCopy(item: GoalLadderItem, launched: boolean, today: DayK
   return {
     meta: parts.join(" · "),
     pays: launched && !c ? item.copy : null,
-    carried: !c && item.carried != null ? `Carried ${carriedFigure(item.carried)} · reschedule or close it on Today` : null,
+    // Today has Close and Reschedule only once life counts, so the sheet sends you there only then.
+    carried: !c && item.carried != null ? `Carried ${carriedFigure(item.carried)}${launched ? " · reschedule or close it on Today" : ""}` : null,
     preview: launched && !c ? previewCopy(item.preview) : null,
     closed,
   };

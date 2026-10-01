@@ -30,12 +30,15 @@ import {
   TRACK_DEPTH_GRACE,
   TRACK_DEPTH_WEEK_COEF,
   TRACK_LEVEL_STEP,
+  TRACK_SHARE_CAP,
   trackLevel,
 } from "../src/lib/life-economy";
+import { emptyLifeLedger, trackShareCap, trackStateAt } from "../src/lib/life-tracks";
+import { effectiveFieldComposition } from "../src/lib/attribute-inference";
 import { TRACK_LABEL, kneeG, priceTask } from "../src/lib/life-grade";
 import { TRACK_SEED } from "../src/lib/life-lexicon";
 import { streakBonusPercent } from "../src/lib/streak-curve";
-import { ATTRIBUTES, computeAttributeScores, type FieldContribution } from "../src/lib/attributes";
+import { ATTRIBUTES, computeAttributeScores, emptyComposition, type FieldContribution } from "../src/lib/attributes";
 import { meetsRequirements } from "../src/lib/skill-gates";
 import { TRACKS, type Band, type Horizon, type Track } from "../src/lib/life-types";
 
@@ -223,6 +226,43 @@ function lifeOnlyScores(level: number, bonusPercent: number) {
   return computeAttributeScores(rows);
 }
 
+/** A task composition that names one attribute at 100: the most any one task mix can carry. */
+function allIn(attribute: (typeof ATTRIBUTES)[number]) {
+  const c = emptyComposition();
+  c[attribute] = 100;
+  return c;
+}
+
+/**
+ * The flood with the task pull: for each attribute, every track's tasks name
+ * only it (the worst a task mix can do). `pulled` is the unclamped mix
+ * (attribute-inference effectiveFieldComposition: 65% of the way to the tasks);
+ * `clamped` is what the code holds a track to (life-tracks trackStateAt, which
+ * applies clampTrackComposition); `ceiling` is Σ over tracks of the clamp,
+ * the bound for ANY mix. Each is that attribute's life-only score with all
+ * four tracks at `level`.
+ */
+function pulledFlood(level: number, bonusPercent: number) {
+  const effective = level * (1 + bonusPercent / 100);
+  const scoreOf = (comps: readonly (typeof TRACK_SEED)[Track][], a: (typeof ATTRIBUTES)[number]) =>
+    computeAttributeScores(comps.map((composition, i) => ({ fieldName: `Life · ${TRACK_LABEL[TRACKS[i]]}`, level: effective, composition })))[a];
+  type Top = { attribute: (typeof ATTRIBUTES)[number]; score: number };
+  const none = (): Top => ({ attribute: ATTRIBUTES[0], score: 0 });
+  const worst: { pulled: Top; clamped: Top; ceiling: Top } = { pulled: none(), clamped: none(), ceiling: none() };
+  for (const a of ATTRIBUTES) {
+    const pulled = TRACKS.map((t) => effectiveFieldComposition(TRACK_SEED[t], [{ composition: allIn(a), totalPoints: 1 }]));
+    const ledger = { ...emptyLifeLedger("2026-01-05"), compositions: TRACKS.map((t) => ({ track: t, key: `all-in:${a}`, xp: 1, composition: allIn(a) })) };
+    const clamped = trackStateAt(ledger, "2026-01-05").map((s) => s.composition);
+    const ceiling = Math.round(effective * TRACKS.reduce((s, t) => s + trackShareCap(t, a), 0)) / 100;
+    const p = scoreOf(pulled, a);
+    const c = scoreOf(clamped, a);
+    if (p > worst.pulled.score) worst.pulled = { attribute: a, score: p };
+    if (c > worst.clamped.score) worst.clamped = { attribute: a, score: c };
+    if (ceiling > worst.ceiling.score) worst.ceiling = { attribute: a, score: ceiling };
+  }
+  return worst;
+}
+
 function topAttribute(scores: ReturnType<typeof computeAttributeScores>) {
   let best: (typeof ATTRIBUTES)[number] = ATTRIBUTES[0];
   for (const a of ATTRIBUTES) if (scores[a] > scores[best]) best = a;
@@ -396,6 +436,18 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
     "9. flood: life alone stays below the tier-5 gate",
     flood.score < gate,
     `all four tracks at L${worst52.level} +${fmt(worstBonus, 1)}% on seed compositions → ${flood.attribute} ${fmt(flood.score)} < ${gate}`,
+  );
+  // The 65% task pull (M5 review C6): a track's mix moves toward its tasks', so
+  // the seed case above is not the bound. Unclamped, life alone opens the gate;
+  // each track's share of an attribute is therefore clamped at max(seed, 16).
+  const pull = pulledFlood(worst52.level, worstBonus);
+  console.log(
+    `       (with the 65% task pull and every task naming one attribute at 100, unclamped: ${pull.pulled.attribute} ${fmt(pull.pulled.score)}, over the gate)`,
+  );
+  check(
+    "9b. flood with the task pull: the share clamp holds life alone below the tier-5 gate",
+    pull.ceiling.score < gate && pull.clamped.score <= pull.ceiling.score + 0.01 && pull.clamped.score < gate,
+    `each track's share of an attribute ≤ max(seed, ${TRACK_SHARE_CAP}); any mix → at most ${pull.ceiling.attribute} ${fmt(pull.ceiling.score)} < ${gate} (all-in mixes through the code: ${pull.clamped.attribute} ${fmt(pull.clamped.score)})`,
   );
   const steady52 = paceAt(plans.steadyAll, 52);
   const steadyFlood = topAttribute(lifeOnlyScores(steady52.level, keptBonusPercent(steady52.keptStreak)));

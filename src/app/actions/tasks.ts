@@ -281,6 +281,9 @@ export interface GoalCloseResult {
  * (its stated MP within the gates and caps, 0 allowed, never XP), writes the
  * one 'mp:GOAL:<id>' decision row, and returns the moments (a finished goal's
  * Seal) as `celebrations`. A second tap gets 'Already closed.' and pays nothing.
+ * A close that raced another paying close (or a judged week's mints) is
+ * refused with goals-server GOAL_CLOSE_STALE ('Something changed; try
+ * again.') and pays nothing; trying again decides it afresh.
  */
 export async function closeGoal(goalId: string, opts?: TaskActionOptions): Promise<TaskActionResult<WithCelebrations<GoalCloseResult>>> {
   if (!isId(goalId)) return noId();

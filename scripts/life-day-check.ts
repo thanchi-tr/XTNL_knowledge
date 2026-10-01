@@ -246,7 +246,7 @@ for (const tz of [SYD, BNE]) {
 
   // npm run life:check runs every pure life check, and the backfill has its script.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
-  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture"].map((n) => `scripts/${n}-check.ts`);
+  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character"].map((n) => `scripts/${n}-check.ts`);
   const lifeCheck = scripts["life:check"] ?? "";
   check(
     "package.json life:check chains every life check with &&, and each exists",

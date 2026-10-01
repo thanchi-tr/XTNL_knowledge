@@ -3,7 +3,7 @@
 /**
  * FROZEN CONTRACT — Sheet (L0-foundation). The ONE sheet (merges the two old ones).
  *
- *   <Sheet open={open} onClose={close} title="Receipt" description? variant="auto|center" id?>
+ *   <Sheet open={open} onClose={close} title="Receipt" description? variant="auto|center" id? closeLabel?>
  *     …body…
  *   </Sheet>
  *
@@ -13,6 +13,8 @@
  *   (components/capture/layers.ts), focus returns to the opener.
  *   Portalled to <body>: never inside <main> (the @container would trap it).
  *   aria-modal dialog labelled by its title. Nothing renders while closed.
+ *   closeLabel (default 'Close') names the dismiss button: a sheet whose own action is
+ *   'Close …' (closing a goal) passes 'Cancel', so dismissing never sounds like the action.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -34,11 +36,13 @@ interface SheetProps {
   className?: string;
   /** Hide the close button (the body has its own). */
   hideClose?: boolean;
+  /** The dismiss button's accessible name (default 'Close'). */
+  closeLabel?: string;
 }
 
 const EXIT_MS = 300;
 
-export function Sheet({ open, onClose, title, description, variant = "auto", id, children, footer, className, hideClose }: SheetProps) {
+export function Sheet({ open, onClose, title, description, variant = "auto", id, children, footer, className, hideClose, closeLabel = "Close" }: SheetProps) {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -117,7 +121,7 @@ export function Sheet({ open, onClose, title, description, variant = "auto", id,
               </p>
             )}
           </div>
-          {!hideClose && <IconButton icon="x" label="Close" onClick={() => closeRef.current()} />}
+          {!hideClose && <IconButton icon="x" label={closeLabel} onClick={() => closeRef.current()} />}
         </div>
         <div className="sheet-b" style={{ marginTop: 12 }}>
           {children}

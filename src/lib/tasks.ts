@@ -46,8 +46,10 @@ import {
   toBand,
 } from "./life-grade";
 import { cleanCaptureKey, matchParentGoal, parseCapture } from "./capture-parse";
+import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
 import { occursOn } from "./recurrence";
+import { statedGoalMp } from "./life-economy";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -179,6 +181,8 @@ const TEMPLATE_SELECT = {
   archivedAt: true,
   createdAt: true,
   sortOrder: true,
+  goalMp: true,
+  closedScore: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 type TemplateRow = Prisma.TaskTemplateGetPayload<{ select: typeof TEMPLATE_SELECT }>;
@@ -269,6 +273,8 @@ function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     completedAt: r.completedAt?.toISOString() ?? null,
     createdAt: r.createdAt.toISOString(),
     sortOrder: r.sortOrder,
+    goalMp: r.goalMp,
+    closedScore: r.closedScore,
   };
 }
 
@@ -469,8 +475,9 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     }),
     readDayTotals(userId, [yesterday, today]),
     readDayTaskEvents(userId, [yesterday, today]),
+    // By goal and life day: goalProgress measures as of min(today, due day).
     prisma.activityEvent.groupBy({
-      by: ["templateId"],
+      by: ["templateId", "day"],
       where: { userId, source: "GOAL_PROGRESS" },
       _sum: { qty: true },
     }),
@@ -498,8 +505,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
   const weekStart = weekStartKeyOf(today);
   const recentFrom = [monthStart, weekStart, yesterday].sort()[0];
 
-  const goalQty: Record<string, number> = {};
-  for (const g of goalQtyRows) if (g.templateId) goalQty[g.templateId] = g._sum.qty ?? 0;
+  const { goalQty, goalDays } = goalProgressOf(goalQtyRows, templates);
 
   return {
     today,
@@ -512,7 +518,30 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     ledger: { today: ledgerOf(today, totals, events), yesterday: ledgerOf(yesterday, totals, events) },
     paid: paidOf(events),
     goalQty,
+    goalDays,
   };
+}
+
+/**
+ * Σ GOAL_PROGRESS per goal (goalQty, every goal) and per open goal per life
+ * day (goalDays: only goals on the board, so a closed goal's history is not
+ * sent), from one groupBy over (templateId, day).
+ */
+function goalProgressOf(
+  rows: readonly { templateId: string | null; day: Date; _sum: { qty: number | null } }[],
+  templates: readonly BoardTemplate[]
+): { goalQty: Record<string, number>; goalDays: Record<string, GoalProgressRow[]> } {
+  const open = new Set(templates.filter((t) => t.kind === "GOAL" && t.closedScore == null).map((t) => t.id));
+  const goalQty: Record<string, number> = {};
+  const goalDays: Record<string, GoalProgressRow[]> = {};
+  for (const r of rows) {
+    if (!r.templateId) continue;
+    const qty = r._sum.qty ?? 0;
+    goalQty[r.templateId] = (goalQty[r.templateId] ?? 0) + qty;
+    if (open.has(r.templateId)) (goalDays[r.templateId] ??= []).push({ day: keyOfDateColumn(r.day), qty });
+  }
+  for (const list of Object.values(goalDays)) list.sort((a, b) => a.day.localeCompare(b.day));
+  return { goalQty, goalDays };
 }
 
 function loadBoardCore(userId: string, day: DayKey, now: Date): Promise<BoardCore> {
@@ -771,7 +800,7 @@ async function insertCapture(
   let parentId: string | null = null;
   if (parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
 
-  const goal = kind === "GOAL" ? goalMetricOf(title) : null;
+  const goal = captureGoalFields(kind, title, parsed.horizon, dueDay, today);
   const autoMetric = parsed.autoMetric && kind !== "GOAL" ? parsed.autoMetric : null;
   const autoTarget =
     autoMetric && parsed.autoTarget != null && Number.isFinite(parsed.autoTarget)
@@ -790,11 +819,12 @@ async function insertCapture(
     startDay: dateColumn(startDay),
     dueDay: dueDay ? dateColumn(dueDay) : null,
     dueKind,
-    horizon: kind === "GOAL" ? horizonFor(parsed.horizon, dueDay, today) : null,
+    horizon: goal.horizon,
     parentId,
-    krMetric: goal?.krMetric ?? null,
-    krTarget: goal?.krTarget ?? null,
-    krUnit: goal?.krUnit ?? null,
+    krMetric: goal.krMetric,
+    krTarget: goal.krTarget,
+    krUnit: goal.krUnit,
+    goalMp: goal.goalMp,
     compulsory,
     intrinsic: parsed.intrinsic,
     mvv: parsed.mvv ? parsed.mvv.slice(0, 120) : null,
@@ -851,6 +881,30 @@ async function insertCapture(
   // ticked since (here, or on the board), so its place reads them.
   const instances = duplicate ? await readCapturedInstances(userId, row.id, today) : [];
   return capturedOf(row, { duplicate, instances, totals, events, minutes: typed, today, now });
+}
+
+/** A goal capture's own columns; all null for any other kind. */
+export interface CaptureGoalFields {
+  horizon: Horizon | null;
+  krMetric: KrMetric | null;
+  krTarget: number | null;
+  krUnit: string | null;
+  /** The MP the goal states, frozen at creation (M5): statedGoalMp(horizon), so Short 1, Mid 6, Long 20. */
+  goalMp: number | null;
+}
+
+/**
+ * What a captured goal stores beside its title (m5-refit F15): its horizon
+ * (a tag may lower it, never raise it past its deadline: horizonFor), how it
+ * is measured (goalMetricOf: 'read 12 books' counts itself) and goalMp =
+ * statedGoalMp(horizon), stated once here and never recomputed (a later
+ * reschedule moves only the due day). Pure: insertCapture spreads it into
+ * the INSERT, and scripts/board-check.ts holds it.
+ */
+export function captureGoalFields(kind: TaskKind, title: string, tag: Horizon | null | undefined, dueDay: DayKey | null, today: DayKey): CaptureGoalFields {
+  if (kind !== "GOAL") return { horizon: null, krMetric: null, krTarget: null, krUnit: null, goalMp: null };
+  const horizon = horizonFor(tag ?? null, dueDay, today);
+  return { horizon, ...goalMetricOf(title), goalMp: statedGoalMp(horizon) };
 }
 
 /** A capture's row as the toast reports it: priced against today's real ledger, placed with its instances. */
@@ -1931,8 +1985,8 @@ export async function clarifyInboxCore(
       break;
     case "goal": {
       if (!parentId) return fail("Pick a goal.");
-      const goal = await prisma.taskTemplate.findFirst({ where: { id: parentId, userId, kind: "GOAL", archivedAt: null }, select: { id: true } });
-      if (!goal) return fail("That goal no longer exists.");
+      const goal = await prisma.taskTemplate.findFirst({ where: { id: parentId, userId, kind: "GOAL", archivedAt: null, closedScore: null }, select: { id: true } });
+      if (!goal) return fail("That goal is closed or no longer exists.");
       await prisma.taskTemplate.update({ where: { id: templateId }, data: { inbox: false, kind: asTask, parentId: goal.id } });
       break;
     }
@@ -1985,8 +2039,9 @@ export async function goalProgressCore(
 ): Promise<LifeResult<{ qty: number }>> {
   const n = goalProgressQty(qty);
   if (n === null) return fail(Number.isFinite(qty) && qty < 0 ? "Progress can only be added." : "Nothing to add.");
-  const goal = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId, kind: "GOAL", archivedAt: null }, select: { id: true } });
-  if (!goal) return fail("That goal no longer exists.");
+  // A closed goal (M5) takes no more progress: its close measured it for good.
+  const goal = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId, kind: "GOAL", archivedAt: null, closedScore: null }, select: { id: true } });
+  if (!goal) return fail("That goal is closed or no longer exists.");
   const key = opId && GOAL_OP_RE.test(opId) ? `goal:${templateId}:${opId}` : null;
   const row = await recordActivity(userId, {
     source: "GOAL_PROGRESS",

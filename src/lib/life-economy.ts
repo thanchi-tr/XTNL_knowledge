@@ -25,6 +25,8 @@
  *     trackLevel(xp, keptWeeks, goalDepth = 0) · moreKeptWeeks(keptWeeks, goalDepth = 0)
  *     KEPT_WEEK_STREAK_DAYS 7 (the kept-week bonus reads streakBonusPercent(7 × kept streak);
  *       life-tracks.ts keptWeekBonusPercent applies it)
+ *     TRACK_SHARE_CAP 16 (added by the M5 review, C6): a track's share of one attribute is at
+ *       most max(seed share, 16); life-tracks.ts trackComposition applies it
  *   Kept-week floors
  *     KEPT_MIN_DAYS 3 · KEPT_MIN_RAW 30 · BODY_EFFORT_MINUTES 150 · EFFORT_WEIGHT · effortWeightOfB(b)
  *     EFFORT_CATEGORY 'EXERCISE' · DUTY_MIN_OCCURRENCES 3 · DUTY_FALLBACK_COMPLETIONS 5
@@ -117,6 +119,19 @@ export function moreKeptWeeks(keptWeeks: number, goalDepth: number = 0): number 
  * it (streak-curve.ts owns the curve; this module imports no values).
  */
 export const KEPT_WEEK_STREAK_DAYS = 7;
+
+/**
+ * The most of any one attribute a track's composition may carry, in points
+ * of 100: max(the seed's share, TRACK_SHARE_CAP). A track's tasks pull its
+ * mix 65% of the way toward their own compositions (attribute-inference
+ * effectiveFieldComposition), and a task can name one attribute at 100, so
+ * without a ceiling four tracks could each carry ~70% of SELF_RESPECT and
+ * open the tier-5 gate on life alone. With it, the worst attribute over the
+ * four tracks is Σ max(seed, 16) = 96 (SELF_RESPECT, STUBBORNNESS), the same
+ * ceiling the seeds give: 13.82 at L12 +20% against the gate of 14.2
+ * (balance-horizon assertion 9). life-tracks.ts trackComposition applies it.
+ */
+export const TRACK_SHARE_CAP = 16;
 
 // ── Kept-week floors ──────────────────────────────────────────────────────
 

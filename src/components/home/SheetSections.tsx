@@ -132,7 +132,7 @@ export function LifeTracks({ knowledge, life }: { knowledge: KnowledgeRow; life:
   const rows = lifeTrackRows(knowledge, life);
   return (
     <div>
-      <SectionHeader title="Life tracks" aside={rows.length > 1 ? "levels capped by kept weeks" : "from your Fields"} />
+      <SectionHeader title="Life tracks" aside={rows.length > 1 ? "levels capped by kept weeks and paid goals" : "from your Fields"} />
       <section className="card">
         {rows.map((r) => (
           <TrackRow key={r.seenKey} {...r} />

@@ -24,6 +24,14 @@
  *                 stepsDoneAsOf · progressQtyAsOf · goalProgressLabel(input, asOf) ('3 of 5 steps')
  *                 horizonOfGoalReason · trackGoalDepth(mints, track) · goalDepthAdded(mints, key)
  *                 goalCloseMint(goal, payout, day): the one 'mp:GOAL:<id>' decision row a close writes
+ *   Added by the M5 review (compatible)
+ *                 GoalMintRow.occurredAt? — same-day rows order by it, as the Seal does (C5)
+ *                 goalPercent(g) — the one floored percentage Today and You show (U6)
+ *                 goalLimitWindow(input) · GoalLimitWindow — what a close's limit and cap gates
+ *                   counted, so goals-server re-checks them inside the close transaction (C3)
+ *                 closedGoalReading(input, closeDay, why) — a closed goal measured as of its close (U5)
+ *   Added by the phase B review (compatible)
+ *                 GOAL_ALREADY_CLOSED — the refusal a replayed close gets; Today refreshes on it
  */
 import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "./life-day";
 import {
@@ -42,6 +50,9 @@ import {
   type LifeMintInput,
 } from "./life-economy";
 import type { Horizon, KrMetric, Track } from "./life-types";
+
+/** The refusal a close of a goal that is already closed gets (a double tap, another device or tab). */
+export const GOAL_ALREADY_CLOSED = "Already closed.";
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 
@@ -76,6 +87,8 @@ export interface GoalMintRow {
   day: DayKey;
   /** MP paid; 0 for a goal closed for nothing (it never counts as paying). */
   qty: number;
+  /** When the row was written (epoch ms): orders two closes on one day. Absent rows order by key. */
+  occurredAt?: number;
 }
 
 /** Everything closeDecision needs, read in one round trip by goals-server.ts readGoalCloseInput. */
@@ -163,6 +176,18 @@ export function goalAsOf(today: DayKey, dueDay: DayKey | null): DayKey {
   return dueDay && dueDay < today ? dueDay : today;
 }
 
+/**
+ * g as a whole percentage, floored, so a goal never reads as reaching a bar
+ * it has not: 2 of 3 steps is 66, 0.695 is 69 (and closing pays 0, 'below
+ * 70%'). The 1e-9 only absorbs float noise (0.29 × 100 = 28.999…), the same
+ * tolerance closeDecision gives the bar. The one rule for Today's goal cards
+ * and the You sheet's ladder: render `${goalPercent(g)}%`.
+ */
+export function goalPercent(g: number): number {
+  if (!Number.isFinite(g)) return 0;
+  return Math.floor(Math.max(0, Math.min(1, g)) * 100 + 1e-9);
+}
+
 /** 'pays ⬡ 1 when done' (SHORT); 'pays ⬡ 6 × progress from 70%' (MID, LONG with its own stated). */
 export function statedPayoutCopy(horizon: Horizon, stated: number = statedGoalMp(horizon)): string {
   const mp = String(round2(stated));
@@ -229,21 +254,67 @@ export function trackGoalDepth(mints: readonly GoalMintRow[], track: Track, exce
 }
 
 /**
+ * The order goal rows were decided in: day, then the time written, then key
+ * (snapshot.ts readGoals' order, so the ladder and the Seal agree).
+ */
+function decidedBefore(a: GoalMintRow, b: GoalMintRow): boolean {
+  if (a.day !== b.day) return a.day < b.day;
+  if (a.occurredAt != null && b.occurredAt != null && a.occurredAt !== b.occurredAt) return a.occurredAt < b.occurredAt;
+  return a.key < b.key;
+}
+
+/**
  * The depth one paid goal row added to its track: its horizon's GOAL_DEPTH,
  * within what was left under the cap after the track's earlier paying rows
- * (by day, then key). 0 for a row that paid nothing.
+ * (by day, then occurredAt, then key: the order they were closed in). 0 for
+ * a row that paid nothing.
  */
 export function goalDepthAdded(mints: readonly GoalMintRow[], key: string): number {
   const row = mints.find((m) => m.key === key);
   if (!row || !isPaying(row) || !row.track) return 0;
-  const earlier = mints
-    .filter((m) => m.track === row.track && m.key !== key && isPaying(m))
-    .filter((m) => m.day < row.day || (m.day === row.day && m.key < key));
+  const earlier = mints.filter((m) => m.track === row.track && m.key !== key && isPaying(m) && decidedBefore(m, row));
   const before = Math.min(GOAL_DEPTH_CAP, earlier.reduce((s, m) => s + GOAL_DEPTH[horizonOfGoalReason(m.reason)!], 0));
   return Math.max(0, Math.min(GOAL_DEPTH[horizonOfGoalReason(row.reason)!], GOAL_DEPTH_CAP - before));
 }
 
 const daysText = (n: number): string => (n === 0 ? "today" : n === 1 ? "1 day ago" : `${n.toLocaleString("en-GB")} days ago`);
+
+/**
+ * What a close's limit gate and (SHORT) cap trim counted: the paying rows of
+ * this goal's reason in its window — the close day's life week (SHORT), or
+ * the days (close − N, close] (MID 30, LONG 91) — other than its own, and
+ * the capped MP already in the close day's life week. closeDecision decides
+ * from exactly these; goals-server.ts re-counts them inside the close
+ * transaction, after the life-mint lock, and refuses the close when another
+ * write changed them in between.
+ */
+export interface GoalLimitWindow {
+  reason: GoalMpReason;
+  /** Inclusive day range of the limit window. */
+  from: DayKey;
+  to: DayKey;
+  /** Paying rows of `reason` dated in [from, to], this goal's own row excluded. */
+  paying: number;
+  /** The close day's life week and its capped MP as read: SHORT only (its pay is trimmed by the cap); null otherwise. */
+  cappedWeek: { monday: DayKey; sunday: DayKey; used: number } | null;
+}
+
+export function goalLimitWindow(input: GoalInput): GoalLimitWindow {
+  const rule = GOAL_RULES[input.horizon];
+  const monday = weekStartKeyOf(input.today);
+  const sunday = addDays(monday, 6);
+  const from = rule.window === "LIFE_WEEK" ? monday : addDays(input.today, 1 - rule.windowDays);
+  const to = rule.window === "LIFE_WEEK" ? sunday : input.today;
+  const ownKey = goalMintKey(input.id);
+  const paying = input.goalMints.filter((m) => m.key !== ownKey && isPaying(m) && m.reason === rule.reason && m.day >= from && m.day <= to).length;
+  return {
+    reason: rule.reason,
+    from,
+    to,
+    paying,
+    cappedWeek: rule.capped ? { monday, sunday, used: round2(Math.max(0, input.cappedUsedThisWeek)) } : null,
+  };
+}
 
 /**
  * The payout of closing now. g is measured as of goalAsOf(today, dueDay);
@@ -277,16 +348,13 @@ export function closeDecision(input: GoalInput): GoalPayout {
   if (lifetime < rule.minLifetimeDays) return refuse(`set ${daysText(Math.max(0, lifetime))} (${rule.minLifetimeDays} needed)`);
 
   const ownKey = goalMintKey(input.id);
-  const sameHorizon = input.goalMints.filter((m) => m.key !== ownKey && isPaying(m) && m.reason === rule.reason);
+  const limit = goalLimitWindow(input);
   if (rule.window === "LIFE_WEEK") {
-    const monday = weekStartKeyOf(input.today);
-    const sunday = addDays(monday, 6);
-    if (sameHorizon.filter((m) => m.day >= monday && m.day <= sunday).length >= rule.maxPaying) {
+    if (limit.paying >= rule.maxPaying) {
       return refuse(`${rule.maxPaying} ${rule.name} goals already paid this week`);
     }
   } else {
-    const after = addDays(input.today, -rule.windowDays);
-    if (sameHorizon.filter((m) => m.day > after && m.day <= input.today).length >= rule.maxPaying) {
+    if (limit.paying >= rule.maxPaying) {
       return refuse(
         rule.maxPaying === 1
           ? `a ${rule.name} goal paid in the last ${rule.windowDays} days`
@@ -344,4 +412,22 @@ export function goalProgressLabel(
     return target != null && Number.isFinite(target) && target > 0 ? `${fmt(qty)} of ${fmt(target)}${unit}` : `${fmt(qty)}${unit} so far`;
   }
   return "not measured";
+}
+
+/**
+ * A closed goal as it stood when it was closed (M5 review U5): g and the
+ * progress label both measured as of goalAsOf(closeDay, dueDay), so steps
+ * ticked or numbers logged after the close move neither. g is null — no
+ * percentage shown — when it cannot be measured, or when the close itself
+ * was decided unmeasured (its why starts 'not measured'), even if a step was
+ * added since.
+ */
+export function closedGoalReading(
+  input: GoalProgressInput & { krUnit?: string | null; dueDay: DayKey | null },
+  closeDay: DayKey,
+  why: string | null
+): { g: number | null; progressLabel: string; asOf: DayKey } {
+  const asOf = goalAsOf(closeDay, input.dueDay);
+  const measured = goalProgress(input, asOf);
+  return { g: measured == null || why?.startsWith("not measured") ? null : measured, progressLabel: goalProgressLabel(input, asOf), asOf };
 }

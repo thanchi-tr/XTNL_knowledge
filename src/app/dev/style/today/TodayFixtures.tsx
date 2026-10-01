@@ -197,9 +197,9 @@ export function TodayFixtures() {
         <OwedRow count={1} total={3.8} onOpen={() => makeupRef.current?.scrollIntoView({ block: "center" })} />
       </div>
 
-      <SectionHeader title="Goals (M5 payout)" aside="the frozen MP line, once goals pay" />
+      <SectionHeader title="Goals (M5 payout)" aside="launched: the stated MP, Close, and a goal carried past its due day" />
       <div className="dev-grid">
-        <GoalsStrip goals={board.goals} busy={false} onProgress={() => undefined} payoutOf={(id) => (id === "run-goal" ? { mp: 6, from: 0.7 } : { mp: 20, from: 0.7 })} />
+        <GoalsStrip goals={board.goals} busy={false} onProgress={() => undefined} launched onClose={() => undefined} onReschedule={() => undefined} />
       </div>
 
       <SectionHeader title="Sheets (M2)" aside="record yesterday · close the day · plan time off" />

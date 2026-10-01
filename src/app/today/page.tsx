@@ -7,6 +7,8 @@ import { boardClock, unrecordedStudyTasks } from "@/lib/today-board";
 import { getDailyStreak } from "@/lib/streak";
 import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
+import { isLaunched } from "@/lib/life-economy";
+import { maybeJudgeWeeks } from "@/lib/life-weeks-server";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
@@ -46,6 +48,11 @@ export default async function TodayPage() {
     });
   }
 
+  // Weeks closed since the last judge (M5): its own after(), never awaited by
+  // the render. maybeJudgeWeeks returns at once before launch, with writes
+  // off, or when the last closed week is already judged, and never throws.
+  after(() => maybeJudgeWeeks(userId));
+
   const readyBosses = bosses.filter((b) => b.availability.status === "ready").map((b) => b.archetype.name);
   const focus = feed?.notices.find((n) => n.id === "focus")?.title ?? null;
 
@@ -66,6 +73,7 @@ export default async function TodayPage() {
         focus={focus}
         bosses={readyBosses}
         footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
+        launched={isLaunched(day)}
       />
     </>
   );

@@ -7,7 +7,7 @@
  * Spec: docs/life-plan/m5-refit.md F6; contract: docs/life-plan/m5-contracts.md §7.
  *
  *   readGoalCloseInput(userId, goalId, now)  → GoalInput | null (one round trip)
- *   closeGoalCore(userId, goalId, now)       → {ok, payout} | {ok: false, error} ('Already closed.' on a replay)
+ *   closeGoalCore(userId, goalId, now)       → {ok, payout} | {ok: false, error} ('Already closed.' on a replay); refused before launch
  *   rescheduleGoalCore(userId, goalId, day)  → {ok} | {ok: false, error}
  *   loadGoalLadder(userId, now?)             → GoalLadder, cached 'goalLadder:<user>' on ['life', 'activity']
  *   stateGoalMp(userId)                      → rows updated (the launch script)
@@ -17,25 +17,54 @@
  * NONE, never a TRACK row; the row's dedupe key is the lock, so a double tap
  * or two devices pay once; nothing pays before launch (closeDecision's first
  * gate); horizon and goalMp never change after creation.
+ *
+ * Two different goals closed at once (M5 review C3): the limits (2 Shorts a
+ * life week, 2 Mids in 30 days, 1 Long in 91) and the Short share of the 8 MP
+ * cap are decided from a read made before the write. So a paying close's
+ * array opens with the life-mint advisory lock (the week judge takes it too)
+ * and a guard that re-counts exactly what the decision counted
+ * (goals.ts goalLimitWindow) and divides by zero when another write changed
+ * it: the close is refused with 'Something changed; try again.' and pays
+ * nothing. Closes are serial per player; each is decided against every one
+ * committed before it.
  */
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { isDuplicateActivity } from "./activity";
 import { mintLifeMasteryOps } from "./mastery";
 import { addDays, dateColumn, dayKeyOf, dayStartOf, keyOfDateColumn, todayKey, weekStartKeyOf, type DayKey } from "./life-day";
-import { GOAL_MINT_PREFIX, goalIdOfMintKey, isCappedReason, isDayKey, lifeLaunchDay, parseMintDetail, round2, statedGoalMp } from "./life-economy";
-import { isTrack } from "./life-grade";
 import {
+  CAPPED_REASONS,
+  GOAL_MINT_PREFIX,
+  MINT_DETAIL_SEP,
+  goalIdOfMintKey,
+  goalMintKey,
+  isCappedReason,
+  isDayKey,
+  isLaunched,
+  lifeLaunchDay,
+  parseMintDetail,
+  round2,
+  statedGoalMp,
+} from "./life-economy";
+import { isTrack } from "./life-grade";
+import { isStaleGuard, lifeMintLockOp } from "./life-tracks-server";
+import {
+  GOAL_ALREADY_CLOSED,
   closeDecision,
+  closedGoalReading,
   goalAsOf,
   goalCloseMint,
   goalDepthAdded,
+  goalLimitWindow,
   goalProgress,
   goalProgressLabel,
   statedPayoutCopy,
   type GoalInput,
   type GoalLadder,
   type GoalLadderItem,
+  type GoalLimitWindow,
   type GoalMintRow,
   type GoalPayout,
   type GoalProgressRow,
@@ -53,7 +82,9 @@ const metricOf = (m: string | null): KrMetric | null => (KR_METRICS.includes(m a
 const trackOf = (t: string | null): Track => (isTrack(t) ? t : "DUTY");
 
 /** Goal decision rows ('mp:GOAL:*') as goals.ts reads them. */
-function goalMintRows(rows: readonly { dedupeKey: string | null; templateId: string | null; track: string | null; day: Date; qty: number | null; detail: string | null }[]): GoalMintRow[] {
+function goalMintRows(
+  rows: readonly { dedupeKey: string | null; templateId: string | null; track: string | null; day: Date; occurredAt: Date; qty: number | null; detail: string | null }[]
+): GoalMintRow[] {
   const out: GoalMintRow[] = [];
   for (const r of rows) {
     if (!r.dedupeKey || goalIdOfMintKey(r.dedupeKey) === null) continue;
@@ -64,6 +95,7 @@ function goalMintRows(rows: readonly { dedupeKey: string | null; templateId: str
       reason: parseMintDetail(r.detail).reason,
       day: keyOfDateColumn(r.day),
       qty: r.qty ?? 0,
+      occurredAt: r.occurredAt.getTime(),
     });
   }
   return out;
@@ -76,7 +108,48 @@ function cappedSum(rows: readonly { qty: number | null; detail: string | null }[
   return round2(used);
 }
 
-const MINT_SELECT = { dedupeKey: true, templateId: true, track: true, day: true, qty: true, detail: true } as const;
+const MINT_SELECT = { dedupeKey: true, templateId: true, track: true, day: true, occurredAt: true, qty: true, detail: true } as const;
+
+/** The error a close gets when its guard finds the limits or the cap moved since its read. */
+export const GOAL_CLOSE_STALE = "Something changed; try again.";
+
+/** The error a close gets before launch (LIFE_LAUNCH_DAY null or still ahead). */
+export const GOAL_CLOSE_BEFORE_LAUNCH = "Goals can be closed once life counts.";
+
+/**
+ * Fails the close's transaction (division by zero) unless, after the
+ * life-mint lock, the paying rows of this goal's reason in its limit window
+ * (its own row excluded) still number what closeDecision counted and, for a
+ * SHORT, the capped MP of the close day's life week (its own row excluded
+ * too) is still what it read. The same filters as the read: MP_MINT rows,
+ * 'mp:GOAL:*' keys, qty > 0, the reason before ' · ' in detail.
+ *
+ * Both sums leave out the goal's own 'mp:GOAL:<id>' row, exactly: the read
+ * was made while the goal was open, so it never held that row. A second
+ * close of the same goal racing the first (two devices, a double tap) then
+ * passes the guard and meets the row's dedupe key: P2002, 'Already closed.',
+ * not 'Something changed; try again.'.
+ */
+function closeGuardOp(userId: string, goalId: string, w: GoalLimitWindow) {
+  const cappedStill = w.cappedWeek
+    ? Prisma.sql`AND ROUND(COALESCE((SELECT SUM("qty") FROM "ActivityEvent"
+          WHERE "userId" = ${userId} AND "source" = 'MP_MINT' AND "qty" > 0
+            AND split_part("detail", ${MINT_DETAIL_SEP}, 1) IN (${Prisma.join([...CAPPED_REASONS])})
+            AND "dedupeKey" IS DISTINCT FROM ${goalMintKey(goalId)}
+            AND "day" >= ${w.cappedWeek.monday}::date AND "day" <= ${w.cappedWeek.sunday}::date), 0)::numeric, 2)
+        = ROUND(${w.cappedWeek.used}::numeric, 2)`
+    : Prisma.empty;
+  return prisma.$executeRaw`
+    SELECT 1 / (CASE WHEN
+      (SELECT COUNT(*) FROM "ActivityEvent"
+        WHERE "userId" = ${userId} AND "source" = 'MP_MINT' AND "dedupeKey" LIKE ${`${GOAL_MINT_PREFIX}%`}
+          AND "dedupeKey" <> ${goalMintKey(goalId)} AND "qty" > 0
+          AND split_part("detail", ${MINT_DETAIL_SEP}, 1) = ${w.reason}
+          AND "day" >= ${w.from}::date AND "day" <= ${w.to}::date) = ${w.paying}::int
+      ${cappedStill}
+    THEN 1 ELSE 0 END)
+  `;
+}
 
 /**
  * Everything closeDecision needs for one open goal, fresh, in one round trip:
@@ -133,26 +206,37 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
 }
 
 /**
- * Closes a goal, once and for good: one $transaction of the template update
- * (closedScore = g ?? 0, completedAt = now, only while still open) and the
- * 'mp:GOAL:<id>' decision row (+ a MasteryLedgerEntry when it pays). A
- * replay raises P2002 on the row and rolls both back: 'Already closed.'
- * Writes only sink-NONE rows; never a TRACK row, never XP.
+ * Closes a goal, once and for good: one $transaction of the life-mint lock,
+ * (when it pays) the guard that its limits and cap still read as decided,
+ * the template update (closedScore = g ?? 0, completedAt = now, only while
+ * still open) and the 'mp:GOAL:<id>' decision row (+ a MasteryLedgerEntry
+ * when it pays). A replay raises P2002 on the row and rolls all back:
+ * 'Already closed.' A guard that finds another close (or a week's mints)
+ * landed in between rolls all back: GOAL_CLOSE_STALE. A close that pays
+ * nothing needs no guard: other writes only ever raise the counts it was
+ * refused on. Writes only sink-NONE rows; never a TRACK row, never XP.
  */
 export async function closeGoalCore(
   userId: string,
   goalId: string,
-  now: Date
+  now: Date,
+  launchDay: DayKey | null = lifeLaunchDay()
 ): Promise<{ ok: true; payout: GoalPayout } | { ok: false; error: string }> {
+  // M5 stays inert while life does not count: a server action is reachable
+  // whatever the UI renders, so a close before launch is refused here, before
+  // any read or write (it would otherwise record a permanent 0 decision).
+  if (!isLaunched(todayKey(now), launchDay)) return { ok: false, error: GOAL_CLOSE_BEFORE_LAUNCH };
   const input = await readGoalCloseInput(userId, goalId, now);
   if (!input) {
     const closed = await prisma.taskTemplate.findFirst({ where: { id: goalId, userId, kind: "GOAL", closedScore: { not: null } }, select: { id: true } });
-    return { ok: false, error: closed ? "Already closed." : "That goal no longer exists." };
+    return { ok: false, error: closed ? GOAL_ALREADY_CLOSED : "That goal no longer exists." };
   }
   const payout = closeDecision(input);
   const mint = goalCloseMint({ id: input.id, track: input.track }, payout, input.today);
   try {
     await prisma.$transaction([
+      lifeMintLockOp(userId),
+      ...(payout.pays > 0 ? [closeGuardOp(userId, input.id, goalLimitWindow(input))] : []),
       prisma.taskTemplate.updateMany({
         where: { id: goalId, userId, kind: "GOAL", closedScore: null },
         data: { closedScore: payout.g ?? 0, completedAt: now },
@@ -160,7 +244,8 @@ export async function closeGoalCore(
       ...mintLifeMasteryOps(userId, { ...mint, now }),
     ]);
   } catch (err) {
-    if (isDuplicateActivity(err)) return { ok: false, error: "Already closed." };
+    if (isDuplicateActivity(err)) return { ok: false, error: GOAL_ALREADY_CLOSED };
+    if (isStaleGuard(err)) return { ok: false, error: GOAL_CLOSE_STALE };
     throw err;
   } finally {
     invalidate("life", "progress", "activity");
@@ -277,9 +362,9 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
       goalMints,
       cappedUsedThisWeek,
     };
-    const asOf = goalAsOf(today, dueDay);
-    const progressLabel = goalProgressLabel({ ...input, krUnit: g.krUnit }, asOf);
     if (isOpen) {
+      const asOf = goalAsOf(today, dueDay);
+      const progressLabel = goalProgressLabel({ ...input, krUnit: g.krUnit }, asOf);
       const g01 = goalProgress(input, asOf);
       const pastDue = dueDay != null && dueDay < today;
       return {
@@ -298,8 +383,14 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
         closed: null,
       };
     }
-    const key = `${GOAL_MINT_PREFIX}${g.id}`;
+    // A closed goal reads as it stood when it was closed (g as of min(close day,
+    // due day)), so its percentage and its progress label are one measurement;
+    // a close made while it was not measured shows no percentage at all.
+    const key = goalMintKey(g.id);
     const row = mintOf.get(key);
+    const closeDay = row ? row.day : g.completedAt ? dayKeyOf(g.completedAt) : today;
+    const why = row ? (whyOf.get(key) ?? null) : null;
+    const reading = closedGoalReading({ ...input, krUnit: g.krUnit }, closeDay, why);
     return {
       id: g.id,
       title: g.title,
@@ -307,8 +398,8 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
       track,
       stated,
       copy: statedPayoutCopy(horizon, stated),
-      g: g.closedScore,
-      progressLabel,
+      g: reading.g,
+      progressLabel: reading.progressLabel,
       dueDay,
       pastDue: false,
       carried: null,
@@ -316,8 +407,8 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
       closed: {
         paid: row ? row.qty : 0,
         depth: row ? goalDepthAdded(goalMints, key) : 0,
-        day: row ? row.day : g.completedAt ? dayKeyOf(g.completedAt) : today,
-        why: row ? (whyOf.get(key) ?? null) : null,
+        day: closeDay,
+        why,
       },
     };
   };

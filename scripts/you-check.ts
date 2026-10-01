@@ -64,13 +64,16 @@ import {
   ghostScores,
   knowledgeRow,
   lifeCompositions,
+  lifeMpCell,
   lifeNoteDue,
   lifeTrackRows,
   longDayLabel,
   mainSource,
   mainSourceOf,
+  mondayOfWeekKey,
   mpFigure,
   niceMax,
+  pendingWeek,
   polygonPoints,
   radarLayout,
   radarPercent,
@@ -78,14 +81,17 @@ import {
   sourceLabel,
   titleDistance,
   topAttributes,
+  weekReviewPromise,
   weekdayDayLabel,
   type FieldComposition,
 } from "../src/components/home/sheet-math";
 import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../src/components/home/TrackCharts";
 import { LifeTracks } from "../src/components/home/SheetSections";
+import { CharacterHero } from "../src/components/home/CharacterHero";
+import { fixtures as celebrateFixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
 import { goalRowCopy, rungsLine } from "../src/components/home/GoalLadder";
 import { LIFE_NOTE_KEY, readNoteDismissed, writeNoteDismissed } from "../src/components/home/LifeNote";
-import { statedPayoutCopy, type GoalLadderItem, type GoalPayout } from "../src/lib/goals";
+import { goalPercent, statedPayoutCopy, type GoalLadderItem, type GoalPayout } from "../src/lib/goals";
 import { GOAL_RULES } from "../src/lib/life-economy";
 import type { LifeTrackRow } from "../src/lib/life-tracks";
 import { momentMeta, momentMonths } from "../src/app/you/_lib/moments";
@@ -382,6 +388,10 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   const htmlOff = renderToStaticMarkup(createElement(LifeTracks, { knowledge: k, life: { launched: false, rows: [] } }));
   check("life tracks: renders 5 rows when launched and 1 when not", count(htmlOn) === 5 && count(htmlOff) === 1, `${count(htmlOn)} / ${count(htmlOff)}`);
   check("life tracks: the aside never promises tracks before they count", htmlOn.includes("levels capped by kept weeks") && !htmlOff.includes("arrive with life tracks") && !htmlOff.includes("kept weeks"));
+  // U7: the rows carry the spec's lines; the aside says once that paid goals raise the cap too.
+  check("life tracks (U7): the aside reads 'levels capped by kept weeks and paid goals'", htmlOn.includes("levels capped by kept weeks and paid goals") && !htmlOff.includes("paid goals"));
+  const art = read("src/app/dev/style/art/you/page.tsx");
+  check("life tracks (U7): the art fixture lines carry no '(or a paid Mid goal)' clause", !/or a paid Mid goal/.test(art) && /aside="levels capped by kept weeks and paid goals · fixture"/.test(art));
 }
 
 // ── 4f. The goal ladder's copy ─────────────────────────────────────────────
@@ -426,6 +436,18 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   check("ladder: a paying preview states the exact figure", paying.preview === "Closing now pays ⬡ 4.8", paying.preview ?? "");
   const carried = goalRowCopy(item("SHORT", { g: 0.55, dueDay: "2026-09-28", pastDue: true, carried: 0.55 }), true, today);
   check("ladder: past due and unfinished is carried, never owed", carried.carried === "Carried 0.55 · reschedule or close it on Today" && carried.meta.endsWith("was due 28 Sep"), carried.carried ?? "");
+  // U2: Today shows Close and Reschedule only once life counts, so before that the sheet never sends you there.
+  const carriedBefore = goalRowCopy(item("SHORT", { g: 0.55, dueDay: "2026-09-28", pastDue: true, carried: 0.55 }), false, today);
+  check("ladder (U2): before life counts, carried says no more than 'Carried 0.55'", carriedBefore.carried === "Carried 0.55", carriedBefore.carried ?? "");
+  // U6: one floored percentage, goals.ts goalPercent, on Today and You alike.
+  const third = goalRowCopy(item("MID", { g: 2 / 3, progressLabel: "2 of 3 steps" }), true, today);
+  check("ladder (U6): 2 of 3 steps reads goalPercent's 66%, never 67%", third.meta === `Mid · Duty · ${goalPercent(2 / 3)}% · 2 of 3 steps` && goalPercent(2 / 3) === 66, third.meta);
+  const nearBar = goalRowCopy(item("MID", { g: 0.695 }), true, today);
+  check("ladder (U6): 0.695 reads 69% (goalPercent), the figure a 'below 70%' preview agrees with", nearBar.meta === `Mid · Duty · ${goalPercent(0.695)}%` && goalPercent(0.695) === 69, nearBar.meta);
+  const ladderSrc = read("src/components/home/GoalLadder.tsx");
+  check("ladder (U6): GoalLadder imports goalPercent and keeps no percentage of its own", /import \{[^}]*\bgoalPercent\b[^}]*\} from "@\/lib\/goals"/.test(ladderSrc) && !/function percentOf\b/.test(ladderSrc) && !/Math\.floor\(/.test(ladderSrc));
+  const closedUnmeasured = goalRowCopy(item("MID", { g: null, progressLabel: "not measured", closed: { paid: 0, depth: 0, day: "2026-09-26", why: "not measured" } }), true, today);
+  check("ladder (U5/U6): a closed goal that was not measured shows no %", closedUnmeasured.meta === "Mid · Duty · not measured" && !closedUnmeasured.meta.includes("%"), closedUnmeasured.meta);
   const closed = goalRowCopy(item("MID", { g: 0.8, closed: { paid: 4.8, depth: 1, day: "2026-09-26", why: null } }), true, today);
   check("ladder: closed and paid", closed.closed === "Closed · paid ⬡ 4.8 · Duty depth +1" && closed.pays === null && closed.preview === null, closed.closed ?? "");
   const closed0 = goalRowCopy(item("SHORT", { g: 1, closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago (3 needed)" } }), true, today);
@@ -502,6 +524,85 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   );
   check("first week: due from its Wednesday, not on Tuesday", !firstWeekJudgement("2026-09-29", "2026-10-06").due && firstWeekJudgement("2026-09-29", "2026-10-07").due);
   check("first week: an old epoch is due now", firstWeekJudgement("2026-06-01", "2026-10-01").due);
+}
+
+// ── 4k. The hero's life MP cell is the last judged week (U1) ──────────────
+{
+  // Thursday 1 October 2026: this week began 28 Sep (W40); last week is W39 (21 Sep).
+  const today = "2026-10-01";
+  check("life MP (U1): week keys map to their Mondays", mondayOfWeekKey("2026-W39") === "2026-09-21" && mondayOfWeekKey("2026-W01") === "2025-12-29" && mondayOfWeekKey("2026-W53") === "2026-12-28" && mondayOfWeekKey("2025-W53") === null && mondayOfWeekKey("nope") === null);
+  const last = lifeMpCell({ used: 6, cap: 8, weekKey: "2026-W39" }, today);
+  check("life MP (U1): the week that just ended reads 'life MP last week' with its figure", last.used === 6 && last.cap === 8 && last.label === "life MP last week", JSON.stringify(last));
+  // Monday 5 October: W40 is not judged until Wednesday, so the cell still shows W39, named by its week.
+  const monday = lifeMpCell({ used: 6, cap: 8, weekKey: "2026-W39" }, "2026-10-05");
+  check("life MP (U1): on Monday the week before last is named, never called 'last week'", monday.used === 6 && monday.label === "life MP, week of 21 Sep", monday.label);
+  const none = lifeMpCell({ used: 0, cap: 8, weekKey: null }, today);
+  check("life MP (U1): before any judged week, no figure (not a 0 that reads as a verdict)", none.used === null && none.label === "life MP · no week judged yet", JSON.stringify(none));
+  const hero = (lifeMp: ReturnType<typeof lifeMpCell> | null) =>
+    renderToStaticMarkup(
+      createElement(CharacterHero, {
+        level: 14,
+        progress: 0.5,
+        title: "Adept",
+        epithet: "of the Deep Archive",
+        transcendent: false,
+        dominant: null,
+        distance: titleDistance(14.5),
+        tracks: null,
+        lifeMp,
+        balance: 100,
+        mastered: 3,
+        owned: 3,
+        poolSize: 10,
+        seenKey: "check:level",
+      })
+    );
+  const onHtml = hero(lifeMpCell({ used: 4.5, cap: 8, weekKey: "2026-W39" }, today));
+  check("life MP (U1): the hero labels the cell 'life MP last week', never 'this week'", onHtml.includes("life MP last week") && !onHtml.includes("this week") && onHtml.includes("4.5"));
+  const noneHtml = hero(none);
+  check("life MP (U1): the hero before any judged week shows a dash and says so", noneHtml.includes("no week judged yet") && noneHtml.includes("—") && !/<\/svg>0<small>/.test(noneHtml));
+  check("life MP (U1): before life counts the hero has no life MP cell", !hero(null).includes("life MP"));
+  // From launch until the first week that can pay is judged, the last judged week is a backfill
+  // week: it paid nothing by rule, so its 0 is no verdict either (phase B review).
+  const backfill = lifeMpCell({ used: 0, cap: 8, weekKey: "2026-W39", backfill: true }, today);
+  check("life MP: a backfill last week shows no figure, 'life MP · first paid week not judged yet'", backfill.used === null && backfill.cap === 8 && backfill.label === "life MP · first paid week not judged yet", JSON.stringify(backfill));
+  const backfillHtml = hero(backfill);
+  check("life MP: the hero on a backfill last week shows a dash and says so, never '0 / 8 life MP last week'", backfillHtml.includes("first paid week not judged yet") && backfillHtml.includes("—") && !backfillHtml.includes("life MP last week") && !/<\/svg>0<small>/.test(backfillHtml));
+  const paid = lifeMpCell({ used: 0, cap: 8, weekKey: "2026-W39", backfill: false }, today);
+  check("life MP: a paid week that minted nothing still reads its honest 0 'life MP last week'", paid.used === 0 && paid.label === "life MP last week", JSON.stringify(paid));
+  const page = read("src/app/you/page.tsx");
+  check("life MP (U1): the sheet passes lifeMpCell(s.life.mpLastWeek, …), not mpThisWeek", /lifeMp=\{launched \? lifeMpCell\(s\.life\.mpLastWeek, s\.today\) : null\}/.test(page) && !/mpThisWeek/.test(page));
+}
+
+// ── 4l. /today/week: the week still to be judged, and the review to come (U8, U9) ──
+{
+  // The last judged week ended Sunday 27 Sep (W39).
+  check("week (U8): Tuesday 6 Oct, W40 not judged → it is named, judged Wednesday 7 October", JSON.stringify(pendingWeek("2026-09-27", "2026-10-06")) === JSON.stringify({ monday: "2026-09-28", judgeDay: "2026-10-07", due: false }));
+  check("week (U8): Monday 5 Oct, same", pendingWeek("2026-09-27", "2026-10-05")?.judgeDay === "2026-10-07");
+  check("week (U8): Wednesday 7 Oct before the judge ran → due now", pendingWeek("2026-09-27", "2026-10-07")?.due === true);
+  check("week (U8): once W40 is judged, nothing is pending", pendingWeek("2026-10-04", "2026-10-07") === null && pendingWeek("2026-10-04", "2026-10-11") === null);
+  check("week (U8): Thursday 1 Oct with W39 judged → nothing pending", pendingWeek("2026-09-27", "2026-10-01") === null);
+  const weekSrc = read("src/app/today/week/page.tsx");
+  check("week (U8): the card is headed 'Last judged week' while the week that ended waits", /pendingWeek\(week\.sunday, today\)/.test(weekSrc) && /title=\{pending \? "Last judged week" : "Last week"\}/.test(weekSrc));
+  const on = weekReviewPromise(true);
+  check("week (U9): once life counts, the review line promises no Monday verdicts", !/Monday/.test(on) && !/what each track kept/.test(on) && !/week card/.test(on) && /inbox to zero/.test(on));
+  check("week (U9): before launch the placeholder is unchanged", /Monday opens a short review/.test(weekReviewPromise(false)));
+  check("week (U9): the page reads the line through weekReviewPromise(life.launched)", /\{weekReviewPromise\(life\.launched\)\}/.test(weekSrc) && !/Monday opens a short review/.test(weekSrc));
+}
+
+// ── 4m. The celebrate lab's goal and week fixtures state what was paid ─────
+{
+  const fx = celebrateFixtures();
+  type Done = { id: string; goalMp: number | null; paid?: number; why?: string | null; track?: string | null; depth?: number };
+  const doneOf = (name: string) => ((fx.find((f) => f.name === name)?.after as { goals?: { done: Done[] } } | undefined)?.goals?.done ?? [])[0];
+  const k5 = doneOf("goal-finished");
+  check("celebrate fixtures: goal-5k paid 1, no why, Body, depth 0", k5?.paid === 1 && k5.why === null && k5.track === "BODY" && k5.depth === 0, JSON.stringify(k5));
+  const book = doneOf("goal-long");
+  check("celebrate fixtures: goal-book states 20 (a Long) and paid 18, Craft depth 2", book?.goalMp === GOAL_RULES.LONG.stated && book.goalMp === 20 && book.paid === 18 && book.why === null && book.track === "CRAFT" && book.depth === 2, JSON.stringify(book));
+  const weeks = (fx.find((f) => f.name === "week-kept")?.after as { ledger?: { weeks: { mp?: number; detail: string | null }[] } } | undefined)?.ledger?.weeks ?? [];
+  check("celebrate fixtures: week-kept rows paid 1.5 each, with the judge's reason", weeks.length === 3 && weeks.every((w) => w.mp === 1.5 && w.detail === "Kept · 4 days · 52.0 raw XP"), JSON.stringify(weeks[0] ?? null));
+  const bookEvent = JSON.stringify(fixtureMoments().find((m) => m.name === "goal-long")?.events ?? []);
+  check("celebrate fixtures: the Long goal's moment states the 18 MP paid", /\+18\b/.test(bookEvent), bookEvent.slice(0, 200));
 }
 
 // ── 5. Palette on tokens ────────────────────────────────────────────────────
@@ -756,10 +857,23 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   const typed = [...text.matchAll(/\d+/g)].map((m) => m[0]);
   check("rules: the Tracks and kept weeks card types no number by hand", start >= 0 && body.length > 500 && typed.length === 0, typed.join(", "));
   const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/life-economy"/)?.[1] ?? "";
-  const needed = ["TRACK_LEVEL_STEP", "TRACK_DEPTH_WEEK_COEF", "KEPT_MIN_DAYS", "KEPT_MIN_RAW", "BODY_EFFORT_MINUTES", "DUTY_MIN_OCCURRENCES", "DUTY_FALLBACK_COMPLETIONS", "WEEK_JUDGE_LAG_DAYS", "LIFE_MP", "LIFE_MP_WEEK_CAP", "CAPPED_REASONS", "GOAL_RULES", "GOAL_DEPTH_CAP"];
+  const needed = ["TRACK_LEVEL_STEP", "TRACK_DEPTH_WEEK_COEF", "TRACK_SHARE_CAP", "KEPT_MIN_DAYS", "KEPT_MIN_RAW", "BODY_EFFORT_MINUTES", "DUTY_MIN_OCCURRENCES", "DUTY_FALLBACK_COMPLETIONS", "WEEK_JUDGE_LAG_DAYS", "LIFE_MP", "LIFE_MP_WEEK_CAP", "CAPPED_REASONS", "GOAL_RULES", "GOAL_DEPTH_CAP"];
   const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
   check("rules: the card's constants are imported from life-economy", missing.length === 0, missing.join(", "));
   check("rules: Full day still pays from daily settlement; goals never pay XP", /pays from daily settlement/.test(rules) && /Goals never pay XP/.test(rules));
+  // U3: the 3-day floor is Craft, Care and Body's; Duty with enough musts due needs only the raw floor.
+  const flat = text.replace(/\s+/g, " ");
+  const rulesFlat = rules.replace(/\s+/g, " ");
+  check("rules (U3): no line says every track needs completions on N days", !/Every track keeps its week/.test(rules) && /and keep their week with completions on at least/.test(flat), flat.slice(0, 160));
+  check("rules (U3): Body needs the same plus effort; Duty with enough musts needs only raw XP, on any number of days", /needs the same, plus/.test(flat) && /raw XP is all it needs, on any number of days/.test(flat));
+  // U4: a closed goal is final, never 'carried'; a kept week is paid when judged, dated its Sunday; no 'finished … when finished'.
+  check("rules (U4): closing is final; only a goal past its due day is carried", !/closed short of its bar pays nothing and is carried/.test(rulesFlat) && /A goal past its due day is carried, never owed, until you reschedule or close it\./.test(rulesFlat));
+  check("rules (U4): the kept-week row says it is paid once judged, dated the Sunday", !/paid on the week's Sunday/.test(rules) && /dated the week's Sunday, paid once the week is judged/.test(rules));
+  check("rules (U4): the Short goal row does not repeat 'finished'", /reason: "GOAL_SHORT", amount: GOAL_RULES\.SHORT\.stated, per: "at 100%"/.test(rules));
+  // U10: every MP amount in the card names its unit for screen readers (the glyph is aria-hidden).
+  const curSpans = [...rules.matchAll(/<span className="cur">([\s\S]*?)<\/span>\s*<\/td>/g)];
+  check("rules (U10): every .cur amount carries an sr-only ' MP'", curSpans.length >= 2 && curSpans.every((m) => /<span className="sr-only"> MP<\/span>/.test(m[1])), `${curSpans.length} spans`);
+  check("rules: the track share ceiling is published from TRACK_SHARE_CAP", /\{TRACK_SHARE_CAP\}%/.test(rules));
 }
 
 (async () => {

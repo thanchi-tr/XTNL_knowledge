@@ -23,12 +23,16 @@
  *   weekdayDayLabel                      from the day key's own calendar date (no clock, no zone)
  *   lifeNoteDue(launched, launchDay, d)  the 'Life now counts' note: launch day + 13 days
  *   firstWeekJudgement(epochDay, today)  before any judged week: which week is first, and when
+ *   lifeMpCell(mpLastWeek, today)        the hero's life MP cell: the last judged week, named
+ *                                        honestly ('last week', 'week of 21 Sep', none judged yet)
+ *   pendingWeek(lastSunday, today)       the week that just ended, while it is not judged yet
+ *   weekReviewPromise(launched)          /today/week's line about the review still to come
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, COMPOSITION_TOTAL, type AttributeScores, type Composition, type FieldContribution } from "@/lib/attributes";
 import { characterRaw as characterRawOf } from "@/lib/character";
 import { round2 } from "@/lib/life-economy";
-import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "@/lib/life-day";
+import { addDays, daysBetween, weekKeyOf, weekStartKeyOf, type DayKey } from "@/lib/life-day";
 import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
 import { judgeDayOf, lastJudgeableSunday } from "@/lib/life-weeks";
 import { TITLE_BANDS } from "@/lib/titles";
@@ -433,4 +437,68 @@ export function firstWeekJudgement(epochDay: DayKey, today: DayKey): { monday: D
   const monday = weekStartKeyOf(epochDay);
   const sunday = addDays(monday, 6);
   return { monday, sunday, judgeDay: judgeDayOf(sunday), due: sunday <= lastJudgeableSunday(today) };
+}
+
+// ─── Life: the last judged week (the hero's cell and /today/week) ───────────
+
+/** The Monday of an ISO week key ('2026-W40' → '2026-09-28'); null when the key is not one. */
+export function mondayOfWeekKey(weekKey: string): DayKey | null {
+  const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+  if (!m) return null;
+  // ISO 8601: week 1 is the week holding 4 January.
+  const monday = addDays(weekStartKeyOf(`${m[1]}-01-04`), 7 * (Number(m[2]) - 1));
+  return weekKeyOf(monday) === weekKey ? monday : null;
+}
+
+/** The hero's life MP cell: a figure (null: no week judged, nothing to show) against the cap, and its label. */
+export interface LifeMpCell {
+  used: number | null;
+  cap: number;
+  label: string;
+}
+
+/**
+ * The hero's life MP cell, from LifeTracksView.mpLastWeek (lifeMpInWeek of
+ * the last judged week: the figure /today/week's footer states). Kept weeks
+ * are paid when their week is judged (from the Wednesday after), so 'this
+ * week' would read near 0 every week. Named for what it is: 'life MP last
+ * week' when the last judged week is the one that just ended; on Monday and
+ * Tuesday (that week not judged yet) 'life MP, week of 21 Sep'; before any
+ * week is judged no figure at all, rather than a 0 that reads as a verdict.
+ * The same while the last judged week is a backfill week (it closed before
+ * launch and paid nothing by rule): '—', 'life MP · first paid week not
+ * judged yet', until the first week that can pay is judged.
+ */
+export function lifeMpCell(mp: { used: number; cap: number; weekKey: string | null; backfill?: boolean }, today: DayKey): LifeMpCell {
+  if (!mp.weekKey) return { used: null, cap: mp.cap, label: "life MP · no week judged yet" };
+  if (mp.backfill) return { used: null, cap: mp.cap, label: "life MP · first paid week not judged yet" };
+  const lastMonday = addDays(weekStartKeyOf(today), -7);
+  if (weekKeyOf(lastMonday) === mp.weekKey) return { used: mp.used, cap: mp.cap, label: "life MP last week" };
+  const monday = mondayOfWeekKey(mp.weekKey);
+  return { used: mp.used, cap: mp.cap, label: monday ? `life MP, week of ${shortDayLabel(monday, today)}` : "life MP, last judged week" };
+}
+
+/**
+ * The week that just ended, while the last judged week is older (every
+ * Monday and Tuesday, and Wednesday until the judge has run): its Monday,
+ * the day it is first judged (judgeDayOf: the Wednesday after its Sunday),
+ * and whether that day has come. Null when the last judged week is the one
+ * that just ended.
+ */
+export function pendingWeek(lastJudgedSunday: DayKey, today: DayKey): { monday: DayKey; judgeDay: DayKey; due: boolean } | null {
+  const endedSunday = addDays(weekStartKeyOf(today), -1);
+  if (lastJudgedSunday >= endedSunday) return null;
+  return { monday: addDays(endedSunday, -6), judgeDay: judgeDayOf(endedSunday), due: endedSunday <= lastJudgeableSunday(today) };
+}
+
+/**
+ * /today/week's line about the weekly review still to come. Once life
+ * counts, the Last week card already states each track's verdict and the MP
+ * it paid (judged from the Wednesday after), so the line promises only the
+ * parts still to come.
+ */
+export function weekReviewPromise(launched: boolean): string {
+  return launched
+    ? "Once each day is settled at 04:00, a short weekly review opens: the inbox to zero, a goals check-in, anything owed, and the shape of next week."
+    : "Once each day is settled at 04:00, Monday opens a short review of the week that ended: what each track kept and why, the inbox to zero, a goals check-in, anything owed, and the shape of next week. It ends on the week card, which states the exact mastery points paid for each kept track.";
 }

@@ -41,11 +41,13 @@ import {
   GOAL_RULES,
   goalIdOfMintKey,
   isBackfillDetail,
+  isLaunched,
   parseMintDetail,
   parseWeekRowKey,
   weekKeptMintKey,
 } from "./life-economy";
-import { loadLifeTracks } from "./life-tracks-server";
+import { loadLifeLedger } from "./life-tracks-server";
+import { lifeTracksView, notLaunchedView, type LifeTracksView } from "./life-tracks";
 import { TRACKS, type Track } from "./life-types";
 import { parseRule } from "./recurrence";
 import { getSkill, SKILL_POOL } from "./skill-pool";
@@ -89,15 +91,19 @@ const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /**
- * The life tracks as of this snapshot's instant. `now` is passed on purpose:
- * loadLifeTracks is wrapped in React cache(), keyed by its arguments, and
- * every captureSnapshot has its own `now`, so the after snapshot of an action
- * never receives the before snapshot's object (the rule at the top of this
- * file). The ledger under it is process-cached on 'life', which every TRACK,
- * WEEK and MP write invalidates.
+ * The life tracks as of this snapshot's instant, built here from the
+ * process-cached ledger (loadLifeLedger, on 'life', which every TRACK, WEEK
+ * and MP write invalidates) — never through loadLifeTracks. That one is
+ * wrapped in React cache(), which keys a Date argument by identity: when a
+ * before and an after snapshot share one `now` (the week judge passes its
+ * clock to both), the after snapshot would get the before one's view back,
+ * miss every track level-up and character change the write caused, and
+ * cache that stale part under celebrate:* (the rule at the top of this file;
+ * M5 review C1).
  */
-function readLife(userId: string, now: Date) {
-  return loadLifeTracks(userId, now);
+async function readLife(userId: string, now: Date): Promise<LifeTracksView> {
+  const today = todayKey(now);
+  return isLaunched(today) ? lifeTracksView(await loadLifeLedger(userId), today) : notLaunchedView(today);
 }
 
 async function readLevels(userId: string, now: Date): Promise<LevelsPart> {

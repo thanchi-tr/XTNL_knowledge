@@ -230,6 +230,17 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-goals .gf { font-size: 13px; line-height: 18px; color: var(--ink-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
 .today-goals .gf .goal-plus { margin-left: auto; min-width: 44px; justify-content: center; }
 .today-goals .goal > .t-meta { margin-top: 4px; }
+/* M5: the track sigil beside the horizon; Carried, Reschedule and Close (Close from launch only). */
+.today-goals .gh .goal-meta { display: inline-flex; align-items: center; gap: 4px; }
+.today-goals .goal-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.today-goals .goal-acts .goal-carried { font-size: 13px; line-height: 18px; color: var(--ink-1); flex: 1 1 140px; min-width: 0; }
+.today-goals .goal-acts .btn-chip { min-width: 44px; justify-content: center; }
+/* The Close and Reschedule sheets are portalled to <body>: their rules are not under .today-goals. */
+.goal-close { display: grid; gap: 8px; }
+.goal-close .goal-close-head { font-size: 20px; line-height: 26px; font-weight: 600; color: var(--ink-0); }
+.goal-close .goal-close-why { font-size: 15px; line-height: 20px; color: var(--ink-1); }
+.goal-resched { display: grid; gap: 10px; }
+.goal-resched .today-input { flex: none; width: 100%; }
 
 .today-side-rows { overflow: hidden; }
 .today-side-rows .collapsed svg.chev { transition: transform var(--t-quick) var(--ease-out); }

@@ -5,8 +5,11 @@
  *
  * Spec: docs/life-plan/m5-refit.md F4; contract: docs/life-plan/m5-contracts.md §7.
  *
- *   judgeClosedWeeks(userId, now, {force?, dryRun?}) → {launched, plans, committed}
+ *   judgeClosedWeeks(userId, now, {force?, dryRun?, moments?, maxWeeks?}) → {launched, plans, committed}
  *   maybeJudgeWeeks(userId, now?)                    → void; the after() entry, never throws
+ *   launchGraceDetail(launchDay)                     → 'life launch <day>': the DECAY_GRACE row the
+ *                                                      launch script writes last; until it exists
+ *                                                      maybeJudgeWeeks judges nothing (M5 review C4)
  *
  * Safety, in order:
  *   - Nothing is planned before LIFE_LAUNCH_DAY is set, and nothing is written
@@ -21,6 +24,12 @@
  *     this run stops and the next render re-reads. Two renders, two devices or
  *     a render racing the launch script write each key once.
  *   - Weeks commit oldest first, so a judged week means every earlier one is.
+ *   - Each week's array opens with the life-mint advisory lock (the one a goal
+ *     close takes), so the two never interleave their MP reads and writes.
+ *   - Page loads judge nothing until the launch script has finished (its
+ *     DECAY_GRACE row 'life launch <day>' exists): the launch judges the
+ *     backfill without per-week moments and then plays the one launch moment,
+ *     which a page load in between would otherwise pre-empt.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -30,9 +39,9 @@ import { mintLifeMasteryOps } from "./mastery";
 import { captureSnapshot, detectCelebrations } from "./celebrations";
 import { withMoments } from "./today-board";
 import { addDays, dateColumn, dayKeyOf, keyOfDateColumn, todayKey, weekKeyOf, weekStartKeyOf, type DayKey } from "./life-day";
-import { isLaunched, lifeLaunchDay, lifeWritesEnabled, parseMintDetail, weekRowKey } from "./life-economy";
+import { DECAY_GRACE_REASON, WEEK_JUDGE_MAX_WEEKS, isLaunched, lifeLaunchDay, lifeWritesEnabled, parseMintDetail, weekRowKey } from "./life-economy";
 import { isTrack } from "./life-grade";
-import { loadLifeLedger } from "./life-tracks-server";
+import { lifeMintLockOp, loadLifeLedger } from "./life-tracks-server";
 import { judgedWeekKeys } from "./life-tracks";
 import {
   lastJudgeableSunday,
@@ -52,6 +61,18 @@ export interface JudgeOptions {
   force?: boolean;
   /** Read and plan, write nothing: the launch script's dry run. Works before the launch day. */
   dryRun?: boolean;
+  /**
+   * Capture the 'settle' moments around the writes (default true). The launch
+   * script passes false: it judges the backfill silently, then captures the
+   * one launch moment itself, so per-week Seals never claim its keys first.
+   */
+  moments?: boolean;
+  /**
+   * Weeks per run (default WEEK_JUDGE_MAX_WEEKS, 12). Honoured only with
+   * dryRun: the launch script's dry run plans every remaining week, so its
+   * figures match what the --apply loop writes.
+   */
+  maxWeeks?: number;
 }
 
 export interface JudgeResult {
@@ -90,7 +111,7 @@ function receiptOf(v: Prisma.JsonValue): Receipt | null {
  * instances of any earlier day too: done early still keeps a deadline), and
  * the MP_MINT rows dated in the range (the life-week cap).
  */
-async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey): Promise<WeekJudgeState | null> {
+async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey, maxWeeks: number): Promise<WeekJudgeState | null> {
   const [settings, weekRows] = await Promise.all([
     prisma.lifeSettings.findUnique({ where: { userId }, select: { epochDay: true } }),
     prisma.activityEvent.findMany({ where: { userId, source: "WEEK", dedupeKey: { not: null } }, select: { dedupeKey: true } }),
@@ -98,8 +119,8 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey):
   if (!settings) return null;
   const epochDay = keyOfDateColumn(settings.epochDay);
   const judged = new Set<string>(weekRows.map((r) => r.dedupeKey!));
-  const weeks = weeksToJudge(today, epochDay, judged);
-  const base = { today, launchDay, epochDay, judged, heldDays: new Set<DayKey>() };
+  const weeks = weeksToJudge(today, epochDay, judged, maxWeeks);
+  const base = { today, launchDay, epochDay, judged, heldDays: new Set<DayKey>(), maxWeeks };
   if (weeks.length === 0) return { ...base, rows: [], templates: [], instances: [], mints: [] };
 
   const from = weeks[0].monday;
@@ -163,9 +184,13 @@ async function readJudgeState(userId: string, today: DayKey, launchDay: DayKey):
   };
 }
 
-/** One week's rows: a WEEK row per missing track, then its LIFE_WEEK_KEPT mints (each with its ledger entry). */
+/**
+ * One week's rows, after the life-mint lock: a WEEK row per missing track,
+ * then its LIFE_WEEK_KEPT mints (each with its ledger entry).
+ */
 function weekOps(userId: string, plan: WeekPlan, now: Date): Prisma.PrismaPromise<unknown>[] {
   return [
+    lifeMintLockOp(userId),
     ...plan.tracks.map((t) =>
       activityOp(userId, {
         source: "WEEK",
@@ -204,11 +229,13 @@ async function commitPlans(userId: string, plans: readonly WeekPlan[], now: Date
 
 /**
  * Judges every closed life week still missing a verdict, oldest first, at
- * most 12 per run. Writes only when launched and (lifeWritesEnabled() ||
- * force); dryRun returns the plans and writes nothing (also before the launch
- * day, for the launch script). The writes run inside withMoments: a 'settle'
- * snapshot before and after and detectCelebrations({cause: 'settle'}), so a
- * week Seal persists as pending and plays on the next load.
+ * most 12 per run (a dry run: maxWeeks). Writes only when launched and
+ * (lifeWritesEnabled() || force); dryRun returns the plans and writes nothing
+ * (also before the launch day, for the launch script). Unless moments is
+ * false, the writes run inside withMoments: a 'settle' snapshot before and
+ * after (each with its own Date, so nothing keyed by identity can hand the
+ * after one the before one's read) and detectCelebrations({cause: 'settle'}),
+ * so a week Seal persists as pending and plays on the next load.
  */
 export async function judgeClosedWeeks(userId: string, now: Date, opts: JudgeOptions = {}): Promise<JudgeResult> {
   const today = todayKey(now);
@@ -219,14 +246,17 @@ export async function judgeClosedWeeks(userId: string, now: Date, opts: JudgeOpt
   const write = !opts.dryRun && launched && (lifeWritesEnabled() || opts.force === true);
   if (!write && !opts.dryRun) return none;
 
-  const state = await readJudgeState(userId, today, launchDay);
+  const maxWeeks = opts.dryRun && typeof opts.maxWeeks === "number" && opts.maxWeeks >= 1 ? Math.floor(opts.maxWeeks) : WEEK_JUDGE_MAX_WEEKS;
+  const state = await readJudgeState(userId, today, launchDay, maxWeeks);
   if (!state) return none;
   const plans = planWeeks(state);
   if (!write || plans.length === 0) return { launched, plans, committed: [] };
 
+  if (opts.moments === false) return { launched, plans, committed: await commitPlans(userId, plans, now) };
+
   let committed: string[] = [];
   await withMoments({
-    snapshot: () => captureSnapshot(userId, { scope: "settle", now }),
+    snapshot: () => captureSnapshot(userId, { scope: "settle", now: new Date(now.getTime()) }),
     detect: (before, after) => detectCelebrations(before, after, { cause: "settle", now }),
     write: async () => {
       committed = await commitPlans(userId, plans, now);
@@ -240,19 +270,43 @@ export async function judgeClosedWeeks(userId: string, now: Date, opts: JudgeOpt
 /** In-flight judge runs, one per user: two renders at once share one run. */
 const inflight = new Map<string, Promise<void>>();
 
+/** The detail of the launch script's DECAY_GRACE row ('life launch 2026-10-05'): its idempotency key and the launch-finished marker. */
+export function launchGraceDetail(launchDay: DayKey): string {
+  return `life launch ${launchDay}`;
+}
+
+/** Users whose launch has finished, by '<user>:<launch day>'. The marker is permanent, so a process reads it once. */
+const launchFinished = new Set<string>();
+
+/** Whether scripts/life-launch.ts --apply has finished for this user: its DECAY_GRACE row exists. */
+async function launchHasFinished(userId: string, launchDay: DayKey): Promise<boolean> {
+  const key = `${userId}:${launchDay}`;
+  if (launchFinished.has(key)) return true;
+  const row = await prisma.masteryLedgerEntry.findFirst({
+    where: { userId, reason: DECAY_GRACE_REASON, detail: launchGraceDetail(launchDay) },
+    select: { id: true },
+  });
+  if (row) launchFinished.add(key);
+  return row != null;
+}
+
 /**
  * The after() entry for page reads (/you, /today/week; /today from phase B).
  * Returns at once unless writes on read are enabled, life is launched, the
- * user has an epochDay and the week of lastJudgeableSunday is missing from
- * the cached ledger's judged weeks (weeks commit oldest first, so that week
- * judged means every earlier one is). Single flight per user. Never throws:
- * a failure is logged and the next render tries again.
+ * user has an epochDay, the week of lastJudgeableSunday is missing from the
+ * cached ledger's judged weeks (weeks commit oldest first, so that week
+ * judged means every earlier one is) and the launch script has finished
+ * (its DECAY_GRACE row 'life launch <day>' exists: between the deploy and
+ * --apply, page loads leave the backfill and the one launch moment to it).
+ * Single flight per user. Never throws: a failure is logged and the next
+ * render tries again.
  */
 export function maybeJudgeWeeks(userId: string, now: Date = new Date()): Promise<void> {
   try {
     if (!lifeWritesEnabled()) return Promise.resolve();
     const today = todayKey(now);
-    if (!isLaunched(today)) return Promise.resolve();
+    const launchDay = lifeLaunchDay();
+    if (launchDay == null || !isLaunched(today, launchDay)) return Promise.resolve();
     const running = inflight.get(userId);
     if (running) return running;
     const run = (async () => {
@@ -262,6 +316,7 @@ export function maybeJudgeWeeks(userId: string, now: Date = new Date()): Promise
       // No week has closed since the epoch's week began: nothing to judge.
       if (sunday < addDays(weekStartKeyOf(ledger.epochDay), 6)) return;
       if (judgedWeekKeys(ledger).includes(weekKeyOf(sunday))) return;
+      if (!(await launchHasFinished(userId, launchDay))) return;
       await judgeClosedWeeks(userId, now);
     })()
       .catch((err) => {

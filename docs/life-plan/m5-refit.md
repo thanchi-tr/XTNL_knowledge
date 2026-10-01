@@ -52,6 +52,8 @@ Lead decisions taken here (each departs from m5.md or grading.md F/G, or fills a
 
 9. File placement. Contract types live in new pure modules (life-economy.ts, life-tracks.ts, goals.ts, life-weeks.ts), never in the capture-owned life-types.ts. Capture-owned Today files are touched only in phase B.
 
+As built: after phase A, two reviews raised findings C1–C7 and U1–U10. The lead's decisions on them are recorded as short 'As built' notes under F3, F4, F6, F9, F10, F12, F13, F14 and F15, and in full in m5-contracts.md §10–§11. Every phase A lane deviation was accepted.
+
 ## Constants
 
 Defined in life-economy.ts (pure), unless noted otherwise.
@@ -299,6 +301,12 @@ loadLifeTracks(userId, now):
 - Otherwise return the full view from trackStateAt(todayKey).
 - Wrapped in React cache() over the process cache.
 
+**As built (lead decisions after the phase A review).**
+- The ' (or a paid Mid goal)' clause is dropped (U7): `trackLine` returns exactly the strings above, and the Life tracks aside says once 'levels capped by kept weeks and paid goals'.
+- `trackComposition` clamps each attribute at max(seed share, TRACK_SHARE_CAP 16) via `clampTrackComposition` (C6).
+- `loadLifeLedger` is the empty ledger, with no query, until launch, and while there is no epochDay. `readLifeLedger` is the ungated read, for the launch script only.
+- The view adds `mpLastWeek {used, cap, weekKey}` (U1).
+
 **Files.** new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/life-tracks-server.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/life-tracks.ts (implementation)
 
 **Tests.** character-check §4 (fixture ledgers, no DB):
@@ -384,6 +392,14 @@ Hooks:
 - after() on /today (phase B).
 
 M2's settleLifeDays later calls judgeClosedWeeks as its Sunday step. The dedupe keys keep the two safe together.
+
+**As built.**
+- The judge reads in two round trips: the epoch and the WEEK keys, then the planned weeks' rows.
+- Each week's array opens with the life-mint advisory lock (C3).
+- `JudgeOptions` adds `moments?` (default true) and `maxWeeks?`, which is honoured only with `dryRun` (C2, C4).
+- The withMoments snapshots each get their own Date (C1).
+- `maybeJudgeWeeks` also waits for the launch's DECAY_GRACE row 'life launch <day>' (C4).
+- Phase B added the /today `after()`.
 
 **Files.** new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/life-weeks.ts; new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/life-weeks-server.ts
 
@@ -510,6 +526,14 @@ actions/tasks.ts (not capture-owned) gains:
 - previewGoalClose(goalId) → GoalPayout, read-only;
 - rescheduleGoal(goalId, day).
 No UI calls them until phase B.
+
+**As built.**
+- A close's `$transaction` opens with `lifeMintLockOp`. When it pays, `closeGuardOp` follows: it re-counts `goalLimitWindow` and, for a SHORT, the week's capped MP. A lost race returns `GOAL_CLOSE_STALE`, 'Something changed; try again.' (C3).
+- Same-day rows order by (day, occurredAt, key) (C5).
+- Closed ladder items are measured as of min(close day, due day) (`closedGoalReading`, U5).
+- The shared floored percentage is `goalPercent` (U6).
+- The ladder's cache key is 'goalLadder:<user>:<today>'.
+- More why strings: 'trimmed by the life week's 8 MP cap', 'set today (3 needed)' and 'it states 0 MP'.
 
 **Files.** new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/goals.ts; new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/goals-server.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/actions/tasks.ts
 
@@ -640,6 +664,8 @@ detectGoals:
 
 celebrations.ts: CAUSE_WORD gains launch: 'life tracks joining your character'.
 
+**As built.** `readLife` builds the view from `loadLifeLedger` (`lifeTracksView`), not the React-cached `loadLifeTracks`, so a before and an after snapshot that share one Date still differ (C1).
+
 **Files.** C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/snapshot.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/celebration-detect.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/celebrations.ts
 
 **Tests.** celebration-check:
@@ -703,6 +729,15 @@ you.css: ladder, 4-cell purse and note styles in @layer components. Respect the 
 
 No 'M5' tokens in non-comment code (you-check). No recharts.
 
+**As built.**
+- The hero's cell shows the last judged week, not this week (U1): `lifeMp = launched ? lifeMpCell(s.life.mpLastWeek, s.today) : null`. It reads:
+  - 'life MP last week';
+  - 'life MP, week of 21 Sep' while the week that just ended is unjudged;
+  - '—' with 'life MP · no week judged yet' before any verdict.
+- The ladder's '· reschedule or close it on Today' clause shows only once launched (U2).
+- Closed goals show no % when unmeasured (U5).
+- The aside reads 'levels capped by kept weeks and paid goals' (U7).
+
 **Files.** C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/you/_lib/sheet.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/you/page.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/home/SheetSections.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/home/CharacterHero.tsx; new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/home/GoalLadder.tsx; new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/home/LifeNote.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/home/you.css; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/dev/style/art/you/page.tsx
 
 **Tests.** you-check:
@@ -764,6 +799,17 @@ today/rules/page.tsx: a 'Tracks and kept weeks' card rendered from life-economy 
 - 'Goals never pay XP'.
 Full day stays 'pays from daily settlement'.
 
+**As built.**
+- /today/week heads its card 'Last judged week' while the week that just ended is pending, with 'The week of 28 September is judged on Wednesday 7 October.' (U8).
+- Once launched, the review promise drops 'Monday' and the track verdicts (U9).
+- /today/rules (U3, U4, U10):
+  - states Craft/Care, Body and Duty floors separately;
+  - says 'a goal closed below its bar pays nothing', and that a goal past due is carried until rescheduled or closed;
+  - kept-week MP is 'dated the week's Sunday, paid once the week is judged';
+  - a Short goal pays 'at 100%';
+  - sr-only ' MP' units;
+  - the TRACK_SHARE_CAP clamp.
+
 **Files.** C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/today/week/page.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/today/rules/page.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/today/rules/rules.css
 
 **Tests.** ui-audit on /today/week and /today/rules at 344, 375, 932 and 1440.
@@ -807,6 +853,14 @@ Printed only, not asserted:
 - emblems whose attribute gates and prerequisites life alone opens at weeks 13 and 52 (38 / 256 MP and 85 / 1,262 MP), against life MP earned by then (about 80 and 340);
 - committed life of 1.209 MP/day and its horizon of 13.45 y.
 
+**As built.**
+- Assertion 3 is an equality (8 = 8).
+- New assertion 9b (C6) models the 65% task pull:
+  - unclamped, all-in task mixes reach SELF_RESPECT 42.34;
+  - with the share clamp, any mix reaches at most 13.82 < 14.2, and the all-in mixes run through the code agree.
+- A TRACK_SHARE_CAP of 18 fails it (PHYSICAL 14.40), and so does 100.
+- The printed life MP earned by weeks 13 and 52 is 78 and 318.
+
 **Files.** C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/scripts/balance-horizon.ts
 
 **Tests.** npm run balance:horizon prints the LIFE block and exits 0.
@@ -844,6 +898,15 @@ Every write is idempotent and independent of order. So the order is:
 
 scripts/backfill-weeks.ts is not written: the judge itself writes pre-launch weeks as 'backfill · ...' rows with no MP and no Seal.
 
+**As built (C2, C4).**
+- The dry run plans every remaining week, up to 520, with a warning if more remain. It computes tracks, character, title, attributes, emblems and decay from `ledgerWithPlans`.
+- `--apply` runs in this order:
+  1. `judgeClosedWeeks({force, moments: false})`, looped until the plan is empty (at most 100 passes, else exit 1, writing nothing more);
+  2. `stateGoalMp`;
+  3. the one launch moment;
+  4. last, the DECAY_GRACE row 'life launch <day>'. That row is also the marker `maybeJudgeWeeks` waits for.
+- On rehearsal, page-load judging starts only after `--apply` has run.
+
 **Files.** new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/scripts/life-launch.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/docs/life-plan/dev-rehearsal.mjs (lead); C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/life-economy.ts (LIFE_LAUNCH_DAY, set by the lead at launch)
 
 **Tests.** The dry run on rehearsal matches what --apply then writes.
@@ -879,6 +942,17 @@ package.json:
 - append '&& tsx scripts/character-check.ts' to life:check.
 
 life-types.ts needs no change.
+
+**As built.**
+- There is no `payoutOf` prop. `GoalsStrip` and `TodayBoard` take `launched`. Close is hidden before launch, because a pre-launch close would write a permanent qty-0 row (U2).
+- The card shows `goalPercent`. It shows the stated payout only once launched ('pays through its steps' before), and reads:
+  - 'Carried 0.55 · Reschedule?' before launch;
+  - 'Carried 0.55 · Reschedule or close?' after.
+- The Close sheet (new `GoalSheets.tsx`) shows 'Closing now pays ⬡ X', the why, the basis and the depth. If the close pays differently, the notice states both figures.
+- The board reads GOAL_PROGRESS by (templateId, day) (`goalDays`) and files a closed goal under `{done, 'Closed'}`.
+- Goal +1 and Inbox step links refuse a closed goal.
+- REVIEWS, IDEAS, WORKOUTS and RUN_KM goals read 'not measured'.
+- New fields are optional on the board types.
 
 **Files.** C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/tasks.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/today-board.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/today/GoalsStrip.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/components/today/TodayBoard.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/today/page.tsx; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/package.json
 

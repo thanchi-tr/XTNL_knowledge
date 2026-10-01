@@ -8,6 +8,7 @@ import { MASTERY_LEVEL } from "@/lib/xp";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { CharacterHero } from "@/components/home/CharacterHero";
 import { LifeNote } from "@/components/home/LifeNote";
+import { lifeMpCell } from "@/components/home/sheet-math";
 import { AttributeRadar, LifeTracks, MasteryCard, ReadyCallout } from "@/components/home/SheetSections";
 import { loadSheet } from "./_lib/sheet";
 
@@ -52,7 +53,7 @@ export default async function YouSheetPage() {
             dominant={s.dominant}
             distance={s.distance}
             tracks={s.life.edges}
-            lifeMp={launched ? s.life.mpThisWeek : null}
+            lifeMp={launched ? lifeMpCell(s.life.mpLastWeek, s.today) : null}
             balance={s.balance}
             mastered={s.mastered}
             owned={s.owned}

@@ -5,7 +5,7 @@ import { GoalLadder } from "@/components/home/GoalLadder";
 import { LifeNote } from "@/components/home/LifeNote";
 import { TrackRow, type WeekPip } from "@/components/home/SheetSections";
 import { KeptWeeks, TrackLines } from "@/components/home/TrackCharts";
-import { titleDistance } from "@/components/home/sheet-math";
+import { lifeMpCell, titleDistance } from "@/components/home/sheet-math";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { statedPayoutCopy, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout } from "@/lib/goals";
 import { GOAL_RULES } from "@/lib/life-economy";
@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: "You fixtures" };
 /**
  * The life parts of the You sheet and Stats, drawn from FIXTURES (the
  * numbers are made up; no real page ever shows them): the hero's purse with
- * life MP this week and the crest's track edges, the life note, the four
+ * life MP last week and the crest's track edges, the life note, the four
  * life tracks with their kept-week pips (one capped, one untouched), the
  * goal ladder with open, carried and closed goals, track levels over 12
  * judged weeks, the kept-weeks heatmap, and the loadout strip L2 puts on the
@@ -30,8 +30,8 @@ const pips = (s: string): WeekPip[] => s.split("").map((c) => (c === "k" ? "kept
 // capped at 7; Craft 2,050 XP over 31; Body 1,960 XP over 25 with a paid Long goal (depth 2);
 // Care has no XP. The crest edges below are level ÷ cap.
 const TRACKS = [
-  { sigil: "duty" as const, name: "Duty", level: 7, banked: 1, now: 1, weeks: pips("kkkkkkok"), cap: 1, capped: true, line: "Capped at 7 · 7 more kept weeks raise it (or a paid Mid goal) · 4,900 XP banked" },
-  { sigil: "craft" as const, name: "Craft", level: 6, banked: 0.4, now: 0.45, weeks: pips("kkkokkok"), line: "2,050 / 2,401 XP · depth cap 7 · 1 more kept week raises it (or a paid Mid goal)" },
+  { sigil: "duty" as const, name: "Duty", level: 7, banked: 1, now: 1, weeks: pips("kkkkkkok"), cap: 1, capped: true, line: "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked" },
+  { sigil: "craft" as const, name: "Craft", level: 6, banked: 0.4, now: 0.45, weeks: pips("kkkokkok"), line: "2,050 / 2,401 XP · depth cap 7 · 1 more kept week raises it" },
   { sigil: "body" as const, name: "Body", level: 6, banked: 0.25, now: 0.31, weeks: pips("kkkokkkk"), line: "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it" },
   { sigil: "care" as const, name: "Care", level: 0, banked: 0, now: 0, weeks: pips("oooooooo"), line: "No Care tasks yet · 49 XP reaches level 1" },
 ];
@@ -86,7 +86,7 @@ export default function YouFixturesPage() {
             dominant="MIND"
             distance={titleDistance(14.86)}
             tracks={{ body: 6 / 9, duty: 1, craft: 6 / 7, care: 0 }}
-            lifeMp={{ used: 5.5, cap: 8 }}
+            lifeMp={lifeMpCell({ used: 5.5, cap: 8, weekKey: "2026-W39" }, TODAY)}
             balance={1346}
             mastered={38}
             owned={38}
@@ -95,7 +95,7 @@ export default function YouFixturesPage() {
           />
           <LifeNote storageKey="xtnl:dev:life-note:v1" />
           <div>
-            <SectionHeader title="Life tracks" aside="levels capped by kept weeks · fixture" />
+            <SectionHeader title="Life tracks" aside="levels capped by kept weeks and paid goals · fixture" />
             <section className="card">
               {TRACKS.map((t) => (
                 <TrackRow key={t.name} {...t} gainKind="xp" seenKey={`fixture:track:${t.name}`} />

@@ -188,6 +188,20 @@ import {
   type DaySnapshot,
 } from "../src/components/today/board-ui";
 import { createLayerStack, wrapFocus, type EscapeKeyLike } from "../src/components/capture/layers";
+import {
+  GOAL_CLOSE_FINAL,
+  carriedFigure,
+  goalCardCopy,
+  goalAfterClose,
+  goalCloseCopy,
+  goalClosedNotice,
+  goalRescheduleError,
+  goalRescheduleRange,
+  goalRescheduledNotice,
+} from "../src/components/today/board-ui";
+import { GoalsStrip } from "../src/components/today/GoalsStrip";
+import { GOAL_ALREADY_CLOSED, type GoalPayout } from "../src/lib/goals";
+import { fixtureBoard } from "../src/app/dev/style/today/fixtures";
 
 const TZ = "Australia/Sydney";
 // Thursday 1 October 2026 (AEST; Sydney's DST starts Sunday 4 October).
@@ -832,6 +846,7 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
     "src/components/today/DayLedger.tsx",
     "src/components/today/NextUp.tsx",
     "src/components/today/GoalsStrip.tsx",
+    "src/components/today/GoalSheets.tsx",
     "src/components/today/InboxSheet.tsx",
     "src/components/today/CapacityTile.tsx",
     "src/components/capture/QuickCapture.tsx",
@@ -877,7 +892,7 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
   check("capture: the toast goes to the one ToastDock", quick.includes("pushToast(") && !quick.includes('className="capture-toast"'));
   check("capture: the corner button is gone and the event name stays in components/capture", !exists("src/components/capture/CaptureFab.tsx") && read("src/components/capture/events.ts").includes('"xtnl:capture"'));
   check("escape: QuickCapture joins the layer stack, no document listener of its own", quick.includes("pushEscapeLayer(") && !/document\.addEventListener\("keydown"/.test(quick));
-  for (const f of ["src/components/today/ReceiptSheet.tsx", "src/components/today/InboxSheet.tsx", "src/components/today/CloseDaySheet.tsx"]) {
+  for (const f of ["src/components/today/ReceiptSheet.tsx", "src/components/today/InboxSheet.tsx", "src/components/today/CloseDaySheet.tsx", "src/components/today/GoalSheets.tsx"]) {
     const src = read(f);
     check(`escape: ${f.split("/").pop()} is the kit's Sheet (one Escape stack, focus trap)`, src.includes("<Sheet") && !/document\.addEventListener\("keydown"/.test(src));
   }
@@ -918,7 +933,11 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
   );
   const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
   const presents = boardSrc.match(/presentAll\(v\.celebrations\)/g) ?? [];
-  check("rewards: the board presents the tick's, Again's and the goal's moments (T2/T3)", presents.length === 3 && boardSrc.includes('from "@/components/celebrate/stage"'), String(presents.length));
+  check(
+    "rewards: the board presents the tick's, Again's, the goal +1's and a goal close's moments (T2/T3)",
+    presents.length === 4 && boardSrc.includes('from "@/components/celebrate/stage"'),
+    String(presents.length)
+  );
   check("streak caption: 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback", /keptAtOf\(current\)/.test(boardSrc) && boardSrc.includes("`Kept today, ${hhmmOf(") && boardSrc.includes('"Kept today."'));
   check("asks: the board passes the Ask's clock to the card", boardSrc.includes("clock={a.clock}") && read("src/components/today/AskCard.tsx").includes('<Icon name="clock"'));
 
@@ -963,6 +982,214 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
 
   // Footer: the rules link is a 40 px target.
   check("touch target: the footer's rules link ≥ 40px", (cssValue(today, ".today-board .foot-note .foot-link", "min-height") ?? 0) >= 40 && read("src/components/today/TodayFooter.tsx").includes('className="foot-link"'));
+}
+
+// ═══ Goals on Today (M5 phase B, m5-refit F15) ════════════════════════════
+// Close only once life counts (a close before launch would write a permanent
+// paid-nothing row); Reschedule for a goal carried past its due day, before
+// and after launch (it writes no MP); the Carried copy; the Close sheet's
+// exact figure and why.
+
+{
+  const late = tpl({ id: "gl", title: "Ship the paper", kind: "GOAL", horizon: "MID", krMetric: "CHILDREN", dueDay: addDays(TODAY, -5), track: "CRAFT", goalMp: 6 });
+  const kids = [
+    tpl({ id: "gl1", title: "Outline", parentId: "gl", completedAt: "2026-09-20T00:00:00.000Z" }),
+    tpl({ id: "gl2", title: "Draft", parentId: "gl" }),
+    tpl({ id: "gl3", title: "Edit", parentId: "gl" }),
+    tpl({ id: "gl4", title: "Submit", parentId: "gl" }),
+  ];
+  const short = tpl({ id: "gs", title: "File the tax return", kind: "GOAL", horizon: "SHORT", krMetric: "CHILDREN", dueDay: addDays(TODAY, 9), goalMp: 1 });
+  const shortKid = tpl({ id: "gs1", title: "Gather receipts", parentId: "gs", completedAt: "2026-09-29T00:00:00.000Z" });
+  const closed = tpl({ id: "gc", title: "Closed goal", kind: "GOAL", horizon: "LONG", closedScore: 0.8, completedAt: "2026-09-30T00:00:00.000Z" });
+  const b = buildBoard(board(TODAY, [late, ...kids, short, shortKid, closed]));
+  const lateCard = b.goals.MID.find((g) => g.template.id === "gl")!;
+  const shortCard = b.goals.SHORT.find((g) => g.template.id === "gs")!;
+
+  const before = goalCardCopy(lateCard, false);
+  const after = goalCardCopy(lateCard, true);
+  check("goal copy: carried before launch is 'Carried 0.25 · Reschedule?'", before.carried === "Carried 0.25 · Reschedule?", before.carried ?? "null");
+  check("goal copy: carried once life counts is 'Carried 0.25 · Reschedule or close?'", after.carried === "Carried 0.25 · Reschedule or close?", after.carried ?? "null");
+  check("goal copy: a goal not past due carries nothing", goalCardCopy(shortCard, true).carried === null);
+  check("goal copy: Close only once life counts", !before.canClose && after.canClose);
+  check("goal copy: no stated MP before launch", before.pays === null);
+  check(
+    "goal copy: from launch, the stated rule: Short 'pays ⬡ 1 when done', Mid 'pays ⬡ 6 × progress from 70%'",
+    goalCardCopy(shortCard, true).pays === "pays ⬡ 1 when done" && after.pays === "pays ⬡ 6 × progress from 70%",
+    `${goalCardCopy(shortCard, true).pays} / ${after.pays}`
+  );
+  check("goal copy: the stated MP is the goal's own, frozen (goalMp 4 reads ⬡ 4)", goalCardCopy({ ...lateCard, template: { ...lateCard.template, goalMp: 4 } }, true).pays === "pays ⬡ 4 × progress from 70%");
+  check("goal copy: a goal from before goalMp was stated reads its horizon's rule", goalCardCopy({ ...lateCard, template: { ...lateCard.template, goalMp: null } }, true).pays === "pays ⬡ 6 × progress from 70%");
+  check("goal copy: the track is named beside its sigil", after.track === "Craft" && after.horizon === "Mid");
+  check("goal copy: Carried rounds down (0.559 → 0.55, never 0.56)", carriedFigure(0.559) === "0.55" && carriedFigure(0.29) === "0.29");
+
+  const render = (launched: boolean) =>
+    renderToStaticMarkup(createElement(GoalsStrip, { goals: b.goals, busy: false, onProgress: () => {}, launched, onClose: () => {}, onReschedule: () => {} }));
+  const pre = render(false);
+  const post = render(true);
+  const closeBtn = /aria-label="Close [^"]*"/g;
+  check("goal strip: no Close button before launch", (pre.match(closeBtn) ?? []).length === 0, String((pre.match(closeBtn) ?? []).length));
+  check("goal strip: a Close button per open goal once life counts", (post.match(closeBtn) ?? []).length === 2, String((post.match(closeBtn) ?? []).length));
+  const reschedBtn = /aria-label="Reschedule Ship the paper"/;
+  check("goal strip: Reschedule on the carried goal, before and after launch", reschedBtn.test(pre) && reschedBtn.test(post) && !/aria-label="Reschedule File the tax return"/.test(post));
+  check("goal strip: the Carried line, before and after launch", pre.includes("Carried 0.25 · Reschedule?") && post.includes("Carried 0.25 · Reschedule or close?"));
+  check("goal strip: before launch it says the steps pay; from launch it states the goal's MP", pre.includes("pays through its steps") && !pre.includes("× progress") && post.includes("× progress from 70%") && !post.includes("pays through its steps"));
+  check("goal strip: the closed goal is not drawn", !pre.includes("Closed goal") && !post.includes("Closed goal"));
+  check("goal strip: the percentage is floored (1 of 4 → 25%; 1 of 1 → 100%)", post.includes(">25%<") && post.includes(">100%<"));
+  check("goal strip: each goal shows its track's sigil (Craft, Duty)", post.includes('href="#s-craft"') && post.includes('href="#s-duty"'));
+  const noClose = renderToStaticMarkup(createElement(GoalsStrip, { goals: b.goals, busy: false, onProgress: () => {}, launched: false }));
+  check("goal strip: without the handlers it offers neither control", !/aria-label="(Close|Reschedule) /.test(noClose));
+
+  // /dev/style/today shows the launched card: the stated MP, Close, and a goal carried past its due day.
+  const fixtures = read("src/app/dev/style/today/TodayFixtures.tsx").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check(
+    "fixture: /dev/style/today passes launched with no-op onClose and onReschedule, and no payoutOf (GoalsStrip has none)",
+    /<GoalsStrip goals=\{board\.goals\}[^\n]*? launched onClose=\{\(\) => undefined\} onReschedule=\{\(\) => undefined\} \/>/.test(fixtures) &&
+      !/payoutOf/.test(fixtures) &&
+      !/payoutOf/.test(read("src/components/today/GoalsStrip.tsx"))
+  );
+  const fixtureHtml = renderToStaticMarkup(createElement(GoalsStrip, { goals: fixtureBoard().goals, busy: false, onProgress: () => {}, launched: true, onClose: () => {}, onReschedule: () => {} }));
+  check(
+    "fixture: its board has a past-due goal, so the Carried row, Reschedule and Close all render",
+    fixtureHtml.includes("Carried 0.50 · Reschedule or close?") && /aria-label="Reschedule Clear out the garage"/.test(fixtureHtml) && (fixtureHtml.match(/aria-label="Close [^"]*"/g) ?? []).length === 3,
+    String((fixtureHtml.match(/aria-label="Close [^"]*"/g) ?? []).length)
+  );
+
+  // The Close sheet: the exact figure closing now pays, and why.
+  const payout = (p: Partial<GoalPayout>): GoalPayout => ({ horizon: "MID", track: "CRAFT", reason: "GOAL_MID", stated: 6, bar: 0.7, scaled: 4.8, g: 0.8, pays: 4.8, why: null, depth: 1, ...p });
+  const full = goalCloseCopy(payout({}));
+  check(
+    "close sheet: 'Closing now pays ⬡ 4.8', its basis and depth, 'Close and take ⬡ 4.8'",
+    full.head === "Closing now pays ⬡ 4.8" && full.why === null && full.basis === "80% done · pays ⬡ 6 × progress from 70%" && full.depth === "Craft depth +1" && full.confirm === "Close and take ⬡ 4.8",
+    JSON.stringify(full)
+  );
+  const below = goalCloseCopy(payout({ g: 0.6923, scaled: 4.15, pays: 0, why: "below 70%", depth: 0 }));
+  check("close sheet: below the bar it pays 0 and says why ('below 70%'), 69% floored", below.head === "Closing now pays 0" && below.why === "below 70%" && below.basis?.startsWith("69% done") === true && below.confirm === "Close for 0" && below.depth === null, JSON.stringify(below));
+  const trimmed = goalCloseCopy(payout({ horizon: "SHORT", reason: "GOAL_SHORT", stated: 1, bar: 1, scaled: 1, g: 1, pays: 0.5, why: "the week's life MP cap", depth: 0 }));
+  check("close sheet: a trimmed Short close states the trimmed figure and the cap", trimmed.head === "Closing now pays ⬡ 0.5" && trimmed.why === "the week's life MP cap" && trimmed.basis === "100% done · pays ⬡ 1 when done");
+  const unmeasured = goalCloseCopy(payout({ g: null, scaled: 0, pays: 0, why: "not measured", depth: 0 }));
+  check("close sheet: an unmeasured goal says so", unmeasured.basis?.startsWith("not measured · ") === true && unmeasured.why === "not measured");
+  const gone = goalCloseCopy(null);
+  check("close sheet: a goal no longer open offers no Confirm", gone.confirm === null && gone.head === "This goal is already closed.");
+  check(
+    "close sheet: closing is final and settled once, a close for 0 included (never 'paid once' above a 'Close for 0')",
+    GOAL_CLOSE_FINAL === "Closing is final. The goal leaves Today and is settled once, even when it pays 0; its steps stay where they are." && !GOAL_CLOSE_FINAL.includes("paid once"),
+    GOAL_CLOSE_FINAL
+  );
+  check("close notice: the paid figure, its unit a word ('It paid 4.8 MP')", goalClosedNotice("Ship the paper", payout({}), { paid: 4.8, why: null }) === "Ship the paper closed. It paid 4.8 MP.");
+  check(
+    "close notice: when the close paid other than the sheet said, it says both",
+    goalClosedNotice("Ship the paper", payout({}), { paid: 3, why: "the week's life MP cap" }) === "Ship the paper closed. It paid 3 MP, not 4.8 MP: the week's life MP cap. Something changed after the sheet opened."
+  );
+  check("close notice: paid 0 says why", goalClosedNotice("X", payout({ pays: 0, why: "below 70%" }), { paid: 0, why: "below 70%" }) === "X closed. It paid 0: below 70%.");
+  check(
+    "close notice: a close that paid where the sheet said 0 states both ('It paid 1 MP, not 0')",
+    goalClosedNotice("X", payout({ pays: 0, why: "below 70%" }), { paid: 1, why: null }) === "X closed. It paid 1 MP, not 0. Something changed after the sheet opened."
+  );
+  // Notices are plain text in a role=status line: no '⬡' glyph in any of them (redesign: Unicode glyph icons are removed).
+  const glyphNotices: string[] = [];
+  for (const shown of [null, payout({}), payout({ pays: 0, why: "below 70%" }), payout({ pays: 0.5 })]) {
+    for (const paid of [0, 0.5, 1, 3, 4.8, 18]) {
+      const line = goalClosedNotice("Goal", shown, { paid, why: paid === 0 ? "below 70%" : null });
+      if (line.includes("⬡") || (paid > 0 && !line.includes(" MP"))) glyphNotices.push(line);
+    }
+  }
+  check("close notice: no '⬡' in any close notice, and every paid figure carries ' MP'", glyphNotices.length === 0, glyphNotices.slice(0, 2).join(" | "));
+
+  // Reschedule: today to ten years out, a week ahead to start; the server's own refusals.
+  const range = goalRescheduleRange(TODAY);
+  check("reschedule: today to ten years out, starting a week ahead", range.min === TODAY && range.max === addDays(TODAY, 3650) && range.initial === addDays(TODAY, 7));
+  check(
+    "reschedule: yesterday, past ten years and a blank day are refused as the server does",
+    goalRescheduleError(addDays(TODAY, -1), TODAY) === "Pick today or a later day." && goalRescheduleError(addDays(TODAY, 3651), TODAY) === "Pick a day within ten years." && goalRescheduleError("", TODAY) === "Pick a day." && goalRescheduleError(TODAY, TODAY) === null
+  );
+  check("reschedule: the notice names the new day", goalRescheduledNotice("Ship the paper", addDays(TODAY, 1), TODAY) === "Ship the paper is now due tomorrow. Nothing else changed.");
+
+  // Wiring (source): Close reads previewGoalClose, Confirm is closeGoal with a refresh and its moments presented;
+  // Reschedule is rescheduleGoal; the page passes launched and judges weeks in an after() of its own.
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+  const fn = (name: string) => {
+    const i = boardSrc.indexOf(`function ${name}(`);
+    const j = boardSrc.indexOf("\n  function ", i + 1);
+    return i < 0 ? "" : boardSrc.slice(i, j < 0 ? undefined : j);
+  };
+  check("wiring: Close opens only once life counts, on previewGoalClose's figure", /if \(!launched\) return;/.test(fn("openGoalClose")) && fn("loadGoalPreview").includes("previewGoalClose(goalId)"));
+  check("wiring: the strip gets Close only when launched", boardSrc.includes("onClose={launched ? openGoalClose : undefined}") && boardSrc.includes("launched={launched}"));
+  check(
+    "wiring: Confirm is closeGoal({ refresh: true }) and presents its moments like a tick",
+    fn("confirmGoalClose").includes("closeGoal(target.id, REFRESH)") && fn("confirmGoalClose").includes("presentAll(v.celebrations)")
+  );
+  check("wiring: a refused close stays in the sheet with a fresh figure", /if \(!res\.ok\)[\s\S]*?loadGoalPreview\(target\.id\)/.test(fn("confirmGoalClose")));
+  check("wiring: a preview that comes back null (closed elsewhere) refreshes the board", /if \(res\.ok && res\.value === null\) router\.refresh\(\);/.test(fn("loadGoalPreview")));
+  const goalsSrv = read("src/lib/goals-server.ts");
+  check(
+    "wiring: a close refused 'Already closed.' refreshes the board, so the card and its Close chip leave the strip",
+    GOAL_ALREADY_CLOSED === "Already closed." &&
+      /if \(error === GOAL_ALREADY_CLOSED\) router\.refresh\(\);/.test(fn("confirmGoalClose")) &&
+      /closed \? GOAL_ALREADY_CLOSED :/.test(goalsSrv) &&
+      /isDuplicateActivity\(err\)\) return \{ ok: false, error: GOAL_ALREADY_CLOSED \}/.test(goalsSrv)
+  );
+  // Focus after a close: the closed card (and the chip that opened the sheet) leaves the strip.
+  check(
+    "focus: after a close, the next goal drawn after it, else the one before, else none (the heading)",
+    typeof goalAfterClose === "function" &&
+      goalAfterClose(["a", "b", "c"], "b") === "c" &&
+      goalAfterClose(["a", "b", "c"], "c") === "b" && goalAfterClose(["a", "b", "c"], "a") === "b" && goalAfterClose(["a"], "a") === null && goalAfterClose([], "a") === null && goalAfterClose(["a", "b"], "z") === "a"
+  );
+  check(
+    "focus: a successful close records the next goal before the sheet shuts, and an effect focuses its Close chip or the Goals heading",
+    /setFocusAfterClose\(\{ next: goalAfterClose\(drawn, target\.id\) \}\);\s*setGoalClose\(\(c\) => \(c && c\.id === target\.id \? \{ \.\.\.c, open: false \} : c\)\);/.test(fn("confirmGoalClose")) &&
+      /querySelector<HTMLElement>\(GOAL_CLOSE_CHIP\) \?\? document\.getElementById\(GOALS_HEADING_ID\)/.test(boardSrc) &&
+      /requestAnimationFrame\(/.test(boardSrc.slice(Math.max(0, boardSrc.indexOf("if (!focusAfterClose) return;"))))
+  );
+  check("focus: the Goals heading can take focus (tabindex -1) and each Close chip is marked", post.includes('id="goals-h" tabindex="-1"') && (post.match(/data-goal-close=""/g) ?? []).length === 2);
+  // Every notice the board shows is plain text: no '⬡' literal in a setNotice call, and the notice helpers it calls have none.
+  const noticeArgs: string[] = [];
+  for (let i = boardSrc.indexOf("setNotice("); i >= 0; i = boardSrc.indexOf("setNotice(", i + 1)) {
+    let depth = 0;
+    let j = i + "setNotice".length;
+    for (; j < boardSrc.length; j++) {
+      if (boardSrc[j] === "(") depth++;
+      else if (boardSrc[j] === ")" && --depth === 0) break;
+    }
+    noticeArgs.push(boardSrc.slice(i, j + 1));
+  }
+  const helpers = new Set(noticeArgs.flatMap((a) => [...a.slice("setNotice(".length).matchAll(/\b(\w+Notice)\(/g)].map((m) => m[1])));
+  const uiSrc = code(read("src/components/today/board-ui.ts"));
+  const bodyOf = (name: string) => {
+    const i = uiSrc.indexOf(`export function ${name}(`);
+    const j = uiSrc.indexOf("\nexport ", i + 1);
+    return i < 0 ? "" : uiSrc.slice(i, j < 0 ? undefined : j);
+  };
+  check(
+    "notices: no string setNotice receives contains '⬡' (literals, and the helpers goalClosedNotice and goalRescheduledNotice)",
+    noticeArgs.length >= 6 &&
+      noticeArgs.every((a) => !a.includes("⬡")) &&
+      [...helpers].every((h) => bodyOf(h).length > 0 && !bodyOf(h).includes("⬡")) &&
+      helpers.has("goalClosedNotice") &&
+      helpers.has("goalRescheduledNotice"),
+    `${noticeArgs.length} calls; helpers ${[...helpers].join(", ")}`
+  );
+  // The kit Sheet's dismiss button is named by closeLabel; the Close-goal sheet calls it 'Cancel'.
+  const sheetSrc = code(read("src/components/ui/Sheet.tsx"));
+  const goalSheets = code(read("src/components/today/GoalSheets.tsx"));
+  check(
+    "close sheet: the kit Sheet takes closeLabel (default 'Close') and the Close-goal sheet's dismiss reads 'Cancel'",
+    /closeLabel\?: string;/.test(sheetSrc) &&
+      /closeLabel = "Close"/.test(sheetSrc) &&
+      /<IconButton icon="x" label=\{closeLabel\}/.test(sheetSrc) &&
+      /export function GoalCloseSheet[\s\S]*?<Sheet[\s\S]*?closeLabel="Cancel"[\s\S]*?<\/Sheet>[\s\S]*?export function GoalRescheduleSheet/.test(goalSheets) &&
+      (goalSheets.match(/closeLabel=/g) ?? []).length === 1
+  );
+  check("wiring: Reschedule is rescheduleGoal with the picked day and a refresh", fn("saveGoalResched").includes("rescheduleGoal(target.id, day, REFRESH)"));
+  check("wiring: the Close and Reschedule sheets are the kit's Sheet", read("src/components/today/GoalSheets.tsx").split("<Sheet").length === 3);
+  const page = code(read("src/app/today/page.tsx"));
+  check("page: launched is isLaunched(today)", page.includes("launched={isLaunched(day)}") && page.includes('from "@/lib/life-economy"'));
+  check("page: the week judge runs in its own after(), never awaited by the render", /after\(\(\) => maybeJudgeWeeks\(userId\)\);/.test(page) && page.includes('from "@/lib/life-weeks-server"'));
+
+  // Targets and type.
+  const css = read("src/components/today/today.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  check("touch target: the goal actions (Reschedule, Close) are 40 px chips at least 44 wide", (cssValue(css, ".today-goals .goal-acts .btn-chip", "min-width") ?? 0) >= 44 && read("src/components/today/GoalsStrip.tsx").includes("<ChipButton"));
 }
 
 // ═══ The capture sheet (capture.md, lane B) ═══════════════════════════════

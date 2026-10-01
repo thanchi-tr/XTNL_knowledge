@@ -18,11 +18,18 @@
  *   §5  the week judge (planWeeks): floors, timing, launch, cap, run size (F4, lane A)
  *   §6  life mints: the op pair, zero deltas, detail format (F5, lane A)
  *   §7  goals: the payout table, depth, measurement, the close's one decision row (F6, lane A)
+ *   §8  the phase A review fixes (C1–C6, U1, U5, U6, U7): life MP last week, the composition
+ *       clamp, close order, the close guard, closed goals as of their close, one floored
+ *       percentage, the launch's folded dry run and silent judge
+ *   §8b a close before launch: closeGoalCore refuses and reaches no database (every Prisma
+ *       entry it could use is a spy that throws)
  *
  * §6 builds Prisma ops without running them (Prisma queries are lazy), so no
  * database is ever reached.
  */
-import { computeAttributeScores, type Composition as FullComposition } from "../src/lib/attributes";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ATTRIBUTES, computeAttributeScores, type Composition as FullComposition } from "../src/lib/attributes";
 import { characterLevel, characterRaw } from "../src/lib/character";
 import { characterLevelOf } from "../src/components/shell/shell-types";
 import { characterRaw as sheetCharacterRaw } from "../src/components/home/sheet-math";
@@ -36,6 +43,8 @@ import { countsForStreakOf } from "../src/lib/streak-curve";
 import { instanceOutcome, outcomesOf } from "../src/lib/habit";
 import { FULL_DAY_MP } from "../src/lib/full-day";
 import { lifeMintData, mintLifeMasteryOps } from "../src/lib/mastery";
+import { prisma } from "../src/lib/prisma";
+import { GOAL_CLOSE_BEFORE_LAUNCH, closeGoalCore } from "../src/lib/goals-server";
 import {
   BACKFILL_PREFIX,
   BODY_EFFORT_MINUTES,
@@ -54,6 +63,7 @@ import {
   LIFE_MP_WEEK_CAP,
   MEASURED_GOAL_METRICS,
   RESERVED_MP_REASONS,
+  TRACK_SHARE_CAP,
   WEEK_JUDGE_LAG_DAYS,
   WEEK_JUDGE_MAX_WEEKS,
   cappedMp,
@@ -101,8 +111,10 @@ import {
   lifeRowName,
   lifeTracksView,
   notLaunchedView,
+  clampTrackComposition,
   trackLine,
   trackRowsView,
+  trackShareCap,
   trackStateAt,
   type LedgerMint,
   type LedgerWeek,
@@ -111,9 +123,12 @@ import {
 } from "../src/lib/life-tracks";
 import {
   closeDecision,
+  closedGoalReading,
   goalAsOf,
   goalCloseMint,
   goalDepthAdded,
+  goalLimitWindow,
+  goalPercent,
   goalProgress,
   goalProgressLabel,
   statedPayoutCopy,
@@ -124,6 +139,7 @@ import {
 import {
   judgeDayOf,
   lastJudgeableSunday,
+  ledgerWithPlans,
   planWeeks,
   weeksToJudge,
   type WeekInstance,
@@ -565,14 +581,12 @@ console.log("\n§4 track state");
     const today = addDays(EPOCH, 7 * kept + 1);
     return trackRowsView(l, today).find((r) => r.track === "BODY")!.line;
   };
-  const base1960 = "1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it";
-  const l1960 = line(1960, 25);
-  check(`(1,960 XP, 25 kept) reads '${base1960}'`, l1960.startsWith(base1960), l1960);
-  eq("  and offers a paid Mid goal while goal depth is below 2", l1960, `${base1960} (or a paid Mid goal)`);
-  const cap4900 = line(4900, 25);
-  eq("(4,900 XP, 25 kept) is capped", cap4900, "Capped at 7 · 7 more kept weeks raise it (or a paid Mid goal) · 4,900 XP banked");
-  check("  without the Mid-goal clause it reads 'Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked'", cap4900.replace(" (or a paid Mid goal)", "") === "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked");
-  eq("at goal depth 2 no goal is offered", line(1960, 25, 2), "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it");
+  // The spec's strings exactly: no per-row goal clause (lead decision, review U7).
+  eq("(1,960 XP, 25 kept) reads '1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it'", line(1960, 25), "1,960 / 2,401 XP · depth cap 7 · 7 more kept weeks raise it");
+  eq("(4,900 XP, 25 kept) reads 'Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked'", line(4900, 25), "Capped at 7 · 7 more kept weeks raise it · 4,900 XP banked");
+  eq("at goal depth 1 the line names no goal either", line(1960, 25, 1), "1,960 / 2,401 XP · depth cap 8 · 7 more kept weeks raise it");
+  eq("at goal depth 2: depth cap 9", line(1960, 25, 2), "1,960 / 2,401 XP · depth cap 9 · 7 more kept weeks raise it");
+  check("no line ever carries a goal clause", [line(1960, 25), line(4900, 25), line(1960, 25, 1), line(100, 0), line(4900, 3)].every((l) => !/goal/i.test(l)));
   eq("zero XP: 'No Body tasks yet · 49 XP reaches level 1'", line(0, 0), "No Body tasks yet · 49 XP reaches level 1");
   eq("a one-week case is singular", trackLine({ track: "DUTY", xp: 4900, level: 10, cap: 10, atCap: true, keptWeeks: 63, goalDepth: 2 }), "Capped at 10 · 1 more kept week raises it · 4,900 XP banked");
 
@@ -997,7 +1011,258 @@ console.log("\n§7 goals");
   check("the decision row is dated the close day and names the goal", paying.event.day === addDays(CREATED, 21) && paying.event.templateId === "g1" && paying.event.track === "DUTY");
 }
 
+// ── §8 the phase A review fixes ───────────────────────────────────────────
+console.log("\n§8 review fixes");
+{
+  const ROOT = join(__dirname, "..");
+  const src = (p: string) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
+  const code = (p: string) => src(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const isFn = (f: unknown): boolean => typeof f === "function";
+
+  // U1: the hero's 'life MP last week' is the last judged week's capped MP, as /today/week's footer.
+  // Four kept tracks in W41 mint 4 × 1.5 dated its Sunday (11 Oct); judged from Wednesday 14 Oct.
+  const W41 = weekKeyOf(EPOCH);
+  const SUN41 = addDays(EPOCH, 6);
+  const kept41 = ledgerOf({
+    xpByDay: [{ track: "BODY", day: EPOCH, xp: 200 }],
+    weeks: TRACKS.flatMap((t) => weekRows(t, 1)),
+    mints: TRACKS.map((t): LedgerMint => ({ key: weekKeptMintKey(t, W41), track: t, templateId: null, day: SUN41, qty: 1.5, reason: "LIFE_WEEK_KEPT", why: null })),
+  });
+  const wed = lifeTracksView(kept41, addDays(SUN41, 3), EPOCH);
+  check(
+    "U1: on the judging Wednesday the week just judged shows 6 of 8 (this week still reads 0)",
+    wed.mpLastWeek?.used === 6 && wed.mpLastWeek.cap === LIFE_MP_WEEK_CAP && wed.mpLastWeek.weekKey === W41 && wed.mpThisWeek.used === 0,
+    JSON.stringify({ last: wed.mpLastWeek, now: wed.mpThisWeek })
+  );
+  const sun = lifeTracksView(kept41, addDays(SUN41, 7), EPOCH);
+  check("U1: still the last judged week the Sunday after", sun.mpLastWeek?.used === 6 && sun.mpLastWeek.weekKey === W41, JSON.stringify(sun.mpLastWeek));
+  eq("U1: mpLastWeek is lifeMpInWeek of the last judged Monday", wed.mpLastWeek?.used, lifeMpInWeek(kept41, EPOCH));
+  const none = lifeTracksView(ledgerOf({ xpByDay: [{ track: "BODY", day: EPOCH, xp: 200 }] }), addDays(EPOCH, 2), EPOCH);
+  check("U1: no judged week yet: used 0, weekKey null", none.mpLastWeek?.used === 0 && none.mpLastWeek.weekKey === null, JSON.stringify(none.mpLastWeek));
+  const nl = notLaunchedView(EPOCH);
+  check("U1: the not-launched view carries mpLastWeek {0, 8, null}", nl.mpLastWeek?.used === 0 && nl.mpLastWeek.cap === LIFE_MP_WEEK_CAP && nl.mpLastWeek.weekKey === null);
+  // Phase B review: a last judged week that closed before launch is marked backfill (it paid nothing by rule).
+  check("U1: mpLastWeek.backfill is false before launch, with no judged week, and on a paid week", nl.mpLastWeek.backfill === false && none.mpLastWeek.backfill === false && wed.mpLastWeek.backfill === false, JSON.stringify([nl.mpLastWeek, none.mpLastWeek, wed.mpLastWeek]));
+  const backfilled = ledgerOf({
+    xpByDay: [{ track: "BODY", day: EPOCH, xp: 200 }],
+    weeks: TRACKS.flatMap((t) => weekRows(t, 1).map((w) => ({ ...w, detail: `backfill · ${w.detail}` }))),
+  });
+  const afterBackfill = lifeTracksView(backfilled, addDays(SUN41, 3), addDays(SUN41, 1));
+  check(
+    "U1: a last judged week whose WEEK rows carry 'backfill · ' reads backfill true (used 0, its week key kept)",
+    afterBackfill.launched && afterBackfill.mpLastWeek.backfill === true && afterBackfill.mpLastWeek.used === 0 && afterBackfill.mpLastWeek.weekKey === W41,
+    JSON.stringify(afterBackfill.mpLastWeek)
+  );
+  const thenPaid = ledgerOf({ ...backfilled, weeks: [...backfilled.weeks, ...TRACKS.flatMap((t) => weekRows(t, 1, () => false, addDays(EPOCH, 7)))] });
+  check("U1: once the next week (judged after launch) is the last, backfill is false again", lifeTracksView(thenPaid, addDays(SUN41, 10), addDays(SUN41, 1)).mpLastWeek.backfill === false);
+
+  // C6: a track's share of one attribute is at most max(seed, 16), whatever its tasks name.
+  eq("C6: TRACK_SHARE_CAP is 16", TRACK_SHARE_CAP, 16);
+  const allIn = (a: (typeof ATTRIBUTES)[number]) => ({ [a]: 100 }) as Record<string, number>;
+  const capOf = (t: Track, a: (typeof ATTRIBUTES)[number]) => Math.max((TRACK_SEED[t] as Record<string, number>)[a] ?? 0, 16);
+  const breaches: string[] = [];
+  for (const a of ATTRIBUTES) {
+    const l = ledgerOf({ compositions: TRACKS.map((t) => ({ track: t, key: `all-in:${a}`, xp: 50, composition: allIn(a) })) });
+    for (const s of trackStateAt(l, EPOCH)) {
+      const total = ATTRIBUTES.reduce((sum, b) => sum + s.composition[b], 0);
+      if (total !== 100) breaches.push(`${s.track} sums ${total}`);
+      for (const b of ATTRIBUTES) if (s.composition[b] > capOf(s.track, b)) breaches.push(`${s.track} ${b} ${s.composition[b]} (tasks all ${a})`);
+    }
+  }
+  check("C6: tasks naming one attribute at 100 never lift a track's share past max(seed, 16); every mix sums 100", breaches.length === 0, breaches.slice(0, 4).join("; "));
+  const worstSum = Math.max(...ATTRIBUTES.map((a) => TRACKS.reduce((s, t) => s + capOf(t, a), 0)));
+  check("C6: the four tracks' ceiling on any attribute is 96 points (13.82 at L12 +20%, below the tier-5 gate 14.2)", worstSum === 96 && Math.round(12 * 1.2 * worstSum) / 100 < 14.2, `${worstSum}`);
+  const craftMind = stateOfTrack(ledgerOf({ compositions: [{ track: "CRAFT", key: "k", xp: 50, composition: allIn("MIND") }] }), EPOCH, "CRAFT").composition;
+  check("C6: the pull keeps its direction: Craft tasks all MIND hold MIND at its seed 34 and take nothing else up", craftMind.MIND === 34 && craftMind.PHYSICAL === 0, JSON.stringify(craftMind));
+  const bodyMind = stateOfTrack(ledgerOf({ compositions: [{ track: "BODY", key: "k", xp: 50, composition: allIn("MIND") }] }), EPOCH, "BODY").composition;
+  check("C6: Body tasks all MIND give Body MIND 16, PHYSICAL still leads", bodyMind.MIND === 16 && bodyMind.PHYSICAL > bodyMind.MIND, JSON.stringify(bodyMind));
+  if (isFn(clampTrackComposition) && isFn(trackShareCap)) {
+    const within = { ...TRACK_SEED.BODY, PHYSICAL: 40, MIND: 6 } as FullComposition;
+    const full: FullComposition = { ...stateOfTrack(ledgerOf(), EPOCH, "BODY").composition, ...within };
+    check("C6: a mix already within the caps is unchanged", JSON.stringify(clampTrackComposition("BODY", full)) === JSON.stringify(full));
+    eq("C6: trackShareCap(BODY, PHYSICAL) is its seed 46", trackShareCap("BODY", "PHYSICAL"), 46);
+  } else check("C6: clampTrackComposition and trackShareCap are exported", false);
+
+  // C5: two paying closes on one track on one day: depth goes to the one closed first (occurredAt).
+  const at = (h: number) => Date.UTC(2026, 9, 26, h);
+  const longFirst: GoalMintRow[] = [
+    { key: goalMintKey("zzz-long"), templateId: "zzz-long", track: "CRAFT", reason: "GOAL_LONG", day: "2026-10-26", qty: 18, occurredAt: at(10) },
+    { key: goalMintKey("aaa-mid"), templateId: "aaa-mid", track: "CRAFT", reason: "GOAL_MID", day: "2026-10-26", qty: 4.8, occurredAt: at(11) },
+  ];
+  check(
+    "C5: a LONG closed at 10:00 adds 2 and a MID closed at 11:00 adds 0, whatever their ids' order",
+    goalDepthAdded(longFirst, goalMintKey("zzz-long")) === 2 && goalDepthAdded(longFirst, goalMintKey("aaa-mid")) === 0,
+    `${goalDepthAdded(longFirst, goalMintKey("zzz-long"))} / ${goalDepthAdded(longFirst, goalMintKey("aaa-mid"))}`
+  );
+  const goalsSrv = code("src/lib/goals-server.ts");
+  check("C5: MINT_SELECT reads occurredAt and goal rows carry it", /MINT_SELECT = \{[^}]*occurredAt: true/.test(goalsSrv) && /occurredAt: r\.occurredAt\.getTime\(\)/.test(goalsSrv));
+
+  // U6: one floored percentage for Today and You.
+  if (isFn(goalPercent)) {
+    check(
+      "U6: goalPercent floors and never reaches a bar early: 2/3 → 66, 0.695 → 69, 0.7 → 70, 0.29 → 29, 1 → 100, 0 → 0",
+      goalPercent(2 / 3) === 66 && goalPercent(0.695) === 69 && goalPercent(0.7) === 70 && goalPercent(0.29) === 29 && goalPercent(1) === 100 && goalPercent(0) === 0
+    );
+    check("U6: it agrees with the bar: every g that reads 70 pays a MID, every g that reads 69 does not", [0.6999, 0.69999999, 0.7, 0.7001].every((g) => (goalPercent(g) >= 70) === (g + 1e-9 >= 0.7)));
+  } else check("U6: goals.ts exports goalPercent", false);
+
+  // C3: the close re-counts exactly what its gates counted, inside the transaction.
+  const CLOSE = "2026-11-25"; // a Wednesday
+  const row = (id: string, h: Horizon, day: DayKey, qty = 1): GoalMintRow => ({ key: goalMintKey(id), templateId: id, track: "DUTY", reason: GOAL_RULES[h].reason, day, qty });
+  const input = (h: Horizon, mints: GoalMintRow[], used = 0): GoalInput => ({
+    id: "me",
+    horizon: h,
+    track: "DUTY",
+    goalMp: null,
+    krMetric: "MANUAL",
+    krTarget: 1,
+    steps: [],
+    progress: [{ day: "2026-08-01", qty: 1 }],
+    dueDay: null,
+    createdDay: "2026-08-01",
+    today: CLOSE,
+    launchDay: "2026-08-01",
+    goalMints: mints,
+    cappedUsedThisWeek: used,
+  });
+  if (isFn(goalLimitWindow)) {
+    const mid = goalLimitWindow(input("MID", [row("a", "MID", addDays(CLOSE, -29)), row("b", "MID", addDays(CLOSE, -30)), row("c", "MID", CLOSE, 0), row("d", "LONG", CLOSE, 20), row("me", "MID", CLOSE)]));
+    check(
+      "C3: MID's window is (close − 30, close]: counts the paying MID 29 days back, not the one 30 back, a 0 row, a LONG or its own row",
+      mid.reason === "GOAL_MID" && mid.from === addDays(CLOSE, -29) && mid.to === CLOSE && mid.paying === 1 && mid.cappedWeek === null,
+      JSON.stringify(mid)
+    );
+    const long = goalLimitWindow(input("LONG", [row("x", "LONG", addDays(CLOSE, -90), 20)]));
+    check("C3: LONG's window is (close − 91, close]", long.from === addDays(CLOSE, -90) && long.paying === 1);
+    const short = goalLimitWindow(input("SHORT", [row("s", "SHORT", "2026-11-23"), row("t", "SHORT", "2026-11-22")], 4.5));
+    check(
+      "C3: SHORT's window is the close day's life week, with its capped MP as read",
+      short.from === "2026-11-23" && short.to === "2026-11-29" && short.paying === 1 && short.cappedWeek?.used === 4.5 && short.cappedWeek.monday === "2026-11-23",
+      JSON.stringify(short)
+    );
+    const twoMid = input("MID", [row("a", "MID", addDays(CLOSE, -1)), row("b", "MID", addDays(CLOSE, -2))]);
+    check("C3: the gate and the guard count the same rows (2 paying MIDs refuse the 3rd)", goalLimitWindow(twoMid).paying === 2 && closeDecision(twoMid).why === "2 Mid goals paid in the last 30 days");
+  } else check("C3: goals.ts exports goalLimitWindow", false);
+  const closeCore = goalsSrv.slice(goalsSrv.indexOf("export async function closeGoalCore"), goalsSrv.indexOf("const RESCHEDULE_MAX_DAYS"));
+  check(
+    "C3: a close's transaction opens with the life-mint lock, then (when it pays) the guard, before any write",
+    /\$transaction\(\[\s*lifeMintLockOp\(userId\),\s*\.\.\.\(payout\.pays > 0 \? \[closeGuardOp\(userId, input\.id, goalLimitWindow\(input\)\)\] : \[\]\),\s*prisma\.taskTemplate\.updateMany/.test(closeCore)
+  );
+  check("C3: a lost race returns 'Something changed; try again.'", /isStaleGuard\(err\)\) return \{ ok: false, error: GOAL_CLOSE_STALE \}/.test(closeCore) && /GOAL_CLOSE_STALE = "Something changed; try again\."/.test(goalsSrv));
+  check(
+    "C3: the guard re-counts the same filters (MP_MINT, 'mp:GOAL:%', not its own key, qty > 0, the reason, the window) and, for a SHORT, the week's capped MP",
+    /"dedupeKey" LIKE \$\{`\$\{GOAL_MINT_PREFIX\}%`\}/.test(goalsSrv) && /"dedupeKey" <> \$\{goalMintKey\(goalId\)\}/.test(goalsSrv) && /split_part\("detail", \$\{MINT_DETAIL_SEP\}, 1\) = \$\{w\.reason\}/.test(goalsSrv) && /= \$\{w\.paying\}::int/.test(goalsSrv) && /IN \(\$\{Prisma\.join\(\[\.\.\.CAPPED_REASONS\]\)\}\)/.test(goalsSrv)
+  );
+  const judgeSrv = code("src/lib/life-weeks-server.ts");
+  const guardBody = goalsSrv.slice(goalsSrv.indexOf("function closeGuardOp("), goalsSrv.indexOf("export async function readGoalCloseInput"));
+  const cappedSub = guardBody.slice(guardBody.indexOf("const cappedStill"), guardBody.indexOf("return prisma.$executeRaw"));
+  const countSub = guardBody.slice(guardBody.indexOf("return prisma.$executeRaw"));
+  check(
+    "C3 (review): both guard subqueries leave out the goal's own 'mp:GOAL:<id>' row, so a same-goal race reaches P2002 'Already closed.'",
+    /"dedupeKey" <> \$\{goalMintKey\(goalId\)\}/.test(countSub) && /"dedupeKey" IS DISTINCT FROM \$\{goalMintKey\(goalId\)\}/.test(cappedSub) && (guardBody.match(/goalMintKey\(goalId\)/g) ?? []).length === 2,
+    `${(guardBody.match(/goalMintKey\(goalId\)/g) ?? []).length} own-key exclusions in closeGuardOp`
+  );
+  check("C3: each judged week's transaction takes the same lock first", /function weekOps[\s\S]*?return \[\s*lifeMintLockOp\(userId\),/.test(judgeSrv));
+  check("C3: the lock is one per-user key ('life-mint:<user>'), transaction-scoped", /pg_advisory_xact_lock\(hashtext\(\$\{`life-mint:\$\{userId\}`\}::text\)\)/.test(code("src/lib/life-tracks-server.ts")));
+
+  // U5: a closed goal reads as it stood at its close.
+  if (isFn(closedGoalReading)) {
+    const steps = [{ completedDay: "2026-10-10" }, { completedDay: "2026-10-12" }, { completedDay: "2026-10-13" }, { completedDay: "2026-10-14" }, { completedDay: "2026-10-20" }];
+    const later = closedGoalReading({ krMetric: "CHILDREN", krTarget: null, steps, progress: [], dueDay: null }, "2026-10-15", null);
+    check("U5: steps ticked after the close move neither g nor the label: 80% · '4 of 5 steps'", later.g === 0.8 && later.progressLabel === "4 of 5 steps", JSON.stringify(later));
+    const dueFirst = closedGoalReading({ krMetric: "CHILDREN", krTarget: null, steps, progress: [], dueDay: "2026-10-12" }, "2026-10-15", "below 70%");
+    check("U5: measured as of min(close day, due day)", dueFirst.g === 0.4 && dueFirst.asOf === "2026-10-12" && dueFirst.progressLabel === "2 of 5 steps", JSON.stringify(dueFirst));
+    const unmeasured = closedGoalReading({ krMetric: "CHILDREN", krTarget: null, steps: [], progress: [], dueDay: null }, "2026-10-15", "not measured: add a step or a number");
+    check("U5: a close made unmeasured shows no percentage (g null), not an invented 0%", unmeasured.g === null && unmeasured.progressLabel === "no steps yet");
+    const stepAddedSince = closedGoalReading({ krMetric: "CHILDREN", krTarget: null, steps: [{ completedDay: null }], progress: [], dueDay: null }, "2026-10-15", "not measured: add a step or a number");
+    check("U5: still no percentage when a step was added after an unmeasured close", stepAddedSince.g === null);
+  } else check("U5: goals.ts exports closedGoalReading", false);
+  check("U5: the ladder reads closed goals through closedGoalReading at their close day", /closedGoalReading\(\{ \.\.\.input, krUnit: g\.krUnit \}, closeDay, why\)/.test(goalsSrv) && /g: reading\.g/.test(goalsSrv));
+
+  // C2: the dry run folds its own plan into a copy of the ledger.
+  const MON = EPOCH;
+  // Five ticks of 7 raw XP on five days per track (Duty has no musts, so it needs 5 completions); Body's are 60-minute DEMANDING exercise.
+  const rows: WeekTaskRow[] = TRACKS.flatMap((t) =>
+    [0, 1, 2, 3, 4].map((d): WeekTaskRow => ({
+      id: `${t}${d}`,
+      source: "TASK",
+      dedupeKey: null,
+      day: addDays(MON, d),
+      track: t,
+      templateId: null,
+      rawXp: 7,
+      receipt: { v: "life-1", factors: [{ key: "B", label: "band", value: 20 }], minutes: 60, raw: 7, kneeBefore: 0, xp: 7, track: t },
+      category: t === "BODY" ? "EXERCISE" : "OTHER",
+    }))
+  );
+  const judgeState: WeekJudgeState = { today: addDays(MON, 10), launchDay: MON, epochDay: MON, judged: new Set(), rows, templates: [], instances: [], mints: [], heldDays: new Set() };
+  const plans = planWeeks(judgeState);
+  const before = ledgerOf({ xpByDay: TRACKS.map((t) => ({ track: t, day: MON, xp: 300 })) });
+  if (isFn(ledgerWithPlans)) {
+    const folded = ledgerWithPlans(before, plans);
+    const st = trackStateAt(folded, addDays(MON, 10));
+    check("C2: the planned week counts once folded in: every track kept 1 week, cap 2, level 2 (300 XP)", plans.length === 1 && plans[0].tracks.every((t) => t.kept) && st.every((s) => s.keptWeeks === 1 && s.cap === 2 && s.level === 2), st.map((s) => `${s.track} kw${s.keptWeeks} L${s.level}`).join(" "));
+    check("C2: unfolded, the same ledger reads keptWeeks 0, cap 1, level 1 (the understatement)", trackStateAt(before, addDays(MON, 10)).every((s) => s.keptWeeks === 0 && s.cap === 1 && s.level === 1));
+    eq("C2: the folded mints are the plan's (4 × 1.5 = 6 in its week)", lifeMpInWeek(folded, MON), 6);
+    check("C2: folding twice adds nothing", JSON.stringify(ledgerWithPlans(folded, plans)) === JSON.stringify(folded));
+    check("C2: the original ledger is not touched", before.weeks.length === 0 && before.mints.length === 0);
+  } else check("C2: life-weeks.ts exports ledgerWithPlans", false);
+  const launch = code("scripts/life-launch.ts");
+  check("C2: the dry run plans every remaining week (maxWeeks) and warns if it is still capped", /judgeClosedWeeks\(userId, now, \{ dryRun: true, maxWeeks: DRY_RUN_MAX_WEEKS \}\)/.test(launch) && /cover the first \$\{DRY_RUN_MAX_WEEKS\} weeks only/.test(launch));
+  check("C2: its states come from the ledger with the plan folded in", /ledgerWithPlans\(await readLifeLedger\(userId\), dry\.plans\)/.test(launch));
+  check("C2: maxWeeks is honoured by a dry run only", /opts\.dryRun && typeof opts\.maxWeeks === "number"/.test(judgeSrv));
+
+  // C4: the launch judges silently until the plan is empty, then plays one moment; page loads wait for it.
+  check("C4: JudgeOptions.moments false commits without withMoments", /if \(opts\.moments === false\) return \{ launched, plans, committed: await commitPlans\(userId, plans, now\) \}/.test(judgeSrv));
+  check("C4: --apply judges with moments: false, looping until the plan is empty", /judgeClosedWeeks\(userId, now, \{ force: true, moments: false \}\)/.test(launch) && /if \(judged\.plans\.length === 0\) \{\s*empty = true;/.test(launch));
+  const momentAt = launch.indexOf("detectCelebrations(withTracksAtZero(afterSnap)");
+  const graceAt = launch.indexOf("reason: DECAY_GRACE_REASON, detail: launchGraceDetail(launchDay) } })");
+  check("C4: the one launch moment comes after the judge, and the DECAY_GRACE marker is written last", momentAt > launch.indexOf("moments: false") && graceAt > momentAt);
+  check("C4: maybeJudgeWeeks judges only once the launch's DECAY_GRACE row exists", /if \(!\(await launchHasFinished\(userId, launchDay\)\)\) return;\s*await judgeClosedWeeks\(userId, now\);/.test(judgeSrv) && /detail: launchGraceDetail\(launchDay\)/.test(judgeSrv) && /`life launch \$\{launchDay\}`/.test(judgeSrv));
+
+  // C1 backstop: the judge's after snapshot gets its own Date (the main fix and its test are in celebration-check).
+  check("C1: judgeClosedWeeks gives each settle snapshot its own Date", /captureSnapshot\(userId, \{ scope: "settle", now: new Date\(now\.getTime\(\)\) \}\)/.test(judgeSrv));
+}
+
+// ── §8b a close before launch is refused on the server, with no read and no write ──
+// Every Prisma entry the close could reach is swapped for a spy that records and throws, so no
+// database is reached even if the refusal is missing (then the spy's throw fails the case).
+async function closeBeforeLaunch(): Promise<void> {
+  console.log("\n§8b a close before launch");
+  const db = prisma as unknown as Record<string, unknown>;
+  const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "taskTemplate", "activityEvent", "masteryLedgerEntry"] as const;
+  const saved = ENTRIES.map((k) => [k, db[k]] as const);
+  const touched: string[] = [];
+  const spy = (name: string) => () => {
+    touched.push(name);
+    throw new Error(`database reached: ${name}`);
+  };
+  for (const k of ENTRIES) db[k] = k.startsWith("$") ? spy(k) : new Proxy({}, { get: (_t, m) => spy(`${k}.${String(m)}`) });
+  const attempt = async (launchDay: DayKey | null): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      return await closeGoalCore("u", "g1", new Date(Date.UTC(2026, 9, 10, 3)), launchDay);
+    } catch (err) {
+      return { ok: false, error: `threw: ${(err as Error).message}` };
+    }
+  };
+  try {
+    eq("the refusal reads 'Goals can be closed once life counts.'", GOAL_CLOSE_BEFORE_LAUNCH, "Goals can be closed once life counts.");
+    const none = await attempt(null);
+    check("no launch day: closeGoalCore refuses with GOAL_CLOSE_BEFORE_LAUNCH and builds no ops", !none.ok && none.error === GOAL_CLOSE_BEFORE_LAUNCH && touched.length === 0, `${JSON.stringify(none)} | ${touched.join()}`);
+    const ahead = await attempt("2026-10-12");
+    check("a launch day still ahead: refused the same way, nothing read or written", !ahead.ok && ahead.error === GOAL_CLOSE_BEFORE_LAUNCH && touched.length === 0, `${JSON.stringify(ahead)} | ${touched.join()}`);
+    const live = await attempt("2026-10-05");
+    check("launched: the close goes on to read the goal (the gate refuses only before launch)", live.error !== GOAL_CLOSE_BEFORE_LAUNCH && touched.length > 0, `${JSON.stringify(live)} | ${touched.join()}`);
+  } finally {
+    for (const [k, v] of saved) db[k] = v;
+  }
+}
+
 // ── lane A appends §2b and §4–§7 above this line ─────────────────────────
 
-console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} pass`);
-process.exit(failed ? 1 : 0);
+closeBeforeLaunch()
+  .catch((err) => check("§8b ran", false, String(err)))
+  .finally(() => {
+    console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} pass`);
+    process.exit(failed ? 1 : 0);
+  });

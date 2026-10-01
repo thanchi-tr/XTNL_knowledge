@@ -39,6 +39,7 @@ import type { Attribute } from "@prisma/client";
 import { STUDY_AUTO_METRICS, UNDO_WINDOW_MINUTES, effBand, estEff, payModeOf, priceTask, receiptBandOf, timingFor } from "./life-grade";
 import { repeatNOf } from "./life-lexicon";
 import { describeRule, nextDue, occursOn, parseRule, periodProgress, scheduledPerWeek, type Rule } from "./recurrence";
+import { goalAsOf, goalProgress, progressQtyAsOf, stepsDoneAsOf, type GoalProgressInput, type GoalProgressRow } from "./goals";
 import {
   HABIT_WINDOW_DAYS,
   habitStrength,
@@ -145,6 +146,14 @@ export interface BoardTemplate extends PricedTemplate {
   completedAt: string | null;
   createdAt: string;
   sortOrder: number;
+  /**
+   * A goal's MP, stated when it was set and frozen (M5; goals.ts reads
+   * goalMp ?? statedGoalMp(horizon)). null on a non-goal and on a goal set
+   * before launch's stateGoalMp. Absent reads as null.
+   */
+  goalMp?: number | null;
+  /** Set once a goal is closed (its g at the close; 0 when unmeasured). A closed goal leaves the board. Absent reads as null. */
+  closedScore?: number | null;
 }
 
 export interface BoardInstance {
@@ -226,6 +235,13 @@ export interface BoardData {
   paid: Record<string, PaidRecord>;
   /** Σ GOAL_PROGRESS qty per goal. */
   goalQty: Record<string, number>;
+  /**
+   * Σ GOAL_PROGRESS qty per open goal per life day (M5): what goalProgress
+   * measures as of min(today, due day), so a number logged after the due day
+   * never counts. tasks.ts always sends it. Absent (an older fixture), a
+   * goal's goalQty counts as logged on the day the goal was set.
+   */
+  goalDays?: Record<string, GoalProgressRow[]>;
   /** Cards due now; null where the caller did not read it (the nav count). */
   dueNow: number | null;
 }
@@ -797,6 +813,11 @@ export interface GoalCard {
   support: string | null;
   dueLabel: string | null;
   steps: number;
+  /**
+   * g when the goal is past its due day and below 1 ('Carried 0.55'); else
+   * null. Never a debt: the goal stays open to reschedule or close.
+   */
+  carried: number | null;
 }
 
 /** A one-off waiting for a later day, as Anytime's 'Planned later' list shows it. */
@@ -926,6 +947,7 @@ const PLACE_HABITS: BoardPlace = { lane: "habits", label: "Habits" };
 const PLACE_ANYTIME: BoardPlace = { lane: "anytime", label: "Anytime" };
 const PLACE_INBOX: BoardPlace = { lane: "inbox", label: "Inbox" };
 const PLACE_GOALS: BoardPlace = { lane: "goals", label: "Goals" };
+const PLACE_GOAL_CLOSED: BoardPlace = { lane: "done", label: "Closed" };
 const PLACE_DONE_TODAY: BoardPlace = { lane: "done", label: "Done today" };
 
 /** 'Planned later · Fri 2 Oct'. */
@@ -969,7 +991,8 @@ export function placementOf(t: BoardTemplate, ctx: PlaceContext): Placement {
     ...more,
   });
 
-  if (t.kind === "GOAL") return only(PLACE_GOALS);
+  // A closed goal (M5) is finished for good: off the board, like a one-off done earlier.
+  if (t.kind === "GOAL") return only(t.closedScore != null ? PLACE_GOAL_CLOSED : PLACE_GOALS);
   if (t.inbox || t.kind === "IDEA_DRAFT") return only(PLACE_INBOX);
   const rule = ruleOf(t);
 
@@ -1293,6 +1316,14 @@ export function projectRow(data: BoardData, r: BoardRow, opts: { minutes?: numbe
   }).receipt;
 }
 
+/**
+ * The goals as cards, nearest due first within each horizon. Progress is
+ * goals.ts goalProgress as of goalAsOf(today, dueDay), the one measurement
+ * the You sheet's ladder and a close also take (a step ticked or a number
+ * logged after the due day never counts); the labels are the board's own
+ * ('2 of 4 steps', '7 of 12 books', 'no one-off steps'), counted the same
+ * way. A closed goal (closedScore set) is skipped: it is finished for good.
+ */
 function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, BoardTemplate>): Record<Horizon, GoalCard[]> {
   const out: Record<Horizon, GoalCard[]> = { SHORT: [], MID: [], LONG: [] };
   const children = new Map<string, BoardTemplate[]>();
@@ -1303,6 +1334,7 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
     else children.set(t.parentId, [t]);
   }
   for (const g of goals) {
+    if (g.closedScore != null) continue;
     const horizon: Horizon = g.horizon ?? "MID";
     const kids = children.get(g.id) ?? [];
     const steps = kids.filter((k) => !k.recurrence && k.kind !== "GOAL");
@@ -1313,20 +1345,23 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
         ? `support habits ${Math.round((ratios.reduce((s, r) => s + r, 0) / ratios.length) * 100)}% kept (28 d)`
         : null;
     const metric: KrMetric = g.krMetric ?? "CHILDREN";
-    let progress: number | null = null;
+    const input = goalProgressInputOf(g, steps, d);
+    const asOf = goalAsOf(d.today, g.dueDay);
+    const progress = goalProgress(input, asOf);
     let label: string;
     if (metric === "MANUAL") {
-      const qty = d.goalQty[g.id] ?? 0;
+      const qty = progressQtyAsOf(input.progress, asOf);
       const target = g.krTarget ?? null;
-      progress = target && target > 0 ? Math.max(0, Math.min(1, qty / target)) : null;
-      label = target ? `${fmtQty(qty)} of ${fmtQty(target)}${g.krUnit ? ` ${g.krUnit}` : ""}` : `${fmtQty(qty)}${g.krUnit ? ` ${g.krUnit}` : ""} so far`;
-    } else if (steps.length > 0) {
-      const done = steps.filter((s) => s.completedAt).length;
-      progress = done / steps.length;
-      label = `${done} of ${steps.length} step${steps.length === 1 ? "" : "s"}`;
+      const unit = g.krUnit ? ` ${g.krUnit}` : "";
+      label = target && target > 0 ? `${fmtQty(qty)} of ${fmtQty(target)}${unit}` : `${fmtQty(qty)}${unit} so far`;
+    } else if (metric === "CHILDREN") {
+      const { done, total } = stepsDoneAsOf(input.steps, asOf);
+      label = total > 0 ? `${done} of ${total} step${total === 1 ? "" : "s"}` : habits.length > 0 ? "no one-off steps" : "no steps yet";
     } else {
-      label = habits.length > 0 ? "no one-off steps" : "no steps yet";
+      // REVIEWS, IDEAS, WORKOUTS, RUN_KM: goals.ts measures none of them (M5).
+      label = "not measured";
     }
+    const pastDue = g.dueDay != null && g.dueDay < d.today;
     out[horizon].push({
       template: g,
       horizon,
@@ -1336,12 +1371,29 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
       support,
       dueLabel: g.dueDay ? dueLabelOf(g, d.today).label : null,
       steps: steps.length,
+      carried: pastDue && progress != null && progress < 1 ? progress : null,
     });
   }
   for (const h of Object.keys(out) as Horizon[]) {
     out[h].sort((a, b) => (a.template.dueDay ?? "9999").localeCompare(b.template.dueDay ?? "9999") || a.template.createdAt.localeCompare(b.template.createdAt));
   }
   return out;
+}
+
+/**
+ * What goals.ts goalProgress reads for one goal, from the board's own data:
+ * its one-off steps (non-recurring, non-goal children; the board reads no
+ * archived template) with the life day each was completed, and its
+ * GOAL_PROGRESS by day (goalDays, or, absent, goalQty on the day it was set).
+ */
+export function goalProgressInputOf(g: BoardTemplate, steps: readonly BoardTemplate[], d: Pick<BoardData, "goalQty" | "goalDays">): GoalProgressInput {
+  const qty = d.goalQty[g.id] ?? 0;
+  return {
+    krMetric: g.krMetric ?? "CHILDREN",
+    krTarget: g.krTarget,
+    steps: steps.map((s) => ({ completedDay: s.completedAt ? dayKeyOf(new Date(s.completedAt)) : null })),
+    progress: d.goalDays?.[g.id] ?? (qty !== 0 ? [{ day: dayKeyOf(new Date(g.createdAt)), qty }] : []),
+  };
 }
 
 function fmtQty(n: number): string {

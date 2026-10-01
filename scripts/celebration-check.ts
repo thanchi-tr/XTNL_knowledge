@@ -58,6 +58,7 @@ import {
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
 import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
+import { emptyLifeLedger, lifeTracksView, type LifeLedger } from "../src/lib/life-tracks";
 import { DEFAULT_PREFS, KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
 import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
 import { fixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
@@ -728,7 +729,44 @@ function life() {
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const snap = strip(read(join(ROOT, "src/lib/snapshot.ts")));
   check("snapshot: the tracks part is read (no 'tracks' exclusion left)", !/Exclude<SnapshotPart, "tracks">/.test(snap) && /tracks: \(\) => readTracks\(userId, now\)/.test(snap));
-  check("snapshot: life is read with the snapshot's own instant (never React-cached across before/after)", /loadLifeTracks\(userId, now\)/.test(snap) && /readLevels\(userId, now\)/.test(snap));
+  // M5 review C1: React cache() keys a Date by identity, so a before and an after snapshot that
+  // share one `now` (the week judge's) would get one view. readLife must not go through it.
+  const readLifeBody = snap.slice(snap.indexOf("async function readLife("), snap.indexOf("async function readLevels("));
+  check(
+    "snapshot: life is read from the process-cached ledger, never through React-cached loadLifeTracks (C1)",
+    readLifeBody.length > 0 && !/loadLifeTracks/.test(snap) && /lifeTracksView\(await loadLifeLedger\(userId\), today\)/.test(readLifeBody) && /notLaunchedView\(today\)/.test(readLifeBody),
+    readLifeBody.slice(0, 200)
+  );
+  check("snapshot: levels and tracks read life at the snapshot's own instant", /readLevels\(userId, now\)/.test(snap) && /tracks: \(\) => readTracks\(userId, now\)/.test(snap) && /readLife\(userId, now\)/.test(snap));
+  check("snapshot: React cache() wraps nothing on the progress path (only the ghost radar's getGhostLevelsFromDaysAgo)", (snap.match(/\bcache\(/g) ?? []).length === 1 && /getGhostLevelsFromDaysAgo = cache\(/.test(snap));
+  // The diff itself: a judged week that lifts Body from L1 to L2, both snapshots at the same `now`.
+  const EPOCH = "2026-10-05";
+  const lifeLedger: LifeLedger = { ...emptyLifeLedger(EPOCH), xpByDay: [{ track: "BODY", day: EPOCH, xp: 200 }] };
+  const judged: LifeLedger = {
+    ...lifeLedger,
+    weeks: (["BODY", "DUTY", "CRAFT", "CARE"] as const).map((t) => ({ track: t, weekKey: "2026-W41", sunday: "2026-10-11", kept: t === "BODY", detail: t === "BODY" ? "Kept · 3 days · 40.0 raw XP" : "Not kept · 0 of 3 days" })),
+  };
+  const sameNow = "2026-10-14";
+  const viewBefore = lifeTracksView(lifeLedger, sameNow, EPOCH);
+  const viewAfter = lifeTracksView(judged, sameNow, EPOCH);
+  const lifeSnap = (v: typeof viewBefore): ProgressData => ({ parts: ["tracks", "levels"], tracks: { levels: { ...v.levels } }, levels: levels([3], { ...v.levels }) });
+  const judgedDiff = diffProgress(lifeSnap(viewBefore), lifeSnap(viewAfter));
+  check(
+    "C1: a judge diff whose before and after read the same `now` still reports the track level-up (Body L1 → L2)",
+    viewBefore.levels.BODY === 1 && viewAfter.levels.BODY === 2 && judgedDiff.some((d) => d.dedupeKey === "track:BODY:2"),
+    `${viewBefore.levels.BODY} → ${viewAfter.levels.BODY} | ${keys(judgedDiff).join()}`
+  );
+  const judgeSrv = strip(read(join(ROOT, "src/lib/life-weeks-server.ts")));
+  check("C1 backstop: the week judge gives each settle snapshot its own Date", /captureSnapshot\(userId, \{ scope: "settle", now: new Date\(now\.getTime\(\)\) \}\)/.test(judgeSrv));
+  // The epithet a judged week's band or title moment carries reads attribute scores with life in them;
+  // loadAttributeScores must not share the page render's pre-judge loadLifeTracks memo either.
+  const effects = strip(read(join(ROOT, "src/lib/skill-effects.ts")));
+  const attrBody = effects.slice(effects.indexOf("export async function loadAttributeScores("), effects.indexOf("async function loadProgressionUncached("));
+  check(
+    "C1: loadAttributeScores reads life with a fresh Date (loadLifeRows(userId, new Date())), never the render's memo",
+    attrBody.length > 0 && /loadLifeRows\(userId, new Date\(\)\)/.test(attrBody) && !/loadLifeRows\(userId\)/.test(attrBody),
+    attrBody.slice(0, 240)
+  );
   check("snapshot: the levels part is invalidated by 'life'", /levels: \[[^\]]*"life"[^\]]*\]/.test(snap));
   check("snapshot: backfill is detail?.startsWith('backfill') (isBackfillDetail), never an exact match", /isBackfillDetail\(r\.detail\)/.test(snap) && !/=== "backfill"/.test(snap));
   check("snapshot: kept weeks carry their mint (weekKeptMintKey) and goals their decision row (goalIdOfMintKey)", /weekKeptMintKey\(/.test(snap) && /goalIdOfMintKey\(/.test(snap) && /closedScore: \{ not: null \}/.test(snap));
