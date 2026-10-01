@@ -19,11 +19,16 @@
  *   7. Source rules: the M1 ledger writes in srs.ts are intact, one read wave
  *      before the write, no AFFIRMATIONS / Strong roll / VARIANCE_*, no
  *      Math.random or framer-motion in the review route, layered CSS.
+ *   8. The review fixes (F2): scoped snapshots, in-run Seals marked seen (one
+ *      Seal implementation, L3's SealCard), one "Today kept" per run, the dock
+ *      guard, one loadout strip (L4's), ink errors, titled truncation, and no
+ *      class name in the lane that Tailwind also emits as a utility.
  *
  * Importing bosses.ts constructs a PrismaClient but never queries it.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, relative } from "node:path";
 import {
   COMBO_CAP,
   COMBO_STEP,
@@ -64,13 +69,16 @@ import {
 } from "../src/lib/bosses";
 import { BOON_KINDS, BOON_META } from "../src/lib/boon-meta";
 import { DEBUFF_KINDS, DEBUFF_META } from "../src/lib/debuff-meta";
-import { honestyProblem } from "../src/lib/celebration-types";
+import { honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
 import {
   CHAIN_MAX,
   bossView,
   cardTitle,
+  celebrationRoute,
   comboView,
+  dayKeptOf,
   formulaOf,
+  keptStreakOf,
   levelRowsOf,
   questNow,
   receiptOf,
@@ -81,6 +89,7 @@ import {
   type CardResult,
 } from "../src/components/workspace/review-model";
 import { reviewFixtures } from "../src/app/dev/style/review/fixtures";
+import { GET as workspaceRedirect } from "../src/app/workspace/route";
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -446,5 +455,186 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   check("css: review.css transitions only transform, opacity and colour", transitions.every((t) => t.split(/,(?![^(]*\))/).every((p) => allowed.test(p.trim()))), transitions.join(" | "));
 }
 
-console.log(`\nreview-check: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── 8. The review fixes (F2) ────────────────────────────────────────────────
+{
+  // Snapshots: scoped (4 queries, not ~10), the same scope before and after.
+  const action = code(read("src/app/actions/review.ts"));
+  const boss = code(read("src/app/actions/bosses.ts"));
+  const calls = (src: string) => [...src.matchAll(/captureSnapshot\(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, " ").trim());
+  check("snapshot: both review snapshots take { scope: \"review\" }", eq(calls(action), ['userId, { scope: "review" }', 'userId, { scope: "review" }']), calls(action).join(" | "));
+  check("snapshot: both boss snapshots take { scope: \"boss\" }", eq(calls(boss), ['userId, { scope: "boss" }', 'userId, { scope: "boss" }']), calls(boss).join(" | "));
+
+  // In-run Seals: one implementation (L3's SealCard, which marks itself seen), and the recap marks the merged ones seen.
+  const panel = code(read("src/components/workspace/ResultPanel.tsx"));
+  const recap = code(read("src/components/workspace/SessionComplete.tsx"));
+  const view = code(read("src/components/workspace/WorkspaceView.tsx"));
+  const sealCard = code(read("src/components/celebrate/SealCard.tsx"));
+  check("seal: RunSeal (a second Seal implementation that never marked seen) is gone", !existsSync(join(ROOT, "src/components/workspace/RunSeal.tsx")) && !/RunSeal/.test(panel + recap + view));
+  check("seal: the result panel renders L3's <SealCard inline announce/>, which acks on mount", /<SealCard ev=\{ev\} inline announce \/>/.test(panel) && /if \(inline\) ackShown\(\[ev\]\)/.test(sealCard));
+  check(
+    "seal: the in-panel Seal still sounds, buzzes and speaks once per id (merged Seals skip the presenter); the panel adds no second copy",
+    /if \(inline && announce && animate && firstAnnouncement\(ev\.id\)\) \{\s*sound\("seal"\);\s*haptic\("seal"\);/.test(sealCard) && !/\bsound\(|\bhaptic\(/.test(panel)
+  );
+  check("seal: the recap marks the run's merged Seals seen when it mounts", /ackShown\(merged\)/.test(recap) && /import \{ ackShown \} from "@\/components\/celebrate\/stage"/.test(recap));
+  const finish = view.slice(view.indexOf("function finish("), view.indexOf("function next("));
+  check("seal: closing the run marks its merged Seals seen (backstop)", /const merged = closeRun\(\);\s*ackShown\(merged\);/.test(finish));
+  check("seal: recap rows use the Seal's own face (a diamond for a rung, PR for a record)", /medalFace\(ev\)/.test(recap));
+  // The fixtures now render the real acking SealCard: a fixture id must never look like a server row id.
+  check("seal: the /dev/style/review Seal can never be acked against the account (its id is not a row id)", !/^[a-z0-9]{8,40}$/i.test(reviewFixtures().seal.id), reviewFixtures().seal.id);
+
+  // One "Today kept" per run: the detector's T1 is not chimed again.
+  const t2 = makeEvent("domain-level", "row1", { eyebrow: "Domain", title: "Probability reached level 7", numeral: { from: 6, to: 7 } });
+  const t1 = makeEvent("day-kept", "t1:day:2026-10-01", { eyebrow: "Day kept", title: "Day 24 kept", numeral: { from: 23, to: 24 } });
+  const t3 = makeEvent("title", "row3", { eyebrow: "Title", title: "Adept", numeral: { from: 9, to: 10 } });
+  check(
+    "t1: a detector's day-kept T1 is ignored (the runner owns the chime); T2 and T3 are queued",
+    celebrationRoute(t1) === "ignore" && celebrationRoute(t2) === "enqueue" && celebrationRoute(t3) === "enqueue"
+  );
+  check(
+    "t1: the review page never chimes a returned T1 (answers and the boss verdict both route through celebrationRoute)",
+    !/\bchime\(/.test(view) && !/ev\.tier === 1/.test(view) && (view.match(/celebrationRoute\(ev\) === "enqueue"/g) ?? []).length === 2
+  );
+  const fx = reviewFixtures();
+  const withT1 = (i: number, evs: CelebrationEvent[]): CardResult => ({ ...fx.results[i], result: { ...fx.results[i].result, streakSecured: i === 0, celebrations: evs } });
+  check(
+    "t1: the streak printed is the detector's own figure when its T1 came back, else the hub's",
+    keptStreakOf({ celebrations: [t1] }, 99) === 24 && keptStreakOf({ celebrations: [] }, 7) === 7 && keptStreakOf(null, null) === null
+  );
+  check(
+    "t1: the recap's Day kept row shows once the session kept the day, with the detector's figure",
+    eq(dayKeptOf([withT1(0, []), withT1(1, [t1])], 5), { streak: 24 }) &&
+      eq(dayKeptOf([withT1(0, [])], 5), { streak: 5 }) &&
+      dayKeptOf([{ ...fx.results[1], result: { ...fx.results[1].result, streakSecured: false, celebrations: [] } }], 5) === null
+  );
+
+  // The dock guard: a key aimed at a toast or a Seal in the shared dock never skips a result.
+  const runner = code(read("src/components/workspace/ReviewRunner.tsx"));
+  check("keys: the runner ignores keys from the capture sheet and the toast/Seal dock", /target\.closest\("\[data-capture-ui\], \.dock"\)/.test(runner));
+
+  // One loadout strip: L4's, rendered on the server and handed to the hub.
+  const hub = code(read("src/components/workspace/ReviewHub.tsx"));
+  const page = code(read("src/app/review/page.tsx"));
+  const clientFiles = readdirSync(join(ROOT, "src/components/workspace"))
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => `src/components/workspace/${f}`);
+  check("strip: the hub has no loadout strip of its own", !/function LoadoutStrip/.test(hub) && !/rv-strip/.test(read("src/components/workspace/review.css")));
+  check(
+    "strip: the page renders L4's LoadoutStrip from the progression it already read",
+    /import \{ LoadoutStrip \} from "@\/components\/skills\/LoadoutStrip"/.test(page) && /<LoadoutStrip slots=\{progression\.loadout\.map\(/.test(page) && /loadoutStrip=\{loadoutStrip\}/.test(page)
+  );
+  check("strip: no client component in the review route imports it (that module reaches Prisma)", clientFiles.every((f) => !/from "@\/components\/skills\/LoadoutStrip"/.test(code(read(f)))));
+  check("effects: boons (held) and penalties (owed) sit in one 'In effect on a review' card", /In effect on a review/.test(hub) && (hub.match(/tone="owed"/g) ?? []).length === 1 && /<Chip tone="held" icon="star">/.test(hub));
+
+  // Errors are ink, never --owed (which reports debt only).
+  const css = read("src/components/workspace/review.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const alertRule = css.match(/\.rv-alert \{[^}]*\}/)?.[0] ?? "";
+  check("errors: .rv-alert is ink at weight 600, with no --owed", alertRule.length > 0 && !/--owed/.test(alertRule) && /color: var\(--ink-0\)/.test(alertRule) && /font: 600/.test(alertRule));
+  check("seal: the in-panel Seal's wrapper is a grid, so the card is a block box whatever its modifier class computes to", /\.rv-seal \{[^}]*display: grid/.test(css));
+
+  // /workspace: a real HTTP redirect before any render (a page-level redirect() under the root
+  // loading.tsx can stream as a meta refresh instead).
+  const hop = workspaceRedirect(new Request("http://app.test/workspace?view=run"));
+  check(
+    "redirect: /workspace is a route handler answering 308 → /review, query kept, with no page beside it",
+    hop.status === 308 && hop.headers.get("location") === "http://app.test/review?view=run" && !existsSync(join(ROOT, "src/app/workspace/page.tsx")),
+    `${hop.status} ${hop.headers.get("location")}`
+  );
+
+  // Truncated titles carry their full text.
+  check("truncation: every ellipsised idea title carries a title attribute", /<b title=\{i\.title\}>/.test(hub) && /<b title=\{b\.title\}>/.test(recap) && /<td title=\{r\.title\}>/.test(recap));
+
+  // Buttons: the lane's full-width actions (Start review, Check answer, Next card, Back to Today) are <Button block>.
+  // A bare `block` class is Tailwind's display:block utility, which stacked the icon over the label.
+  const laneTsx = laneFiles().filter((f) => /\.tsx$/.test(f));
+  const blockProp = laneTsx.filter((f) => /<Button\b[^>]*\sblock[\s>]/.test(code(read(f))));
+  const button = code(read("src/components/ui/Button.tsx"));
+  check(
+    "buttons: <Button block> renders .btn-block, never Tailwind's .block",
+    blockProp.length >= 5 && /block && "btn-block"/.test(button) && !/block && "block"/.test(button),
+    blockProp.join(", ")
+  );
+}
+
+function walkFiles(d: string, out: string[] = []): string[] {
+  for (const f of readdirSync(join(ROOT, d))) {
+    const p = join(d, f);
+    if (statSync(join(ROOT, p)).isDirectory()) walkFiles(p, out);
+    else out.push(p.replace(/\\/g, "/"));
+  }
+  return out;
+}
+
+function laneFiles(): string[] {
+  return [...walkFiles("src/components/workspace"), ...walkFiles("src/app/review"), ...walkFiles("src/app/dev/style/review")];
+}
+
+/** Every class name the review lane writes: className strings, cx() arguments and review.css selectors. */
+function laneClassNames(): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const add = (token: string, file: string) => {
+    if (!/^[a-z][\w-]*$/i.test(token)) return;
+    if (!out.has(token)) out.set(token, new Set());
+    out.get(token)!.add(file);
+  };
+  const strings = (expr: string, file: string) => {
+    for (const q of expr.matchAll(/"([^"]*)"|'([^']*)'|`([^`$]*)`/g)) (q[1] ?? q[2] ?? q[3] ?? "").split(/\s+/).forEach((t) => add(t, file));
+  };
+  for (const f of laneFiles()) {
+    const src = read(f);
+    if (f.endsWith(".css")) {
+      for (const m of src.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.([a-zA-Z][\w-]*)/g)) add(m[1], f);
+      continue;
+    }
+    if (!/\.tsx?$/.test(f)) continue;
+    const c = code(src);
+    for (const m of c.matchAll(/className="([^"]*)"/g)) m[1].split(/\s+/).forEach((t) => add(t, f));
+    for (const m of c.matchAll(/className=\{([^{}]*)\}/g)) strings(m[1], f);
+    for (const m of c.matchAll(/\bcx\(([^()]*)\)/g)) strings(m[1], f);
+  }
+  return out;
+}
+
+type DesignSystem = { candidatesToCss(candidates: string[]): (string | null)[] };
+type LoadDesignSystem = (
+  css: string,
+  opts: { base: string; loadStylesheet: (id: string, base: string) => Promise<{ path: string; base: string; content: string }> }
+) => Promise<DesignSystem>;
+
+/**
+ * Tailwind v4 emits a utility for any class name it finds in the source, in
+ * @layer utilities, which beats every kit rule. So a kit class named like a
+ * utility (block, inline, ring, hidden, grow …) silently changes its element.
+ * This asks Tailwind's own design system which of the lane's names it emits.
+ */
+async function tailwindCollisions(): Promise<{ hits: string[]; error: string | null }> {
+  try {
+    const req = createRequire(join(ROOT, "package.json"));
+    const tw = req("tailwindcss") as { __unstable__loadDesignSystem: LoadDesignSystem };
+    const twDir = dirname(req.resolve("tailwindcss/package.json"));
+    const ds = await tw.__unstable__loadDesignSystem('@import "tailwindcss";', {
+      base: ROOT,
+      loadStylesheet: async (id) => {
+        const p = id === "tailwindcss" ? join(twDir, "index.css") : join(twDir, id.replace(/^tailwindcss\//, ""));
+        const file = p.endsWith(".css") ? p : `${p}.css`;
+        return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
+      },
+    });
+    const names = laneClassNames();
+    // sr-only is used AS the utility (the same rule the kit would write).
+    const list = [...names.keys()].filter((n) => n !== "sr-only");
+    const out = ds.candidatesToCss(list);
+    const known = ds.candidatesToCss(["block", "inline", "ring", "rv-panel"]);
+    if (!known[0] || !known[1] || !known[2] || known[3]) return { hits: [], error: "the Tailwind probe does not recognise block/inline/ring" };
+    return { hits: list.filter((_, i) => out[i]).map((n) => `${n} (${[...names.get(n)!].join(", ")})`), error: null };
+  } catch (err) {
+    return { hits: [], error: String(err) };
+  }
+}
+
+void tailwindCollisions().then(({ hits, error }) => {
+  check("classes: no class name in the review lane is also a Tailwind utility (block, inline, ring, grow …)", error == null && hits.length === 0, error ?? hits.join("; "));
+  const names = laneClassNames();
+  check("classes: the scan sees the lane's names (rv-panel, rv-alert, rv-seal, rv-effect)", ["rv-panel", "rv-alert", "rv-seal", "rv-effect"].every((n) => names.has(n)) && names.size > 100, String(names.size));
+  console.log(`\nreview-check: ${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+});

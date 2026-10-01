@@ -93,7 +93,8 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     readIdeaHistory(userId, input.ideaId),
     readReviewDay(userId, today),
     // L3's snapshot is decoration on this path: if it fails, the review still lands.
-    captureSnapshot(userId).catch(() => null),
+    // Scoped (levels, mastered, streak: 4 queries), the same scope before and after.
+    captureSnapshot(userId, { scope: "review" }).catch(() => null),
   ]);
 
   const correct = verifyAnswer(idea.questionType, input.userAnswer, idea.answer);
@@ -101,7 +102,7 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
 
   // After the write (and its leveling), so the diff sees it. Never fails the answer: the points are already in.
   const celebrations: CelebrationEvent[] = before
-    ? await captureSnapshot(userId)
+    ? await captureSnapshot(userId, { scope: "review" })
         .then((afterSnap) => detectCelebrations(before, afterSnap, { cause: "review", now }))
         .catch(() => [])
     : [];

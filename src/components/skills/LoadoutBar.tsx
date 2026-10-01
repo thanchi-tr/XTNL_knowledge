@@ -19,6 +19,7 @@ import { GRADE_VISUALS, motesFor } from "@/lib/resonance-visuals";
 import { skyFor } from "@/lib/sky";
 import { ResonanceAtmosphere } from "./ResonanceAtmosphere";
 import type { Skill } from "@/lib/skill-pool";
+import { ActionError } from "@/components/home/ActionError";
 
 const EMPTY_SEEN_SET = new Set<string>();
 
@@ -624,11 +625,7 @@ export function LoadoutBar({ slots, bench, ambient = true, persist = true, attac
             ))}
           </ul>
 
-          {error && (
-            <p className="shrink-0" style={{ fontSize: 12, color: "var(--owed)" }} role="alert">
-              {error}
-            </p>
-          )}
+          {error && <ActionError className="shrink-0">{error}</ActionError>}
         </div>
 
         {/* The set readout. Only rendered once something is actually held, so

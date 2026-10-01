@@ -25,6 +25,7 @@ import { CurrencyGlyph } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { Sheet } from "@/components/ui/Sheet";
 import { cx } from "@/components/ui/cx";
+import { ActionError } from "@/components/home/ActionError";
 import { formatReq, nodeState, requirementsOf, type LadderContext } from "./ladder";
 import { SkillLogo } from "./SkillLogo";
 import { UnlockButton } from "./UnlockButton";
@@ -71,7 +72,7 @@ export function EmblemDetail({ skill, ctx, equippedSlot, freeSlot, onDone, showN
   }
 
   return (
-    <div>
+    <div className="dt-body">
       <span className={cx("chip", "dt-mat", material)}>
         {RANK_META[skill.rank].label} · depth {depth}
       </span>
@@ -107,11 +108,7 @@ export function EmblemDetail({ skill, ctx, equippedSlot, freeSlot, onDone, showN
                   All ten slots are full: open Loadout
                 </Button>
               )}
-              {equipError && (
-                <p role="alert" className="t-meta dt-note" style={{ color: "var(--owed)" }}>
-                  {equipError}
-                </p>
-              )}
+              {equipError && <ActionError className="dt-note">{equipError}</ActionError>}
             </div>
           )}
         </div>

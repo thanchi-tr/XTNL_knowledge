@@ -22,13 +22,17 @@
   .seal-card .sc-t .t-eyebrow { margin-bottom: 2px; }
   .seal-card .facts .cur { color: var(--ink-0); font-weight: 600; }
   .seal-card .medal.glyph .num-wrap b { font-size: 20px; letter-spacing: .02em; }
-  .seal-card.inline { margin-top: 12px; border-radius: var(--r-card); }
+  /* In a panel (result panel, recap, week card): settled at once, flat, no button. Never the bare
+     class `inline`: that is also Tailwind's .inline{display:inline} utility, which wins by layer. */
+  .seal-card.seal-inline { transform: none; opacity: 1; box-shadow: none; margin-top: 12px; border-radius: var(--r-card); }
 
   /* The curtain: its focus container takes focus with no ring (it is not a control). */
   .curtain .cur-in:focus { outline: none; }
   .curtain .cur-in .t-epithet { color: var(--ink-1); }
-  /* A caller's backdrop (the sky band, a Cataclysm variant, fixed at z 16) stays under the words and the Skip. */
+  /* The backdrop (the sky band, a Cataclysm variant fixed at z 16) stays under the rays, the
+     flash and the shockwave (17), the words (20) and the Skip (21). */
   .curtain .cur-backdrop { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .curtain :is(.rays, .flash, .wave) { z-index: 17; }
   .curtain .cur-in { z-index: 20; }
   .curtain .cur-skip { z-index: 21; }
   .curtain .cur-what { text-align: left; margin-top: 16px; }

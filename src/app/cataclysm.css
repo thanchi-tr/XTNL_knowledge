@@ -133,8 +133,9 @@
   100% { opacity: 0; }
 }
 
-/* Space bending: a ring that expands and thins, the visual shorthand for a
-   gravity well opening. */
+/* Space bending: a ring that expands and fades, the visual shorthand for a
+   gravity well opening. Transform and opacity only: the border is one
+   hairline that the scale carries (it used to animate border-width). */
 .cat-warp {
   position: absolute;
   top: 50%;
@@ -143,16 +144,16 @@
   height: 30vmin;
   margin: -15vmin 0 0 -15vmin;
   border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 55%, transparent);
   box-shadow: 0 0 40px color-mix(in srgb, var(--cat-color, #ff5eb0) 40%, transparent);
   opacity: 0;
   animation: cat-warp 3400ms cubic-bezier(.16,1,.3,1) calc(var(--prelude, 1800ms) + var(--wd, 0ms)) both;
 }
 
 @keyframes cat-warp {
-  0%   { opacity: 0;   transform: scale(.1);  border-width: 3px; }
+  0%   { opacity: 0;   transform: scale(.1); }
   12%  { opacity: .9; }
-  100% { opacity: 0;   transform: scale(6.5); border-width: 0.5px; }
+  100% { opacity: 0;   transform: scale(6.5); }
 }
 
 /* Matter drawn in. Accelerating, never easing out — gravity does not
@@ -281,7 +282,8 @@
   100% { opacity: 0;   transform: scale(1.9); }
 }
 
-/* The rebound: everything the well swallowed thrown back out as one ring. */
+/* The rebound: everything the well swallowed thrown back out as one ring
+   (a fixed 1.5 px border the scale widens as it fades; no border-width keyframes). */
 .cat-shock {
   position: absolute;
   top: 50%;
@@ -290,16 +292,16 @@
   height: 20vmin;
   margin: -10vmin 0 0 -10vmin;
   border-radius: 50%;
-  border: 3px solid rgba(255, 245, 225, .95);
+  border: 1.5px solid rgba(255, 245, 225, .95);
   box-shadow: 0 0 50px 12px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent);
   opacity: 0;
   animation: cat-shock 1500ms cubic-bezier(.1, .9, .3, 1) calc(var(--prelude, 1800ms) + 2500ms) both;
 }
 
 @keyframes cat-shock {
-  0%   { opacity: 0;   transform: scale(.2);  border-width: 4px; }
+  0%   { opacity: 0;   transform: scale(.2); }
   14%  { opacity: 1; }
-  100% { opacity: 0;   transform: scale(9);   border-width: 0; }
+  100% { opacity: 0;   transform: scale(9); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -468,7 +470,10 @@
 
 /* Each ring turns at its own rate, and the odd ones turn the other way —
    counter-rotation is what makes a set of circles read as a mechanism
-   rather than as one spinning object. */
+   rather than as one spinning object. One turn, not a loop: the inscription
+   fades out within --cat-dur (2.6 s), long before the slowest turn (12 s)
+   ends, and the only loops in the app are the ready orbit and the rays.
+   It still honours --ambient-play (paused under Calm, Still, power-save). */
 .cat-ring {
   transform-origin: 50% 50%;
   fill: none;
@@ -479,7 +484,8 @@
   stroke-dashoffset: var(--dash, 240);
   animation:
     cat-ring-draw var(--draw, 900ms) cubic-bezier(.2, .9, .3, 1) var(--rd, 0ms) both,
-    cat-ring-turn var(--spin, 9s) linear var(--rd, 0ms) infinite;
+    cat-ring-turn var(--spin, 9s) linear var(--rd, 0ms) 1;
+  animation-play-state: running, var(--ambient-play, running);
 }
 
 @keyframes cat-ring-draw {
@@ -775,7 +781,8 @@
   100% { opacity: 0;   transform: scale(11); }
 }
 
-/* Expanding shells, staggered, so the blast has structure. */
+/* Expanding shells, staggered, so the blast has structure (transform and
+   opacity only; a fixed 1.5 px border). */
 .cat-shell {
   position: absolute;
   top: 50%;
@@ -784,16 +791,16 @@
   height: 20vmin;
   margin: -10vmin 0 0 -10vmin;
   border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 70%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--cat-color, #ff5eb0) 70%, transparent);
   box-shadow: 0 0 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 45%, transparent);
   opacity: 0;
   animation: cat-shell 3200ms cubic-bezier(.15, .9, .3, 1) calc(var(--prelude, 886ms) + var(--sd, 0ms)) both;
 }
 
 @keyframes cat-shell {
-  0%   { opacity: 0;   transform: scale(.1);  border-width: 4px; }
+  0%   { opacity: 0;   transform: scale(.1); }
   12%  { opacity: .95; }
-  100% { opacity: 0;   transform: scale(8.5); border-width: 0; }
+  100% { opacity: 0;   transform: scale(8.5); }
 }
 
 /* ── d15-C — the rift ────────────────────────────────────

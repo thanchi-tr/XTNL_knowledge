@@ -7,7 +7,11 @@
  * exact payout "+6.4 review pts · +0.6 MP", its formula in mono
  * ("2.36 base × 1.15 combo × 1.20 yield = 3.26"), the domain meter growing
  * from its old value to its new one in the currency that fed it, any Seal
- * inline (no button of its own), and Next card with a 1.8 s countdown
+ * inline (L3's <SealCard inline announce/>: no button of its own; it marks
+ * the moment seen when it mounts, so it never replays as a docked Seal on
+ * the next load or the other device, and — because a Seal merged into the
+ * run skips the queue's presenter — it plays its own sound, haptic and
+ * sentence once per id), and Next card with a 1.8 s countdown
  * hairline when auto-advance is on (never in Still; the pointer entering
  * the panel cancels it). A hold is a ceiling, never a toll.
  *
@@ -18,6 +22,7 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { SealCard } from "@/components/celebrate/SealCard";
 import { Amount } from "@/components/ui/Amount";
 import { Button } from "@/components/ui/Button";
 import { Medallion } from "@/components/ui/Crest";
@@ -29,7 +34,6 @@ import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { SubmitReviewResult } from "@/app/actions/review";
 import { medallionMaterial } from "@/lib/materials";
 import { play } from "@/lib/motion";
-import { RunSeal } from "./RunSeal";
 import { formulaOf, sealsOf, type RunCard } from "./review-model";
 
 export const AUTO_ADVANCE_MS = 1800;
@@ -130,7 +134,7 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   <DomainMeter outcome={advanced} />
                   {seals.map((ev) => (
                     <div key={ev.id} className="rv-seal">
-                      <RunSeal ev={ev} />
+                      <SealCard ev={ev} inline announce />
                     </div>
                   ))}
                   <LevelFacts outcome={advanced} covered={seals.map((s) => s.dedupeKey ?? "")} />

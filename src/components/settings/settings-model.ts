@@ -6,7 +6,11 @@
  *   clampCapacity(m)      what the server will store (tasks.ts setDailyCapacityCore:
  *                         30..960, to the nearest 5), so the button says what is saved
  *   formatCapacity(m)     "4 h" · "4 h 30 min" · "45 min"
+ *   resetSpecOf(scope)    a reset scope's row, or null for anything else
+ *   confirmsPhrase(p, t)  the resets' gate (actions/reset.ts)
  */
+import { RESET_SCOPES, type ResetScope } from "@/lib/reset-scopes";
+
 export const CAPACITY_MIN = 30;
 export const CAPACITY_MAX = 16 * 60;
 
@@ -47,4 +51,22 @@ export function restWeekdaysLabel(days: readonly number[]): string {
   if (names.length === 0) return "None";
   if (names.length === 1) return names[0];
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A reset scope's row. A Server Action receives whatever is posted, so an
+ * inherited key ("toString", "__proto__") or a non-string is not a scope.
+ */
+export function resetSpecOf(scope: unknown): (typeof RESET_SCOPES)[ResetScope] | null {
+  return typeof scope === "string" && Object.hasOwn(RESET_SCOPES, scope) ? RESET_SCOPES[scope as ResetScope] : null;
+}
+
+/**
+ * The resets' gate (actions/reset.ts). `typed` is what the person typed:
+ * DangerZone sends the confirm field's text, never the phrase itself. Trimmed,
+ * it must be the phrase exactly, capitals included ("delete ideas" arms
+ * TypedConfirm's button, which matches loosely, but deletes nothing).
+ */
+export function confirmsPhrase(phrase: string, typed: unknown): boolean {
+  return typeof typed === "string" && phrase.length > 0 && typed.trim() === phrase;
 }

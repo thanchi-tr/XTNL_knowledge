@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { reattributeTaxonomy, type ReattributeSummary } from "@/app/actions/reattribute";
 import { Button } from "@/components/ui/Button";
+import "@/components/library/study.css";
 import "@/components/settings/settings.css";
 
 /**
@@ -50,7 +51,7 @@ export function ReattributeButton() {
       </div>
 
       {error && (
-        <p role="alert" className="t-meta" style={{ color: "var(--owed)" }}>
+        <p role="alert" className="st-error">
           {error}
         </p>
       )}

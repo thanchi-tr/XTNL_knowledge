@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { devStyleEnabled } from "../gate";
-import { reviewFixtures } from "./fixtures";
+import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
+import { reviewFixtureStrip, reviewFixtures } from "./fixtures";
 import { fixtureStateOf } from "./states";
 import { ReviewFixtures } from "./ReviewFixtures";
 
@@ -17,5 +18,5 @@ export const metadata: Metadata = { title: "Review fixtures" };
 export default async function ReviewFixturesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!devStyleEnabled()) notFound();
   const state = fixtureStateOf((await searchParams).state);
-  return <ReviewFixtures key={state} state={state} data={reviewFixtures()} />;
+  return <ReviewFixtures key={state} state={state} data={reviewFixtures()} loadoutStrip={<LoadoutStrip slots={reviewFixtureStrip()} />} />;
 }

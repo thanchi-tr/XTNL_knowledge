@@ -10,6 +10,9 @@
  *     lit in light at 92% in proportion to level ÷ depth cap (0..1 each).
  *     Sizes: 24 tab · 34 rail · 38 top bar · 48 sidebar · 96 sheet hero · 168 ceremony.
  *     level null draws an unnumbered iron crest (no data yet; never a fake number).
+ *     The numeral never renders under the 12 px floor: it grows to 12 px where
+ *     the hex still holds it (34 rail), and is left off where it cannot (24 tab,
+ *     20 inline), where the level lives in the accessible name and the caption.
  *
  *   <Medallion material="bronze" numeral={7} size={64} label?/>
  *     The T2 visual: coin face, material rim (class "rim", pathLength 100, for the
@@ -38,6 +41,24 @@ function hexPoints(r: number, cx0 = 50, cy0 = 52): [number, number][] {
 }
 const pts = (a: [number, number][]) => a.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
 
+/** Rendered text floor (redesign.md › Type): 12 px everywhere, SVG text included. */
+export const TEXT_FLOOR_PX = 12;
+
+/**
+ * The crest numeral's font size in viewBox units (the box is 100 wide, so the
+ * rendered size is units × size / 100), or null when a numeral at the 12 px
+ * floor would not fit inside the inner hex. Pure; exported for the checks.
+ */
+export function crestNumeralUnits(size: number, level: number | null): number | null {
+  if (level == null || !(size > 0)) return null;
+  const digits = String(Math.max(0, Math.round(level))).length;
+  const base = digits >= 3 ? 26 : 32;
+  // Widest a numeral can be and still sit inside the inner hex (radius 36).
+  const fits = digits >= 3 ? 32 : 40;
+  const units = Math.max(base, (TEXT_FLOOR_PX * 100) / size);
+  return units <= fits + 1e-9 ? Math.round(units * 100) / 100 : null;
+}
+
 export interface TrackEdges {
   body: number;
   duty: number;
@@ -61,7 +82,7 @@ export function Crest({ level, size = 38, material, tracks, label, className }: 
   const grad = `url(#${materialGradientId(band)})`;
   const outer = hexPoints(44);
   const inner = hexPoints(36);
-  const fs = level != null && level >= 100 ? 26 : 32;
+  const fs = crestNumeralUnits(size, level);
   const edgeRing = hexPoints(39.5);
   const edges: [number, number, keyof TrackEdges][] = [
     [5, 0, "body"],
@@ -107,7 +128,7 @@ export function Crest({ level, size = 38, material, tracks, label, className }: 
             </g>
           );
         })}
-      {level != null && (
+      {level != null && fs != null && (
         <text x="50" y={52 + fs * 0.36} textAnchor="middle" fontSize={fs}>
           {level}
         </text>
@@ -146,7 +167,7 @@ export function Medallion({
       </svg>
       {numeral != null && (
         <div className="num-wrap" aria-hidden={label ? true : undefined}>
-          <b className="num" style={size !== 64 ? { fontSize: Math.round(size * 0.375) } : undefined}>
+          <b className="num" style={size !== 64 ? { fontSize: Math.max(TEXT_FLOOR_PX, Math.round(size * 0.375)) } : undefined}>
             {numeral}
           </b>
         </div>

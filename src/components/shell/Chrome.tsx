@@ -92,7 +92,7 @@ export function Rail() {
       {item("today", today.href, today.label, "today")}
       {item("study", study.href, study.label, "study")}
       {item("train", train.href, train.label, "train")}
-      <span className="grow" aria-hidden="true" />
+      <span className="rail-grow" aria-hidden="true" />
       <Link href={you.href} aria-current={current === "you" ? "page" : undefined} aria-label={crestLabel(data?.character)}>
         <Crest level={data?.character.level ?? null} material={data?.character.material} size={34} />
         You
@@ -123,7 +123,7 @@ export function Sidebar() {
           {caption && <span>{caption}</span>}
         </div>
       </Link>
-      <button type="button" className="btn btn-primary block sb-capture" aria-keyshortcuts="c Control+K" onClick={openCaptureSheet}>
+      <button type="button" className="btn btn-primary btn-block sb-capture" aria-keyshortcuts="c Control+K" onClick={openCaptureSheet}>
         <Icon name="plus" />
         Capture
         <span className="kbd" aria-hidden="true">

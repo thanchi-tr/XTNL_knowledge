@@ -74,7 +74,7 @@ export const REVIEW_STATUS_COLORS = {
 /** The hatch for struggling cards (never colour alone). */
 export const OWED_HATCH = "repeating-linear-gradient(135deg, var(--owed) 0 2px, transparent 2px 4px)";
 
-/** ChartCard chrome. */
+/** Chart chrome for ink SVG charts (grid, axis, tooltip, the one series ink). */
 export const CHART_THEME = {
   grid: "var(--line-1)",
   axis: "var(--ink-2)",

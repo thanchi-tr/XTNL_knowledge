@@ -5,7 +5,9 @@
  *
  * Headline, review points, recalled, best combo; the quest ring closing to
  * CLEARED (the T1 "quest cleared" fires here, not on the next Today visit);
- * What moved (the run's merged Seals, levels, MP minted, the day kept);
+ * What moved (the run's merged Seals, levels, MP minted, the day kept). The
+ * merged Seals are marked seen when the recap mounts (ackShown), so none of
+ * them replays as a docked Seal on the next load or on the other device;
  * True facts from this session's results; Back tomorrow (each miss, linking
  * to its idea); the per-card receipt; the next batch; Back to Today.
  *
@@ -15,6 +17,8 @@
  */
 import { useEffect, useRef, type ReactNode } from "react";
 import Link from "next/link";
+import { ackShown } from "@/components/celebrate/stage";
+import { medalFace } from "@/components/celebrate/SealCard";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { chime } from "@/lib/celebrate";
 import { LIFE_TZ, type DayKey } from "@/lib/life-day";
@@ -93,6 +97,8 @@ export function SessionComplete({
 
   // The reveal (Full: 70 ms stagger; Calm: opacity only; Still: nothing) and the one T1.
   useEffect(() => {
+    // The run's merged Seals have now been seen (the in-panel ones acked themselves; this covers the rest).
+    ackShown(merged);
     const root = rootRef.current;
     root?.querySelectorAll(":scope > [data-reveal]").forEach((el, i) => {
       void play(el, [{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 360, delay: i * 70 });
@@ -204,22 +210,26 @@ export function SessionComplete({
         <>
           <SectionHeader title="What moved" />
           <section className="card rv-moved" data-reveal="">
-            {merged.map((ev) => (
-              <div key={ev.id} className="rv-mv">
-                <span className="ic">
-                  <Medallion material={ev.facts.material ?? "bronze"} numeral={ev.facts.numeral?.to ?? null} size={40} />
-                </span>
-                <div className="tx">
-                  <b>{ev.facts.title}</b>
-                  <span className="sub">{["Seal", ev.facts.lines?.[0] ?? ev.what[0]?.label].filter(Boolean).join(" · ")}</span>
-                </div>
-                {ev.facts.amounts?.[0] && (
-                  <span className="amt">
-                    <Amount kind={ev.facts.amounts[0].kind} value={ev.facts.amounts[0].value} />
+            {merged.map((ev) => {
+              // The Seal's own face: ◆ for a habit rung, PR for a record, else the numeral it reached.
+              const face = medalFace(ev);
+              return (
+                <div key={ev.id} className="rv-mv">
+                  <span className="ic">
+                    <Medallion material={ev.facts.material ?? "bronze"} numeral={face.glyph ?? face.to} className={face.glyph ? "glyph" : undefined} size={40} />
                   </span>
-                )}
-              </div>
-            ))}
+                  <div className="tx">
+                    <b>{ev.facts.title}</b>
+                    <span className="sub">{["Seal", ev.facts.lines?.[0] ?? ev.what[0]?.label].filter(Boolean).join(" · ")}</span>
+                  </div>
+                  {ev.facts.amounts?.[0] && (
+                    <span className="amt">
+                      <Amount kind={ev.facts.amounts[0].kind} value={ev.facts.amounts[0].value} />
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {levels.map((l) => (
               <div key={l.key} className="rv-mv">
                 <span className="ic">
@@ -299,7 +309,7 @@ export function SessionComplete({
             {back.map((b) => (
               <Link key={b.id} className="rv-idea" href={`/library/${b.id}`}>
                 <div style={{ minWidth: 0 }}>
-                  <b>{b.title}</b>
+                  <b title={b.title}>{b.title}</b>
                   <span className="t-meta">{b.line}</span>
                 </div>
                 <Icon name="chev" className="ink-2" size={16} />

@@ -258,43 +258,8 @@ for (const tz of [SYD, BNE]) {
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
 
-  // The central reduced-motion list names the board's and the sheet's motion,
-  // and every class it names still exists where it is defined.
-  const globals = read("src/app/globals.css");
-  const reduced = globals.slice(globals.indexOf("@media (prefers-reduced-motion: reduce)"));
-  const lifeMotion: [string, string][] = [
-    ["today-tick-ring", "src/components/today/today.css"],
-    ["today-tick-check", "src/components/today/today.css"],
-    ["today-row-title", "src/components/today/today.css"],
-    ["today-bar-fill", "src/components/today/today.css"],
-    ["today-sheet", "src/components/today/today.css"],
-    ["today-toast", "src/components/today/today.css"],
-    ["capture-sheet", "src/app/capture.css"],
-    ["capture-backdrop", "src/app/capture.css"],
-    ["capture-toast", "src/app/capture.css"],
-    ["capture-chip", "src/app/capture.css"],
-    ["capture-fab", "src/app/capture.css"],
-  ];
-  const missing = lifeMotion.filter(([cls, file]) => !new RegExp(`:root [a-z]*\\.${cls}\\b`).test(reduced) || !read(file).includes(`.${cls}`));
-  check(
-    "globals.css reduced motion covers the today and capture motion (with :root, as those sheets load later)",
-    missing.length === 0,
-    missing.map(([c]) => c).join(", ")
-  );
-
-  // The header's More is a disclosure (no half-built ARIA menu), and the row
-  // at md holds no more links than the measured width budget in AppNav.tsx.
-  const nav = code(read("src/components/AppNav.tsx"));
-  check(
-    "AppNav: More is a disclosure — aria-expanded and aria-controls, no menu roles",
-    !/role="menu(item)?"|aria-haspopup/.test(nav) && /aria-expanded=/.test(nav) && /aria-controls=/.test(nav)
-  );
-  const mdLinks = [...nav.matchAll(/href: "([^"]+)", label: "[^"]+", from: "md"/g)].map((m) => m[1]);
-  check(
-    "AppNav: at md the row keeps at most Today, Review and Skills (the rest fold into More)",
-    mdLinks.length > 0 && mdLinks.length <= 3 && mdLinks[0] === "/today",
-    mdLinks.join(" ")
-  );
+  // Reduced motion and the shell are gated repo-wide by scripts/shell-check.ts
+  // (every keyframe and loop), since the redesign retired AppNav and the list.
 }
 
 console.log(failed ? `\n${failed} failed` : "\nall pass");

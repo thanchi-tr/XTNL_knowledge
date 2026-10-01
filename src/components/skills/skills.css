@@ -82,12 +82,14 @@
   }
   .att-input::placeholder { color: var(--ink-2); }
   .att-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  /* 16 px on a phone, or iOS zooms the page on focus (the shell's input rule). */
+  @media (max-width: 599px) { .att-input { font-size: 16px; } }
 
   /* ---------- active effects: boons (held) and penalties (owed), each with its way out ---------- */
   .fx-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
   .fx-list li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; font-size: 14px; }
   .fx-list li + li { border-top: 1px solid var(--line-1); }
-  .fx-list li .grow { flex: 1; min-width: 0; }
+  .fx-list li .fx-body { flex: 1; min-width: 0; }
   .fx-list li b { font-weight: 600; }
 
   /* ---------- the graph (SkillTree): focusable nodes ---------- */

@@ -1,7 +1,6 @@
 import "./today-fixtures.css";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ShellTitle } from "@/components/shell/ShellTitle";
 import { devStyleEnabled } from "../gate";
 import { TodayFixtures } from "./TodayFixtures";
 
@@ -14,10 +13,6 @@ export const metadata: Metadata = { title: "Style · Today" };
  */
 export default function DevStyleTodayPage() {
   if (!devStyleEnabled()) notFound();
-  return (
-    <>
-      <ShellTitle eyebrow="Dev · Style" title="Today fixtures" />
-      <TodayFixtures />
-    </>
-  );
+  // The top bar's "Dev · Style / Today fixtures" comes from nav.titleFor.
+  return <TodayFixtures />;
 }

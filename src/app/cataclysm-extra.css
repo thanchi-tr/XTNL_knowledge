@@ -199,22 +199,45 @@
 
 /* ── d15-F — implosion ───────────────────────────────────
    No object at the centre at all. The edges of the viewport simply arrive,
-   which is the one thing none of the other five do. */
+   which is the one thing none of the other five do.
+
+   Four panels (top, bottom, left, right), each black with the colour's glow
+   on its inner edge, translate in from just outside the viewport until they
+   meet. Transform and opacity only: this used to animate an inset
+   box-shadow spread across the whole viewport, a repaint every frame. */
 .cat-crush {
   position: absolute;
   inset: 0;
-  box-shadow:
-    inset 0 0 0 0 #000,
-    inset 0 0 120px 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent);
+  overflow: hidden;
   opacity: 0;
-  animation: cat-crush 3600ms cubic-bezier(.6, 0, .9, .4) var(--prelude, 886ms) both;
+  animation: cat-crush-fade 3600ms linear var(--prelude, 886ms) both;
 }
 
-@keyframes cat-crush {
-  0%   { opacity: 0; box-shadow: inset 0 0 0 0 #000, inset 0 0 120px 30px color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent); }
+.cat-crush > i {
+  --glow: color-mix(in srgb, var(--cat-color, #ff5eb0) 60%, transparent);
+  position: absolute;
+  animation: cat-crush-in 3600ms cubic-bezier(.6, 0, .9, .4) var(--prelude, 886ms) both;
+}
+
+/* Each panel is 50vmax of black plus a 120px glow band; it starts with only
+   the glow inside the viewport (translated out by 50vmax) and ends covering
+   its half. */
+.cat-crush > .cc-t { left: 0; right: 0; top: 0;    height: calc(50vmax + 120px); --kx: 0;  --ky: -1; background: linear-gradient(to bottom, #000 calc(100% - 120px), var(--glow) calc(100% - 120px), transparent); }
+.cat-crush > .cc-b { left: 0; right: 0; bottom: 0; height: calc(50vmax + 120px); --kx: 0;  --ky: 1;  background: linear-gradient(to top,    #000 calc(100% - 120px), var(--glow) calc(100% - 120px), transparent); }
+.cat-crush > .cc-l { top: 0; bottom: 0; left: 0;   width: calc(50vmax + 120px);  --kx: -1; --ky: 0;  background: linear-gradient(to right,  #000 calc(100% - 120px), var(--glow) calc(100% - 120px), transparent); }
+.cat-crush > .cc-r { top: 0; bottom: 0; right: 0;  width: calc(50vmax + 120px);  --kx: 1;  --ky: 0;  background: linear-gradient(to left,   #000 calc(100% - 120px), var(--glow) calc(100% - 120px), transparent); }
+
+@keyframes cat-crush-in {
+  0%   { transform: translate(calc(var(--kx) * 50vmax), calc(var(--ky) * 50vmax)); }
+  84%  { transform: translate(calc(var(--kx) * 4vmax), calc(var(--ky) * 4vmax)); }
+  100% { transform: translate(0, 0); }
+}
+
+@keyframes cat-crush-fade {
+  0%   { opacity: 0; }
   14%  { opacity: 1; }
-  84%  { opacity: 1; box-shadow: inset 0 0 0 46vmax #000, inset 0 0 90px 20px var(--cat-color, #ff5eb0); }
-  100% { opacity: 0; box-shadow: inset 0 0 0 50vmax #000, inset 0 0 0 0 transparent; }
+  84%  { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* ── comet, improved ─────────────────────────────────────
@@ -240,5 +263,6 @@
   .cat-eclipse-sun, .cat-eclipse-moon,
   .cat-pulsar-core, .cat-beam, .cat-crush,
   .cat-comet-flash { animation: none; opacity: 0; }
+  .cat-crush > i { animation: none; }
 }
 }

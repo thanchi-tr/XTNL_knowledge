@@ -99,3 +99,20 @@ export const MARK_TOKENS = ["--ink-mute", "--line-ctl"] as const;
 export const TEXT_MIN = 4.5;
 export const MARK_MIN = 3;
 export const LEDGER_DE_MIN = 8;
+
+/**
+ * Pairs the kit actually paints, beyond a bare token on a surface
+ * (components.css; contrast-check reads these percentages back out of the CSS):
+ *   a signal chip's text on its own wash (.chip.kept / .owed / .held),
+ *   ink-0 on a paid pill's currency wash (.pill.paid, .pill.paid.pts),
+ *   every ink step on the bars (--bar), and --light as a mark (motes, lit rings).
+ */
+export const CHIP_WASH = { "--kept": 12, "--owed": 12, "--held": 11 } as const;
+export const PAID_WASH = { "--xp": 14, "--pts": 14 } as const;
+export const BAR_TEXT_TOKENS = ["--ink-0", "--ink-1", "--ink-2"] as const;
+export const LIGHT_MARK = "--light";
+
+/** A colour mixed with transparent at `pct`% (CSS color-mix in srgb) over an opaque surface. */
+export function wash(color: Rgb, pct: number, over: Rgb): Rgb {
+  return composite({ rgb: color, a: pct / 100 }, over);
+}

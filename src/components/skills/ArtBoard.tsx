@@ -102,7 +102,7 @@ export function CeremonyBoard({ event }: { event: CelebrationEvent }) {
           Queue the Ascension
         </Button>
         <Button variant="secondary" onClick={() => queue(true)}>
-          Queue it as a first deep unlock (Cataclysm)
+          Queue with Cataclysm
         </Button>
       </div>
       <p className="t-meta" style={{ marginTop: 8 }}>

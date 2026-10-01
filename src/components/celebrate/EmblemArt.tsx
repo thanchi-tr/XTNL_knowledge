@@ -1,25 +1,21 @@
 "use client";
 
 /**
- * L3-celebrate — an emblem's coin for a curtain or a Moments row, drawn from
- * its code alone (Replay, or an unlock whose caller staged no art). Loaded
- * lazily by AscensionCurtain and MomentArt, so the skill pool never ships
- * in the shell's bundle. SkillLogo's palette is untouched; the rim is the
- * rank's material (EmblemCoin).
+ * L3-celebrate — an emblem's coin drawn from its code alone (a Moments row,
+ * or anything that has only the code). One drawing of the emblem: it is
+ * L4's CeremonyArt (EmblemCoin with the rank's material rim and depth
+ * notches around SkillLogo, animated={false}), the same art the Ascension
+ * curtain shows. Loaded lazily by MomentArt, so the skill pool never ships
+ * in the shell's bundle.
  */
-import { EmblemCoin } from "@/components/ui/Crest";
-import { SkillLogo } from "@/components/skills/SkillLogo";
+import { CeremonyArt } from "@/components/skills/ceremony-art";
 import { depthOf } from "@/lib/skill-form";
 import { getSkill } from "@/lib/skill-pool";
 
-export function EmblemArt({ code, size = 168, label }: { code: string; size?: number; label?: string }) {
+export function EmblemArt({ code, size = 168 }: { code: string; size?: number }) {
   const skill = getSkill(code);
   if (!skill) return null;
-  return (
-    <EmblemCoin rank={skill.rank} depth={depthOf(skill)} size={size} label={label}>
-      <SkillLogo skill={skill} size={Math.round(size * 0.5)} animated={false} />
-    </EmblemCoin>
-  );
+  return <CeremonyArt art={{ type: "emblem", code, rank: skill.rank, depth: depthOf(skill) }} size={size} />;
 }
 
 export default EmblemArt;

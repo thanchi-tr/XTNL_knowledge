@@ -90,7 +90,9 @@ export default async function StatsPage() {
                 <ul className="hbars">
                   {s.fieldLevels.map((f) => (
                     <li key={f.name}>
-                      <span className="nm">{f.name}</span>
+                      <span className="nm" title={f.name}>
+                        {f.name}
+                      </span>
                       <span className="fig">
                         L{lvl(f.level)}
                         {f.delta != null && f.delta > 0.05 ? ` · +${f.delta.toFixed(1)}` : ""} · {f.domains} {f.domains === 1 ? "domain" : "domains"}
@@ -179,7 +181,9 @@ export default async function StatsPage() {
                 <ul className="hbars">
                   {s.questionTypes.map((t) => (
                     <li key={t.name}>
-                      <span className="nm">{t.name}</span>
+                      <span className="nm" title={t.name}>
+                        {t.name}
+                      </span>
                       <span className="fig">{n(t.count)}</span>
                       <Meter thin value={t.count / maxType} label={`${t.name}: ${t.count}`} valueText={String(t.count)} />
                     </li>

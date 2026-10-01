@@ -19,6 +19,8 @@
    centred 560 panel from 600. Never a transform at rest: the floating
    word-hint strip is position: fixed, and a transformed ancestor would
    become its containing block. */
+/* The portal's root: it only carries [data-capture-ui] over the scrim and the sheet. */
+.capture-root { display: contents; }
 .scrim.capture-backdrop { z-index: calc(var(--z-sheet) + 2); }
 
 .capture-sheet {
@@ -44,7 +46,9 @@
 /* The word-hint strip floats against the keyboard, which is where this
    sheet's bottom edge is; room is made so it sits below the chips, not on them. */
 .capture-sheet[data-hints="1"] { padding-bottom: 60px; }
-.capture-sheet .word-hints:not([data-floating]) { margin: 10px 0 0; }
+/* The in-flow word-hint strip (WordHintBar, components/WordComplete.css's .wc-bar) sits
+   above the line: room above it, none below (the line has its own margin). */
+.capture-sheet .wc-bar:not([data-floating]) { margin: 10px 0 0; }
 
 @media (min-width: 600px) {
   .capture-sheet {
@@ -189,9 +193,4 @@ button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
 }
 html[data-motion="calm"] .capture-sheet { animation-name: capture-fade; animation-duration: 200ms; }
 
-/* RETIRED class names, kept only as text for scripts/life-day-check.ts, which
-   reads globals.css's prefers-reduced-motion block by name and checks each
-   class still appears here: .capture-fab (the tab bar's + replaced the corner
-   button) and .capture-toast (the ToastDock replaced it). The lead drops that
-   assertion and the globals.css block together (L0 handoff). */
 }

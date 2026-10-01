@@ -43,7 +43,7 @@ export function ComboPopup({ queue, onDismiss }: Props) {
       aria-labelledby="combo-popup-title"
     >
       <div
-        className="card w-[min(94vw,420px)] p-5 boss-rise"
+        className="card w-[min(94vw,420px)] p-5"
         style={{ borderColor: "color-mix(in srgb, var(--kept) 40%, transparent)", background: "linear-gradient(160deg, color-mix(in srgb, var(--kept) 8%, transparent), var(--card) 55%)" }}
       >
         <p className="label-xs" style={{ color: "var(--kept)" }}>

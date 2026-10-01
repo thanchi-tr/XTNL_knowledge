@@ -87,7 +87,13 @@ export function PathLadder({ attribute, ctx, equippedByCode }: Props) {
               <ul className="nodes">
                 {shown.map((n) => (
                   <li key={n.skill.code}>
-                    <button type="button" className={n.state === "owned" ? "node owned" : "node"} aria-label={nodeLabel(n)} onClick={() => setPicked(n.skill.code)}>
+                    <button
+                      type="button"
+                      className={n.state === "owned" ? "node owned" : "node"}
+                      aria-label={nodeLabel(n)}
+                      data-emblem={n.skill.code}
+                      onClick={() => setPicked(n.skill.code)}
+                    >
                       <EmblemCoin rank={n.skill.rank} depth={n.depth} size={56} state={n.state} percent={n.state === "locked" ? n.percent : undefined}>
                         <SkillLogo skill={n.skill} size={32} animated={false} />
                       </EmblemCoin>

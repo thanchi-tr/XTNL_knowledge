@@ -26,6 +26,7 @@ import { pushToast } from "@/components/ui/toast-store";
 import { chime, clearLog, enqueue, getLog, getServerLog, mark, subscribeLog } from "@/lib/celebrate";
 import { makeEvent, type MotionPref } from "@/lib/celebration-types";
 import { MATERIALS, crestBandStarts } from "@/lib/materials";
+import { DEV_STYLE_PAGES } from "@/components/shell/nav";
 import { bump, countTo } from "@/lib/motion";
 import {
   LEDGER_DE_MIN,
@@ -480,14 +481,7 @@ export function StyleGuide() {
             <HeldGlyph kind="freeze" />
           </Spec>
           <Spec label="Tabs · segmented · switch" col>
-            <TabLinks
-              label="Fixture tabs"
-              current="/dev/style"
-              items={[
-                { href: "/dev/style", label: "Style" },
-                { href: "/dev/style/art", label: "Art (L4)" },
-              ]}
-            />
+            <TabLinks label="Fixture tabs" current="/dev/style" items={[...DEV_STYLE_PAGES]} />
             <Segmented
               label="Range (fixture)"
               value={seg}

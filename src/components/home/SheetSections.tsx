@@ -4,9 +4,10 @@
  *   <ReadyCallout/>      gold border, the orbiting coin, "An emblem is ready", View
  *   <TrackRow/>          one life track: sigil, level, 8-week pips, meter (ink banked +
  *                        this week's gain in the currency that fed it), the honest line
- *   <LifeTracks/>        the rows that exist: Knowledge now; Duty, Craft, Body, Care with M5
+ *   <LifeTracks/>        the rows that exist: Knowledge now; Duty, Craft, Body, Care with life tracks (M5)
  *   <AttributeRadar/>    13-gon with the dashed 7-days-ago ghost, polygon markers in their
- *                        hues, 12 px labels, and the top three with a true note each
+ *                        hues, 12 px HTML labels over the scaled plot, and the top three
+ *                        with a true note each
  *   <MasteryCard/>       ideas mastered and Field tiers (goals, rungs and PRs join as they exist)
  *
  * Fixtures for the M5 rows render on /dev/style/art/you only.
@@ -22,7 +23,8 @@ import { EmblemCoin } from "@/components/ui/Crest";
 import { Sigil, type TrackSigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { SkillLogo } from "@/components/skills/SkillLogo";
-import { polygonPoints, type KnowledgeRow, type RadarLayout, type TopAttribute } from "./sheet-math";
+import { cx } from "@/components/ui/cx";
+import { RADAR_VIEWBOX_ATTR, polygonPoints, type KnowledgeRow, type RadarLayout, type TopAttribute } from "./sheet-math";
 import { LastSeenMeter } from "./LastSeenMeter";
 
 const whole = (v: number) => Math.round(v).toLocaleString("en-GB");
@@ -116,7 +118,7 @@ export function knowledgeLine(k: KnowledgeRow): string {
 export function LifeTracks({ knowledge }: { knowledge: KnowledgeRow }) {
   return (
     <div>
-      <SectionHeader title="Life tracks" aside="Duty, Craft, Body and Care join with the character sheet (M5)" />
+      <SectionHeader title="Life tracks" aside="Duty, Craft, Body and Care arrive with life tracks" />
       <section className="card">
         <TrackRow
           sigil="know"
@@ -141,24 +143,27 @@ export function AttributeRadar({ radar, hasGhost, top }: { radar: RadarLayout; h
     <div>
       <SectionHeader title="Attributes" aside="13, from your Fields" />
       <section className="card radar-c">
-        <svg viewBox="-190 -160 380 320" role="img" aria-label={`Attribute radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
-          {radar.rings.map((pts, i) => (
-            <polygon key={i} points={pts} fill="none" stroke="var(--line-1)" />
-          ))}
-          {radar.spokes.map((s, i) => (
-            <line key={i} x1={0} y1={0} x2={s.x} y2={s.y} stroke="var(--line-1)" />
-          ))}
-          {radar.ghost && <polygon points={radar.ghost} fill="none" stroke="var(--ink-2)" strokeDasharray="3 3" />}
-          <polygon points={radar.now} fill="color-mix(in srgb, var(--ink-0) 8%, transparent)" stroke="var(--ink-0)" strokeWidth={1.5} strokeLinejoin="round" />
-          {radar.markers.map((m) => (
-            <polygon key={m.attribute} points={m.points} fill={m.hue} stroke="var(--card)" strokeWidth={1} />
-          ))}
+        <div className="radar-plot">
+          <svg viewBox={RADAR_VIEWBOX_ATTR} role="img" aria-label={`Attribute radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
+            {radar.rings.map((pts, i) => (
+              <polygon key={i} points={pts} fill="none" stroke="var(--line-1)" />
+            ))}
+            {radar.spokes.map((s, i) => (
+              <line key={i} x1={0} y1={0} x2={s.x} y2={s.y} stroke="var(--line-1)" />
+            ))}
+            {radar.ghost && <polygon points={radar.ghost} fill="none" stroke="var(--ink-2)" strokeDasharray="3 3" />}
+            <polygon points={radar.now} fill="color-mix(in srgb, var(--ink-0) 8%, transparent)" stroke="var(--ink-0)" strokeWidth={1.5} strokeLinejoin="round" />
+            {radar.markers.map((m) => (
+              <polygon key={m.attribute} points={m.points} fill={m.hue} stroke="var(--card)" strokeWidth={1} />
+            ))}
+          </svg>
+          {/* HTML, not SVG text: the plot scales with the card, the labels stay 12 px. */}
           {radar.labels.map((l) => (
-            <text key={l.attribute} x={l.x} y={l.y} textAnchor={l.anchor} className={l.lead ? "lead" : undefined}>
+            <span key={l.attribute} className={cx("radar-lbl", `at-${l.anchor}`, l.lead && "lead")} style={{ left: `${l.left}%`, top: `${l.top}%` }} aria-hidden="true">
               {l.text}
-            </text>
+            </span>
           ))}
-        </svg>
+        </div>
         <div className="rlegend" aria-hidden="true">
           <span>— now</span>
           {hasGhost && <span>- - - 7 days ago</span>}
@@ -201,13 +206,13 @@ export function MasteryCard({
 }) {
   return (
     <div>
-      <SectionHeader title="Goals and mastery" aside="goals arrive with M5" />
+      <SectionHeader title="Goals and mastery" aside="goals join when they pay MP" />
       <section className="card">
         <div className="mo">
           <span className="art">
             <Sigil track="know" />
           </span>
-          <div className="grow">
+          <div className="mo-body">
             <b>
               {mastered.toLocaleString("en-GB")} {mastered === 1 ? "idea" : "ideas"} mastered
             </b>
@@ -220,7 +225,7 @@ export function MasteryCard({
           <span className="art">
             <Sigil track="craft" />
           </span>
-          <div className="grow">
+          <div className="mo-body">
             <b>
               {tiers.established} {tiers.established === 1 ? "Field" : "Fields"} Established or above
             </b>

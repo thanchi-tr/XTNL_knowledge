@@ -573,7 +573,7 @@ export function QuickCapture() {
   return createPortal(
     // One marker over everything the capture UI puts on screen, so the review
     // card can tell a tap on the sheet or its scrim from a tap meant for it.
-    <div data-capture-ui="" className="contents">
+    <div data-capture-ui="" className="capture-root">
       <div className="scrim show capture-backdrop" onMouseDown={closeSheet} aria-hidden="true" />
       <div
         ref={sheetRef}

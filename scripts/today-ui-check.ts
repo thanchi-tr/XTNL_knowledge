@@ -7,7 +7,10 @@
  *
  * The redesign (Sigil & Slate, lane L1) adds: the Full-day rings
  * (src/lib/full-day.ts), Next up's priority, the Asks the board shows, the
- * Tier 1 moments a tap may fire, and "To Inbox".
+ * Tier 1 moments a tap may fire, and "To Inbox". The review fixes (F1) add:
+ * the moments around a tick (today-board.ts withMoments, with fakes), the
+ * kept time, the quest estimate and cap shared with /review, past grace as
+ * an ink Ask, and guards against class names that are Tailwind utilities.
  *
  * Plus source guards for the few rules that live only in markup and CSS
  * (touch-target sizes, the 12 px floor, no legacy tokens, the animated
@@ -17,7 +20,7 @@
  *
  *   npx tsx scripts/today-ui-check.ts
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import { parseCapture, type KeyLike } from "../src/lib/capture-parse";
@@ -31,6 +34,7 @@ import {
   moveBlockOf,
   questOf,
   statsFor,
+  withMoments,
   type BoardData,
   type BoardInstance,
   type BoardRow,
@@ -58,11 +62,15 @@ import {
 } from "../src/components/today/board-ui";
 import { isUndoCaptureKey, nextOccurrenceNote, toInboxLine } from "../src/components/capture/capture-ui";
 import { QUEST_CAP, fullDayInputOf, fullDayOf, lifeDeedsOf, lifeRingOf, mustsRingOf, questRingOf } from "../src/lib/full-day";
+import { REVIEW_QUEST_CARDS, minutesFor, questTargetOf } from "../src/lib/review-facts";
 import {
   closeDayProminent,
   dayMomentsOf,
+  hhmmOf,
+  keptAtOf,
   laneTally,
   nextUpOf,
+  questMinutesOf,
   splitTodayLane,
   tickNameOf,
   todayAsksOf,
@@ -504,6 +512,10 @@ const row = (state: BoardRow["state"], paid: PaidRecord | null = null) => ({ sta
   check("asks: yesterday first, then past grace, the quota and a penalty", asks.map((a) => a.id).join(",") === "yesterday,overdue,quota,debuff-SHAKEN", asks.map((a) => a.id).join(","));
   check("asks: yesterday opens its sheet (no link) and says when it closes", !asks[0].href && asks[0].title === "Yesterday: 2 to record" && asks[0].detail.includes("04:00"));
   check("asks: a penalty is owed-toned and says how to act", asks[3].tone === "owed" && !!asks[3].href && asks[3].action.length > 0);
+  // Due is never a hue: cards past grace are a date (the feed tones them 'bad'), so an ink diamond and a clock.
+  check("asks: past grace is ink (never owed) and carries the clock glyph", asks[1].id === "overdue" && asks[1].tone === "ask" && asks[1].clock === true);
+  check("asks: only the past-grace Ask carries the clock", asks.filter((a) => a.clock).map((a) => a.id).join(",") === "overdue");
+  check("asks: owed only for a penalty", asks.filter((a) => a.tone === "owed").map((a) => a.id).join(",") === "debuff-SHAKEN");
   check("asks: good news never nags", !asks.some((a) => ["quota-met", "focus", "bosses", "boon-x"].includes(a.id)));
   check("asks: nothing from yesterday, no card", todayAsksOf({ yesterdayOpen: 0, recordBy: "", notices: [] }).length === 0);
 }
@@ -548,6 +560,105 @@ const row = (state: BoardRow["state"], paid: PaidRecord | null = null) => ({ sta
     check(`to inbox: '${line}' goes to the Inbox through the parser's own '?', title unchanged`, after.inbox && after.title === before.title, `${after.title} | ${before.title}`);
   }
 }
+
+// ── Review fixes (F1): the kept time, the quest estimate and target ───────
+
+{
+  const done = (eventId: string, iso: string, undone = false): PaidRecord => ({ eventId, instanceId: `i-${eventId}`, receipt: null, occurredAt: iso, xp: 3, undone });
+  const comp = (eventId: string) => ({ eventId, templateId: "t", groupKey: "t", intro: false, raw: 3, xp: 3, sink: "TRACK" as const });
+  const day = (p: Partial<DayLedger>): Pick<BoardData, "paid" | "ledger"> & { paid: Record<string, PaidRecord> } => ({
+    paid: {},
+    ledger: { today: { ...ledger(TODAY), ...p }, yesterday: ledger(WED) },
+  });
+  const t0805 = new Date(at(TODAY, 8, 5)).toISOString();
+  const t0930 = new Date(at(TODAY, 9, 30)).toISOString();
+  const two = { ...day({ completions: [comp("b"), comp("a")] }), paid: { i1: done("a", t0930), i2: done("b", t0805) } };
+  check("kept at: the earliest live tick of the day", keptAtOf(two) === t0805 && hhmmOf(Date.parse(t0805), TZ) === "08:05", String(keptAtOf(two)));
+  check("kept at: no time when a review may have kept the day first", keptAtOf({ ...two, ledger: { ...two.ledger, today: { ...two.ledger.today, reviews: 1 } } }) === null);
+  check("kept at: no time when a new idea may have kept it first", keptAtOf({ ...two, ledger: { ...two.ledger, today: { ...two.ledger.today, ideas: 1 } } }) === null);
+  check("kept at: an undone tick is not the time", keptAtOf({ ...day({ completions: [comp("a")] }), paid: { i1: done("a", t0805, true) } }) === null);
+  check("kept at: a deed the board cannot time says no time", keptAtOf({ ...day({ completions: [comp("a"), comp("x")] }), paid: { i1: done("a", t0805) } }) === null);
+  check("kept at: nothing kept, nothing said", keptAtOf(day({})) === null);
+
+  check("quest estimate: the hub's own rate for the cards still to go", questMinutesOf({ cards: 15, reviews: 0 }) === minutesFor(15) && questMinutesOf({ cards: 15, reviews: 12 }) === minutesFor(3));
+  check("quest estimate: never 0 min, never negative past the target", questMinutesOf({ cards: 15, reviews: 40 }) === minutesFor(0) && minutesFor(0) >= 1);
+  check("quest cap: the Quest ring's cap is the /review hub's (review-facts REVIEW_QUEST_CARDS)", QUEST_CAP === REVIEW_QUEST_CARDS);
+  const agree = [
+    [null, 0, 0],
+    [null, 3, 4],
+    [null, 2, 140],
+    [40, 2, 38],
+    [5, 5, 0],
+    [0, 0, 0],
+  ].every(([open, reviews, due]) => {
+    const q = questOf({ dayOpenQty: open, reviews: reviews as number, dueNow: due as number, reviewXp: 0 });
+    const ring = questRingOf({ reviews: q.progress, target: q.target, dueNow: q.dueNow });
+    const hub = questTargetOf(open, reviews as number, due as number);
+    return hub === 0 ? ring.caption === "Nothing due" : ring.target === hub;
+  });
+  check("quest target: Today's ring and the /review hub (questTargetOf) agree on every shape", agree);
+}
+
+// ── Moments around a board write (today-board withMoments, used by tasks.ts) ──
+
+const asyncChecks: Promise<void>[] = [];
+asyncChecks.push(
+  (async () => {
+    type Snap = { n: number };
+    const log: string[] = [];
+    let reads = 0;
+    const snapshot = async (): Promise<Snap> => {
+      log.push("snapshot");
+      reads += 1;
+      return { n: reads };
+    };
+    const detect = async (b: Snap, a: Snap) => {
+      log.push(`detect ${b.n}->${a.n}`);
+      return [`moment ${b.n}->${a.n}`];
+    };
+    const okWrite = async () => {
+      log.push("write");
+      return { ok: true as const, value: { paid: 3.6, duplicate: false } };
+    };
+
+    const r1 = await withMoments({ snapshot, detect, write: okWrite });
+    check(
+      "moments: before, write, after, diff, in that order; the write's value is kept",
+      log.join(",") === "snapshot,write,snapshot,detect 1->2" && r1.ok && r1.value.paid === 3.6 && r1.value.celebrations.join() === "moment 1->2",
+      log.join(",")
+    );
+
+    log.length = 0;
+    const r2 = await withMoments({ snapshot, detect, write: async () => ({ ok: false as const, error: "That task is archived." }) });
+    check("moments: a refused write takes no second snapshot and keeps its error", log.join(",") === "snapshot" && !r2.ok && r2.error === "That task is archived.", log.join(","));
+
+    log.length = 0;
+    const r3 = await withMoments({ snapshot, detect, write: async () => ({ ok: true as const, value: { duplicate: true } }), changed: (v) => !v.duplicate });
+    check("moments: a double tap's stored answer changes nothing and fires nothing", log.join(",") === "snapshot" && r3.ok && r3.value.celebrations.length === 0, log.join(","));
+
+    let wrote = 0;
+    const r4 = await withMoments({
+      snapshot: async () => {
+        throw new Error("db down");
+      },
+      detect,
+      write: async () => {
+        wrote += 1;
+        return { ok: true as const, value: { qty: 1 } };
+      },
+    });
+    check("moments: a failed snapshot never fails the write (it lands once, with no moments)", wrote === 1 && r4.ok && r4.value.celebrations.length === 0 && r4.value.qty === 1);
+
+    const r5 = await withMoments({
+      snapshot,
+      detect: async () => {
+        throw new Error("persist failed");
+      },
+      write: okWrite,
+    });
+    check("moments: a failed diff never fails the write", r5.ok && r5.value.celebrations.length === 0);
+  })().catch((err) => check("moments: the checks ran", false, String(err)))
+);
 
 // ── Source guards: markup and CSS rules no function holds ─────────────────
 
@@ -665,8 +776,86 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
   const page = read("src/app/today/page.tsx");
   check("top bar: the date is printed once, by ShellTitle", (page.match(/longDate\(/g) ?? []).length === 1 && page.includes("<ShellTitle") && !page.includes("clock.date"));
   check("top bar: the page renders no <main> or <h1> of its own", !/<main[\s>]/.test(page) && !/<h1[\s>]/.test(page));
-  check("footer: the clock is live and prints its zone", page.includes("<LiveClock") && page.includes("zone={clock.zone}"));
+  // The footer line is rendered by TodayFooter inside the board from three strings (no server-made JSX crosses into the client tree).
+  const foot = read("src/components/today/TodayFooter.tsx");
+  check("footer: the clock is live and prints its zone", foot.includes("<LiveClock") && foot.includes("zone={zone}") && page.includes("zone: clock.zone"));
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+// ── Source guards for the review fixes (F1) ───────────────────────────────
+
+{
+  const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const today = strip(read("src/components/today/today.css"));
+  const capture = strip(read("src/app/capture.css"));
+
+  // Ticks celebrate: the server diffs a snapshot taken before and after with the tick scope, the board presents.
+  const actions = code(read("src/app/actions/tasks.ts"));
+  const fnBody = (name: string) => {
+    const i = actions.indexOf(`export async function ${name}(`);
+    const j = actions.indexOf("export async function", i + 1);
+    return i < 0 ? "" : actions.slice(i, j < 0 ? undefined : j);
+  };
+  for (const name of ["completeTask", "againTask"]) {
+    check(`rewards: ${name} runs inside aroundTick with the tick scope and its template`, /aroundTick\(\s*userId,\s*\{ scope: "tick", templateIds: \[templateId\] \}/.test(fnBody(name)));
+    check(`rewards: ${name} skips the diff for a double tap's stored answer`, fnBody(name).includes("(v) => !v.duplicate"));
+  }
+  check("rewards: goalProgress runs inside aroundTick (streak and goals)", /aroundTick\(userId, \{ scope: GOAL_PARTS \}/.test(fnBody("goalProgress")) && /GOAL_PARTS = \["streak", "goals"\]/.test(actions));
+  check(
+    "rewards: aroundTick snapshots with captureSnapshot and diffs with cause 'tick' through withMoments",
+    /withMoments\(\{[\s\S]*captureSnapshot\(userId, snap\)[\s\S]*detectCelebrations\(before, after, \{ cause: "tick" \}\)/.test(actions)
+  );
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+  const presents = boardSrc.match(/presentAll\(v\.celebrations\)/g) ?? [];
+  check("rewards: the board presents the tick's, Again's and the goal's moments (T2/T3)", presents.length === 3 && boardSrc.includes('from "@/components/celebrate/stage"'), String(presents.length));
+  check("streak caption: 'Kept today, 08:05.' from keptAtOf, with the plain line as its fallback", /keptAtOf\(current\)/.test(boardSrc) && boardSrc.includes("`Kept today, ${hhmmOf(") && boardSrc.includes('"Kept today."'));
+  check("asks: the board passes the Ask's clock to the card", boardSrc.includes("clock={a.clock}") && read("src/components/today/AskCard.tsx").includes('<Icon name="clock"'));
+
+  // Next up: the focus line wraps inside the card; the estimate is the hub's; the action is full width without `block`.
+  const nextUp = code(read("src/components/today/NextUp.tsx"));
+  check("next up: the focus line is not the nowrap .cur (it wraps inside the card)", nextUp.includes('className="focus-what"') && !/className="cur">\s*<Sigil track="know"/.test(nextUp));
+  const focusRule = /\.today-hero \.focus-what\s*\{([^}]*)\}/.exec(today)?.[1] ?? "";
+  check("next up: .focus-what can shrink and wrap (min-width 0, never nowrap)", /min-width:\s*0/.test(focusRule) && !/nowrap/.test(focusRule) && /flex-wrap:\s*wrap/.test(/\.today-hero \.focus-line\s*\{([^}]*)\}/.exec(today)?.[1] ?? ""));
+  check("next up: the quest card states the hub's estimate", nextUp.includes("about {questMinutesOf(next)} min"));
+
+  // Class names: none of L1's may also be a Tailwind utility (the utilities layer wins: `block`, `ring`, `grow`…).
+  // The bare-word utilities of Tailwind v4.3 (its design system's class list), plus the display/position ones with a dash.
+  const TW = new Set(
+    "absolute antialiased block border capitalize collapse container contents fixed flex grayscale grid grow hidden inline invert invisible isolate italic lowercase ordinal outline overline relative resize ring sepia shadow shrink static sticky table transform transition truncate underline uppercase visible inline-block inline-flex inline-grid inline-table flow-root list-item table-cell table-row line-through no-underline not-italic normal-case".split(
+      " "
+    )
+  );
+  const walk = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir)).flatMap((n) => {
+      const p = `${dir}/${n}`;
+      return statSync(join(ROOT, p)).isDirectory() ? walk(p) : /\.(tsx?|css)$/.test(n) ? [p] : [];
+    });
+  const files = [...walk("src/components/today"), ...walk("src/components/capture"), ...walk("src/app/today"), ...walk("src/app/dev/style/today"), "src/app/capture.css"];
+  const clashes: string[] = [];
+  for (const f of files) {
+    const src = read(f);
+    const names: string[] = [];
+    if (f.endsWith(".css")) for (const m of strip(src).matchAll(/\.([a-zA-Z][\w-]*)/g)) names.push(m[1]);
+    else {
+      for (const m of src.matchAll(/className=\{?["'`]([^"'`]*)["'`]/g)) names.push(...m[1].split(/\s+/));
+      for (const m of src.matchAll(/cx\(([^)]*)\)/g)) for (const s of m[1].matchAll(/["'`]([^"'`]*)["'`]/g)) names.push(...s[1].split(/\s+/));
+    }
+    for (const n of names) if (TW.has(n)) clashes.push(`${f}: .${n}`);
+  }
+  check("class names: none of L1's is also a Tailwind utility (block, ring, grow, contents…)", clashes.length === 0, clashes.join("; "));
+
+  // Capture: the in-sheet word-hint strip is L5's .wc-bar now.
+  check("capture: the word-hint margin targets .wc-bar (not the retired .word-hints)", /\.capture-sheet \.wc-bar:not\(\[data-floating\]\)\s*\{/.test(capture) && !/\.word-hints/.test(capture));
+
+  // Inputs: 16 px on phones (base.css's rule is in @layer base, which this layer beats).
+  check("inputs: .today-input is 16 px under 600 px", /@media \(max-width: 599px\)\s*\{\s*\.today-input\s*\{\s*font-size:\s*16px/.test(today));
+
+  // Footer: the rules link is a 40 px target.
+  check("touch target: the footer's rules link ≥ 40px", (cssValue(today, ".today-board .foot-note .foot-link", "min-height") ?? 0) >= 40 && read("src/components/today/TodayFooter.tsx").includes('className="foot-link"'));
+}
+
+// The async checks (withMoments) settle before the tally.
+void Promise.all(asyncChecks).then(() => {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+});

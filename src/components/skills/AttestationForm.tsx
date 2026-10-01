@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { submitMasteryAttestation } from "@/app/actions/skills";
 import { Button } from "@/components/ui/Button";
 import { Amount } from "@/components/ui/Amount";
+import { ActionError } from "@/components/home/ActionError";
 
 export function AttestationForm() {
   const router = useRouter();
@@ -62,11 +63,7 @@ export function AttestationForm() {
           {isPending ? "Grading…" : "Submit"}
         </Button>
       </div>
-      {error && (
-        <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 8 }}>
-          {error}
-        </p>
-      )}
+      {error && <ActionError>{error}</ActionError>}
       {result && (
         <p role="status" className="t-meta ink-1" style={{ marginTop: 8 }}>
           <Amount kind="mp" value={result.points} label="MP" /> · {result.rationale}

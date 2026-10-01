@@ -9,6 +9,8 @@
  *   stroke-dashoffset in 220 ms; minimum is a half-filled ring (pair it with
  *   the words "Minimum kept" in the row's meta). Resting CSS is the final
  *   state, so Still shows the finished tick with no motion.
+ *   The ring is `.tick-ring` (never the bare `ring`: that is Tailwind's ring
+ *   utility, a 1px currentColor box-shadow that would halo every tick).
  */
 import type { ComponentProps } from "react";
 import { cx } from "./cx";
@@ -35,7 +37,7 @@ export function Tick({ shape = "circle", state, label, className, type = "button
       data-shape={shape}
       data-state={state}
     >
-      <span className="ring" aria-hidden="true">
+      <span className="tick-ring" aria-hidden="true">
         <svg viewBox="0 0 24 24">
           <path d="M5 12.5l4.5 4.5L19 7.5" />
         </svg>

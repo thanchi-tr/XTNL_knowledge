@@ -64,11 +64,11 @@ export function WeekRunner({
           </Button>
         )}
         {done && exitHref ? (
-          <Button variant="primary" size="lg" className="grow" href={exitHref}>
+          <Button variant="primary" size="lg" className="wr-grow" href={exitHref}>
             Back to Today
           </Button>
         ) : (
-          <Button variant="primary" size="lg" className="grow" onClick={onNext}>
+          <Button variant="primary" size="lg" className="wr-grow" onClick={onNext}>
             {done ? "Back to Today" : step === WEEK_STEPS.length ? "Finish" : "Next"}
           </Button>
         )}

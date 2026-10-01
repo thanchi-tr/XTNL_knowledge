@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T10:31+1000 — interactive session: redesign-fix workflow (6 lanes) + capture-improve-design workflow running until 2026-10-01T12:31+1000
+    HEARTBEAT: 2026-10-01T11:16+1000 — interactive session: redesign committed; starting the capture improvement build
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -39,12 +39,12 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
   - [x] Browser-verified on the local rehearsal server (port 3100)
   - [x] `life_core` applied to Supabase (after the project-ref check), backfill dry-run then `--apply`
   - [x] Committed and pushed to `main`
-- [ ] Full UI/UX redesign — spec `redesign.md`, mockups `redesign/final-*.html`
+- [x] Full UI/UX redesign — spec `redesign.md`, mockups `redesign/final-*.html`
   - [x] Design round (map → 3 directions → 3 judges → synthesis): "Sigil & Slate"
   - [x] Build: L0 foundation, L1 Today, L2 Review, L3 Celebrate (+ migration), L4 You, L5 Study/Settings (workflow redesign-build; the 3 reviewers were cut off by a usage limit and are being re-run)
-  - [ ] Reviews fixed; gates (contrast, UI audit at 344/375/932/1440, motion, perf, layers) green
+  - [x] Reviews fixed; gates (contrast, UI audit at 344/375/932/1440, motion, perf, layers) green
   - [x] Celebrations migration rehearsed locally, applied to Supabase (20261010000000_celebrations)
-  - [ ] Browser-verified; committed and pushed
+  - [x] Browser-verified; committed and pushed
 - [ ] Improve the capture feature
 - [ ] M5
 - [ ] M2
@@ -80,3 +80,5 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — Redesign build lanes L0–L5 done. User revised the order: finish the redesign → improve capture → M5 → M2; M3 and M4 dropped.
 - 2026-10-01 — Redesign reviews: 0 blocker, 14 major, 21 minor (Tailwind class-name collisions block/ring/inline, unwired Seal ack and Today celebrations, unlock ceremony art, DangerZone phrase, loadout slot, radar labels, global CSS imports, redirects, unwired check scripts). The user had committed the unreviewed build as `a` (e8562bf); the celebrations migration was applied to Supabase right away. Fix workflow `redesign-fix` (run wf_45b3cf28-5f8) running; capture design workflow `capture-improve-design` (run wf_13df9456-534) running in parallel (read-only).
 - RESUME NOTE: review findings are in the scratchpad file redesign_build.json (also in the redesign-build journal: C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_2085416b-229/journal.jsonl). After the fixes: tsc, lint, life:check + ui checks, next build, the ui-audit (node scripts/ui-audit.mjs against the rehearsal server) at 344/375/932/1440, browser pass, commit, push.
+- 2026-10-01 — Redesign finished: 6 fix lanes (85 items) + lead cleanup (retired AppNav/Logo/aliases, dead files, footer key warning). Gates: life:check, ui:check (shell 169, contrast 204/204, review, celebration, you, study-side), tsc, lint, next build, ui-audit 121/121 at 344/375/932/1440 on the rehearsal server.
+- 2026-10-01 — Capture design done (workflow capture-improve-design, run wf_13df9456-534; journal under subagents/workflows/wf_13df9456-534). Next: build it.

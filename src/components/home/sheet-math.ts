@@ -172,7 +172,22 @@ export interface RadarLayout {
   now: string;
   ghost: string | null;
   markers: { attribute: Attribute; points: string; hue: string }[];
-  labels: { attribute: Attribute; x: number; y: number; anchor: "start" | "middle" | "end"; text: string; lead: boolean }[];
+  /**
+   * x/y: the SVG anchor (baseline). left/top: the label's anchor point as a
+   * percentage of the viewBox box, for the HTML labels that sit over the SVG
+   * and stay 12 px however far the plot is scaled down.
+   */
+  labels: { attribute: Attribute; x: number; y: number; left: number; top: number; anchor: "start" | "middle" | "end"; text: string; lead: boolean }[];
+}
+
+/** The radar's viewBox: −190 −160 380 320 (R = 112 plus room for the labels). */
+export const RADAR_VIEWBOX = { x: -190, y: -160, w: 380, h: 320 } as const;
+export const RADAR_VIEWBOX_ATTR = `${RADAR_VIEWBOX.x} ${RADAR_VIEWBOX.y} ${RADAR_VIEWBOX.w} ${RADAR_VIEWBOX.h}`;
+
+/** A viewBox point as percentages of the box (for absolutely placed HTML). */
+export function radarPercent(x: number, y: number): { left: number; top: number } {
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return { left: r2(((x - RADAR_VIEWBOX.x) / RADAR_VIEWBOX.w) * 100), top: r2(((y - RADAR_VIEWBOX.y) / RADAR_VIEWBOX.h) * 100) };
 }
 
 const f1 = (v: number) => (Math.round(v * 10) / 10).toFixed(1);
@@ -217,7 +232,7 @@ export function radarLayout(axes: readonly RadarAxis[], ghost: AttributeScores |
     labels: axes.map((a, i) => {
       const [lx, ly] = pt(i, max * 1.2);
       const anchor = Math.abs(lx) < 8 ? "middle" : lx > 0 ? "start" : "end";
-      return { attribute: a.attribute, x: Number(f1(lx)), y: Number(f1(ly + 4)), anchor, text: a.label, lead: i === leadIdx && a.value > 0 };
+      return { attribute: a.attribute, x: Number(f1(lx)), y: Number(f1(ly + 4)), ...radarPercent(lx, ly), anchor, text: a.label, lead: i === leadIdx && a.value > 0 };
     }),
   };
 }

@@ -512,7 +512,14 @@ export function Cataclysm({ skill, replayKey }: Props) {
       )}
 
       {/* F — no centre at all; the edges arrive instead. */}
-      {variant === "implosion" && <span className="cat-crush" />}
+      {variant === "implosion" && (
+        <span className="cat-crush">
+          <i className="cc-t" />
+          <i className="cc-b" />
+          <i className="cc-l" />
+          <i className="cc-r" />
+        </span>
+      )}
     </span>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { NextUp as NextUpModel } from "./board-ui";
+import { questMinutesOf, type NextUp as NextUpModel } from "./board-ui";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon, Sigil } from "@/components/ui/Icon";
@@ -29,13 +29,15 @@ interface Props {
  * Next up: one priority and one primary action. The review quest (15 cards
  * of N due) while its Full-day ring is open, then the oldest open Must,
  * then nothing (board-ui.nextUpOf). The quest pays review points and no
- * life XP, and says so; R starts it from anywhere on the board.
+ * life XP, and says so; R starts it from anywhere on the board. Its time
+ * estimate is the /review hub's own (questMinutesOf → minutesFor).
  */
 export function NextUp({ next, focus, bosses, quota, mustPrice, onKeepMust, busy, reviewHref = "/review" }: Props) {
   const side: ReactNode = (focus || bosses.length > 0 || quota) && (
     <div className="focus-line">
       {focus && (
-        <span className="cur">
+        // Wraps (never nowrap): a long field name and its boost fit a 344 px card.
+        <span className="focus-what">
           <Sigil track="know" />
           <span>Focus: {focus}</span>
         </span>
@@ -52,21 +54,21 @@ export function NextUp({ next, focus, bosses, quota, mustPrice, onKeepMust, busy
 
   if (next.kind === "quest") {
     const segs: Segment[] = Array.from({ length: next.cards }, (_, i) => (i < next.reviews ? "on" : i === next.reviews ? "cur" : "off"));
+    const done = Math.min(next.reviews, next.cards);
     return (
       <section className="card today-hero" aria-labelledby="nu-h">
         <div className="hero-top">
           <span className="t-eyebrow">Next up · Quest</span>
-          <span className="t-meta num">
-            {Math.min(next.reviews, next.cards)} of {next.cards}
-          </span>
+          <span className="t-meta num">about {questMinutesOf(next)} min</span>
         </div>
         <h2 id="nu-h" className="t-display-m">
           Clear the review quest
         </h2>
         <p className="t-meta">
+          {done > 0 ? `${done} of ${next.cards} done · ` : ""}
           {next.cards} card{next.cards === 1 ? "" : "s"} of {Math.max(next.dueAtOpen, next.cards)} due · paid in review points, 0 life XP
         </p>
-        <SegmentStrip segs={segs} label={`Quest: ${Math.min(next.reviews, next.cards)} of ${next.cards} reviewed`} className="hero-segs" />
+        <SegmentStrip segs={segs} label={`Quest: ${done} of ${next.cards} reviewed`} className="hero-segs" />
         {side}
         <Button variant="primary" size="lg" block icon="study" kbd="R" href={reviewHref}>
           Start review

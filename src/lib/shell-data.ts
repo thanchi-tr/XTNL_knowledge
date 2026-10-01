@@ -15,11 +15,12 @@
  */
 import { ALL_TAGS, cached } from "./cache";
 import { crestMaterial } from "./materials";
-import { loadNotifications } from "./notifications";
+import { loadNotifications, type Notice } from "./notifications";
 import { loadFieldLevels } from "./queries";
 import { loadProgression } from "./skill-effects";
+import { getSkill } from "./skill-pool";
 import { TITLE_BANDS, computeTitle } from "./titles";
-import { asksFromNotices, characterLevelOf, type ShellData } from "../components/shell/shell-types";
+import { askCount, asksFromNotices, characterLevelOf, type ShellData } from "../components/shell/shell-types";
 
 async function build(userId: string): Promise<ShellData> {
   const [progression, fields, feed] = await Promise.all([
@@ -28,7 +29,10 @@ async function build(userId: string): Promise<ShellData> {
     loadNotifications(userId).catch(() => null),
   ]);
   const { level, progress } = characterLevelOf(fields.map((f) => f.level));
-  const ultimateCount = progression.activeSkills.filter((s) => s.rank === "ULTIMATE").length;
+  // Owned, not equipped: a title is earned once (titles.ts), so the crest and
+  // the sidebar agree with /you, /you/stats and the title detectors even
+  // while the Ultimate sits on the bench.
+  const ultimateCount = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
   const title = computeTitle(level, progression.scores, ultimateCount);
   const transcendent = ultimateCount > 0;
   const nextBand = transcendent ? null : TITLE_BANDS.find((b) => b.min > level) ?? null;
@@ -50,9 +54,15 @@ async function build(userId: string): Promise<ShellData> {
       study: feed?.counts.due ?? 0,
       train: 0, // M4
     },
-    asks: { count: feed?.actionable ?? 0, items: feed ? asksFromNotices(feed.notices) : [] },
+    asks: askOf(feed?.notices ?? null),
     owed: { count: 0 }, // M2
   };
+}
+
+/** The bell: rows that ask, then effects in play; the count is the asking rows only. */
+function askOf(notices: Notice[] | null): ShellData["asks"] {
+  const items = notices ? asksFromNotices(notices) : [];
+  return { count: askCount(items), items };
 }
 
 export async function loadShellData(userId: string): Promise<ShellData | null> {

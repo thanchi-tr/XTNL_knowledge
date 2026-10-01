@@ -14,6 +14,7 @@
 import { selfRatingOpen, selfRatingOpensOn } from "../../lib/life-grade";
 import { LIFE_TZ, addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../../lib/life-day";
 import { nextDue } from "../../lib/recurrence";
+import { minutesFor } from "../../lib/review-facts";
 import {
   UNDO_WINDOW_MS,
   dayName,
@@ -349,6 +350,38 @@ export function nextUpOf(input: {
   return { kind: "clear", dueNow: quest.dueNow };
 }
 
+/**
+ * The quest card's time estimate ("about 5 min"): the cards still to go at
+ * the /review hub's own rate (review-facts.ts minutesFor), so Today and the
+ * hub never describe the same quest two ways.
+ */
+export function questMinutesOf(next: Pick<Extract<NextUp, { kind: "quest" }>, "cards" | "reviews">): number {
+  return minutesFor(Math.max(0, next.cards - Math.min(next.reviews, next.cards)));
+}
+
+// ── The streak's caption: when the day was kept ───────────────────────────
+
+/**
+ * When today was kept ("Kept today, 08:05."): the earliest live tick of the
+ * day, as an ISO instant. Only when the board can stand behind it: every
+ * deed today is a tick whose paid record it holds. A review or a new idea
+ * may have kept the day first, and the board does not read their times, so
+ * then (or with nothing kept) it is null and the caption says no time.
+ */
+export function keptAtOf(data: Pick<BoardData, "paid" | "ledger">): string | null {
+  const day = data.ledger.today;
+  if (day.reviews > 0 || day.ideas > 0 || day.completions.length === 0) return null;
+  const at = new Map<string, string>();
+  for (const p of Object.values(data.paid)) if (!p.undone) at.set(p.eventId, p.occurredAt);
+  let first: string | null = null;
+  for (const c of day.completions) {
+    const t = at.get(c.eventId);
+    if (t === undefined || !Number.isFinite(Date.parse(t))) return null;
+    if (first === null || Date.parse(t) < Date.parse(first)) first = t;
+  }
+  return first;
+}
+
 // ── Asks: what waits on you that the board does not already show ──────────
 
 /** The feed's notice, as Today reads it (lib/notifications.ts, Notice). */
@@ -370,7 +403,10 @@ export interface TodayAsk {
   action: string;
   /** A link, or (no href) an in-page sheet the board opens by id. */
   href?: string;
+  /** Owed marks a penalty only (debt, a debuff); a date is never a colour. */
   tone: "ask" | "owed";
+  /** Time-bound (cards past grace): the detail carries the clock glyph. */
+  clock?: boolean;
 }
 
 /**
@@ -380,6 +416,9 @@ export interface TodayAsk {
  * active penalty (announced with the way to clear it). Due cards, the
  * focus field and ready bosses live in Next up; musts and the inbox are
  * the board itself. Good news never nags.
+ *
+ * Only a penalty is owed-toned. Cards past grace are a date, and due is
+ * never a hue: an ink diamond, with the clock glyph on its detail.
  */
 export function todayAsksOf(input: { yesterdayOpen: number; recordBy: string; notices: readonly AskNotice[] }): TodayAsk[] {
   const out: TodayAsk[] = [];
@@ -402,7 +441,8 @@ export function todayAsksOf(input: { yesterdayOpen: number; recordBy: string; no
       detail: n.detail,
       action: n.action ?? (penalty ? "See why" : "Open"),
       href: n.href ?? (penalty ? "/review" : undefined),
-      tone: n.tone === "bad" ? "owed" : "ask",
+      tone: penalty ? "owed" : "ask",
+      ...(n.id === "overdue" ? { clock: true } : {}),
     });
   }
   return out;

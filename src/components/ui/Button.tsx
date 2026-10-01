@@ -8,6 +8,8 @@
  *     gold       ONLY for spending earned currency (Unlock, Equip now in a ceremony)
  *     danger     owed outline; pair with <TypedConfirm> for destructive actions
  *   With `href` it renders a Next <Link>. `kbd` shows a key hint on hover-capable devices only.
+ *   `block` is full width (class `btn-block`: never the bare `block`, which is
+ *   Tailwind's display:block utility and would win over .btn's inline-flex).
  *
  *   <IconButton label="Close" icon="x"/>   44×44, radius 12. `label` is required (it is the name).
  */
@@ -34,8 +36,13 @@ type AsLink = Common & Omit<ComponentProps<typeof Link>, keyof Common> & { href:
 
 export type ButtonProps = AsButton | AsLink;
 
-function classes(variant: ButtonVariant, size: "md" | "lg", block: boolean | undefined, className?: string) {
-  return cx("btn", `btn-${variant}`, size === "lg" && "lg", block && "block", className);
+/**
+ * The class list a Button renders (exported for the checks). Every kit class
+ * is namespaced: a bare name that is also a Tailwind utility (`block`,
+ * `inline`, `ring`, `hidden`…) loses to the utilities layer.
+ */
+export function buttonClass(variant: ButtonVariant, size: "md" | "lg", block: boolean | undefined, className?: string): string {
+  return cx("btn", `btn-${variant}`, size === "lg" && "lg", block && "btn-block", className);
 }
 
 function Inner({ icon, kbd, children }: Pick<Common, "icon" | "kbd" | "children">) {
@@ -56,7 +63,7 @@ export function Button(props: ButtonProps) {
   if (props.href !== undefined) {
     const { variant = "secondary", size = "md", block, kbd, icon, children, className, ...rest } = props as AsLink;
     return (
-      <Link {...rest} className={classes(variant, size, block, className)} aria-keyshortcuts={kbd ? kbdShortcut(kbd) : undefined}>
+      <Link {...rest} className={buttonClass(variant, size, block, className)} aria-keyshortcuts={kbd ? kbdShortcut(kbd) : undefined}>
         <Inner icon={icon} kbd={kbd}>
           {children}
         </Inner>
@@ -65,7 +72,7 @@ export function Button(props: ButtonProps) {
   }
   const { variant = "secondary", size = "md", block, kbd, icon, children, className, type = "button", ...rest } = props as AsButton;
   return (
-    <button {...rest} type={type} className={classes(variant, size, block, className)} aria-keyshortcuts={kbd ? kbdShortcut(kbd) : undefined}>
+    <button {...rest} type={type} className={buttonClass(variant, size, block, className)} aria-keyshortcuts={kbd ? kbdShortcut(kbd) : undefined}>
       <Inner icon={icon} kbd={kbd}>
         {children}
       </Inner>

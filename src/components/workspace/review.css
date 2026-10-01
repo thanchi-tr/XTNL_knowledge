@@ -17,11 +17,10 @@
   .rv-hero-top .pring .ctr .n { font: 600 18px/1 var(--font-display); }
   .rv-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
   .rv-chips::-webkit-scrollbar { display: none; }
-  .rv-strip { display: flex; align-items: center; gap: 10px; padding: 8px 14px; min-height: 52px; font-size: 13px; line-height: 18px; color: var(--ink-1); text-decoration: none; }
-  .rv-strip .grow { flex: 1; min-width: 0; }
-  .rv-strip:hover { background: var(--raised); }
-  .rv-penalty { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; }
-  .rv-penalty + .rv-penalty { border-top: 1px solid var(--line-1); }
+  /* what is in effect on a review (the loadout strip itself is L4's .lo-strip) */
+  .rv-fx-head { display: grid; gap: 2px; padding: 12px 14px 10px; }
+  .rv-fx-head p { margin: 0; overflow-wrap: anywhere; }
+  .rv-effect { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-top: 1px solid var(--line-1); }
   .rv-empty { padding: 28px 16px; display: grid; gap: 8px; justify-items: center; text-align: center; }
 
   /* encounters */
@@ -77,7 +76,8 @@
   .rv-q .qh { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rv-q h2 { margin: 12px 0 0; text-wrap: pretty; overflow-wrap: anywhere; }
   .rv-spacer { flex: 1; min-height: 12px; }
-  .rv-alert { margin: 8px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--owed) 40%, transparent); color: var(--ink-0); font-size: 14px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  /* An action that failed: ink, weight 600, like the capture and Today errors. Never --owed, which reports debt only. */
+  .rv-alert { margin: 8px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 600 14px/1.35 var(--font-ui); display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 
   /* options: 56 px, keys anchored low (the thumb zone) */
   .rv-opts { display: flex; flex-direction: column; gap: 8px; padding-bottom: 4px; }
@@ -153,8 +153,10 @@
   .rv-acts { margin-top: 14px; position: relative; }
   .rv-hair { position: absolute; left: 0; right: 0; top: -6px; height: 2px; border-radius: 1px; background: var(--line-2); overflow: hidden; }
   .rv-hair i { display: block; height: 100%; background: var(--ink-1); transform-origin: left; transform: scaleX(0); }
-  .rv-seal { margin-top: 12px; }
-  .rv-seal .seal-card { background: var(--card); border-color: var(--line-2); }
+  /* The in-panel Seal is L3's <SealCard inline announce/> (.seal-card.seal-inline). The grid parent
+     blockifies the card, so no modifier class can ever turn it into an inline box. */
+  .rv-seal { margin-top: 12px; display: grid; }
+  .rv-panel .rv-seal > .seal-card { margin-top: 0; background: var(--card); border-color: var(--line-2); }
   .rv-levelup { display: flex; gap: 12px; align-items: center; margin-top: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--card); }
   .rv-why { margin-top: 12px; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
   .rv-why .row2 { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 3px 0; }

@@ -80,14 +80,15 @@ export async function resolveBossEncounter(
   total: number
 ): Promise<BossActionResult<{ resolution: BossResolution; celebrations: CelebrationEvent[] }>> {
   const userId = getCurrentUserId();
-  const before = await captureSnapshot(userId).catch(() => null);
+  // Scoped (levels, mastered, streak, bosses), the same scope before and after.
+  const before = await captureSnapshot(userId, { scope: "boss" }).catch(() => null);
   const resolution = await resolveBossAttempt(userId, fieldId, correct, total);
   if (resolution.outcome === "rejected") {
     return { ok: false, error: resolution.why };
   }
   // L3's detectors see the victory (a T2 "boss-won" Seal). Never fails the resolution.
   const celebrations: CelebrationEvent[] = before
-    ? await captureSnapshot(userId)
+    ? await captureSnapshot(userId, { scope: "boss" })
         .then((after) => detectCelebrations(before, after, { cause: "boss" }))
         .catch(() => [])
     : [];

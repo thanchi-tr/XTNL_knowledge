@@ -16,6 +16,7 @@ import { claimCapital } from "@/app/actions/capital";
 import { play } from "@/lib/motion";
 import { useLastSeen } from "@/components/ui/useLastSeen";
 import { Button } from "@/components/ui/Button";
+import { ActionError } from "./ActionError";
 
 export function TitleRing({ fraction, next, nextAt, current }: { fraction: number; next: string | null; nextAt: number | null; current: string }) {
   const pct = Math.floor(Math.max(0, Math.min(1, fraction)) * 100);
@@ -88,11 +89,7 @@ export function DividendLine({ amount, perHour, capped, balance }: { amount: num
           </Button>
         )}
       </div>
-      {error && (
-        <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 6 }}>
-          {error}
-        </p>
-      )}
+      {error && <ActionError>{error}</ActionError>}
     </section>
   );
 }

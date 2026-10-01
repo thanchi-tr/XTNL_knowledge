@@ -237,7 +237,7 @@ function CapacitySheet({ open, onClose, capacity }: { open: boolean; onClose: ()
       title="Daily capacity"
       description="How much planned time a day holds. Today's board warns when the plan runs past it; nothing is taken away."
       footer={
-        <Button variant="primary" size="lg" block onClick={save} disabled={pending}>
+        <Button variant="primary" size="lg" className="btn-block" onClick={save} disabled={pending}>
           {pending ? "Saving…" : `Use ${formatCapacity(choice)}`}
         </Button>
       }

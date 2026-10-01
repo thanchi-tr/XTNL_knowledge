@@ -63,7 +63,7 @@
   .curtain .wave { position: fixed; left: 50%; top: 0; width: 320px; height: 320px; margin-left: -160px; border-radius: 50%; border: 1.5px solid rgba(255,236,190,.75); opacity: 0; pointer-events: none; }
 
   /* ---------- Calm: the kit's own transitions shorten to ≤ 260 ms (the gateway strips transforms) ---------- */
-  html[data-motion="calm"] :is(.meter > i, .pring .val, .sheet, .toast, .seal-card, .mini-ledger, .tick .ring, .tick .ring path, .scrim) {
+  html[data-motion="calm"] :is(.meter > i, .pring .val, .sheet, .toast, .seal-card, .mini-ledger, .tick .tick-ring, .tick .tick-ring path, .scrim) {
     transition-duration: 200ms;
     transition-delay: 0s;
   }

@@ -128,23 +128,34 @@
   100%      { opacity: 0; transform: scaleX(1); }
 }
 
-/* The leading edge — a bright bar riding the front of the fill. */
+/* The leading edge — a bright bar riding the front of the fill.
+   The element spans the bar and the 3px bar is its ::before at the right
+   edge, so translateX(%) of the element is a fraction of the bar: it rides
+   from the left end to the right end on transform alone (it used to animate
+   `left`). */
 .bc-edge {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  left: 0;
-  background: var(--bc-color);
-  box-shadow: 0 0 18px 3px var(--bc-color);
+  inset: 0;
+  pointer-events: none;
   opacity: 0;
   animation: bc-edge var(--bc-dur, 800ms) cubic-bezier(.3, .1, .2, 1) both;
 }
 
+.bc-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 3px;
+  background: var(--bc-color);
+  box-shadow: 0 0 18px 3px var(--bc-color);
+}
+
 @keyframes bc-edge {
-  0%   { opacity: 1; left: 0; }
-  58%  { opacity: 1; left: calc(100% - 3px); }
-  100% { opacity: 0; left: calc(100% - 3px); }
+  0%   { opacity: 1; transform: translateX(calc(-100% + 3px)); }
+  58%  { opacity: 1; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(0); }
 }
 
 /* Fires as the fill completes: the bar acknowledges reaching full instead of
@@ -269,26 +280,49 @@
 
 /* ULTIMATE — the bar collapses into a well at the slot.
    Matter along its length is drawn in, an accretion disc turns around the
-   point, and the core occludes what falls past it. */
+   point, and the core occludes what falls past it.
+
+   Each streak is a bar-wide element whose ::before is the 46px streak
+   centred on its left edge: the element translates from --pull-from to
+   --bc-origin (percentages of its own width, which is the bar's) while the
+   streak scales to 3px. Transform and opacity only; this used to animate
+   `left` and `width`. */
 .bc-pull {
   position: absolute;
+  left: 0;
+  right: 0;
   top: var(--pull-top, 50%);
   height: 1px;
-  width: 46px;
-  margin-left: -23px;
-  border-radius: 1px;
-  background: linear-gradient(90deg, transparent, var(--bc-color));
-  box-shadow: 0 0 8px var(--bc-color);
+  pointer-events: none;
   opacity: 0;
   /* Accelerating, never easing out: gravity does not decelerate on arrival. */
   animation: bc-pull 1.5s cubic-bezier(.55, 0, .95, .35)
     calc(var(--bc-dur, 800ms) * 0.5 + var(--pull-delay, 0ms)) both;
 }
 
+.bc-pull::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -23px;
+  width: 46px;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--bc-color));
+  box-shadow: 0 0 8px var(--bc-color);
+  animation: bc-pull-shrink 1.5s cubic-bezier(.55, 0, .95, .35)
+    calc(var(--bc-dur, 800ms) * 0.5 + var(--pull-delay, 0ms)) both;
+}
+
 @keyframes bc-pull {
-  0%   { opacity: 0; left: var(--pull-from, 50%); width: 46px; }
+  0%   { opacity: 0; transform: translateX(var(--pull-from, 50%)); }
   18%  { opacity: .85; }
-  100% { opacity: 0; left: var(--bc-origin, 50%); width: 3px; }
+  100% { opacity: 0; transform: translateX(var(--bc-origin, 50%)); }
+}
+
+@keyframes bc-pull-shrink {
+  0%   { transform: scaleX(1); }
+  100% { transform: scaleX(.065); }
 }
 
 .bc-accretion {
@@ -346,6 +380,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .bc-pull::before { animation: none; }
   .bc-halo,
   .bc-pull,
   .bc-accretion,

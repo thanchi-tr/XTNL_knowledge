@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { ideaHistory } from "@/app/actions/ideas";
-import { ShellTitle } from "@/components/shell/ShellTitle";
 import { Button } from "@/components/ui/Button";
 import { PageActions } from "@/components/ui/Tabs";
 import { IdeaDetailPage } from "@/components/library/IdeaDetail";
@@ -56,6 +55,10 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
  * Study › Library › an idea: question, answer, level ring, history strip,
  * next due, Edit and a quiet Delete. Review results and the recap link here.
  * The Library opens the same detail as a sheet; this is its deep link.
+ *
+ * The top bar keeps the shell's own "Study / Idea" (nav.titleFor, rendered on
+ * the server), so nothing swaps after the first paint; the headline is said
+ * once, in the card below, under its domain · field eyebrow.
  */
 export default async function IdeaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -88,7 +91,6 @@ export default async function IdeaPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="page narrow cq-main">
-      <ShellTitle eyebrow="Library" title={headline} />
       <PageActions>
         <Button variant="quiet" href="/library" icon="back">
           Library

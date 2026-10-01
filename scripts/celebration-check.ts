@@ -17,10 +17,22 @@
  *     rows, and a moment acknowledged in session A never replays in session B;
  *   - the client queue: highest tier first, seen-once, shownAt respected, T2s
  *     merge into an open run while T3s wait;
- *   - untrusted input: row ids and prefs patches are cleaned.
+ *   - untrusted input: row ids and prefs patches are cleaned;
+ *   - the review fixes (F3):
+ *       no celebrate class name is also a Tailwind utility (`inline` was: the
+ *       in-panel Seal collapsed into line boxes), checked against the real
+ *       compiler and the project's globals.css;
+ *       the host never calls a Server Action (prefs applied without echo,
+ *       seeded and acked over /api/celebrations), and the POST body is cleaned;
+ *       a failed ack is retried; the shell chunk never statically reaches the
+ *       skill pool, the detector or Prisma;
+ *       an emblem Ascension with nothing staged gets CeremonyArt and
+ *       CeremonyBackdrop, the Cataclysm never on a replay, and the words sit
+ *       above the Cataclysm's z-index;
+ *       an in-panel Seal says itself once per id when asked (announce).
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import {
   cleanPrefsPatch,
   dataOf,
@@ -41,9 +53,12 @@ import {
   type ProgressData,
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
-import { KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
+import { DEFAULT_PREFS, KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
 import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
 import { fixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
+import { ACCOUNT_PREF_KEYS, accountPatch, planPrefsSync, readPostBody } from "../src/components/celebrate/protocol";
+import { firstAnnouncement, sealSentence } from "../src/components/celebrate/SealCard";
+import { ackShown, ceremonyEventFor, noteShowing, sendPrefs } from "../src/components/celebrate/stage";
 
 const ROOT = join(__dirname, "..");
 let passed = 0;
@@ -312,10 +327,259 @@ function input() {
   check("input: garbage is an empty patch", Object.keys(cleanPrefsPatch("x")).length === 0 && Object.keys(cleanPrefsPatch(null)).length === 0);
 }
 
+// ── 8. Class names: never a Tailwind utility (the utilities layer wins) ─────
+const CELEBRATE_DIR = join(ROOT, "src/components/celebrate");
+const read = (p: string) => readFileSync(p, "utf8");
+const lanePath = (f: string) => join(CELEBRATE_DIR, f);
+
+/** The class names a TSX file applies: className="…", className={…} string parts, classList.add/remove/toggle. */
+function appliedClasses(src: string): string[] {
+  const out: string[] = [];
+  const words = (s: string) => out.push(...s.split(/\s+/).filter((w) => /^[A-Za-z_][\w-]*$/.test(w)));
+  const strings = (expr: string) => {
+    for (const m of expr.matchAll(/"([^"\\]*)"|'([^'\\]*)'/g)) words(m[1] ?? m[2] ?? "");
+    for (const m of expr.matchAll(/`([^`]*)`/g)) words(m[1].replace(/\$\{[^}]*\}/g, " "));
+  };
+  for (const m of src.matchAll(/className=(?:"([^"]*)"|\{)/g)) {
+    if (m[1] !== undefined) {
+      words(m[1]);
+      continue;
+    }
+    let depth = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const start = i;
+    while (i < src.length && depth > 0) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") depth--;
+      i++;
+    }
+    strings(src.slice(start, i - 1));
+  }
+  for (const m of src.matchAll(/classList\.(?:add|remove|toggle)\(([^)]*)\)/g)) strings(m[1]);
+  return out;
+}
+
+/** The class names a stylesheet's selectors name. */
+function selectorClasses(css: string): string[] {
+  const out: string[] = [];
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const m of clean.matchAll(/([^{};]+)\{/g)) {
+    const sel = m[1].trim();
+    if (sel.startsWith("@")) continue;
+    for (const c of sel.matchAll(/\.([A-Za-z_][\w-]*)/g)) out.push(c[1]);
+  }
+  return out;
+}
+
+/** Bare-word Tailwind utilities, for when the compiler itself cannot be loaded (a hoisting change). */
+const KNOWN_UTILITIES = new Set(
+  "block inline inline-block flex inline-flex grid inline-grid contents hidden table flow-root list-item static fixed absolute relative sticky visible invisible collapse isolate ring border shadow rounded outline grow shrink truncate italic underline overline uppercase lowercase capitalize antialiased ordinal transform filter blur invert grayscale sepia transition container resize sr-only".split(" ")
+);
+
+/** The candidates the real Tailwind compiler (with the project's globals.css) emits as utilities. */
+async function tailwindUtilities(candidates: string[]): Promise<{ hits: Set<string>; source: string }> {
+  let compile: typeof import("@tailwindcss/node").compile;
+  try {
+    ({ compile } = await import("@tailwindcss/node"));
+  } catch {
+    return { hits: new Set(candidates.filter((c) => KNOWN_UTILITIES.has(c))), source: "the known-utility list" };
+  }
+  const base = join(ROOT, "src/app");
+  let source = "src/app/globals.css";
+  let compiler;
+  try {
+    compiler = await compile(read(join(base, "globals.css")), { base, onDependency: () => {} });
+  } catch {
+    source = '@import "tailwindcss"';
+    compiler = await compile(`@import "tailwindcss";`, { base, onDependency: () => {} });
+  }
+  const css = compiler.build(candidates);
+  const hits = new Set<string>();
+  for (const m of css.matchAll(/@layer utilities\s*\{/g)) {
+    let depth = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const start = i;
+    while (i < css.length && depth > 0) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+      i++;
+    }
+    for (const s of css.slice(start, i - 1).matchAll(/(?:^|[\s,}])\.((?:\\.|[\w-])+)/g)) hits.add(s[1].replace(/\\/g, ""));
+  }
+  return { hits: new Set(candidates.filter((c) => hits.has(c))), source };
+}
+
+async function classNames() {
+  const files = readdirSync(CELEBRATE_DIR).filter((f) => /\.(tsx?|css)$/.test(f));
+  const used = new Map<string, Set<string>>();
+  for (const f of files) {
+    const src = read(lanePath(f));
+    for (const c of f.endsWith(".css") ? selectorClasses(src) : appliedClasses(src)) {
+      if (!used.has(c)) used.set(c, new Set());
+      used.get(c)!.add(f);
+    }
+  }
+  check("classes: the scan finds the lane's classes (seal-card, seal-inline, curtain, cur-backdrop)", ["seal-card", "seal-inline", "curtain", "cur-backdrop", "seal-dock"].every((c) => used.has(c)), [...used.keys()].join(" "));
+  const { hits, source } = await tailwindUtilities([...used.keys(), "inline", "block", "ring", "hidden"]);
+  check(`classes: the guard is live (${source} emits inline, block, ring and hidden as utilities)`, ["inline", "block", "ring", "hidden"].every((c) => hits.has(c)));
+  const clashes = [...used.keys()].filter((c) => hits.has(c)).map((c) => `${c} (${[...used.get(c)!].join(", ")})`);
+  check("classes: no celebrate class name is also a Tailwind utility", clashes.length === 0, clashes.join("; "));
+  const seal = read(lanePath("SealCard.tsx"));
+  check("seal: the in-panel modifier is seal-inline, never the bare `inline` utility", /inline && "seal-inline"/.test(seal) && !/&& "inline"/.test(seal));
+  const css = read(lanePath("celebrate.css"));
+  const rule = /\.seal-card\.seal-inline\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  check("seal: .seal-card.seal-inline carries the settled, flat state on its own", /transform:\s*none/.test(rule) && /opacity:\s*1/.test(rule) && /box-shadow:\s*none/.test(rule), rule);
+}
+
+// ── 9. The host's channel: no Server Action, cleaned bodies, retried acks ──
+interface Posted {
+  url: string;
+  body: { ack?: string[]; prefs?: Record<string, string> };
+}
+
+async function channel() {
+  const host = read(lanePath("CelebrationHost.tsx")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const actionImports = readdirSync(CELEBRATE_DIR)
+    .filter((f) => /\.tsx?$/.test(f) && /from\s+["']@\/app\/actions\//.test(read(lanePath(f))));
+  check("host: no celebrate module imports a Server Action (they queue ahead of ticks and answers)", actionImports.length === 0, actionImports.join(", "));
+  check("host: account prefs are applied without setPref's save echo, seeded over the route", /new StorageEvent\("storage"/.test(host) && /sendPrefs\(plan\.seed\)/.test(host) && !/savePrefs/.test(host));
+
+  // Prefs: per key, the account's choice wins; an unchosen key is seeded once from this device.
+  const local = { ...DEFAULT_PREFS, theme: "vellum" as const, motion: "still" as const, sound: "soft" as const };
+  const plan = planPrefsSync(local, { motion: "calm" });
+  check("prefs: the account's motion wins and applies here; its unchosen theme is seeded from this device", JSON.stringify(plan) === JSON.stringify({ apply: { motion: "calm" }, seed: { theme: "vellum" } }), JSON.stringify(plan));
+  const same = planPrefsSync(local, { theme: "vellum", motion: "still", autoAdvance: "next" });
+  check("prefs: nothing to apply or seed when the account already matches", Object.keys(same.apply).length === 0 && Object.keys(same.seed).length === 0, JSON.stringify(same));
+  const junk = planPrefsSync({ ...DEFAULT_PREFS }, { theme: "neon", motion: 3, sound: "soft", autoAdvance: "wait" });
+  check("prefs: invalid account values and per-device keys are ignored", JSON.stringify(junk) === JSON.stringify({ apply: { autoAdvance: "wait" }, seed: {} }), JSON.stringify(junk));
+  check("prefs: a default device with an empty account seeds nothing", Object.keys(planPrefsSync({ ...DEFAULT_PREFS }, null).seed).length === 0);
+  check("prefs: only theme, motion and autoAdvance follow the account", ACCOUNT_PREF_KEYS.join() === "theme,motion,autoAdvance" && Object.keys(accountPatch({ sound: "soft", haptics: "on", theme: "night" })).join() === "theme");
+  const body = readPostBody({ ack: ["clx1abcd0000efgh", 7], prefs: { motion: "still", sound: "soft", theme: "x" }, extra: true });
+  check("route: a POST body keeps the ack list and only valid account prefs", body.ack.length === 2 && JSON.stringify(body.prefs) === JSON.stringify({ motion: "still" }));
+  check("route: garbage is an empty body", (() => {
+    const g = [readPostBody(null), readPostBody("x"), readPostBody([1]), readPostBody({ ack: "id", prefs: [] })];
+    return g.every((b) => b.ack.length === 0 && Object.keys(b.prefs).length === 0);
+  })());
+  const route = read(join(ROOT, "src/app/api/celebrations/route.ts"));
+  check("route: POST saves prefs, refuses cross-site, and fails with 500 (so the client retries)", /savePrefsFor\(/.test(route) && /sec-fetch-site/.test(route) && /status:\s*500/.test(route));
+
+  // The background POSTs, against a stubbed fetch.
+  const posted: Posted[] = [];
+  let answer = { ok: false };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+    posted.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
+    return answer as Response;
+  }) as typeof fetch;
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  try {
+    await sendPrefs({ motion: "still", sound: "soft" });
+    check("send: a prefs seed posts only the account keys to /api/celebrations", posted.length === 1 && posted[0].url === "/api/celebrations" && JSON.stringify(posted[0].body) === JSON.stringify({ prefs: { motion: "still" } }));
+    await sendPrefs({ sound: "soft" });
+    check("send: a patch with no account key posts nothing", posted.length === 1);
+    posted.length = 0;
+    const row = (id: string) => ({ id, tier: 2 as const, dedupeKey: `k:${id}` });
+    ackShown([row("ackretry0001"), { id: "t1:day:2026-10-01", tier: 1 as const, dedupeKey: "day:x" }, { id: "draft:band:bronze", tier: 2 as const, dedupeKey: "band:bronze" }]);
+    await wait(120);
+    check("ack: one batched POST carries only server row ids", posted.length === 1 && JSON.stringify(posted[0].body) === JSON.stringify({ ack: ["ackretry0001"] }), JSON.stringify(posted));
+    ackShown([row("ackretry0001")]);
+    await wait(120);
+    check("ack: a refused ack (500) is forgotten, so the next sight sends it again", posted.length === 2 && JSON.stringify(posted[1].body) === JSON.stringify({ ack: ["ackretry0001"] }), JSON.stringify(posted));
+    answer = { ok: true };
+    ackShown([row("ackretry0001")]);
+    await wait(120);
+    ackShown([row("ackretry0001")]);
+    await wait(120);
+    check("ack: once accepted, an id is never sent again from this tab", posted.length === 3, JSON.stringify(posted));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+// ── 10. The shell chunk stays light: no static path to the pool, the detector or Prisma ──
+function resolveImport(from: string, spec: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = join(ROOT, "src", spec.slice(2));
+  else if (spec.startsWith(".")) base = join(dirname(from), spec);
+  else return null;
+  for (const ext of ["", ".ts", ".tsx", "/index.ts", "/index.tsx"]) {
+    const p = base + ext;
+    if (existsSync(p) && statSync(p).isFile()) return p;
+  }
+  return null;
+}
+
+function staticGraph(entry: string): Set<string> {
+  const seen = new Set<string>();
+  const stack = [entry];
+  while (stack.length) {
+    const f = stack.pop()!;
+    if (seen.has(f) || !/\.tsx?$/.test(f)) continue;
+    const src = read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    // A "use server" module reaches the client bundle as an action reference only: its imports never ship.
+    if (/^\s*["']use server["']/.test(src)) continue;
+    seen.add(f);
+    for (const m of src.matchAll(/^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s+)?["']([^"']+)["']/gm)) {
+      const p = resolveImport(f, m[1]);
+      if (p) stack.push(p);
+    }
+  }
+  return seen;
+}
+
+function shellChunk() {
+  const graph = staticGraph(lanePath("CelebrationHost.tsx"));
+  const rel = [...graph].map((p) => relative(ROOT, p).replace(/\\/g, "/"));
+  const heavy = rel.filter((p) => /src\/lib\/(skill-pool|celebration-detect|prisma|celebrations|snapshot)\.ts$|src\/components\/skills\/ceremony-art\.tsx$/.test(p));
+  check(`chunk: the host's static graph (${rel.length} modules) never reaches the skill pool, the detector, ceremony-art or Prisma`, heavy.length === 0 && rel.some((p) => p.endsWith("AscensionCurtain.tsx")), heavy.join(", "));
+  const curtain = read(lanePath("AscensionCurtain.tsx"));
+  check("curtain: CeremonyArt and CeremonyBackdrop load lazily", /dynamic\(\(\) => import\("@\/components\/skills\/ceremony-art"\)\.then\(\(m\) => m\.CeremonyArt\)/.test(curtain) && /m\.CeremonyBackdrop/.test(curtain));
+}
+
+// ── 11. The Ascension's default staging; the in-panel Seal's own voice ──────
+function staging() {
+  const curtain = read(lanePath("AscensionCurtain.tsx"));
+  check("curtain: an emblem with no staged art is drawn by CeremonyArt (one emblem drawing)", /art\?\.type === "emblem"\) return <CeremonyArt art=\{art\}/.test(curtain));
+  check("curtain: a backdrop (staged or default) replaces the generic sky band", /\{\(!backdropNode \|\| sky\) && <div className="skyband"/.test(curtain) && /const backdropNode = backdrop \?\?/.test(curtain));
+  const emblem = fixtureMoments().flatMap((m) => m.events).find((e) => e.facts.art?.type === "emblem");
+  const crest = fixtureMoments().flatMap((m) => m.events).find((e) => e.facts.art?.type === "crest");
+  check("curtain: the fixtures include an emblem and a crest Ascension", !!emblem && !!crest);
+  if (emblem && crest) {
+    check("backdrop: an emblem's first showing keeps its id (a flagged first-of-depth unlock plays the Cataclysm)", ceremonyEventFor(emblem, false)?.id === emblem.id);
+    check("backdrop: a replay never matches the Cataclysm flag", (ceremonyEventFor(emblem, true)?.id ?? emblem.id) !== emblem.id);
+    check("backdrop: a crest or medallion keeps the generic sky band (no ceremony backdrop)", ceremonyEventFor(crest, false) === null);
+  }
+  check("replay: the first showing of an id in a tab is not a replay; the second is", noteShowing("fx:unlock:1") === false && noteShowing("fx:unlock:1") === true && noteShowing("fx:unlock:2") === false);
+  const host = read(lanePath("CelebrationHost.tsx"));
+  check("replay: the host passes the replay flag to the curtain", /replay: noteShowing\(ev\.id\)/.test(host) && /replay=\{replay\}/.test(host));
+
+  // z-order: the Cataclysm (L4, fixed) under the rays/flash/wave, the words and Skip.
+  const css = read(lanePath("celebrate.css"));
+  const z = (sel: RegExp) => Number(sel.exec(css)?.[1] ?? NaN);
+  const cataPath = join(ROOT, "src/app/cataclysm.css");
+  const cata = existsSync(cataPath) ? Math.max(...[...read(cataPath).matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1]))) : 16;
+  const fx = z(/\.curtain :is\(\.rays, \.flash, \.wave\)\s*\{\s*z-index:\s*(\d+)/);
+  const words = z(/\.curtain \.cur-in\s*\{\s*z-index:\s*(\d+)/);
+  const skip = z(/\.curtain \.cur-skip\s*\{\s*z-index:\s*(\d+)/);
+  check(`z-order: Cataclysm ${cata} < rays/flash/wave ${fx} < words ${words} < Skip ${skip}`, cata < fx && fx < words && words < skip);
+
+  // The in-panel Seal's voice (a review run's merged T2 skips the queue, which would announce it).
+  const ev = makeEvent("domain-level", "say-1", { eyebrow: "Domain level", title: "Probability · level 7", lines: ["6 → 7"], amounts: [{ kind: "pts", value: 4.2 }], numeral: { from: 6, to: 7 } }, [{ label: "L", value: "6 → 7" }]);
+  check("voice: the sentence keeps the payout (a level-up never hides it)", sealSentence(ev) === "Domain level. Probability · level 7. 6 → 7. +4.2 review pts", sealSentence(ev));
+  check("voice: facts.say wins when given", sealSentence({ facts: { ...ev.facts, say: "Said." } }) === "Said.");
+  check("voice: an in-panel Seal says itself once per id per tab", firstAnnouncement("say-1") && !firstAnnouncement("say-1") && firstAnnouncement("say-2"));
+  const seal = read(lanePath("SealCard.tsx"));
+  check("voice: only an inline, animated Seal that asks (announce) speaks; the recap list (animate={false}) stays silent", /inline && announce && animate && firstAnnouncement\(ev\.id\)/.test(seal));
+}
+
 (async () => {
   await persistence();
   queue();
   input();
+  await classNames();
+  await channel();
+  shellChunk();
+  staging();
   console.log(`\ncelebration-check: ${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((err) => {

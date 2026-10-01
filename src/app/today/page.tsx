@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
@@ -11,7 +10,6 @@ import { loadNotifications } from "@/lib/notifications";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
-import { LiveClock } from "@/components/today/LiveClock";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -67,11 +65,7 @@ export default async function TodayPage() {
         notices={feed?.notices ?? []}
         focus={focus}
         bosses={readyBosses}
-        footer={
-          <p className="t-num">
-            <LiveClock initialTime={clock.time} zone={clock.zone} tz={clock.tz} /> · <Link href="/today/rules">How a day is judged</Link>
-          </p>
-        }
+        footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
       />
     </>
   );

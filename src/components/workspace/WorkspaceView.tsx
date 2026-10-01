@@ -13,17 +13,18 @@
  *
  * Every answer goes to submitReview (graded and priced on the server). The
  * run is wrapped in celebrate.ts openRun/closeRun: T2 Seals that L3's
- * detectors return merge into the run (in the result panel and the recap),
- * T3s wait until the run closes, T1s chime in place.
+ * detectors return merge into the run (in the result panel and the recap,
+ * marked seen there), T3s wait until the run closes. The detectors' T1s are
+ * not chimed again: the runner and the recap play the run's own T1s.
  */
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { submitReview } from "@/app/actions/review";
 import { chooseBossBoon, resolveBossEncounter, startBossEncounter } from "@/app/actions/bosses";
 import type { BossResolution, BossState } from "@/lib/bosses";
 import { BOON_KINDS, BOON_META, type BoonKind } from "@/lib/boon-meta";
 import { autoAdvances, type CelebrationEvent } from "@/lib/celebration-types";
-import { chime, closeRun, enqueue, openRun } from "@/lib/celebrate";
+import { closeRun, enqueue, openRun } from "@/lib/celebrate";
 import type { DayKey } from "@/lib/life-day";
 import { formatExpiry } from "@/lib/format-date";
 import type { ReviewAnswer } from "@/lib/verification";
@@ -32,13 +33,14 @@ import { useMotionPref } from "@/components/ui/MotionPrefs";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import { pushToast } from "@/components/ui/toast-store";
+import { ackShown } from "@/components/celebrate/stage";
 import { BossPanel } from "./BossPanel";
 import { BossResult, BoonChoice } from "./BossResult";
-import { LoadoutStrip, PenaltyCard, RecentIdeas, type LoadoutSummary, type PenaltySummary, type RecentIdea } from "./ReviewHub";
+import { EffectsCard, RecentIdeas, type RecentIdea, type ReviewEffects } from "./ReviewHub";
 import { ReviewRunner, type BossRun, type RunPhase } from "./ReviewRunner";
 import { SessionComplete } from "./SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "./SessionSummary";
-import { questNow, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
+import { celebrationRoute, dayKeptOf, questNow, seededOrder, tallyOf, type CardResult, type RunCard } from "./review-model";
 import "./review.css";
 
 export interface WorkspaceField {
@@ -64,8 +66,10 @@ interface Props {
   /** The day is already kept (something counted today), and the daily streak. */
   dayKept: boolean;
   dayStreak: number;
-  loadout: LoadoutSummary | null;
-  penalties: PenaltySummary[];
+  /** L4's loadout strip (src/components/skills/LoadoutStrip), rendered by the server page; null before the first emblem. */
+  loadoutStrip: ReactNode;
+  /** What changes a review right now: the folded modifiers, boons and penalties. */
+  effects: ReviewEffects;
   recent: RecentIdea[];
 }
 
@@ -113,7 +117,7 @@ function newRun(fields: WorkspaceField[], scope: string, today: DayKey, quest: {
 }
 
 export function WorkspaceView(props: Props) {
-  const { fields, totalDue, bosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadout, penalties, recent } = props;
+  const { fields, totalDue, bosses, upcoming, scheduledCount, quest, comboCap, today, dayKept, dayStreak, loadoutStrip, effects, recent } = props;
   const router = useRouter();
   const pathname = usePathname();
   const view = useSearchParams().get("view");
@@ -227,10 +231,8 @@ export function WorkspaceView(props: Props) {
             ? { ...cur, results: [...cur.results, { card, result, answer: display }], phase: { kind: "answered", result, answer: display, picked } }
             : cur
         );
-        for (const ev of result.celebrations) {
-          if (ev.tier === 1) chime({ kind: ev.kind as Parameters<typeof chime>[0]["kind"], id: ev.id, text: ev.facts.title, say: ev.facts.say });
-          else if (ev.tier >= 2) enqueue(ev); // T2 merges into this run; T3 waits for it to close
-        }
+        // T2 merges into this run; T3 waits for it to close. T1s are the runner's own (one "Today kept", not two).
+        for (const ev of result.celebrations) if (celebrationRoute(ev) === "enqueue") enqueue(ev);
       } catch {
         setPhase({ kind: "error", message: "No reply from the server for that answer. Check the connection and try again." });
       } finally {
@@ -243,6 +245,8 @@ export function WorkspaceView(props: Props) {
     const r = runRef.current;
     if (!r) return;
     const merged = closeRun();
+    // Seen: the in-panel Seals acked themselves; the recap lists the rest. A backstop for the recap's own ack.
+    ackShown(merged);
     const endedAt = Date.now();
     setRun({ ...r, merged, endedAt, bossNote: opts.retreat && r.boss ? "Retreated: the encounter is forfeit. The cards answered were real reviews and stay paid." : null });
     setMode("recap");
@@ -260,7 +264,7 @@ export function WorkspaceView(props: Props) {
         }
         setRun((cur) => (cur ? { ...cur, bossResolution: res.value.resolution as Settled } : cur));
         // The run is closed: a "boss won" Seal plays at the dock through L3's presenter.
-        for (const ev of res.value.celebrations) if (ev.tier >= 2) enqueue(ev);
+        for (const ev of res.value.celebrations) if (celebrationRoute(ev) === "enqueue") enqueue(ev);
       });
     }
   }
@@ -405,7 +409,7 @@ export function WorkspaceView(props: Props) {
         questAfter={questNow(run.questStart, run.results)}
         startedAt={run.startedAt}
         endedAt={run.endedAt ?? Date.now()}
-        dayKept={run.results.some((r) => r.result.streakSecured) ? { streak: dayKept ? null : dayStreak + 1 } : null}
+        dayKept={dayKeptOf(run.results, dayKept ? null : dayStreak + 1)}
         remainingDue={remainingDue}
         upcoming={upcoming}
         fieldsCleared={run.boss ? [] : fieldsCleared}
@@ -435,8 +439,8 @@ export function WorkspaceView(props: Props) {
             scheduledCount={scheduledCount}
             upcoming={upcoming}
           />
-          {loadout && <LoadoutStrip loadout={loadout} />}
-          <PenaltyCard penalties={penalties} />
+          {loadoutStrip}
+          <EffectsCard effects={effects} />
         </div>
         <div className="rv-col">
           <BossPanel bosses={bosses} onChallenge={challenge} onChooseBoon={setBoonFor} pendingFieldId={pendingBoss} error={bossError} />

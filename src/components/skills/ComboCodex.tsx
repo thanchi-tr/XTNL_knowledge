@@ -49,7 +49,7 @@ export function CodexSheet({ open, onClose, seenIds, activeIds }: Props) {
         <ul className="fx-list" style={{ margin: "0 -14px" }}>
           {discovered.map((shape) => (
             <li key={shape.id}>
-              <span className="grow">
+              <span className="fx-body">
                 <b>{shape.name}</b>
                 <span className="t-meta" style={{ display: "block" }}>
                   {shape.blurb}

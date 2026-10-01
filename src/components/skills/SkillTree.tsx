@@ -282,6 +282,7 @@ export function SkillTree({ attribute, skills, statusOf, blockersOf, ctx, equipp
               <g
                 key={skill.code}
                 className="tree-node"
+                data-emblem={skill.code}
                 transform={`translate(${x - NODE / 2}, ${y - NODE / 2})`}
                 onClick={() => setSelectedCode(skill.code)}
                 onKeyDown={(e) => onNodeKey(e, skill.code)}

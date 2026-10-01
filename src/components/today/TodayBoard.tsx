@@ -1,5 +1,6 @@
 "use client";
 
+import { TodayFooter } from "./TodayFooter";
 import "./today.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -37,6 +38,7 @@ import {
   undoCompletion,
 } from "@/app/actions/tasks";
 import { openCapture } from "@/components/capture/events";
+import { presentAll } from "@/components/celebrate/stage";
 import { Button } from "@/components/ui/Button";
 import { Icon, Sigil } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
@@ -62,6 +64,8 @@ import {
   capacityChosen,
   closeDayProminent,
   dayMomentsOf,
+  hhmmOf,
+  keptAtOf,
   laneTally,
   mergeSkew,
   momentText,
@@ -92,7 +96,8 @@ interface Props {
   /** Encounters ready, by name. */
   bosses: string[];
   /** The clock line under the board (LiveClock, the zone, the rules link). */
-  footer?: ReactNode;
+  /** The live clock line under the board: plain strings, so no server-made JSX crosses into this client tree. */
+  footClock?: { time: string; zone: string; tz: string };
 }
 
 interface Pending {
@@ -163,7 +168,7 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
  * and a Full day are Tier 1, once, after a tap, never on arrival. Every
  * number is the real one.
  */
-export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footer }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<Pending[]>([]);
@@ -483,6 +488,10 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
       // own clock, so a board left open across 04:00 is refused, not misbooked.
       () => completeTask(row.template.id, { day: row.day, minutes: opts.minutes ?? null, mvv: opts.mvv }, REFRESH),
       (v) => {
+        // The server's moments for this tick (a streak milestone, a habit
+        // rung, a finished goal): Seals and Ascensions only, since
+        // presentAll skips T1 and the board chimes its own.
+        presentAll(v.celebrations);
         if (v.duplicate) setNotice(`${row.template.title} was already recorded. Nothing is paid twice.`);
         else if (Math.abs(v.receipt.xp - shown.xp) > 0.05) {
           setNotice(`${row.template.title} paid ${fmtXp(v.receipt.xp)} XP, not ≈ ${fmtXp(shown.xp)}: its size or today's total changed since the board loaded.`);
@@ -506,7 +515,10 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
     setOpenKey(null);
     setDrawerMinutes(null);
     markTick(row, projectRow(current, row, { minutes }).xp, null);
-    dispatch(op, () => againTask(row.template.id, { minutes }, REFRESH), (v) => ({ instanceId: v.instanceId, receipt: v.receipt, slot: v.slot }));
+    dispatch(op, () => againTask(row.template.id, { minutes }, REFRESH), (v) => {
+      presentAll(v.celebrations);
+      return { instanceId: v.instanceId, receipt: v.receipt, slot: v.slot };
+    });
   }
 
   function undo(row: BoardRow) {
@@ -556,16 +568,21 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
 
   function progressGoal(goalId: string) {
     setBusyGoals(true);
-    dispatch(null, async () => {
-      try {
-        // A fresh key per tap: a tap that reaches the server twice counts once.
-        return await goalProgress(goalId, 1, { ...REFRESH, opId: freshKey() });
-      } finally {
-        // Cleared on every outcome, a thrown network error included, so the
-        // goal buttons never stay disabled until a reload.
-        setBusyGoals(false);
-      }
-    });
+    dispatch(
+      null,
+      async () => {
+        try {
+          // A fresh key per tap: a tap that reaches the server twice counts once.
+          return await goalProgress(goalId, 1, { ...REFRESH, opId: freshKey() });
+        } finally {
+          // Cleared on every outcome, a thrown network error included, so the
+          // goal buttons never stay disabled until a reload.
+          setBusyGoals(false);
+        }
+      },
+      // A finished goal is a Seal (Short, Mid) or an Ascension (Long).
+      (v) => presentAll(v.celebrations)
+    );
   }
 
   function setCapacity(minutes: number) {
@@ -795,9 +812,12 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
         : receiptRow.projection
     : null;
 
+  // "Kept today, 08:05.": the first deed's time, when the board holds it (a
+  // review or a new idea may have kept the day first; then no time is said).
+  const keptAt = keptToday ? keptAtOf(current) : null;
   const streakCaption: ReactNode = keptToday ? (
     <>
-      <b>Kept today.</b> Safe until 04:00.
+      <b>{keptAt ? `Kept today, ${hhmmOf(Date.parse(keptAt))}.` : "Kept today."}</b> Safe until 04:00.
     </>
   ) : streakNow > 0 ? (
     "Not kept yet. Any tick or review keeps it."
@@ -926,6 +946,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
               action={a.action}
               href={a.href}
               tone={a.tone}
+              clock={a.clock}
               onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
             />
           ))}
@@ -1019,7 +1040,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, foote
 
           <div className="foot-note o11">
             <p>Life XP and review points are two ledgers. They are never added together.</p>
-            {footer}
+            {footClock && <TodayFooter time={footClock.time} zone={footClock.zone} tz={footClock.tz} />}
           </div>
         </div>
       </div>

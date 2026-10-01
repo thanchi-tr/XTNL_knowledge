@@ -122,7 +122,10 @@ html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { trans
 .today-hero .t-meta.cur, .today-hero .due { white-space: normal; align-items: flex-start; }
 .today-hero .due { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-0); font-weight: 600; }
 .today-hero .hero-segs { margin: 14px 0 12px; }
-.today-hero .focus-line { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-1); margin: 12px 0 14px; flex-wrap: wrap; }
+.today-hero .focus-line { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-1); margin: 12px 0 14px; flex-wrap: wrap; min-width: 0; }
+/* The focus line wraps inside the card (never nowrap past it at 344/375). */
+.today-hero .focus-what { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.today-hero .focus-what > svg { flex: none; margin-top: 2px; }
 .today-hero .hero-segs + .focus-line { margin-top: 0; }
 .today-hero > .btn { margin-top: 14px; }
 .today-hero .focus-line + .btn { margin-top: 0; }
@@ -132,6 +135,9 @@ html[data-motion="calm"] :is(.seal .ring-lit, .seal .halo, .seal .flame) { trans
 .today-ask .txt { flex: 1; min-width: 0; }
 .today-ask .txt b { font-weight: 600; display: block; }
 .today-ask .txt span { font-size: 13px; line-height: 18px; color: var(--ink-2); }
+/* A time-bound Ask: the clock glyph, ink, before its detail (due is never a hue). */
+.today-ask .txt .ask-when { display: flex; gap: 5px; align-items: flex-start; }
+.today-ask .ask-when > svg { flex: none; margin-top: 2px; color: var(--ink-1); }
 
 /* ── Lanes ─────────────────────────────────────────────────────────────── */
 .today-lane { position: relative; min-width: 0; }
@@ -174,8 +180,9 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .t-row .r-acts { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: -2px 0 -4px; }
 .t-row .r-act { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 4px; border: 0; background: none; color: var(--ink-0); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; }
 .t-row .r-act:disabled { opacity: .45; }
-.t-row .tick[data-skipped="1"] .ring { border-style: dashed; }
-.t-row[data-state="locked"] .tick .ring { border-style: dotted; }
+/* The kit Tick's circle is .tick-ring (never the bare .ring: that is Tailwind's ring utility). */
+.t-row .tick[data-skipped="1"] .tick-ring { border-style: dashed; }
+.t-row[data-state="locked"] .tick .tick-ring { border-style: dotted; }
 
 /* ── The drawer: everything a row does besides the tick ───────────────── */
 .today-drawer { margin: 0 8px 12px 50px; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
@@ -196,6 +203,8 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-drawer-note { margin-top: 6px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
 .today-input { flex: 1 1 200px; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line-ctl); background: var(--sunken); color: var(--ink-0); font: 400 15px/1.3 var(--font-ui); }
 .today-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* 16 px on phones so the browser never zooms in (base.css's rule loses to this layer). */
+@media (max-width: 599px) { .today-input { font-size: 16px; } }
 .today-size { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-1); font-size: 13px; line-height: 18px; color: var(--ink-2); }
 .today-size-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
 .today-size dl { margin: 8px 0; }
@@ -244,6 +253,8 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 
 .today-board .foot-note { font-size: 12px; line-height: 16px; color: var(--ink-2); text-align: center; padding: 4px 0 8px; display: grid; gap: 4px; }
 .today-board .foot-note a { color: var(--ink-1); }
+/* The rules link is a 40 px target inside a 12 px line. */
+.today-board .foot-note .foot-link { display: inline-flex; align-items: center; min-height: 40px; padding: 0 4px; text-decoration: underline; text-underline-offset: 3px; }
 
 /* ── Sheets the board opens (portalled; styled by their own classes) ──── */
 .today-inbox { list-style: none; margin: 0; padding: 0; }
@@ -330,18 +341,11 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .wr-tr b { font-weight: 600; }
 .wr-spacer { flex: 1; min-height: 16px; }
 .wr-nav { display: flex; gap: 8px; }
-.wr-nav .grow { flex: 1; }
+.wr-nav .wr-grow { flex: 1; }
 .weekcard { padding: 18px; text-align: center; position: relative; overflow: hidden; }
 .weekcard .medal { margin: 0 auto 10px; }
 .weekcard h2 { font: 600 30px/34px var(--font-display); margin: 6px 0 0; }
 .weekcard .kw { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .weekcard .what { text-align: left; }
 
-/* RETIRED class names, kept only as text for scripts/life-day-check.ts, which
-   reads globals.css's prefers-reduced-motion block by name and checks each
-   class still appears here: .today-tick-ring and .today-tick-check (the kit's
-   Tick), .today-bar-fill (the kit's Meter), .today-sheet (ui/Sheet),
-   .today-toast (the ToastDock). .today-row-title is still live (the row's
-   title). The lead drops that assertion and the globals.css block together
-   (L0 handoff); motion now follows html[data-motion]. */
 }

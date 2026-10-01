@@ -14,8 +14,9 @@ import { BOON_META } from "@/lib/boon-meta";
 import { DEBUFF_META } from "@/lib/debuff-meta";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { questTargetOf } from "@/lib/review-facts";
+import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { WorkspaceView, type WorkspaceField } from "@/components/workspace/WorkspaceView";
-import type { LoadoutSummary, PenaltySummary, RecentIdea } from "@/components/workspace/ReviewHub";
+import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
 import { loadLastSeen, loadReviewDay } from "./review-data";
 
 // Due-ness changes by the second (dueDate <= now) — never let this be
@@ -37,9 +38,10 @@ function daysLabel(days: number): string {
  *
  * One wave of reads, every one cached and shared with the pages that need
  * the same rows: the Field tree, the Boss roster, today's ledger counts (the
- * quest and whether the day is kept), progression (the combo's ceiling and
- * the loadout line), the daily streak and each Idea's last review. The
- * answer side of an Idea never leaves this file: the client gets questions.
+ * quest and whether the day is kept), progression (the combo's ceiling, the
+ * loadout strip and what is in effect on a review), the daily streak and
+ * each Idea's last review. The answer side of an Idea never leaves this
+ * file: the client gets questions.
  */
 export default async function ReviewPage() {
   const now = new Date();
@@ -104,29 +106,31 @@ export default async function ReviewPage() {
   const quest = { done: day.reviews, target: questTargetOf(day.dayOpenQty, day.reviews, totalDue) };
 
   const m = progression.modifiers;
-  const loadout: LoadoutSummary | null =
-    progression.ownedCodes.length === 0 && progression.boons.length === 0
-      ? null
-      : {
-          equipped: progression.loadout.filter(Boolean).length,
-          slots: progression.loadout.length,
-          lines: describeModifiers(m)
-            .slice(0, 3)
-            .map((l) => `${l.label} ${l.value}`),
-          boons: progression.boons.map((b) => ({
-            label: BOON_META[b.kind].label,
-            effect: BOON_META[b.kind].effectText(b.magnitude),
-            until: b.expiresAt,
-          })),
-        };
+  // L4's one loadout strip (mini coins, "7 of 10"), from the progression this page already read.
+  // Like LoadoutStripSlot, it shows nothing until the first emblem is owned.
+  const loadoutStrip =
+    progression.ownedCodes.length > 0 ? (
+      <LoadoutStrip slots={progression.loadout.map((e, slot) => ({ slot, skill: e?.skill ?? null, active: e?.active ?? false }))} />
+    ) : null;
 
-  const penalties: PenaltySummary[] = progression.debuffs.map((d) => ({
-    kind: d.kind,
-    label: DEBUFF_META[d.kind].label,
-    effect: DEBUFF_META[d.kind].effectText(d.magnitude),
-    clears: DEBUFF_META[d.kind].clears,
-    until: d.expiresAt,
-  }));
+  const effects: ReviewEffects = {
+    lines: describeModifiers(m)
+      .slice(0, 3)
+      .map((l) => `${l.label} ${l.value}`),
+    boons: progression.boons.map((b) => ({
+      kind: b.kind,
+      label: BOON_META[b.kind].label,
+      effect: BOON_META[b.kind].effectText(b.magnitude),
+      until: b.expiresAt,
+    })),
+    penalties: progression.debuffs.map((d) => ({
+      kind: d.kind,
+      label: DEBUFF_META[d.kind].label,
+      effect: DEBUFF_META[d.kind].effectText(d.magnitude),
+      clears: DEBUFF_META[d.kind].clears,
+      until: d.expiresAt,
+    })),
+  };
 
   const byId = new Map(allIdeas.map((x) => [x.idea.id, x]));
   const recent: RecentIdea[] = lastSeen.recent
@@ -157,8 +161,8 @@ export default async function ReviewPage() {
       today={today}
       dayKept={streak.last7Days[streak.last7Days.length - 1] === true}
       dayStreak={streak.current}
-      loadout={loadout}
-      penalties={penalties}
+      loadoutStrip={loadoutStrip}
+      effects={effects}
       recent={recent}
     />
   );

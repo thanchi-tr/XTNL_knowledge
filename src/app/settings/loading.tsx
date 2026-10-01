@@ -1,9 +1,9 @@
 import { Skeleton, SkeletonCard } from "@/components/ui/Tabs";
 
-/** Static blocks at Settings' geometry (three section cards); no shimmer. */
+/** Static blocks at Settings' geometry (three section cards); no shimmer. Inside layout.tsx (the page and the You tabs). */
 export default function Loading() {
   return (
-    <div className="page" aria-busy="true">
+    <div aria-busy="true">
       <span className="sr-only">Loading settings</span>
       <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
         <Skeleton w={96} h={12} />

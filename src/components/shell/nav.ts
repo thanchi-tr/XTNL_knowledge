@@ -125,12 +125,37 @@ export interface TopTitle {
   title: string;
 }
 
-/** The top bar's default title for a path. `dayKey` is the life day (life-day.ts todayKey). */
+/**
+ * The /dev/style pages' own titles (each lane's fixture route). Static titles
+ * live here rather than in a page's <ShellTitle/>, so the server-rendered top
+ * bar is already right on first paint and nothing swaps after hydration.
+ */
+export const DEV_STYLE_PAGES: readonly SubPage[] = [
+  { href: "/dev/style", label: "Style" },
+  { href: "/dev/style/today", label: "Today fixtures" },
+  { href: "/dev/style/review", label: "Review fixtures" },
+  { href: "/dev/style/celebrate", label: "Celebrations" },
+  { href: "/dev/style/art", label: "Art" },
+  { href: "/dev/style/settings", label: "Settings fixtures" },
+];
+
+/**
+ * The top bar's default title for a path. `dayKey` is the life day (life-day.ts todayKey).
+ * A page overrides it with <ShellTitle/> only for data-driven titles; any
+ * title known from the path belongs here (an override paints one title on the
+ * server and swaps to another after hydration).
+ */
 export function titleFor(pathname: string | null | undefined, dayKey?: string): TopTitle {
   const path = pathname ?? "/";
-  if (under(path, "/dev/style")) return { eyebrow: "Dev", title: "Style" };
+  if (under(path, "/dev/style")) {
+    let best: SubPage | null = null;
+    for (const p of DEV_STYLE_PAGES) if (under(path, p.href) && (!best || p.href.length > best.href.length)) best = p;
+    return { eyebrow: "Dev · Style", title: best?.label ?? "Style" };
+  }
   if (path === "/today" && dayKey) return { eyebrow: "Today", title: longDate(dayKey) };
   if (under(path, "/library") && path !== "/library") return { eyebrow: "Study", title: "Idea" };
+  // The sheet's title is the character, as the mockup names it (its tab is "Sheet").
+  if (path === "/you") return { eyebrow: "You", title: "Character" };
   const id = sectionOf(path);
   if (!id) return { eyebrow: null, title: "XTNL" };
   const section = sectionById(id);

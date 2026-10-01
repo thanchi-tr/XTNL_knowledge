@@ -6,12 +6,12 @@
  * runner is interactive: answer, Next and the keys all work, against canned
  * results instead of the server.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { BoonKind } from "@/lib/boon-meta";
 import { TabLinks } from "@/components/ui/Tabs";
 import { BossPanel } from "@/components/workspace/BossPanel";
 import { BossResult } from "@/components/workspace/BossResult";
-import { LoadoutStrip, PenaltyCard, RecentIdeas } from "@/components/workspace/ReviewHub";
+import { EffectsCard, RecentIdeas } from "@/components/workspace/ReviewHub";
 import { ReviewRunner, type RunPhase } from "@/components/workspace/ReviewRunner";
 import { SessionComplete } from "@/components/workspace/SessionComplete";
 import { ALL_FIELDS, SessionSummary } from "@/components/workspace/SessionSummary";
@@ -55,7 +55,7 @@ function start(state: FixtureState): { index: number; answered: number; phase: "
   }
 }
 
-export function ReviewFixtures({ state, data }: { state: FixtureState; data: ReviewFixtureData }) {
+export function ReviewFixtures({ state, data, loadoutStrip }: { state: FixtureState; data: ReviewFixtureData; loadoutStrip: ReactNode }) {
   const s = start(state);
   const all = data.results;
   const [index, setIndex] = useState(s.index);
@@ -92,8 +92,8 @@ export function ReviewFixtures({ state, data }: { state: FixtureState; data: Rev
                 scheduledCount={412}
                 upcoming={{ label: "tomorrow", count: 9 }}
               />
-              <LoadoutStrip loadout={data.loadout} />
-              <PenaltyCard penalties={data.penalties} />
+              {loadoutStrip}
+              <EffectsCard effects={data.effects} />
             </div>
             <div className="rv-col">
               <BossPanel bosses={data.bosses} onChallenge={() => undefined} onChooseBoon={() => undefined} pendingFieldId={null} error={null} />

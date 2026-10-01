@@ -65,22 +65,23 @@
 }
 
 /* ── Stage 2: shockwave ──────────────────────────────────
-   A single thin ring that outruns the others and thins as it goes, so the
-   burst reads as having a leading edge. */
+   A single thin ring that outruns the others and fades as it goes, so the
+   burst reads as having a leading edge. A fixed 1px border carried by the
+   scale (transform and opacity only; it used to animate border-width). */
 .equip-shock {
   width: 10px;
   height: 10px;
   margin: -5px 0 0 -5px;
   border-radius: 50%;
-  border: 2px solid var(--pulse-color);
+  border: 1px solid var(--pulse-color);
   opacity: 0;
   animation: equip-shock calc(var(--pulse-dur, 900ms) * 1.25) cubic-bezier(.1, .7, .25, 1) both;
 }
 
 @keyframes equip-shock {
-  0%   { opacity: .85; transform: scale(.4); border-width: 2px; }
+  0%   { opacity: .85; transform: scale(.4); }
   70%  { opacity: .25; }
-  100% { opacity: 0; transform: scale(calc(4 * var(--pulse-reach, 2))); border-width: .5px; }
+  100% { opacity: 0; transform: scale(calc(4 * var(--pulse-reach, 2))); }
 }
 
 /* ── Stage 3: beam ───────────────────────────────────────

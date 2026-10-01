@@ -291,6 +291,36 @@ export function sealsOf(result: SubmitReviewResult | null): CelebrationEvent[] {
   return (result?.celebrations ?? []).filter((e) => e.tier === 2);
 }
 
+/**
+ * Where an answer's (or a verdict's) event goes. T2 and T3 go to the queue (a
+ * T2 merges into the open run, a T3 waits for it to close). T0 and T1 are
+ * ignored: the run already plays its own in place — the runner chimes "Today
+ * kept" from `streakSecured` and the recap chimes the quest and the fields —
+ * so chiming the detector's copy too would play the same beat twice.
+ */
+export function celebrationRoute(ev: Pick<CelebrationEvent, "tier">): "enqueue" | "ignore" {
+  return ev.tier >= 2 ? "enqueue" : "ignore";
+}
+
+/**
+ * The day-kept streak to print ("Day 24 kept"): the detector's figure when its
+ * T1 came back with this result (the after-snapshot's own count), else the
+ * hub's estimate (the streak before today, plus one), else null ("Today kept").
+ */
+export function keptStreakOf(result: Pick<SubmitReviewResult, "celebrations"> | null, fallback: number | null): number | null {
+  const ev = result?.celebrations.find((e) => e.kind === "day-kept");
+  const to = ev?.facts.numeral?.to;
+  return typeof to === "number" && to > 0 ? to : fallback;
+}
+
+/** The recap's "Day kept" row: shown when this session kept the day (its first deed), with the streak it reached. */
+export function dayKeptOf(results: readonly CardResult[], fallback: number | null): { streak: number | null } | null {
+  const kept = results.some((r) => r.result.streakSecured || r.result.celebrations.some((e) => e.kind === "day-kept"));
+  if (!kept) return null;
+  const counted = results.find((r) => r.result.celebrations.some((e) => e.kind === "day-kept"));
+  return { streak: keptStreakOf(counted?.result ?? null, fallback) };
+}
+
 const f2 = (v: number) => v.toFixed(2);
 
 /** "2.36 base × 1.15 combo × 1.20 yield + 25.00 mastery = 29.07": every factor that was paid, nothing else. */

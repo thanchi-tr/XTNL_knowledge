@@ -59,9 +59,10 @@
   --bar:#f3efe6; --scrim:rgba(30,26,18,.38); --face:#0d1017;
   --ink-0:#17191f; --ink-1:#3a404d; --ink-2:#595f6e /* 6.28 card, 5.00 sunken */; --ink-mute:#777d8a;
   --line-1:rgba(40,32,16,.08); --line-2:rgba(40,32,16,.14); --line-ctl:#7f7868 /* 4.31 card, 3.43 sunken */; --hi:rgba(255,255,255,.7);
-  --kept:#196b3d; --on-kept:#fff; --owed:#9c2f6b /* 6.81 */; --on-owed:#fff; --held:#0e6480; --on-held:#fff;
+  /* signal text ≥ 4.5 on its own chip wash (12% / 12% / 11%) over every surface, sunken included: kept 5.07, owed 4.53, held 5.13 */
+  --kept:#155f36; --on-kept:#fff; --owed:#9c2f6b /* 6.81 */; --on-owed:#fff; --held:#0c5a73; --on-held:#fff;
   --xp:#a33d00 /* 6.41 */; --on-xp:#fff; --pts:#3450c2 /* 6.72 */; --on-pts:#fff; --mp:#b47308 /* 3.83, glyph only */; --on-mp:#1f1500;
-  --light:#b8801f; --light-glow:rgba(184,128,31,.22); --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
+  --light:#a87419 /* a mark: ≥ 3 on every surface, 3.17 sunken */; --light-glow:rgba(168,116,25,.22); --shadow-pop:0 16px 40px -14px rgba(40,30,10,.35);
 }
 
 /* type, space, radius, motion, layers (theme-independent) */
@@ -89,18 +90,11 @@ html[data-motion="calm"], html[data-motion="still"], html[data-power="save"] { -
 html[data-motion="still"] *, html[data-motion="still"] *::before, html[data-motion="still"] *::after { animation:none !important; transition:none !important; }
 
 /* ===== LEGACY ALIASES (PR 1; delete each when `grep var(--name)` reaches 0) =====
-   Declared on .theme-night too, so an alias inside the curtain follows Night. */
+   Declared on .theme-night too, so an alias inside the curtain follows Night.
+   Only the --rank-* literals are left. Gone at 0 uses: --ink-3 --line --green --green-10 --nav-h --base --sub --lift --line-hi --line-act
+   --green-hi --green-06 --red --red-10 --blue --blue-10 --amber --amber-10
+   --background --foreground --shadow-sm/md/lg (shell-check keeps them gone). */
 :root, .theme-night {
-  --base:var(--page); --sub:var(--sunken); --lift:var(--overlay);
-  --ink-3:var(--ink-2);       /* 141 TSX + 18 CSS text uses: 1.64:1 → 7.21:1 on card, 6.20 on overlay */
-  --line:var(--line-1); --line-hi:var(--line-2); --line-act:var(--line-ctl);
-  --green:var(--kept); --green-hi:var(--kept); --green-10:color-mix(in srgb,var(--kept) 10%,transparent); --green-06:color-mix(in srgb,var(--kept) 6%,transparent);
-  --red:var(--owed); --red-10:color-mix(in srgb,var(--owed) 10%,transparent);
-  --blue:var(--held); --blue-10:color-mix(in srgb,var(--held) 10%,transparent);
-  --amber:var(--ink-0); --amber-10:color-mix(in srgb,var(--ink-0) 8%,transparent);  /* due → ink; each Apex use → gold material (codemod) */
-  --nav-h:var(--topbar-h); --background:var(--page); --foreground:var(--ink-0);
-  /* Old elevation scale: only overlays cast shadows now, so all three are the pop shadow. */
-  --shadow-sm:var(--shadow-pop); --shadow-md:var(--shadow-pop); --shadow-lg:var(--shadow-pop);
   /* --rank-* keep their values: SkillLogo mirrors them in RANK_META */
   --rank-pure:#5a7490; --rank-synergy:#4d9cf5; --rank-capstone:#9b6bff; --rank-apex:#f0a030; --rank-ultimate:#ff5eb0;
   --rank-pure-10:rgba(90,116,144,.10); --rank-synergy-10:rgba(77,156,245,.10); --rank-capstone-10:rgba(155,107,255,.12);

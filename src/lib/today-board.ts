@@ -1435,3 +1435,48 @@ export function boardClock(now: Date, tz: string = LIFE_TZ): { date: string; tim
     return { date: shortDate(dayKeyOf(now, tz)), time: "", zone: "", tz, lateNight: false };
   }
 }
+
+// ── Moments around a board write (actions/tasks.ts) ───────────────────────
+
+/** The `{ok, value} | {ok, error}` every board write returns (tasks.ts LifeResult). */
+export type WriteResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * L3's detectors around one board write: a snapshot before, the write, a
+ * snapshot after taken the same way, and the diff, returned with the write's
+ * own value as `celebrations` (streak milestones, habit rungs, finished
+ * goals; the board presents the T2/T3s and chimes its T1s itself).
+ *
+ * Decoration only, so it can never cost the write:
+ *   - a refused write, or one that changed nothing (`changed` false: a double
+ *     tap's stored answer), takes no second snapshot and returns no moments;
+ *   - a snapshot or a diff that fails (throws, or has no before) is no moments;
+ *   - the write itself runs exactly once, after the before snapshot settles,
+ *     so the before never sees the write.
+ * Injected so it stays pure: tasks.ts passes captureSnapshot and
+ * detectCelebrations, scripts/today-ui-check.ts passes fakes.
+ */
+export async function withMoments<T, S, E>(deps: {
+  snapshot: () => Promise<S>;
+  detect: (before: S, after: S) => Promise<E[]>;
+  write: () => Promise<WriteResult<T>>;
+  changed?: (value: T) => boolean;
+}): Promise<WriteResult<T & { celebrations: E[] }>> {
+  let before: S | null = null;
+  try {
+    before = await deps.snapshot();
+  } catch {
+    before = null;
+  }
+  const res = await deps.write();
+  if (!res.ok) return res;
+  let celebrations: E[] = [];
+  if (before !== null && (deps.changed?.(res.value) ?? true)) {
+    try {
+      celebrations = await deps.detect(before, await deps.snapshot());
+    } catch {
+      celebrations = [];
+    }
+  }
+  return { ok: true, value: { ...res.value, celebrations } };
+}

@@ -5,6 +5,9 @@ import { getCurrentUserId } from "@/lib/user";
 import type { CaptureSpan } from "@/lib/capture-parse";
 import type { DayKey } from "@/lib/life-day";
 import { applySizing } from "@/lib/life-sizing";
+import { captureSnapshot, detectCelebrations, type CaptureOptions } from "@/lib/celebrations";
+import type { CelebrationEvent } from "@/lib/celebration-types";
+import { withMoments } from "@/lib/today-board";
 import { createFromCapture, type CapturedItem } from "./capture";
 import {
   againCore,
@@ -38,6 +41,12 @@ import {
  * what its optimistic state reconciles against. Callers elsewhere (the
  * capture toast on /review, say) leave it off so a review session is never
  * re-rendered under the player.
+ *
+ * The writes that can move a streak, a habit rung or a goal (completeTask,
+ * againTask, goalProgress) also return L3's moments as `celebrations`: a
+ * snapshot before and after with the same scope, diffed by
+ * detectCelebrations (redesign.md › Rewards). The board presents the
+ * T2/T3s; it chimes its own T1s, so it ignores the returned ones.
  */
 
 export type TaskActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -56,6 +65,29 @@ async function run<T>(label: string, opts: TaskActionOptions | undefined, fn: (u
     console.error(`${label} failed:`, err);
     return { ok: false, error: "Couldn't save that. Try again." };
   }
+}
+
+/** A write's value plus L3's moments for it (T1s the board ignores: it chimes its own). */
+export type WithCelebrations<T> = T & { celebrations: CelebrationEvent[] };
+
+/**
+ * L3's detectors around one write (today-board.ts withMoments): the snapshot
+ * before, the write, the snapshot after with the same options, the diff.
+ * Never fails the write; a refused or repeated write takes no second snapshot.
+ */
+function aroundTick<T>(
+  userId: string,
+  snap: CaptureOptions,
+  write: () => Promise<LifeResult<T>>,
+  changed?: (value: T) => boolean
+): Promise<LifeResult<WithCelebrations<T>>> {
+  return withMoments({
+    // Each snapshot reads at its own instant (captureSnapshot's default); both with the same scope.
+    snapshot: () => captureSnapshot(userId, snap),
+    detect: (before, after) => detectCelebrations(before, after, { cause: "tick" }),
+    write,
+    changed,
+  });
 }
 
 const isId = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 64;
@@ -94,17 +126,31 @@ export interface CompleteTaskInput {
   mvv?: boolean;
 }
 
-/** Ticks a task: today, or yesterday inside the record window. Pays exactly the projected price; a double tap pays once. */
-export async function completeTask(templateId: string, input?: CompleteTaskInput, opts?: TaskActionOptions): Promise<TaskActionResult<Completion>> {
+/**
+ * Ticks a task: today, or yesterday inside the record window. Pays exactly
+ * the projected price; a double tap pays once. Returns L3's moments for the
+ * tick (a streak milestone, a habit rung, a finished goal) as `celebrations`.
+ */
+export async function completeTask(
+  templateId: string,
+  input?: CompleteTaskInput,
+  opts?: TaskActionOptions
+): Promise<TaskActionResult<WithCelebrations<Completion>>> {
   if (!isId(templateId)) return noId();
   const day = input?.day;
   const cleanDay = day === "yesterday" || day === "today" || (typeof day === "string" && DAY_KEY_RE.test(day)) ? day : "today";
   return run("completeTask", opts, (userId) =>
-    completeInstanceCore(userId, templateId, {
-      day: cleanDay,
-      minutes: typeof input?.minutes === "number" ? input.minutes : null,
-      mvv: input?.mvv === true,
-    })
+    aroundTick(
+      userId,
+      { scope: "tick", templateIds: [templateId] },
+      () =>
+        completeInstanceCore(userId, templateId, {
+          day: cleanDay,
+          minutes: typeof input?.minutes === "number" ? input.minutes : null,
+          mvv: input?.mvv === true,
+        }),
+      (v) => !v.duplicate
+    )
   );
 }
 
@@ -126,14 +172,24 @@ export async function skipTask(templateId: string, opts?: TaskActionOptions): Pr
   return run("skipTask", opts, (userId) => skipCore(userId, templateId));
 }
 
-/** The same habit once more today. */
-export async function againTask(templateId: string, input?: Pick<CompleteTaskInput, "minutes" | "mvv">, opts?: TaskActionOptions): Promise<TaskActionResult<Completion>> {
+/** The same habit once more today. Returns its moments as `celebrations`, like completeTask. */
+export async function againTask(
+  templateId: string,
+  input?: Pick<CompleteTaskInput, "minutes" | "mvv">,
+  opts?: TaskActionOptions
+): Promise<TaskActionResult<WithCelebrations<Completion>>> {
   if (!isId(templateId)) return noId();
   return run("againTask", opts, (userId) =>
-    againCore(userId, templateId, {
-      minutes: typeof input?.minutes === "number" ? input.minutes : null,
-      mvv: input?.mvv === true,
-    })
+    aroundTick(
+      userId,
+      { scope: "tick", templateIds: [templateId] },
+      () =>
+        againCore(userId, templateId, {
+          minutes: typeof input?.minutes === "number" ? input.minutes : null,
+          mvv: input?.mvv === true,
+        }),
+      (v) => !v.duplicate
+    )
   );
 }
 
@@ -176,18 +232,25 @@ export async function clarifyInbox(
   return run("clarifyInbox", opts, (userId) => clarifyInboxCore(userId, templateId, choice, isId(parentId) ? parentId : null));
 }
 
+/** A goal's '+1' moves the streak and the goals; there is no habit rung, so the habits read is skipped. */
+const GOAL_PARTS = ["streak", "goals"] as const;
+
 /**
  * '+1' (or +n) on a goal measured by hand. Progress only goes up. Pass a
  * fresh `opId` per tap: a tap that reaches the server twice then counts once.
+ * It counts for the streak, so its moments are the streak's and the goals'
+ * (a finished goal), returned as `celebrations`.
  */
 export async function goalProgress(
   templateId: string,
   qty?: number,
   opts?: TaskActionOptions & { opId?: string }
-): Promise<TaskActionResult<{ qty: number }>> {
+): Promise<TaskActionResult<WithCelebrations<{ qty: number }>>> {
   if (!isId(templateId)) return noId();
   const opId = typeof opts?.opId === "string" ? opts.opId : null;
-  return run("goalProgress", opts, (userId) => goalProgressCore(userId, templateId, typeof qty === "number" ? qty : 1, new Date(), opId));
+  return run("goalProgress", opts, (userId) =>
+    aroundTick(userId, { scope: GOAL_PARTS }, () => goalProgressCore(userId, templateId, typeof qty === "number" ? qty : 1, new Date(), opId))
+  );
 }
 
 /** Renames a task; its grade and repeat-decay group stay. */

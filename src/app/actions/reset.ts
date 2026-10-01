@@ -5,7 +5,8 @@ import { getCurrentUserId } from "@/lib/user";
 import { invalidateAll } from "@/lib/cache";
 import { domainLevel, fieldLevel } from "@/lib/xp";
 import { KNOWLEDGE_SOURCES } from "@/lib/activity";
-import { RESET_SCOPES, type ResetScope, type ResetResult } from "@/lib/reset-scopes";
+import type { ResetScope, ResetResult } from "@/lib/reset-scopes";
+import { confirmsPhrase, resetSpecOf } from "@/components/settings/settings-model";
 
 /**
  * Destructive resets.
@@ -49,15 +50,17 @@ async function deleteLifeRows(userId: string): Promise<Record<string, number>> {
 /**
  * Wipes part of this knowledge base, or the life system beside it.
  *
- * `confirmation` must equal the scope's phrase exactly.
+ * `confirmation` is what the person typed (DangerZone sends the field's text,
+ * never the phrase itself). Trimmed, it must equal the scope's phrase exactly,
+ * capitals included: this comparison is the gate, not the client's button.
  */
 export async function resetKnowledgeBase(scope: ResetScope, confirmation: string): Promise<ResetResult> {
-  const spec = RESET_SCOPES[scope];
+  const spec = resetSpecOf(scope);
   if (!spec) {
     return { ok: false, error: "Unknown reset scope." };
   }
-  if (confirmation.trim() !== spec.phrase) {
-    return { ok: false, error: `Type ${spec.phrase} exactly to confirm.` };
+  if (!confirmsPhrase(spec.phrase, confirmation)) {
+    return { ok: false, error: `Type ${spec.phrase} exactly, in capitals, to confirm.` };
   }
 
   const userId = getCurrentUserId();

@@ -9,10 +9,11 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { runInNewContext } from "node:vm";
-import { SECTIONS, activeSub, longDate, sectionOf, titleFor } from "../src/components/shell/nav";
+import { DEV_STYLE_PAGES, SECTIONS, activeSub, longDate, sectionOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
-import { asksFromNotices, characterLevelOf, levelCaption, toneOf } from "../src/components/shell/shell-types";
+import { EFFECTS_GROUP, askCount, asksFromNotices, asksOfYou, characterLevelOf, levelCaption, toneOf } from "../src/components/shell/shell-types";
+import type { Notice } from "../src/lib/notifications";
 import {
   KIND_TIER,
   T0_KINDS,
@@ -34,7 +35,11 @@ import {
   medallionMaterial,
 } from "../src/lib/materials";
 import { hashSeed, motionLevel, play, seededRandom } from "../src/lib/motion";
-import { closeRun, enqueue, nextIndex, openRun, queueState, registerPresenter } from "../src/lib/celebrate";
+import { chime, closeRun, enqueue, hasChimed, nextIndex, openRun, queueState, registerPresenter, subscribeLog } from "../src/lib/celebrate";
+import { buttonClass } from "../src/components/ui/Button";
+import { TEXT_FLOOR_PX, crestNumeralUnits } from "../src/components/ui/Crest";
+import { phraseMatches } from "../src/components/ui/TypedConfirm";
+import { compile } from "tailwindcss";
 import { approx, formatAmount, formatMultiplier, formatNumber, formatPercent } from "../src/components/ui/format";
 import { divergingBar, factorMoved, receiptTotal } from "../src/components/ui/receipt-math";
 import { fieldLevel } from "../src/lib/xp";
@@ -49,6 +54,17 @@ function check(name: string, ok: boolean, detail = "") {
     failed++;
     console.log(`FAIL ${name}${detail ? ` — ${detail}` : ""}`);
   }
+}
+/**
+ * A check over other lanes' files: a known problem already handed off (key →
+ * the handoff) is a WARN until that lane lands it; anything else fails. A
+ * pending key that no longer occurs is reported so it can be deleted here.
+ */
+function checkPending(name: string, problems: string[], pending: Record<string, string>) {
+  const fresh = problems.filter((p) => !(p in pending));
+  check(name, fresh.length === 0, fresh.join("; "));
+  for (const p of problems.filter((q) => q in pending)) console.log(`WARN ${name} — ${p} (handed off: ${pending[p]})`);
+  for (const k of Object.keys(pending).filter((q) => !problems.includes(q))) console.log(`NOTE ${name} — "${k}" is fixed; delete it from the pending list`);
 }
 const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
@@ -74,8 +90,45 @@ eq("nav: /today title is the date", titleFor("/today", "2026-10-01"), { eyebrow:
 eq("nav: /today/rules title", titleFor("/today/rules"), { eyebrow: "Today", title: "How a day is judged" });
 eq("nav: /add title", titleFor("/add"), { eyebrow: "Study", title: "New idea" });
 eq("nav: /library/[id] title", titleFor("/library/xyz"), { eyebrow: "Study", title: "Idea" });
-eq("nav: /dev/style title", titleFor("/dev/style"), { eyebrow: "Dev", title: "Style" });
+eq("nav: /dev/style title", titleFor("/dev/style"), { eyebrow: "Dev · Style", title: "Style" });
+eq("nav: each /dev/style fixture route has its own title (no ShellTitle swap)", ["/dev/style/today", "/dev/style/review", "/dev/style/celebrate", "/dev/style/art/ladder", "/dev/style/settings"].map((p) => titleFor(p).title), [
+  "Today fixtures",
+  "Review fixtures",
+  "Celebrations",
+  "Art",
+  "Settings fixtures",
+]);
+eq("nav: /you is the Character sheet on first paint (the server-rendered title)", titleFor("/you"), { eyebrow: "You", title: "Character" });
+eq("nav: /you/loadout keeps its sub-page title", titleFor("/you/loadout"), { eyebrow: "You", title: "Loadout" });
 eq("nav: unknown path", titleFor("/nowhere"), { eyebrow: null, title: "XTNL" });
+check(
+  "nav: every /dev/style page in the strip exists",
+  DEV_STYLE_PAGES.every((p) => existsSync(join(ROOT, "src/app", p.href, "page.tsx"))),
+  DEV_STYLE_PAGES.filter((p) => !existsSync(join(ROOT, "src/app", p.href, "page.tsx"))).map((p) => p.href).join(", ")
+);
+{
+  // A static title known from the path belongs in titleFor: a <ShellTitle/> with
+  // only literal props paints one title on the server and swaps after hydration.
+  const pages: string[] = [];
+  const walkTsx = (d: string) => {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walkTsx(p);
+      else if (f.endsWith(".tsx")) pages.push(p);
+    }
+  };
+  walkTsx(join(ROOT, "src"));
+  const swaps = pages.flatMap((f) =>
+    [...readFileSync(f, "utf8").matchAll(/<ShellTitle\s+eyebrow="([^"]*)"\s+title="([^"]*)"\s*\/>/g)].map((m) => [relative(ROOT, f), m[1], m[2]] as const)
+  );
+  const mismatched = swaps.filter(([file, eyebrow, title]) => {
+    const route = "/" + file.split("\\").join("/").replace(/^src\/app\//, "").replace(/\/?page\.tsx$/, "");
+    if (!file.split("\\").join("/").startsWith("src/app/")) return false; // a component; its route is unknown here
+    const want = titleFor(route === "/" ? "/" : route);
+    return want.eyebrow !== eyebrow || want.title !== title;
+  });
+  check("nav: no page overrides the top bar with a literal title titleFor does not already give", mismatched.length === 0, mismatched.map((m) => m.join(" ")).join("; "));
+}
 {
   const all = SECTIONS.flatMap((s) => s.subs.map((x) => x.href));
   check("nav: every sub-page href is unique", new Set(all).size === all.length, all.join(" "));
@@ -234,15 +287,38 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   eq("caption: next level inside the band", levelCaption({ level: 16, progress: 0.5, nextTitle: "Scholar", nextTitleAt: 21 }), "50% to level 17");
   eq("caption: never 100% before the level lands", levelCaption({ level: 3, progress: 0.9999, nextTitle: null, nextTitleAt: null }), "99% to level 4");
   eq("caption: no data, no caption", levelCaption({ level: null, progress: null, nextTitle: null, nextTitleAt: null }), null);
-  eq("asks: tones (penalty owed, boon held, due ink, good kept)", [
-    toneOf({ group: "Due", tone: "bad" }),
-    toneOf({ group: "Active effects", tone: "good" }),
+  // Colour grammar: owed only for a penalty in effect, held for a boon, kept only
+  // for the quota met; past grace, the focus line and a ready encounter are ink.
+  eq("asks: tones (debuff owed, boon held, past grace ink, warn ink, encounter ink, focus ink, quota met kept, info quiet)", [
     toneOf({ group: "Active effects", tone: "bad" }),
+    toneOf({ group: "Active effects", tone: "good" }),
+    toneOf({ id: "overdue", group: "Due", tone: "bad" }),
     toneOf({ group: "Due", tone: "warn" }),
-    toneOf({ group: "Challenges", tone: "good" }),
+    toneOf({ id: "bosses", group: "Challenges", tone: "good" }),
+    toneOf({ id: "focus", group: "Due", tone: "good" }),
+    toneOf({ id: "quota-met", group: "Due", tone: "good" }),
     toneOf({ group: "Due", tone: "info" }),
-  ], ["owed", "held", "owed", "ask", "kept", "quiet"]);
-  eq("asks: rows keep the feed's order and action", asksFromNotices([{ id: "due", group: "Due", tone: "info", title: "3 cards due", detail: "Ready.", href: "/review", action: "Review" }]).map((a) => [a.id, a.action, a.href]), [["due", "Review", "/review"]]);
+  ], ["owed", "held", "ask", "ask", "ask", "ask", "kept", "quiet"]);
+  const n = (id: string, group: "Due" | "Challenges" | "Active effects", tone: "good" | "warn" | "bad" | "info"): Notice => ({ id, group, tone, title: id, detail: "", href: `/${id}`, action: "Go" });
+  const feed: Notice[] = [
+    n("boon-x", "Active effects", "good"),
+    n("due", "Due", "info"),
+    n("overdue", "Due", "bad"),
+    n("focus", "Due", "good"),
+    n("quota", "Due", "warn"),
+    n("quota-met", "Due", "good"),
+    n("bosses", "Challenges", "good"),
+    n("debuff-y", "Active effects", "bad"),
+  ];
+  const rows = asksFromNotices(feed);
+  eq("asks: the sheet lists what asks (feed order), then the effects in play; info and good news stay on Today", rows.map((a) => a.id), ["overdue", "quota", "bosses", "boon-x", "debuff-y"]);
+  eq("asks: the bell counts exactly the rows that ask (never an effect)", askCount(rows), rows.filter((a) => a.group !== EFFECTS_GROUP).length);
+  eq("asks: 3 asking rows → a count of 3", askCount(rows), 3);
+  check("asks: asksOfYou never counts an effect, even a debuff", !asksOfYou(n("debuff-y", "Active effects", "bad")) && asksOfYou(n("bosses", "Challenges", "good")));
+  eq("asks: rows keep the action and href", rows.slice(0, 1).map((a) => [a.id, a.action, a.href]), [["overdue", "Go", "/overdue"]]);
+  const shellData = read("src/lib/shell-data.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  check("shell title counts OWNED Ultimates (titles are earned once), not equipped ones", /ownedCodes\.filter\(/.test(shellData) && !/activeSkills/.test(shellData));
+  check("shell bell count comes from the listed rows (askCount), not the feed's own tally", /askCount\(/.test(shellData) && !/feed\??\.actionable/.test(shellData));
 }
 
 // ── the capture event the shell dispatches is the one QuickCapture hears ────
@@ -292,7 +368,263 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   check("layout: skies.css and cataclysm*.css are not global", !/import\s+"\.\/(skies|cataclysm)/.test(layout));
   check("layout: the pre-paint script is in <head>", /<head>[\s\S]*PREPAINT_SCRIPT[\s\S]*<\/head>/.test(layout));
   check("layout: the shell data is a Suspense-wrapped prop slot", /dataSlot=\{\s*<Suspense fallback=\{null\}>\s*<ShellDataSlot \/>/.test(layout));
+
+  // The art sheets are not global (fix pass F0): only the art previews and the ceremony load them.
+  const artGlobal = ["atmosphere", "field-tier", "equip-attach", "bar-charge", "powerbar", "skies", "cataclysm", "cataclysm-extra"].filter((f) =>
+    new RegExp(`import\\s+["'][^"']*\\b${f}\\.css["']`).test(globals + layout)
+  );
+  check("css: no art sheet is imported by globals.css or the root layout", artGlobal.length === 0, artGlobal.join(", "));
+  const artLayout = read("src/app/dev/style/art/layout.tsx");
+  const previewSheets = ["atmosphere", "powerbar", "bar-charge", "equip-attach"].filter((f) => !artLayout.includes(`${f}.css`));
+  check("css: the art previews import the loadout-bar art themselves", previewSheets.length === 0, previewSheets.join(", "));
+  check("css: globals.css has no retired rules (capture-fab hide, float-up-fade, legacy @theme names)", !/\.capture-fab\[data-capture-fab\]|float-up-fade|--color-(ink-3|sub|green|red|crimson|arcane-bright)\b|--radius-control/.test(globals));
+
+  // The legacy 46 px .slot (the art previews' LoadoutBar) is the only .slot: a
+  // second global .slot (You › Loadout's grid once) met its fixed height and
+  // lost its aspect-ratio, clipping the coin. Every other sheet names its own.
+  const slotSheets = cssFiles
+    .filter((f) => cssRules(readFileSync(f, "utf8")).some((r) => !r.selector.startsWith("@") && /\.slot(?![\w-])/.test(r.selector)))
+    .map((f) => relative(ROOT, f).split("\\").join("/"));
+  check("css: only legacy.css styles .slot (others use a namespaced class, e.g. .lo-slot)", slotSheets.length === 1 && slotSheets[0] === "src/app/styles/legacy.css", slotSheets.join(", "));
+
+  // Every legacy alias stays gone (tokens.css keeps only the --rank-* literals).
+  const deletedAliases = ["ink-3", "line", "green", "green-10", "nav-h", "base", "sub", "lift", "line-hi", "line-act", "green-hi", "green-06", "red", "red-10", "blue", "blue-10", "amber", "amber-10", "background", "foreground", "shadow-sm", "shadow-md", "shadow-lg"];
+  const tokens = read("src/app/styles/tokens.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const redeclared = deletedAliases.filter((a) => new RegExp(`--${a}\\s*:`).test(tokens));
+  check("tokens: the retired aliases are not declared", redeclared.length === 0, redeclared.join(", "));
+  const srcFiles: string[] = [];
+  const walkSrc = (d: string) => {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walkSrc(p);
+      else if (/\.(tsx?|css|mjs)$/.test(f)) srcFiles.push(p);
+    }
+  };
+  walkSrc(join(ROOT, "src"));
+  const aliasUsers = srcFiles.flatMap((f) => {
+    const text = readFileSync(f, "utf8");
+    return deletedAliases.filter((a) => new RegExp(`var\\(\\s*--${a}\\s*[,)]`).test(text)).map((a) => `${relative(ROOT, f)} --${a}`);
+  });
+  check("tokens: nothing reads a retired alias", aliasUsers.length === 0, aliasUsers.join("; "));
+
+  // Repo-wide motion (Gate 4): every keyframe animates only transform-family
+  // properties, opacity and stroke dashes; transitions never move layout; every
+  // infinite loop pauses on --ambient-play (Calm, Still, power-save).
+  const ANIMATABLE = new Set(["transform", "translate", "rotate", "scale", "opacity", "stroke-dashoffset", "stroke-dasharray", "offset-distance"]);
+  const LAYOUT_PROP = /^(width|height|min-width|min-height|max-width|max-height|left|right|top|bottom|inset|margin|padding|border-width|border-(top|right|bottom|left)-width|font-size|line-height|flex|flex-basis|grid-template|gap|all)$/;
+  const kfBad: string[] = [];
+  const trBad: string[] = [];
+  const loopBad: string[] = [];
+  for (const f of cssFiles) {
+    const rel = relative(ROOT, f);
+    for (const r of cssRules(readFileSync(f, "utf8"))) {
+      const kf = /^@keyframes\s+([\w-]+)/.exec(r.selector);
+      if (kf) {
+        const props = new Set([...r.body.replace(/[^{}]*\{/g, "{").matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]));
+        for (const p of props) if (!ANIMATABLE.has(p) && !p.startsWith("--")) kfBad.push(`${rel} @keyframes ${kf[1]}: ${p}`);
+        continue;
+      }
+      for (const m of r.body.matchAll(/(?:^|;)\s*transition(?:-property)?\s*:([^;]*)/g)) {
+        for (const part of m[1].split(",")) {
+          const p = part.trim().split(/\s+/)[0];
+          if (LAYOUT_PROP.test(p)) trBad.push(`${rel} ${r.selector.slice(0, 40)}: transition ${p}`);
+        }
+      }
+      if (/animation(?:-iteration-count)?\s*:[^;]*\binfinite\b/.test(r.body) && !/animation-play-state\s*:\s*var\(--ambient-play/.test(r.body)) {
+        loopBad.push(`${rel} ${r.selector.slice(0, 40)}`);
+      }
+    }
+  }
+  check("motion (all CSS): keyframes animate only transform, opacity and stroke dashes", kfBad.length === 0, kfBad.join("; "));
+  check("motion (all CSS): no transition moves layout (width, height, left, …)", trBad.length === 0, trBad.join("; "));
+  check("motion (all CSS): every infinite loop pauses on --ambient-play", loopBad.length === 0, loopBad.join("; "));
+
+  // Inputs are 16 px on phones: a component class that sizes an input below
+  // 16 px (in @layer components, which outranks base.css's phone rule) must
+  // repeat the phone rule for itself.
+  const phoneMiss: string[] = [];
+  for (const f of cssFiles) {
+    const rules = cssRules(readFileSync(f, "utf8"));
+    const isPhone = (at: string[]) => at.some((a) => /@media[^{]*max-width:\s*(5\d\d|599)(\.\d+)?px/.test(a));
+    const sizeOf = (body: string): number | null => {
+      const fs = /(?:^|;)\s*font-size\s*:\s*([\d.]+)px/.exec(body);
+      if (fs) return Number(fs[1]);
+      const font = /(?:^|;)\s*font\s*:[^;]*?([\d.]+)px/.exec(body);
+      return font ? Number(font[1]) : null;
+    };
+    for (const r of rules) {
+      if (isPhone(r.at) || r.selector.startsWith("@")) continue;
+      const size = sizeOf(r.body);
+      if (size == null || size >= 16) continue;
+      for (const sel of r.selector.split(",")) {
+        const cls = /\.([\w-]*input[\w-]*)\s*$/.exec(sel.trim().replace(/:[\w-]+(\([^)]*\))?/g, ""))?.[1];
+        if (!cls) continue;
+        const fixed = rules.some((q) => isPhone(q.at) && new RegExp(`\\.${cls}\\b`).test(q.selector) && (sizeOf(q.body) ?? 0) >= 16);
+        if (!fixed) phoneMiss.push(`${relative(ROOT, f).split("\\").join("/")} .${cls}`);
+      }
+    }
+  }
+  // Nothing pending: the lanes landed .st-input, .today-input and .att-input.
+  checkPending("inputs: every input class under 16 px repeats the 16 px phone rule (< 600)", [...new Set(phoneMiss)], {});
 }
 
-console.log(`\nshell-check: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── kit class names never collide with Tailwind (block, ring, inline, grow…) ──
+{
+  const cls = buttonClass("primary", "lg", true, "x").split(" ");
+  check("button: block renders .btn-block, never the bare `block` utility", cls.includes("btn-block") && !cls.includes("block"), cls.join(" "));
+  const tick = read("src/components/ui/Tick.tsx");
+  check("tick: the ring is .tick-ring, never the bare `ring` utility", /className="tick-ring"/.test(tick) && !/className="ring"/.test(tick));
+  const effects = read("src/app/styles/effects.css");
+  check("tick: the Calm list names .tick-ring", /\.tick \.tick-ring/.test(effects) && !/\.tick \.ring\b/.test(effects));
+  const chrome = read("src/components/shell/Chrome.tsx");
+  check("chrome: no bare utility names as kit classes (block, grow)", ![...chrome.matchAll(/className="([^"]*)"/g)].some((m) => m[1].split(/\s+/).some((c) => c === "block" || c === "grow")));
+}
+
+// ── TypedConfirm: loose by default, exact on request; hands back what was typed ──
+{
+  check("typed confirm: trimmed and case-insensitive by default", phraseMatches("  delete everything ", "DELETE EVERYTHING"));
+  check("typed confirm: exact needs the capitals", !phraseMatches("delete everything", "DELETE EVERYTHING", true) && phraseMatches(" DELETE EVERYTHING ", "DELETE EVERYTHING", true));
+  check("typed confirm: an empty phrase never arms", !phraseMatches("", "") && !phraseMatches("x", "  "));
+  check("typed confirm: a near miss never arms", !phraseMatches("DELETE EVERYTHIN", "DELETE EVERYTHING"));
+  const src = read("src/components/ui/TypedConfirm.tsx");
+  check("typed confirm: onConfirm receives the typed text", /onConfirm:\s*\(typed: string\) => void/.test(src) && /onConfirm\(typed\.trim\(\)\)/.test(src));
+}
+
+// ── the crest numeral never renders under the 12 px floor ───────────────────
+{
+  for (const [size, level] of [[24, 14], [34, 14], [38, 14], [48, 14], [96, 14], [168, 14], [20, 3], [38, 120], [34, 120], [48, 120]] as const) {
+    const u = crestNumeralUnits(size, level);
+    check(`crest: ${size} px, level ${level} → numeral ${u == null ? "omitted" : `${((u * size) / 100).toFixed(1)} px`} (never under ${TEXT_FLOOR_PX})`, u == null || (u * size) / 100 >= TEXT_FLOOR_PX - 0.01);
+  }
+  eq("crest: the 24 px tab and 20 px inline crests omit the numeral; the rail and top bar keep it", [24, 20, 34, 38].map((s) => crestNumeralUnits(s, 14) != null), [false, false, true, true]);
+  eq("crest: no level, no numeral", crestNumeralUnits(96, null), null);
+}
+
+// ── chime: a moment plays once per tab ─────────────────────────────────────
+{
+  let logged = 0;
+  const off = subscribeLog(() => logged++);
+  chime({ kind: "day-kept", id: "check:day-kept:2026-10-01", text: "Day 3 kept" });
+  chime({ kind: "day-kept", id: "check:day-kept:2026-10-01", text: "Day 3 kept" });
+  off();
+  eq("chime: the same id chimes once (an effect run twice, a re-render)", logged, 1);
+  check("chime: hasChimed reports it", hasChimed("check:day-kept:2026-10-01") && !hasChimed("check:other"));
+}
+
+// ── /dev/style: gated per request, linked from one strip ────────────────────
+{
+  const layout = read("src/app/dev/style/layout.tsx");
+  check("dev/style: the layout waits for a request (connection) before the gate", /await connection\(\)[\s\S]*devStyleEnabled\(\)/.test(layout));
+  check("dev/style: the layout renders the one strip", /<DevStyleNav \/>/.test(layout));
+}
+
+// ── redirects: real 307/308s from next.config, before any render ───────────
+async function redirectChecks() {
+  const config = (await import("../next.config")).default;
+  const list = (await config.redirects?.()) ?? [];
+  const find = (source: string) => list.find((r) => r.source === source);
+  eq("redirect: / → /today, temporary (307)", [find("/")?.destination, find("/")?.permanent], ["/today", false]);
+  eq("redirect: /workspace → /review, permanent (308)", [find("/workspace")?.destination, find("/workspace")?.permanent], ["/review", true]);
+  eq("redirect: /taxonomy → /structure, permanent (308)", [find("/taxonomy")?.destination, find("/taxonomy")?.permanent], ["/structure", true]);
+  const stubs = ["src/app/page.tsx", "src/app/workspace/page.tsx", "src/app/taxonomy/page.tsx"].filter((p) => existsSync(join(ROOT, p)) && /\bredirect\(/.test(read(p)));
+  check("redirect: no page-level redirect() stub is left for these paths (it would stream as a meta refresh under loading.tsx)", stubs.length === 0, stubs.join(", "));
+}
+
+// ── Tailwind: no class a hand-written sheet styles is also a Tailwind utility ──
+// A kit class named like a utility (`block`, `ring`, `inline`, `grow`, `hidden`…)
+// gets the utility's declarations too, and the utilities layer always wins.
+// Compiled with the real Tailwind, so the list is exactly what v4 generates.
+const UTILITY_REFERENCES = new Set([
+  // Tailwind's own screen-reader utility, used as a utility; a sheet may qualify it.
+  "sr-only",
+]);
+async function tailwindCollisions() {
+  const twDir = join(ROOT, "node_modules/tailwindcss");
+  const globalsCss = read("src/app/globals.css");
+  const tw = await compile(globalsCss, {
+    base: join(ROOT, "src/app"),
+    loadStylesheet: async (id: string, base: string) => {
+      // Tailwind itself, and its own relative imports; the app's sheets are scanned below, not compiled here.
+      if (id === "tailwindcss") return { path: join(twDir, "index.css"), base: twDir, content: readFileSync(join(twDir, "index.css"), "utf8") };
+      if (base.startsWith(twDir)) {
+        const p = join(base, id);
+        return { path: p, base: twDir, content: readFileSync(p, "utf8") };
+      }
+      return { path: join(base, id), base, content: "" };
+    },
+  });
+  const names = new Map<string, Set<string>>();
+  const sheets: string[] = [];
+  const walk = (d: string) => {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (f.endsWith(".css")) sheets.push(p);
+    }
+  };
+  walk(join(ROOT, "src"));
+  for (const f of sheets) {
+    for (const r of cssRules(readFileSync(f, "utf8"))) {
+      if (r.selector.startsWith("@")) continue;
+      for (const m of r.selector.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) {
+        if (!names.has(m[1])) names.set(m[1], new Set());
+        names.get(m[1])!.add(relative(ROOT, f));
+      }
+    }
+  }
+  const has = (css: string, n: string) => css.includes(`.${n} {`);
+  const before = tw.build([]);
+  const after = tw.build([...names.keys()]);
+  const hits = [...names.keys()].filter((n) => has(after, n) && !has(before, n) && !UTILITY_REFERENCES.has(n));
+  check(
+    "tailwind: no hand-written class is also a generated utility (rename it: btn-block, tick-ring, seal-inline, rail-grow…)",
+    hits.length === 0,
+    hits.map((h) => `.${h} in ${[...names.get(h)!].join(", ")}`).join("; ")
+  );
+  check("tailwind: the probe really compiles utilities (block is one)", has(tw.build(["block"]), "block"));
+}
+
+/** Rules of a stylesheet, flattened, with the @media/@layer/@supports/@container context each sits in. */
+function cssRules(css: string): { selector: string; body: string; at: string[] }[] {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: { selector: string; body: string; at: string[] }[] = [];
+  const walk = (text: string, at: string[]) => {
+    let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf("{", i);
+      if (open < 0) break;
+      let head = text.slice(i, open);
+      const semi = head.lastIndexOf(";");
+      if (semi >= 0) head = head.slice(semi + 1);
+      head = head.trim();
+      let depth = 1;
+      let j = open + 1;
+      while (j < text.length && depth > 0) {
+        if (text[j] === "{") depth++;
+        else if (text[j] === "}") depth--;
+        j++;
+      }
+      const inner = text.slice(open + 1, j - 1);
+      if (/^@(media|supports|layer|container)\b/.test(head)) walk(inner, [...at, head]);
+      else out.push({ selector: head, body: inner, at });
+      i = j;
+    }
+  };
+  walk(src, []);
+  return out;
+}
+
+(async () => {
+  try {
+    await redirectChecks();
+  } catch (e) {
+    check("redirect: next.config loads", false, String(e));
+  }
+  try {
+    await tailwindCollisions();
+  } catch (e) {
+    check("tailwind: the collision probe runs", false, String(e));
+  }
+  console.log(`\nshell-check: ${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+})();

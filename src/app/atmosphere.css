@@ -42,16 +42,11 @@
    hue — the rarity/colour language stays one language — while rarity decides
    how much of the sky that hue actually reaches, and which layers open up.
 
-   Registered rather than merely set, for two reasons. `@property` gives it a
-   typed initial value, so the `calc()`s below are never resolving against an
-   invalid token; and a typed custom property is *interpolable*, which is the
-   only way to transition a gradient at all. Without this, attaching an
-   emblem would snap the background; with it, the sky slides. */
-
-
-html {
-  transition: --atmos-rarity 1100ms cubic-bezier(.22, .61, .36, 1);
-}
+   Registered so the `calc()`s below never resolve against an invalid token
+   (`@property` gives it a typed initial value). It is no longer transitioned:
+   a transition on --atmos-rarity repainted the body's gradients on every
+   frame, and the motion rule allows only transform, opacity and
+   stroke-dashoffset to animate. Attaching an emblem now steps the sky. */
 
 /* The hue comes from the sky, not the grade.
    `--sky-a`/`--sky-b` are written onto the root by `ResonanceAtmosphere`
@@ -218,12 +213,9 @@ html[data-res-grade]:not([data-res-grade="NONE"]) .panel {
 }
 
 /* ── Reduced motion ──────────────────────────────────────
-   The rarity crossfade is the one thing here that is not a loop, so it is
-   also the one thing the POWER block's animation-play-state pause cannot
-   reach. Cut the transition and the sky still evolves — it simply arrives
-   at the new value immediately instead of sliding to it. */
+   The loops stop. (The rarity no longer transitions at all, so there is no
+   `html { transition: none }` here to reach into other sheets' html rules.) */
 @media (prefers-reduced-motion: reduce) {
-  html { transition: none; }
   .atmos-speck, .atmos-meteor, .atmos-orbit-spin,
   .atmos-sun-core, .atmos-sun-rays,
   .atmos-disk, .atmos-lens, .atmos-infall, .atmos-freeze { animation: none; }

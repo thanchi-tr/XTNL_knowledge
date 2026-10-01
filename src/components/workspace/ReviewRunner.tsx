@@ -37,7 +37,7 @@ import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { SubmitReviewResult } from "@/app/actions/review";
 import { ResultPanel } from "./ResultPanel";
 import { SessionCard, multiOptionsOf, type CardPhase } from "./SessionCard";
-import { bossView, comboView, segmentsOf, type CardResult, type QuestView, type RunCard } from "./review-model";
+import { bossView, comboView, keptStreakOf, segmentsOf, type CardResult, type QuestView, type RunCard } from "./review-model";
 
 export type RunPhase =
   | { kind: "ask" }
@@ -75,10 +75,14 @@ interface Props {
   onRequestExit: () => void;
 }
 
-/** A key or tap that belongs to something else: a field being typed in, or the capture sheet. */
+/**
+ * A key or tap that belongs to something else: a field being typed in, the
+ * capture sheet, or the shared toast and Seal docks (a capture Undo, a removal
+ * Undo, a T1 toast) — acting on one of those must never skip a result.
+ */
 function belongsElsewhere(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return isTypingTarget(target) || target.closest("[data-capture-ui]") !== null;
+  return isTypingTarget(target) || target.closest("[data-capture-ui], .dock") !== null;
 }
 
 const ARM_MS = 220;
@@ -168,12 +172,14 @@ export function ReviewRunner({
       for (let k = 1; k <= from - to; k++) timers.push(window.setTimeout(() => setDrain({ of: result, step: k }), k * DRAIN_STEP_MS));
     }
     // The day's first deed, once: a later answer racing its predecessor's after() row cannot chime twice.
+    // The streak figure is the detector's own when its day-kept T1 came back (it is not chimed a second time).
     if (result.streakSecured && !results.slice(0, -1).some((r) => r.result.streakSecured)) {
+      const n = keptStreakOf(result, dayStreakIfKept);
       chime({
         kind: "day-kept",
         id: `day-kept:${today}`,
-        text: dayStreakIfKept ? `Day ${dayStreakIfKept} kept` : "Today kept",
-        say: `${dayStreakIfKept ? `Day ${dayStreakIfKept} kept` : "Today kept"}. Your first deed today was this review.`,
+        text: n ? `Day ${n} kept` : "Today kept",
+        say: `${n ? `Day ${n} kept` : "Today kept"}. Your first deed today was this review.`,
         burstEl: tallyRef.current,
       });
     }

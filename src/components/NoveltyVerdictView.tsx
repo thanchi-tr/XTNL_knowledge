@@ -2,6 +2,8 @@ import type { NoveltyMatch, NoveltyVerdict, Relation } from "@/lib/novelty";
 import { Chip, type ChipTone } from "@/components/ui/Chip";
 import { Meter } from "@/components/ui/Meter";
 import { formatPercent } from "@/components/ui/format";
+// Its add-* rules (the compare cards, the summary, the evidence list) live with New idea's.
+import "@/components/library/study.css";
 
 /**
  * How a new-or-existing verdict reads on New idea (src/lib/novelty.ts).
@@ -66,11 +68,9 @@ export function VerdictCompare({ verdict, fieldName }: { verdict: NoveltyVerdict
 export function VerdictDetail({ verdict }: { verdict: NoveltyVerdict }) {
   return (
     <div>
-      <p className="ink-1" style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5 }}>
-        {verdict.summary}
-      </p>
+      <p className="t-body add-summary">{verdict.summary}</p>
       {verdict.evidence.length > 0 && (
-        <ul className="add-evidence" aria-label="Evidence" style={{ listStyle: "none", margin: "10px 0 0", padding: 0 }}>
+        <ul className="add-evidence" aria-label="Evidence">
           {verdict.evidence.map((e) => (
             <li key={e}>
               <Chip>{e}</Chip>

@@ -9,6 +9,11 @@
    rank-ascend and boss-rise replays, the notification bubble (→ Asks bell),
    `.card { content-visibility: auto }` (→ opt-in .cv-auto), the global
    `code, pre, .mono { !important }`, and every :root/html specificity patch.
+   Removed when their users reached 0 (fix pass F0): .data-value, .font-mono
+   (it restyled Tailwind's own utility), .card-hover, .chip-green/red/blue/
+   amber/muted, .data-table, .divider, .hover-card, .equipped, .skill-unlock, the
+   no-op .rank-ascend/.boss-rise/.aura-breathe, .foil, .ready-ring,
+   .edge-flow, .unlock-burst, .tag-particles and .boss-hit.
    ===================================================================== */
 @layer components {
   /* ---------- layout ---------- */
@@ -29,23 +34,11 @@
   .panel-title { font: 600 14px/20px var(--font-ui); color: var(--ink-0); }
   .panel-sub { font-size: 13px; line-height: 18px; color: var(--ink-2); }
   .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .data-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .font-mono { font-variant-numeric: tabular-nums; }
 
   /* ---------- cards ---------- */
   /* arcane.css used to make every card a positioning context (its :root .card
      patch); absolutely placed children in unswept pages still rely on it. */
   .card { position: relative; }
-  .card-hover { transition: border-color var(--t-quick); }
-  .card-hover:hover { border-color: var(--line-2); }
-
-  /* ---------- chips: the old tones mapped onto signal and ink ---------- */
-  .chip-green { color: var(--kept); background: color-mix(in srgb, var(--kept) 12%, transparent); border-color: color-mix(in srgb, var(--kept) 34%, transparent); }
-  .chip-red { color: var(--owed); background: color-mix(in srgb, var(--owed) 12%, transparent); border-color: color-mix(in srgb, var(--owed) 36%, transparent); }
-  .chip-blue { color: var(--held); background: color-mix(in srgb, var(--held) 11%, transparent); border-color: color-mix(in srgb, var(--held) 34%, transparent); }
-  /* amber was "due": due is ink now. */
-  .chip-amber { color: var(--ink-0); background: color-mix(in srgb, var(--ink-0) 8%, transparent); border-color: var(--line-ctl); }
-  .chip-muted { color: var(--ink-2); background: var(--sunken); border-color: var(--line-1); }
 
   /* ---------- inputs ---------- */
   .input {
@@ -66,20 +59,11 @@
   textarea.input { min-height: 88px; }
   @media (max-width: 599px) { .input { font-size: 16px; } }
 
-  /* ---------- data tables ---------- */
-  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .data-table thead th {
-    font: 600 12px/16px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2);
-    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line-2); white-space: nowrap;
-  }
-  .data-table tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line-1); color: var(--ink-0); vertical-align: baseline; line-height: 1.5; }
-  .data-table tbody tr:last-child td { border-bottom: none; }
-  .data-table tbody tr:hover td { background: var(--raised); }
-  .data-table .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-  .divider { width: 100%; height: 1px; background: var(--line-1); }
-
-  /* ---------- the loadout slots and footer (LoadoutBar leaves the layout; L4 restyles) ---------- */
+  /* ---------- the loadout slots and footer (LoadoutBar leaves the layout; L4 restyles) ----------
+     The legacy 46 px .slot is the art previews' LoadoutBar only. Every other
+     sheet names its own (You › Loadout is .lo-slot): a second global .slot
+     met this one's fixed height and lost its aspect-ratio. shell-check keeps
+     .slot to this file. */
   .slot {
     width: 46px; height: 46px; display: grid; place-items: center; border-radius: 12px;
     border: 1px solid var(--line-2); cursor: pointer; position: relative;
@@ -92,34 +76,11 @@
     font-size: 12px; font-weight: 600; white-space: nowrap;
     color: var(--ink-1); border: 1px solid var(--line-2);
   }
-  .hover-card { position: absolute; z-index: 30; width: 250px; pointer-events: none; }
-  .equipped { box-shadow: inset 0 0 0 1px var(--line-2); }
 }
 
 /* Emblem and encounter art (SkillLogo and friends; L4 and L2 restyle).
    Loops stay paused under Calm, Still and power-save via --ambient-play. */
 @layer art {
-  .skill-unlock { animation: legacy-skill-unlock .5s var(--ease-out) both; }
-  @keyframes legacy-skill-unlock { 0% { transform: scale(.94); opacity: 0; } 55% { transform: scale(1.03); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-  /* rank-ascend, boss-rise and aura-breathe replayed on every visit; now static. */
-  .rank-ascend, .boss-rise, .aura-breathe { animation: none; }
-
-  .foil { position: relative; overflow: hidden; }
-  .foil::after {
-    content: ""; position: absolute; top: -60%; bottom: -60%; left: 0; width: 42%; pointer-events: none;
-    background: linear-gradient(90deg, transparent 0%, var(--foil, rgba(255,255,255,.10)) 50%, transparent 100%);
-    transform: translateX(-160%) rotate(12deg); opacity: 0; transition: opacity .2s ease;
-  }
-  .foil:hover::after { opacity: 1; animation: legacy-foil-sweep .9s var(--ease-inout); }
-  @keyframes legacy-foil-sweep { from { transform: translateX(-160%) rotate(12deg); } to { transform: translateX(340%) rotate(12deg); } }
-
-  .ready-ring { animation: legacy-ready-ring 2.4s ease-in-out infinite; transform-origin: center; animation-play-state: var(--ambient-play); }
-  @keyframes legacy-ready-ring { 0%, 100% { opacity: .30; transform: scale(1); } 50% { opacity: .85; transform: scale(1.06); } }
-  .edge-flow { stroke-dasharray: 3 9; animation: legacy-edge-flow 1.4s linear infinite; animation-play-state: var(--ambient-play); }
-  @keyframes legacy-edge-flow { to { stroke-dashoffset: -24; } }
-  .unlock-burst { animation: legacy-unlock-burst .75s var(--ease-out) both; transform-origin: center; }
-  @keyframes legacy-unlock-burst { 0% { transform: scale(.5); opacity: .75; } 100% { transform: scale(2.6); opacity: 0; } }
-
   .orbit-cw, .orbit-ccw, .twinkle, .shockwave, .flare-pulse, .corona-pulse, .ember-rise, .core-pulse { transform-box: fill-box; transform-origin: center; }
   .orbit-cw { animation: legacy-orbit 14s linear infinite; animation-play-state: var(--ambient-play); }
   .orbit-ccw { animation: legacy-orbit 22s linear infinite reverse; animation-play-state: var(--ambient-play); }
@@ -138,12 +99,6 @@
   @keyframes legacy-ember-rise { 0% { transform: translateY(4px) scale(.5); opacity: 0; } 25% { opacity: .9; } 100% { transform: translateY(-16px) scale(1.1); opacity: 0; } }
   .core-pulse { animation: legacy-core-pulse 3.4s ease-in-out infinite; animation-play-state: var(--ambient-play); }
   @keyframes legacy-core-pulse { 0%, 100% { opacity: .75; } 50% { opacity: 1; } }
-  .tag-particles { position: relative; overflow: hidden; }
-  .tag-particles > .mote {
-    position: absolute; bottom: -2px; width: 2px; height: 2px; border-radius: 999px; background: currentColor; opacity: 0;
-    animation: legacy-tag-mote 2.8s ease-out infinite; animation-play-state: var(--ambient-play);
-  }
-  @keyframes legacy-tag-mote { 0% { transform: translateY(2px) scale(.5); opacity: 0; } 25% { opacity: .95; } 100% { transform: translateY(-14px) scale(1.1); opacity: 0; } }
 
   /* Equip is Tier 0 now: one slot glint. The pulse stays for the loadout strip until L4 swaps it. */
   .slot-attach { animation: legacy-slot-seat .42s var(--ease-stamp); }
@@ -160,8 +115,4 @@
     animation: legacy-equip-spoke var(--pulse-dur, 900ms) var(--ease-out) both;
   }
   @keyframes legacy-equip-spoke { 0% { opacity: .9; transform: rotate(var(--spoke-angle, 0deg)) scaleY(.15); } 100% { opacity: 0; transform: rotate(var(--spoke-angle, 0deg)) scaleY(var(--pulse-reach, 2.2)); } }
-
-  /* Boss takes a hit: a one-shot translate, correct answers only (L2). */
-  .boss-hit { animation: legacy-boss-hit .32s ease-in-out; }
-  @keyframes legacy-boss-hit { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 45% { transform: translateX(5px); } 70% { transform: translateX(-3px); } }
 }

@@ -4,7 +4,9 @@
  * the history strip, the cloze edit template, the capacity helpers, and
  * source guards on the lane's pages (routes, loading skeletons, titles, the
  * /taxonomy redirect, Settings › Data, the ledger write, the celebrations,
- * the 12 px floor, no legacy colour aliases, no randomness). No DB, no browser.
+ * the 12 px floor, no legacy colour aliases, no randomness), the resets'
+ * phrase gate, and the lane's class names against Tailwind's utilities (the
+ * project's own globals.css, compiled in memory). No DB, no browser.
  *
  * Run: npx tsx scripts/study-side-check.ts
  */
@@ -33,7 +35,16 @@ import {
   type LibraryFilters,
   type LibraryIdea,
 } from "../src/components/library/library-model";
-import { CAPACITY_PRESETS, clampCapacity, formatCapacity, normalizeWeekdays, restWeekdaysLabel } from "../src/components/settings/settings-model";
+import {
+  CAPACITY_PRESETS,
+  clampCapacity,
+  confirmsPhrase,
+  formatCapacity,
+  normalizeWeekdays,
+  resetSpecOf,
+  restWeekdaysLabel,
+} from "../src/components/settings/settings-model";
+import { RESET_SCOPES, RESET_SCOPE_ORDER } from "../src/lib/reset-scopes";
 import { FIELD_TIERS } from "../src/lib/field-tier";
 import { QUESTION_TYPES, encodeIdeaContent, parseCloze } from "../src/lib/idea-payload";
 import { MASTERY_LEVEL } from "../src/lib/xp";
@@ -196,6 +207,21 @@ check("capacity: presets are already clamped", CAPACITY_PRESETS.every((m) => cla
 eq("weekdays: normalised Monday-first, invalid dropped", normalizeWeekdays([7, 1, 7, 0, 8, 3.5, 6]), [1, 6, 7]);
 eq("weekdays: labels", [[], [7], [6, 7], [5, 1, 3]].map(restWeekdaysLabel), ["None", "Sunday", "Saturday and Sunday", "Monday, Wednesday and Friday"]);
 
+// ── The resets' gate (actions/reset.ts; DangerZone sends what was typed) ───
+for (const s of RESET_SCOPE_ORDER) {
+  const phrase = RESET_SCOPES[s].phrase;
+  check(`reset gate: ${phrase} as typed passes, with stray spaces too`, confirmsPhrase(phrase, phrase) && confirmsPhrase(phrase, `  ${phrase} `));
+  check(`reset gate: ${phrase} in lower case does not (TypedConfirm arms on it; the server refuses)`, !confirmsPhrase(phrase, phrase.toLowerCase()));
+}
+eq(
+  "reset gate: not a string, empty, or a near miss never confirms",
+  [undefined, null, 1, ["DELETE IDEAS"], "", "DELETE IDEA", "DELETE  IDEAS", "DELETE IDEAS!"].map((t) => confirmsPhrase("DELETE IDEAS", t)),
+  [false, false, false, false, false, false, false, false]
+);
+check("reset gate: an empty phrase confirms nothing", !confirmsPhrase("", ""));
+eq("reset scope: real scopes resolve to their row", RESET_SCOPE_ORDER.map((s) => resetSpecOf(s)?.phrase), RESET_SCOPE_ORDER.map((s) => RESET_SCOPES[s].phrase));
+eq("reset scope: inherited keys and non-strings are not scopes", ["toString", "__proto__", "constructor", "", 1, null].map((s) => resetSpecOf(s)), [null, null, null, null, null, null]);
+
 // ── Nav: the shell's model agrees with the lane's routes ────────────────────
 eq("nav: /structure and /taxonomy light Fields & Domains", [activeSub("/structure"), activeSub("/taxonomy")], ["/structure", "/structure"]);
 eq("nav: /library/<id> lights Library; its title is Study · Idea", [activeSub("/library/abc"), titleFor("/library/abc")], ["/library", { eyebrow: "Study", title: "Idea" }]);
@@ -210,8 +236,34 @@ for (const r of ROUTES) {
   check(`route /${r}: renders no <main> (AppShell owns the only one)`, !/<main\b/.test(page));
 }
 {
-  const tax = code(read("src/app/taxonomy/page.tsx"));
-  check("/taxonomy redirects to /structure", /redirect\(\s*"\/structure"\s*\)/.test(tax) && !/TaxonomyManager|DangerZone/.test(tax));
+  // A route handler, not a page-level redirect(): under the root loading.tsx
+  // that can stream as a meta refresh instead of a real 308.
+  const tax = existsSync(join(ROOT, "src/app/taxonomy/route.ts")) ? code(read("src/app/taxonomy/route.ts")) : "";
+  check(
+    "/taxonomy is a 308 route handler to /structure (no page.tsx)",
+    !existsSync(join(ROOT, "src/app/taxonomy/page.tsx")) &&
+      /export function GET\(/.test(tax) &&
+      /Response\.redirect\(new URL\(`\/structure\$\{url\.search\}`, url\.origin\), 308\)/.test(tax)
+  );
+}
+{
+  // /settings is a You sub-page: on compact it carries the You tabs, like /you and /skills.
+  const layout = existsSync(join(ROOT, "src/app/settings/layout.tsx")) ? code(read("src/app/settings/layout.tsx")) : "";
+  check(
+    "/settings has a layout with the You tabs (streamed slot, static fallback)",
+    /<Suspense fallback=\{<YouTabs \/>\}>\s*<YouTabsSlot \/>\s*<\/Suspense>/.test(layout) && /className="page cq-main"/.test(layout)
+  );
+  const page = code(read("src/app/settings/page.tsx"));
+  const pageClass = /className="(?:[^"]*\s)?page[\s"]/;
+  check("/settings page: the layout is the page (no second .page wrapper)", !pageClass.test(page));
+  const loading = code(read("src/app/settings/loading.tsx"));
+  check("/settings loading: inside the layout (no second .page wrapper)", !pageClass.test(loading));
+}
+{
+  // The top bar keeps the shell's server-rendered "Study / Idea": a ShellTitle
+  // override would swap it after the first paint and repeat the headline.
+  const page = code(read("src/app/library/[id]/page.tsx"));
+  check("/library/[id]: no ShellTitle override (no title swap; the headline is said once)", !/ShellTitle/.test(page) && (page.match(/\{headline\}/g) ?? []).length === 1);
 }
 {
   const view = code(read("src/components/settings/SettingsView.tsx"));
@@ -219,9 +271,36 @@ for (const r of ROUTES) {
   check("Settings › Feedback writes through useMotionPref().setPref", /useMotionPref\(\)/.test(view) && /setPref\("motion"/.test(view) && /setPref\("autoAdvance"/.test(view));
   check("Settings › Days saves capacity through the tasks action", /setDailyCapacity\(/.test(view));
   const danger = code(read("src/components/taxonomy/DangerZone.tsx"));
-  check("Data: the resets keep their typed phrase (TypedConfirm on the scope's phrase)", /<TypedConfirm[\s\S]*phrase=\{spec\.phrase\}/.test(danger) && /resetKnowledgeBase\(scope, spec\.phrase\)/.test(danger));
-  const reset = code(read("src/app/actions/reset.ts"));
-  check("Data: the server still checks the phrase exactly", /confirmation\.trim\(\) !== spec\.phrase/.test(reset));
+  check("Data: the resets keep their typed phrase (TypedConfirm on the scope's phrase)", /<TypedConfirm[\s\S]*phrase=\{spec\.phrase\}/.test(danger));
+  // What was typed reaches the server: the field's text, read as it changes.
+  const calls = [...danger.matchAll(/resetKnowledgeBase\(([^)]*)\)/g)].map((m) => m[1].trim());
+  check(
+    "Data: DangerZone sends what was typed, never the phrase itself",
+    calls.length === 1 && calls[0] === "scope, confirmation" && /const confirmation = typed;/.test(danger) && !/phrase/.test(calls.join()),
+    calls.join(" | ")
+  );
+  check(
+    "Data: the typed text is read from the confirm field as it changes, and cleared with the scope",
+    /onChange=\{\(e\) => \{\s*if \(e\.target instanceof HTMLInputElement\) setTyped\(e\.target\.value\);/.test(danger) && /setTyped\(""\)/.test(danger)
+  );
+  // The capture reads TypedConfirm's one field; a second input would make it ambiguous.
+  check("Data: TypedConfirm still renders exactly one input", (code(read("src/components/ui/TypedConfirm.tsx")).match(/<input\b/g) ?? []).length === 1);
+  const resetAll = code(read("src/app/actions/reset.ts"));
+  const reset = resetAll.slice(resetAll.indexOf("export async function resetKnowledgeBase"));
+  const gate = reset.indexOf("confirmsPhrase(spec.phrase, confirmation)");
+  check(
+    "Data: the server gates on the typed text, exactly, before any write",
+    /const spec = resetSpecOf\(scope\);/.test(reset) &&
+      /if \(!confirmsPhrase\(spec\.phrase, confirmation\)\)/.test(reset) &&
+      gate > 0 &&
+      gate < reset.indexOf("getCurrentUserId()") &&
+      gate < reset.indexOf("await prisma.")
+  );
+  const focus = code(read("src/app/actions/focus.ts"));
+  check(
+    "focus: a field-interest change revalidates the whole tree (the focus line is in the shell), no retired route",
+    /revalidatePath\("\/", "layout"\)/.test(focus) && !/revalidatePath\("\/(overview|dashboard|taxonomy|workspace)"/.test(focus)
+  );
 }
 {
   const actions = code(read("src/app/actions/ideas.ts"));
@@ -272,7 +351,119 @@ for (const r of ROUTES) {
   check("legacy: no retired classes in the lane's files", legacyClasses.length === 0, legacyClasses.join(", "));
   const keyframes = files.filter((f) => f.endsWith(".css") && /@keyframes/.test(read(f))).map(rel);
   check("motion: the lane adds no keyframes (the kit's gateway does the moving)", keyframes.length === 0, keyframes.join(", "));
+  // Gate 2: type sizes come from role classes, not inline style objects.
+  const inlineSize = files.filter((f) => f.endsWith(".tsx") && /fontSize\s*:/.test(code(read(f)))).map(rel);
+  check("type: no inline fontSize at all in the lane (role classes)", inlineSize.length === 0, inlineSize.join(", "));
+  // Colour reports kept / owed / held; an action's error is ink (.st-error), never owed.
+  const alerts = files
+    .filter((f) => f.endsWith(".tsx"))
+    .flatMap((f) => [...code(read(f)).matchAll(/<p\b[^>]*role="alert"[^>]*>/g)].filter((m) => /--owed/.test(m[0]) || !/className="st-error"/.test(m[0])).map((m) => `${rel(f)}: ${m[0]}`));
+  check("colour: every alert paragraph is .st-error (ink), none owed-coloured", alerts.length === 0, alerts.join("; "));
+  const study = read("src/components/library/study.css").replace(/\r\n/g, "\n");
+  const stError = /\.st-error \{([^}]*)\}/.exec(study)?.[1] ?? "";
+  check("colour: .st-error is ink at weight 600, not owed", /color: var\(--ink-0\)/.test(stError) && /\b600\b/.test(stError) && !/--owed/.test(stError), stError);
+  // Inputs are 16 px on phones: base.css says so in @layer base, which .st-input (components) outranks.
+  const phone = study.indexOf("@media (max-width: 599px) {\n    .st-input { font-size: 16px; }");
+  check("type: .st-input is 16 px on phones, declared after its 15 px rule", phone > study.indexOf(".st-input {"), String(phone));
+  // Milestone codes are build vocabulary, not copy ("Arrives with Train", not "M4").
+  const milestones = files
+    .filter((f) => f.endsWith(".tsx"))
+    .flatMap((f) => [...code(read(f)).matchAll(/[^\n]*\bM[2-5]\b[^\n]*/g)].map((m) => `${rel(f)}: ${m[0].trim()}`));
+  check("copy: no milestone code (M2…M5) in the lane's rendered text", milestones.length === 0, milestones.join("; "));
 }
 
-console.log(`\nstudy-side-check: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── Class names never collide with a Tailwind utility ───────────────────────
+// Utilities sit in the last layer, so a kit or lane class that is also a
+// utility name (block, inline, ring, grow, hidden…) silently loses its own
+// rules to the utility. Asks Tailwind itself, through the project's own
+// globals.css, which names it would emit.
+const LANE_TSX_DIRS = ["src/app/library", "src/app/add", "src/app/structure", "src/app/settings", "src/components/library", "src/components/settings", "src/components/taxonomy", "src/components/math"];
+const LANE_TSX_FILES = ["src/components/AddIdeaForm.tsx", "src/components/NoveltyVerdictView.tsx", "src/components/home/FieldFocusPanel.tsx", "src/components/WordComplete.tsx"];
+const LANE_CSS = ["src/components/library/study.css", "src/components/settings/settings.css", "src/components/WordComplete.css"];
+/** Utilities the lane uses on purpose, for exactly their Tailwind meaning. */
+const INTENDED_UTILITIES = new Set(["sr-only"]);
+
+function laneTsx(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const f of readdirSync(join(ROOT, dir))) {
+      const p = `${dir}/${f}`;
+      if (statSync(join(ROOT, p)).isDirectory()) walk(p);
+      else if (f.endsWith(".tsx")) out.push(p);
+    }
+  };
+  for (const d of LANE_TSX_DIRS) walk(d);
+  return [...out, ...LANE_TSX_FILES];
+}
+
+/** Every string literal's words inside the balanced (…) or {…} that opens at `src[from]`. */
+function literalWords(src: string, from: number): string[] {
+  const open = src[from];
+  const close = open === "(" ? ")" : "}";
+  let depth = 0;
+  let end = src.length;
+  for (let i = from; i < src.length; i++) {
+    if (src[i] === open) depth++;
+    else if (src[i] === close && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  return [...src.slice(from + 1, end).matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].flatMap((m) =>
+    (m[1] ?? m[2] ?? (m[3] ?? "").replace(/\$\{[^}]*\}/g, " ")).split(/\s+/)
+  );
+}
+
+/** Class name → where it is used (className / cx in the lane's TSX) or defined (the lane's CSS). */
+function laneClassNames(): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const add = (t: string, where: string) => {
+    if (!/^-?[a-z][\w-]*$/i.test(t)) return;
+    if (!out.has(t)) out.set(t, new Set());
+    out.get(t)!.add(where);
+  };
+  for (const f of laneTsx()) {
+    const src = code(read(f));
+    for (const m of src.matchAll(/className="([^"]*)"/g)) for (const t of m[1].split(/\s+/)) add(t, f);
+    for (const m of src.matchAll(/className=\{/g)) for (const t of literalWords(src, m.index! + "className=".length)) add(t, f);
+    for (const m of src.matchAll(/\bcx\(/g)) for (const t of literalWords(src, m.index! + 2)) add(t, f);
+  }
+  for (const f of LANE_CSS) {
+    const css = read(f).replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of css.matchAll(/\.(-?[a-zA-Z_][\w-]*)/g)) add(m[1], `${f} (css)`);
+  }
+  return out;
+}
+
+async function classCollisionChecks() {
+  const { __unstable__loadDesignSystem } = await import("@tailwindcss/node");
+  const ds = await __unstable__loadDesignSystem(read("src/app/globals.css"), { base: join(ROOT, "src/app") });
+  const probe = ds.candidatesToCss(["block", "ring", "inline", "grow", "lib-q"]);
+  check("tailwind: the probe sees real utilities (block, ring, inline, grow) and not lane names", probe.slice(0, 4).every(Boolean) && probe[4] === null);
+
+  const names = laneClassNames();
+  const list = [...names.keys()];
+  const css = ds.candidatesToCss(list);
+  const utilities = list.filter((_, i) => css[i] !== null);
+  const hits = utilities.filter((n) => !INTENDED_UTILITIES.has(n)).map((n) => `${n} (${[...names.get(n)!].join(", ")})`);
+  check("classes: no lane class name is also a Tailwind utility (namespace it: add-grow, not grow)", hits.length === 0, hits.join("; "));
+  const styled = utilities.filter((n) => LANE_CSS.some((f) => names.get(n)!.has(`${f} (css)`)));
+  check("classes: the lane's CSS styles no Tailwind utility name", styled.length === 0, styled.join(", "));
+
+  // While the kit's Button still emits a bare "block" class (Tailwind's
+  // display:block, which stacks the icon over the label), the lane asks for
+  // the kit's btn-block class instead of the prop.
+  if (/block && "block"/.test(read("src/components/ui/Button.tsx"))) {
+    const blockProps = laneTsx().filter((f) => /<Button\b[^>]*?\sblock[\s>=/]/.test(code(read(f))));
+    check("classes: no <Button block> in the lane while Button emits the bare block class", blockProps.length === 0, blockProps.join(", "));
+  }
+}
+
+function finish() {
+  console.log(`\nstudy-side-check: ${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+}
+
+classCollisionChecks()
+  .catch((e: unknown) => check("tailwind: the class-collision check ran", false, String(e)))
+  .finally(finish);

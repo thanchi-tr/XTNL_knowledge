@@ -997,7 +997,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         <Button variant="secondary" size="lg" onClick={handlePreview} disabled={isPreviewing || isPending || !ready}>
           {isPreviewing ? "Checking…" : "Check first"}
         </Button>
-        <Button ref={createRef} type="submit" variant="primary" size="lg" className="grow" disabled={isPending || !ready}>
+        <Button ref={createRef} type="submit" variant="primary" size="lg" className="add-grow" disabled={isPending || !ready}>
           {isPending ? "Filing…" : "Create"}
         </Button>
       </div>

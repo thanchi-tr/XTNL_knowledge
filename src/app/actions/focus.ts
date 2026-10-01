@@ -9,19 +9,22 @@ export type FocusResult = { ok: true } | { ok: false; error: string };
 /**
  * Marks a Field as of interest, or puts it into maintenance.
  *
- * `revalidatePath` on the screens whose content actually changes: Settings ›
- * Study owns the picker (the overview still renders it until it retires), and
- * Review's Boss roster is derived from the same set. The in-memory cache is dropped inside `setFieldInterest`; this is the
- * router's own cache, which is separate and would otherwise keep serving the
- * previous roster after a toggle.
+ * Revalidates the whole tree under the root layout, because the change is
+ * read everywhere: Settings › Study owns the picker, Review's Boss roster and
+ * the weekly quota are drawn from the same set, and so is today's focus field,
+ * which Today's Next up, New idea's projected points and the shell's Asks (on
+ * every page) all show. The in-memory cache is dropped inside
+ * `setFieldInterest`; this is the router's own cache, which is separate and
+ * would otherwise keep serving the previous roster after a toggle. (It used
+ * to name /overview, which is a redirect now.)
  */
 export async function setFieldFocus(fieldId: string, interested: boolean): Promise<FocusResult> {
-  if (!fieldId) return { ok: false, error: "No field given." };
+  // A Server Action is a public endpoint: check the shapes, not just the types.
+  if (typeof fieldId !== "string" || !fieldId) return { ok: false, error: "No field given." };
+  if (typeof interested !== "boolean") return { ok: false, error: "No choice given." };
   try {
     await setFieldInterest(getCurrentUserId(), fieldId, interested);
-    revalidatePath("/settings");
-    revalidatePath("/overview");
-    revalidatePath("/review");
+    revalidatePath("/", "layout");
     return { ok: true };
   } catch {
     return { ok: false, error: "Couldn't change that field's focus. Try again." };

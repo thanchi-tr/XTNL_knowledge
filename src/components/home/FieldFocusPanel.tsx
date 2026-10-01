@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { setFieldFocus } from "@/app/actions/focus";
 import type { FieldFocus } from "@/lib/field-focus";
 import { Switch } from "@/components/ui/Tabs";
+import "@/components/library/study.css";
 import "@/components/settings/settings.css";
 
 /**
@@ -63,7 +64,7 @@ export function FieldFocusPanel({ fields, variant = "card" }: Props) {
         {isPending ? " Saving…" : ""}
       </p>
       {error && (
-        <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 6 }}>
+        <p role="alert" className="st-error" style={{ marginTop: 6 }}>
           {error}
         </p>
       )}

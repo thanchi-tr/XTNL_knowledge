@@ -8,7 +8,13 @@
  *   Skip from frame 1 (tap, Escape or the button): the first skip jumps to the
  *   final tableau and the button becomes Close; the second closes.
  *   Art and backdrop come from the caller (stage/present); otherwise the art is
- *   drawn from facts.art (crest, medallion, or the emblem from its code).
+ *   drawn from facts.art (crest, medallion, or an emblem through L4's
+ *   CeremonyArt), and an emblem gets L4's CeremonyBackdrop: the attribute sky
+ *   band, plus the first-of-depth Cataclysm when the unlock flow flagged it
+ *   (Full motion only; never on a replay). Both load lazily, so the skill
+ *   pool never ships in the root layout's chunk. A backdrop replaces the
+ *   generic sky band; the Cataclysm sits at z 16, under the rays, the flash,
+ *   the shockwave (17), the words (20) and Skip (21).
  *   Text: kicker in the material colour, display-xl title, epithet, lore, grant
  *   cards, the cost line and the cause line; a gold primary plus quiet Done.
  *   Still: the final tableau at once, identical words. Calm: fades only.
@@ -27,10 +33,12 @@ import { Crest, Medallion } from "@/components/ui/Crest";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { MATERIAL_STOPS, type Material } from "@/lib/materials";
 import { EASE, burst, center, motionLevel, play } from "@/lib/motion";
-import type { CurtainAction } from "./stage";
+import { ceremonyEventFor, type CurtainAction } from "./stage";
 import { WhatMoved } from "./WhatMoved";
 
-const EmblemArt = dynamic(() => import("./EmblemArt"), { ssr: false });
+// L4's ceremony art, lazily: it reads the skill pool, which must stay out of the shell's chunk.
+const CeremonyArt = dynamic(() => import("@/components/skills/ceremony-art").then((m) => m.CeremonyArt), { ssr: false });
+const CeremonyBackdrop = dynamic(() => import("@/components/skills/ceremony-art").then((m) => m.CeremonyBackdrop), { ssr: false });
 
 /** The rays and the kicker take the band's light stop. */
 function rayOf(m: Material): string {
@@ -57,9 +65,15 @@ export function defaultPrimary(ev: Pick<CelebrationEvent, "kind">): CurtainActio
 export function CurtainArt({ ev, size = 168 }: { ev: CelebrationEvent; size?: number }) {
   const art = ev.facts.art;
   if (art?.type === "crest") return <Crest level={art.level} material={art.material} size={size} />;
-  if (art?.type === "emblem") return <EmblemArt code={art.code} size={size} />;
+  if (art?.type === "emblem") return <CeremonyArt art={art} size={size} />;
   if (art?.type === "medallion") return <Medallion material={art.material} numeral={art.numeral} size={size} />;
   return <Medallion material={ev.facts.material ?? "gold"} numeral={ev.facts.numeral?.to ?? null} size={size} />;
+}
+
+/** The curtain's backdrop when the caller staged none: an emblem's sky band (and its Cataclysm, first play only). */
+export function CurtainBackdrop({ ev, replay = false }: { ev: CelebrationEvent; replay?: boolean }) {
+  const event = ceremonyEventFor(ev, replay);
+  return event ? <CeremonyBackdrop event={event} /> : null;
 }
 
 export interface AscensionCurtainProps {
@@ -69,13 +83,16 @@ export interface AscensionCurtainProps {
   sky?: string;
   fromEl?: Element | null;
   primary?: CurtainAction | null;
+  /** This tab already played this id (Replay from You › Moments): the default backdrop skips the Cataclysm. */
+  replay?: boolean;
   onDone: () => void;
 }
 
-export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, onDone }: AscensionCurtainProps) {
+export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, replay = false, onDone }: AscensionCurtainProps) {
   const f = ev.facts;
   const material: Material = f.material ?? "gold";
   const action = primary === undefined ? defaultPrimary(ev) : primary;
+  const backdropNode = backdrop ?? (ceremonyEventFor(ev, replay) ? <CurtainBackdrop ev={ev} replay={replay} /> : null);
   const titleId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
@@ -204,10 +221,10 @@ export function AscensionCurtain({ ev, art, backdrop, sky, fromEl, primary, onDo
         if (armedRef.current && !settledRef.current && !(e.target as Element).closest("button, a")) finalize();
       }}
     >
-      <div className="skyband" aria-hidden="true" />
-      {backdrop && (
+      {(!backdropNode || sky) && <div className="skyband" aria-hidden="true" />}
+      {backdropNode && (
         <div className="cur-backdrop" aria-hidden="true">
-          {backdrop}
+          {backdropNode}
         </div>
       )}
       <div className="rays" aria-hidden="true" />

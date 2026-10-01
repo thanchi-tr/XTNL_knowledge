@@ -9,8 +9,12 @@
  *
  * Fails (exit 1) on, per route × width:
  *   - horizontal overflow (scrollWidth > innerWidth)
+ *   - text spilling past its card (a nowrap line wider than the card it sits in,
+ *     unless an ancestor clips it on purpose, e.g. an ellipsis)
  *   - an interactive target under 40×40 (primary actions and ticks under 44×44)
- *   - rendered text under 12 px
+ *   - rendered text under 12 px, SVG text included (font size × the SVG's scale:
+ *     a 12-unit label in a 380-wide viewBox drawn 282 px wide is 8.9 px)
+ *   - under 600 px: a text input, select or textarea under 16 px (the browser zooms into it)
  *   - console errors or uncaught exceptions
  *   - on /today and /review: any running infinite animation at rest
  * And once, with prefers-reduced-motion: the first frame must carry html[data-motion="still"].
@@ -49,6 +53,11 @@ const ROUTES = opt(
     "/settings",
     "/train",
     "/dev/style",
+    "/dev/style/today",
+    ...["hub", "empty", "question", "correct", "seal", "miss", "boss", "recap", "boss-won"].map((s) => `/dev/style/review?state=${s}`),
+    "/dev/style/celebrate",
+    "/dev/style/art",
+    "/dev/style/settings",
   ].join(",")
 ).split(",");
 const WIDTHS = opt("widths", "344,375,932,1440").split(",").map(Number);
@@ -125,7 +134,8 @@ const AUDIT = `(() => {
     const cs = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && !el.closest('[hidden],[aria-hidden="true"],.sr-only');
   };
-  const out = { overflow: document.documentElement.scrollWidth - innerWidth, small: [], tiny: [], loops: [] };
+  const out = { overflow: document.documentElement.scrollWidth - innerWidth, small: [], tiny: [], loops: [], spill: [], zoomInputs: [] };
+  const label = (el) => (typeof el.className === 'string' && el.className ? el.tagName + '.' + el.className.trim().split(/\\s+/).join('.') : el.tagName);
   document.querySelectorAll('a[href],button,input,select,textarea,[role=switch],[role=checkbox],[role=tab]').forEach((el) => {
     if (!vis(el) || el.closest('.skip-link') || el.classList.contains('skip-link')) return;
     let { width: w, height: h } = el.getBoundingClientRect();
@@ -136,12 +146,43 @@ const AUDIT = `(() => {
   });
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let n;
+  const clipsX = (el) => { const o = getComputedStyle(el).overflowX; return o === 'hidden' || o === 'clip' || o === 'auto' || o === 'scroll'; };
   while ((n = tw.nextNode())) {
     if (!n.textContent.trim()) continue;
     const el = n.parentElement;
-    if (!el || !vis(el) || el.closest('svg')) continue;
+    if (!el || !vis(el)) continue;
+    const svg = el.closest('svg');
+    if (svg) {
+      // SVG text: its font size is in user units; the rendered size scales with the drawing.
+      const t = el.closest('text');
+      const m = t && t.getScreenCTM ? t.getScreenCTM() : null;
+      if (!t || !m) continue;
+      const px = parseFloat(getComputedStyle(t).fontSize) * Math.hypot(m.a, m.b);
+      if (px < 11.95) out.tiny.push('svg ' + label(svg) + ' "' + n.textContent.trim().slice(0, 20) + '" ' + px.toFixed(1) + 'px');
+      continue;
+    }
     const fs = parseFloat(getComputedStyle(el).fontSize);
-    if (fs < 12) out.tiny.push(el.tagName + '.' + el.className + ' "' + n.textContent.trim().slice(0, 20) + '" ' + fs + 'px');
+    if (fs < 12) out.tiny.push(label(el) + ' "' + n.textContent.trim().slice(0, 20) + '" ' + fs + 'px');
+    // Spill: the text's own box runs past the card it sits in, and nothing between clips it on purpose.
+    const card = el.closest('.card, .toast, .seal-card, .sheet');
+    if (card) {
+      let clipped = false;
+      for (let a = el; a && a !== card; a = a.parentElement) if (clipsX(a)) { clipped = true; break; }
+      if (!clipped && !clipsX(card)) {
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const r = range.getBoundingClientRect();
+        const c = card.getBoundingClientRect();
+        if (r.width > 0 && (r.right > c.right + 1 || r.left < c.left - 1)) out.spill.push(label(el) + ' "' + n.textContent.trim().slice(0, 32) + '" ' + Math.round(Math.max(r.right - c.right, c.left - r.left)) + 'px past ' + label(card));
+      }
+    }
+  }
+  if (innerWidth < 600) {
+    document.querySelectorAll('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=hidden]),select,textarea').forEach((el) => {
+      if (!vis(el)) return;
+      const fs = parseFloat(getComputedStyle(el).fontSize);
+      if (fs < 16) out.zoomInputs.push(label(el) + ' ' + fs + 'px');
+    });
   }
   for (const a of document.getAnimations()) {
     const t = a.effect && a.effect.getTiming();
@@ -149,6 +190,8 @@ const AUDIT = `(() => {
   }
   out.small = [...new Set(out.small)].slice(0, 30);
   out.tiny = [...new Set(out.tiny)].slice(0, 30);
+  out.spill = [...new Set(out.spill)].slice(0, 30);
+  out.zoomInputs = [...new Set(out.zoomInputs)].slice(0, 30);
   return out;
 })()`;
 
@@ -200,14 +243,16 @@ for (const route of ROUTES) {
     try {
       r = await evaluate(AUDIT);
     } catch (e) {
-      r = { overflow: 0, small: [], tiny: [], loops: [], evalError: String(e) };
+      r = { overflow: 0, small: [], tiny: [], loops: [], spill: [], zoomInputs: [], evalError: String(e) };
     }
     const path = route.split("?")[0];
     const loopsBad = AT_REST_ROUTES.includes(path) && !route.includes("?") ? r.loops : [];
     const problems = [];
     if (r.overflow > 0) problems.push(`overflow ${r.overflow}px`);
+    if (r.spill.length) problems.push(`${r.spill.length} texts spill past their card`);
     if (r.small.length) problems.push(`${r.small.length} small targets`);
     if (r.tiny.length) problems.push(`${r.tiny.length} tiny texts`);
+    if (r.zoomInputs.length) problems.push(`${r.zoomInputs.length} inputs under 16 px on a phone`);
     if (errors.length) problems.push(`${errors.length} console errors`);
     if (loopsBad.length) problems.push(`infinite animations at rest: ${loopsBad.join(", ")}`);
     if (r.evalError) problems.push(r.evalError);
@@ -216,8 +261,10 @@ for (const route of ROUTES) {
     results.push({ route, width, ok, ...r, errors, problems });
     console.log(`${ok ? "PASS" : "FAIL"} ${route} @${width}${ok ? "" : ` — ${problems.join("; ")}`}`);
     if (!ok) {
+      for (const s of r.spill.slice(0, 6)) console.log(`      spill: ${s}`);
       for (const s of r.small.slice(0, 6)) console.log(`      small: ${s}`);
       for (const t of r.tiny.slice(0, 6)) console.log(`      tiny:  ${t}`);
+      for (const z of r.zoomInputs.slice(0, 6)) console.log(`      input: ${z}`);
       for (const e of errors.slice(0, 4)) console.log(`      error: ${e}`);
     }
   }

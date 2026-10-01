@@ -11,7 +11,6 @@ import { useRef } from "react";
 import { MomentArt, momentCaption } from "@/components/celebrate/MomentArt";
 import { SealCard } from "@/components/celebrate/SealCard";
 import { WhatMoved } from "@/components/celebrate/WhatMoved";
-import { ShellTitle } from "@/components/shell/ShellTitle";
 import { Button } from "@/components/ui/Button";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { enqueue, replay } from "@/lib/celebrate";
@@ -30,7 +29,6 @@ export function CelebrateLab({ groups }: { groups: Group[] }) {
 
   return (
     <div className="page">
-      <ShellTitle eyebrow="Style" title="Celebrations" />
       <p className="t-meta" style={{ margin: "0 0 16px" }}>
         Fixtures only. Each group is the real detector&rsquo;s output on a labelled before/after snapshot. Play sends a copy through the real queue; nothing is stored.
       </p>

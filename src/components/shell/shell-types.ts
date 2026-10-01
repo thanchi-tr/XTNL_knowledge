@@ -73,16 +73,41 @@ export function characterLevelOf(fieldLevels: number[]): { level: number; progre
   return { level, progress: Math.max(0, Math.min(1, raw - level)) };
 }
 
-export function toneOf(n: Pick<Notice, "group" | "tone">): AskTone {
-  if (n.group === "Active effects") return n.tone === "bad" ? "owed" : "held";
-  if (n.tone === "bad") return "owed";
-  if (n.tone === "good") return "kept";
+/** The feed's group for standing boons and debuffs: facts in effect, not asks. */
+export const EFFECTS_GROUP = "Active effects";
+
+/**
+ * Colour grammar for an Ask's diamond. Colour only reports kept / owed / held:
+ *   a debuff in effect → owed (a penalty is the only owed diamond, never a due date);
+ *   a boon in effect → held;
+ *   the quota met → kept (the one notice that reports something kept);
+ *   background info → quiet;
+ *   everything that asks (due, past grace, the focus line, an encounter ready) → ink.
+ */
+export function toneOf(n: Pick<Notice, "group" | "tone"> & { id?: string }): AskTone {
+  if (n.group === EFFECTS_GROUP) return n.tone === "bad" ? "owed" : "held";
+  if (n.id === "quota-met") return "kept";
   if (n.tone === "info") return "quiet";
   return "ask";
 }
 
+/**
+ * A notice that asks something of you (the bell counts these): a warning, a
+ * past-grace or penalty notice, or an encounter ready. Standing effects are
+ * listed separately and never counted.
+ */
+export function asksOfYou(n: Pick<Notice, "id" | "group" | "tone">): boolean {
+  if (n.group === EFFECTS_GROUP) return false;
+  return n.tone === "warn" || n.tone === "bad" || n.id === "bosses";
+}
+
+/**
+ * The bell sheet's rows: the notices that ask (counted), then the effects in
+ * play (listed, not counted). Good-news and info notices (the focus line, the
+ * quota met, cards due with nothing late) stay on Today, not in the bell.
+ */
 export function asksFromNotices(notices: Notice[]): ShellAsk[] {
-  return notices.map((n) => ({
+  const toAsk = (n: Notice): ShellAsk => ({
     id: n.id,
     title: n.title,
     detail: n.detail,
@@ -90,5 +115,11 @@ export function asksFromNotices(notices: Notice[]): ShellAsk[] {
     tone: toneOf(n),
     action: n.action,
     group: n.group,
-  }));
+  });
+  return [...notices.filter(asksOfYou).map(toAsk), ...notices.filter((n) => n.group === EFFECTS_GROUP).map(toAsk)];
+}
+
+/** The bell's count: exactly the rows that ask (so the badge and the sheet agree). */
+export function askCount(items: readonly Pick<ShellAsk, "group">[]): number {
+  return items.filter((a) => a.group !== EFFECTS_GROUP).length;
 }

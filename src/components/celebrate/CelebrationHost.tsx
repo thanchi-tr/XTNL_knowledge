@@ -17,46 +17,62 @@
  *     refreshPending(): pulls unseen moments (deferred ones surface on the next
  *     open) and the account's Feedback prefs, which win over this device's
  *     mirror; a device whose account never saved any seeds it once.
+ *   - No Server Action from here, ever: they dispatch one at a time per
+ *     client, so a first-load prefs write would queue ahead of the first tick
+ *     or answer. The account's prefs are applied without saving them back, and
+ *     a seed goes over /api/celebrations like the acks.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { savePrefs } from "@/app/actions/celebrations";
 import { readPrefs, setPref } from "@/components/ui/MotionPrefs";
 import { enqueue, registerPresenter } from "@/lib/celebrate";
-import { DEFAULT_PREFS, parsePrefs, type CelebrationEvent, type FeedbackPrefs } from "@/lib/celebration-types";
+import { PREFS_STORAGE_KEY, type CelebrationEvent } from "@/lib/celebration-types";
 import { AscensionCurtain } from "./AscensionCurtain";
 import { SealCard } from "./SealCard";
-import { CELEBRATIONS_URL, REFRESH_EVENT, ackShown, takeStaged, type StagedExtras } from "./stage";
+import { planPrefsSync, type AccountPatch, type AccountPrefKey } from "./protocol";
+import { CELEBRATIONS_URL, REFRESH_EVENT, ackShown, noteShowing, sendPrefs, takeStaged, type StagedExtras } from "./stage";
 import "./celebrate.css";
 
 interface Showing {
   ev: CelebrationEvent;
   done: () => void;
   extras: StagedExtras;
+  /** This tab already played this id (a Replay). */
+  replay: boolean;
 }
 
-const ACCOUNT_KEYS = ["theme", "motion", "autoAdvance"] as const;
 const PULL_EVERY_MS = 60_000;
 
 /**
- * Per key: a value the account chose wins over this device's mirror; a key the
- * account never chose is seeded from this device when the device chose one.
+ * The account's choices, applied on this device WITHOUT saving them back
+ * (setPref would echo each one through the savePrefs Server Action). They go
+ * to the localStorage mirror the pre-paint script reads, and MotionPrefs'
+ * storage listener re-reads it, exactly as for another tab's write. If that
+ * did not take (no storage, or no provider listening), setPref is the fallback.
  */
-function reconcilePrefs(server: Partial<FeedbackPrefs> | null): void {
-  const local = readPrefs();
-  const raw = (server ?? {}) as Record<string, unknown>;
-  const parsed = parsePrefs(raw);
-  const seed: Partial<FeedbackPrefs> = {};
-  for (const k of ACCOUNT_KEYS) {
-    // Only a value the account chose, and a valid one (this came over the network).
-    const theirs = k in raw && raw[k] === parsed[k] ? parsed[k] : undefined;
-    if (theirs !== undefined) {
-      if (theirs !== local[k]) setPref(k, theirs as never);
-    } else if (local[k] !== DEFAULT_PREFS[k]) {
-      (seed as Record<string, string>)[k] = local[k];
-    }
+function applyAccountPrefs(patch: AccountPatch): void {
+  const keys = Object.keys(patch) as AccountPrefKey[];
+  if (keys.length === 0) return;
+  let mirrored = false;
+  try {
+    const value = JSON.stringify({ ...readPrefs(), ...patch });
+    window.localStorage.setItem(PREFS_STORAGE_KEY, value);
+    window.dispatchEvent(new StorageEvent("storage", { key: PREFS_STORAGE_KEY, newValue: value }));
+    mirrored = true;
+  } catch {
+    /* private mode: setPref below still applies it for this page */
   }
-  if (Object.keys(seed).length) void savePrefs(seed).catch(() => undefined);
+  const now = readPrefs();
+  for (const k of keys) {
+    if (!mirrored || now[k] !== patch[k]) setPref(k, patch[k] as never);
+  }
+}
+
+/** Per key: a value the account chose wins over this device's mirror; an unchosen key is seeded from this device. */
+function reconcilePrefs(server: unknown): void {
+  const plan = planPrefsSync(readPrefs(), server);
+  applyAccountPrefs(plan.apply);
+  void sendPrefs(plan.seed);
 }
 
 function isEvent(v: unknown): v is CelebrationEvent {
@@ -75,7 +91,7 @@ export function CelebrationHost() {
     setHost(document.body);
     return registerPresenter((ev, done) => {
       ackShown([ev]);
-      setShowing({ ev, done, extras: takeStaged(ev.id) ?? {} });
+      setShowing({ ev, done, extras: takeStaged(ev.id) ?? {}, replay: noteShowing(ev.id) });
     });
   }, []);
 
@@ -91,12 +107,12 @@ export function CelebrationHost() {
       try {
         const res = await fetch(CELEBRATIONS_URL, { cache: "no-store", headers: { accept: "application/json" } });
         if (!res.ok) return;
-        const body = (await res.json()) as { pending?: unknown[]; prefs?: Partial<FeedbackPrefs> | null };
+        const body = (await res.json()) as { pending?: unknown; prefs?: unknown };
         if (first) {
           first = false;
           reconcilePrefs(body.prefs ?? null);
         }
-        for (const ev of body.pending ?? []) if (isEvent(ev)) enqueue(ev);
+        if (Array.isArray(body.pending)) for (const ev of body.pending) if (isEvent(ev)) enqueue(ev);
       } catch {
         /* offline: the next open tries again */
       } finally {
@@ -117,7 +133,7 @@ export function CelebrationHost() {
   }, []);
 
   if (!showing || !host) return null;
-  const { ev, extras } = showing;
+  const { ev, extras, replay } = showing;
   const finish = () => {
     const d = showing.done;
     setShowing(null);
@@ -134,6 +150,7 @@ export function CelebrationHost() {
         sky={extras.sky}
         fromEl={extras.fromEl}
         primary={extras.primary}
+        replay={replay}
         onDone={finish}
       />,
       host

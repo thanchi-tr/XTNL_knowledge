@@ -8,7 +8,16 @@
  *   Docked (the CelebrationHost plays it): Done button, Escape, auto-dismiss
  *   after 9 s that pauses on hover or focus.
  *   <SealCard ev={ev} inline/>  inside a result panel, recap or week card:
- *   no button of its own, and it marks the moment seen when it mounts.
+ *   no button of its own, and it marks the moment seen when it mounts (so it
+ *   never replays as a docked Seal on the next open or the other device).
+ *   <SealCard ev={ev} inline announce/>  for a Seal that skipped the queue
+ *   (a T2 merged into a review run): it also plays the seal's sound, haptic
+ *   and live-region sentence, once per id per tab. The queue already does
+ *   that for everything it presents, so the host never passes it.
+ *   <SealCard ev={ev} inline animate={false}/>  a recap list: settled, silent.
+ *
+ * The modifier class is `seal-inline`, never `inline` (Tailwind's
+ * .inline{display:inline} utility would win over the card).
  *
  * Motion (Full): rim draws 520 ms, notches pop at 32 ms each, the numeral
  * rolls at 380 ms, 14 seeded motes, one card sweep. Calm fades; Still shows
@@ -20,10 +29,32 @@ import { Amount } from "@/components/ui/Amount";
 import { Button } from "@/components/ui/Button";
 import { Medallion } from "@/components/ui/Crest";
 import { cx } from "@/components/ui/cx";
-import type { CelebrationEvent } from "@/lib/celebration-types";
+import { announce as say, haptic, signedFigure, sound } from "@/lib/celebrate";
+import type { CelebrationEvent, CurrencyKind } from "@/lib/celebration-types";
 import { burst, center, motionLevel, play } from "@/lib/motion";
 import { ackShown } from "./stage";
 import { WhatMoved } from "./WhatMoved";
+
+const CURRENCY_WORD: Record<CurrencyKind, string> = { xp: "life XP", pts: "review pts", mp: "MP" };
+
+/** The sentence a Seal says in the live region: the queue's wording (a level-up never hides the payout). */
+export function sealSentence(ev: Pick<CelebrationEvent, "facts">): string {
+  const f = ev.facts;
+  if (f.say) return f.say;
+  const parts = [f.eyebrow, f.title, ...(f.lines ?? [])];
+  if (f.amounts?.length) parts.push(f.amounts.map((a) => `${signedFigure(a.value)} ${a.label ?? CURRENCY_WORD[a.kind]}`).join(", "));
+  return parts.filter(Boolean).join(". ");
+}
+
+/** Ids whose sound and sentence already played in this tab (an in-panel Seal says itself once). */
+const announced = new Set<string>();
+
+/** True the first time an id asks to announce itself in this tab. */
+export function firstAnnouncement(id: string): boolean {
+  if (announced.has(id)) return false;
+  announced.add(id);
+  return true;
+}
 
 /** The medal's face: a glyph for habit rungs and PRs, else the numeral (from → to). */
 export function medalFace(ev: Pick<CelebrationEvent, "kind" | "facts">): { glyph: string | null; from: number | null; to: number | null } {
@@ -44,10 +75,15 @@ export interface SealCardProps {
   onDone?: () => void;
   /** False: render the settled card with no arrival motion (a recap listing, the lab). Default true. */
   animate?: boolean;
+  /**
+   * Inline only: play the seal's sound, haptic and live-region sentence once per id per tab.
+   * For a Seal shown outside the queue (a review run's merged T2); the queue announces the rest.
+   */
+  announce?: boolean;
   className?: string;
 }
 
-export function SealCard({ ev, inline = false, onDone, animate = true, className }: SealCardProps) {
+export function SealCard({ ev, inline = false, onDone, animate = true, announce = false, className }: SealCardProps) {
   const f = ev.facts;
   const face = medalFace(ev);
   const titleId = useId();
@@ -102,6 +138,11 @@ export function SealCard({ ev, inline = false, onDone, animate = true, className
     const timers: number[] = [];
     const raf = requestAnimationFrame(() => setShown(true));
     if (inline) ackShown([ev]);
+    if (inline && announce && animate && firstAnnouncement(ev.id)) {
+      sound("seal");
+      haptic("seal");
+      say(sealSentence(ev));
+    }
     if (!animate) {
       return () => cancelAnimationFrame(raf);
     }
@@ -164,7 +205,7 @@ export function SealCard({ ev, inline = false, onDone, animate = true, className
   return (
     <div
       ref={cardRef}
-      className={cx("seal-card sweep", inline && "inline", shown && "show", className)}
+      className={cx("seal-card sweep", inline && "seal-inline", shown && "show", className)}
       role={inline ? "group" : "dialog"}
       aria-labelledby={titleId}
       data-celebration={ev.kind}

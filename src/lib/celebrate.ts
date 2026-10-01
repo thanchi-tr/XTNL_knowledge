@@ -7,6 +7,8 @@
  *        resolves when it lands, so the ledger owner can countTo() + bump().
  *   chime(opts)                     Tier 1. In place, < 1 s: sweep + seeded burst of 8.
  *        If opts.ringEl is off-screen, the ToastDock carries a closing mini ring.
+ *        Once per id per tab: a second chime with the same id (an effect run
+ *        twice, a re-render, an undo and redo) does nothing, as a moment plays once.
  *   enqueue(event)                  Tier 2 / 3. One at a time, highest tier first.
  *        A registered presenter (L3's CelebrationHost) renders it and calls done().
  *        Events already seen in this tab are ignored (a moment plays once).
@@ -285,7 +287,17 @@ export interface ChimeOptions {
   toastTitle?: string;
 }
 
+/** T1 ids already chimed in this tab. */
+const chimed = new Set<string>();
+
+/** Has this T1 id already chimed in this tab? (For pages that also show the moment as a row.) */
+export function hasChimed(id: string): boolean {
+  return chimed.has(id);
+}
+
 export function chime(o: ChimeOptions): void {
+  if (chimed.has(o.id)) return;
+  chimed.add(o.id);
   if (isBrowser()) {
     if (o.sweepEl instanceof HTMLElement) {
       const el = o.sweepEl;

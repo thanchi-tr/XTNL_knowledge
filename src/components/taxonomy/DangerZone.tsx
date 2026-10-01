@@ -7,6 +7,7 @@ import { RESET_SCOPES, RESET_SCOPE_ORDER, type ResetScope, type ResetSummary } f
 import { Button } from "@/components/ui/Button";
 import { TypedConfirm } from "@/components/ui/TypedConfirm";
 import { MINUS } from "@/components/ui/format";
+import "@/components/library/study.css";
 import "@/components/settings/settings.css";
 
 interface Props {
@@ -30,8 +31,15 @@ function countOf(counts: Record<string, number>, key: string, one: string, many:
  * be chosen (there is no default), and the scope's phrase must be typed
  * (the kit's TypedConfirm, the danger voice). The panel states real row
  * counts rather than a vague "all data": you should know you are about to
- * lose 55 ideas before you lose them. The server checks the phrase again
- * (reset.ts), so a mis-wired prop can never delete anything.
+ * lose 55 ideas before you lose them.
+ *
+ * What the person typed is what the server receives. TypedConfirm arms its
+ * button on a case-insensitive match and keeps the text to itself, so the
+ * panel reads the field's value as it changes (React's change event bubbles
+ * to the wrapper) and sends exactly that. The server is the gate: reset.ts
+ * compares it, trimmed but case-sensitive, to the scope's phrase, so "delete
+ * ideas" arms the button but deletes nothing, and a mis-wired prop can never
+ * stand in for the phrase.
  */
 export function DangerZone({ counts, onReset }: Props) {
   const router = useRouter();
@@ -39,22 +47,31 @@ export function DangerZone({ counts, onReset }: Props) {
   const [scope, setScope] = useState<ResetScope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<ResetSummary | null>(null);
+  /** The confirm field's text, as typed (never the canonical phrase). */
+  const [typed, setTyped] = useState("");
 
   const spec = scope ? RESET_SCOPES[scope] : null;
 
+  function choose(next: ResetScope | null) {
+    setScope(next);
+    // TypedConfirm is keyed by scope, so its field starts empty again.
+    setTyped("");
+    setError(null);
+  }
+
   function run() {
     if (!scope || !spec) return;
+    const confirmation = typed;
     setError(null);
     startTransition(async () => {
-      // TypedConfirm only enables its button once the phrase is typed; the
-      // action checks it again against the same table.
-      const res = await resetKnowledgeBase(scope, spec.phrase);
+      // Exactly what was typed: the action decides whether it is the phrase.
+      const res = await resetKnowledgeBase(scope, confirmation);
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setDone(res.value);
-      setScope(null);
+      choose(null);
       router.refresh();
       onReset?.();
     });
@@ -120,10 +137,7 @@ export function DangerZone({ counts, onReset }: Props) {
               type="button"
               className="dz-scope"
               aria-pressed={on}
-              onClick={() => {
-                setScope(on ? null : s);
-                setError(null);
-              }}
+              onClick={() => choose(on ? null : s)}
             >
               <b>{meta.label}</b>
               <span>{meta.blurb}</span>
@@ -133,17 +147,25 @@ export function DangerZone({ counts, onReset }: Props) {
       </div>
 
       {spec && scope && (
-        <TypedConfirm
-          key={scope}
-          phrase={spec.phrase}
-          action={`Delete: ${spec.label.toLowerCase()}`}
-          onConfirm={run}
-          pending={isPending}
-        />
+        <div
+          onChange={(e) => {
+            if (e.target instanceof HTMLInputElement) setTyped(e.target.value);
+            // A refusal ("Type DELETE IDEAS exactly…") goes once the text changes.
+            setError(null);
+          }}
+        >
+          <TypedConfirm
+            key={scope}
+            phrase={spec.phrase}
+            action={`Delete: ${spec.label.toLowerCase()}`}
+            onConfirm={run}
+            pending={isPending}
+          />
+        </div>
       )}
 
       {error && (
-        <p role="alert" className="t-meta" style={{ color: "var(--owed)" }}>
+        <p role="alert" className="st-error">
           {error}
         </p>
       )}

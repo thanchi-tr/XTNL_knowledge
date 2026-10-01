@@ -34,8 +34,9 @@ export default async function SettingsPage() {
     fields,
   };
 
+  // layout.tsx is the page and the `main` container (with the You tabs on compact).
   return (
-    <div className="page cq-main set-page">
+    <div className="set-page">
       <SettingsView data={data} />
     </div>
   );

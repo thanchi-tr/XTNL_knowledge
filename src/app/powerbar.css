@@ -32,13 +32,17 @@
   height: 2px;
   z-index: 2;
   pointer-events: none;
-  background: var(--line);
-  transition: height 420ms cubic-bezier(.22, .61, .36, 1);
+  background: var(--line-1);
+  /* The head rides on a bar-wide element (see .pw-head): clip it sideways
+     only, so the arcs above the rail still show. */
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 /* Deep loadouts get a rail with some physical presence, before any
    overcharge is involved — a d13 in the bar should already look different
-   from a d3 in the bar. */
+   from a d3 in the bar. The height steps; it does not animate (only
+   transform and opacity do). */
 .pw-rail[data-deep="1"] { height: 3px; }
 .pw-rail[data-over="1"] { height: 4px; }
 
@@ -64,11 +68,24 @@
 
 /* The leading edge. A meter without a head reads as a coloured stripe; a
    bright point sitting exactly where the fill stops reads as charge
-   arriving, and it is the part the eye tracks when the value changes. */
+   arriving, and it is the part the eye tracks when the value changes.
+   The element spans the rail and the dot is its ::before on the left edge,
+   so translateX(charge × 100%) is a fraction of the rail: the head follows
+   the fill on transform alone (it used to transition `left`). */
 .pw-head {
   position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--charge, 0) * 100%));
+  opacity: calc(.25 + var(--charge, 0) * .75);
+  transition: transform 720ms cubic-bezier(.22, .61, .36, 1);
+}
+
+.pw-head::before {
+  content: "";
+  position: absolute;
   top: 50%;
-  left: calc(var(--charge, 0) * 100%);
+  left: 0;
   width: 8px;
   height: 8px;
   margin: -4px 0 0 -4px;
@@ -77,8 +94,6 @@
   box-shadow:
     0 0 10px 2px rgb(var(--sky-a, 0 229 255) / .9),
     0 0 30px 6px rgb(var(--sky-a, 0 229 255) / .35);
-  opacity: calc(.25 + var(--charge, 0) * .75);
-  transition: left 720ms cubic-bezier(.22, .61, .36, 1);
   animation: pw-head-pulse 2.6s ease-in-out infinite;
   animation-play-state: var(--ambient-play, running);
 }
@@ -260,7 +275,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pw-head, .pw-over::before, .pw-arc, .pw-value[data-over="1"] .pw-pct { animation: none; }
+  .pw-head::before, .pw-over::before, .pw-arc, .pw-value[data-over="1"] .pw-pct { animation: none; }
   .pw-arc { opacity: .5; }
   .loadout-bar:has(.pw-rail[data-over="1"])::after { animation: none; }
   .pw-fill, .pw-head { transition: none; }

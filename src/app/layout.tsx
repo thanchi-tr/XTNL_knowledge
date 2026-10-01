@@ -11,11 +11,10 @@ import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
 // Separate global sheets, each starting with the layer order statement, so
-// import order no longer decides who wins: the layer does. skies.css and
-// cataclysm*.css are not global any more (L4 imports them where the sky and
-// the ceremony render).
+// import order no longer decides who wins: the layer does. The art sheets
+// are not global (globals.css says where each one is imported); powerbar.css
+// renders only in the /dev/style/art previews, whose layout imports it.
 import "./arcane.css";
-import "./powerbar.css";
 import "./insignia.css";
 import "./capture.css";
 

@@ -31,6 +31,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { pushToast } from "@/components/ui/toast-store";
 import { cx } from "@/components/ui/cx";
+import { ActionError } from "@/components/home/ActionError";
 import { SkillLogo } from "./SkillLogo";
 import { CodexSheet } from "./ComboCodex";
 
@@ -145,13 +146,13 @@ export function LoadoutGrid({ slots, bench }: Props) {
           </h2>
           <span className="t-meta num">{filled} of {local.length}</span>
         </div>
-        <ul className="slots" style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        <ul className="lo-slots">
           {local.map((s) => (
-            <li key={s.slot} style={{ width: "100%", display: "grid", justifyItems: "center" }}>
+            <li key={s.slot}>
               {s.skill ? (
                 <button
                   type="button"
-                  className={cx("slot", !s.active && "dormant", glint?.slot === s.slot && "glint")}
+                  className={cx("lo-slot", !s.active && "dormant", glint?.slot === s.slot && "glint")}
                   key={glint?.slot === s.slot ? `g${glint.n}` : "s"}
                   onClick={() => setPick({ mode: "manage", slot: s.slot })}
                   aria-label={`Slot ${s.slot + 1}: ${s.skill.name}${s.active ? "" : ", dormant"}. Swap or unequip`}
@@ -164,7 +165,7 @@ export function LoadoutGrid({ slots, bench }: Props) {
               ) : (
                 <button
                   type="button"
-                  className="slot empty"
+                  className="lo-slot empty"
                   onClick={() => setPick({ mode: "equip", slot: s.slot })}
                   aria-label={`Empty slot ${s.slot + 1}: equip`}
                   disabled={isPending}
@@ -189,11 +190,7 @@ export function LoadoutGrid({ slots, bench }: Props) {
             Unlock more
           </Button>
         </div>
-        {error && (
-          <p role="alert" className="t-meta" style={{ color: "var(--owed)", marginTop: 8 }}>
-            {error}
-          </p>
-        )}
+        {error && <ActionError>{error}</ActionError>}
       </section>
 
       <Sheet

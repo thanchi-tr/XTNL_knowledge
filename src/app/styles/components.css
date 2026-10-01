@@ -47,7 +47,8 @@
   :is(.btn, .btn-primary, .btn-secondary, .btn-quiet, .btn-gold, .btn-danger, .btn-ghost):disabled,
   :is(.btn, .btn-primary, .btn-secondary, .btn-quiet, .btn-gold, .btn-danger, .btn-ghost)[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   .btn.lg, .btn-lg { min-height: 48px; font-size: 15px; padding: 0 18px; }
-  .btn.block, .btn-block { width: 100%; }
+  /* Full width. Never `.block`: that is Tailwind's display:block utility, which wins. */
+  .btn-block { width: 100%; }
   .btn-primary { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
   .btn-primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
   :root[data-theme="vellum"] .btn-primary:hover:not(:disabled) { background: #000; border-color: #000; }
@@ -114,25 +115,26 @@
   .pill.paid { color: var(--ink-0); background: color-mix(in srgb, var(--xp) 14%, transparent); border-color: color-mix(in srgb, var(--xp) 38%, transparent); }
   .pill.paid.pts { background: color-mix(in srgb, var(--pts) 14%, transparent); border-color: color-mix(in srgb, var(--pts) 38%, transparent); }
 
-  /* ---------- tick: 44 target around a 24 circle (todos) or a 21 diamond (musts) ---------- */
+  /* ---------- tick: 44 target around a 24 circle (todos) or a 21 diamond (musts) ----------
+     The inner circle is .tick-ring: a bare `.ring` is Tailwind's ring utility. */
   .tick { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; flex: none; background: transparent; border: 0; padding: 0; color: inherit; }
-  .tick .ring {
+  .tick .tick-ring {
     width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line-ctl);
     display: grid; place-items: center;
     transition: background-color var(--t-quick), border-color var(--t-quick), transform var(--t-press) var(--ease-out);
   }
-  .tick .ring svg { width: 15px; height: 15px; fill: none; stroke: var(--on-kept); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-  .tick .ring path { stroke-dasharray: 22; stroke-dashoffset: 22; transition: stroke-dashoffset 220ms var(--ease-out) 40ms; }
-  .tick:hover .ring { border-color: var(--ink-1); }
-  .tick:active .ring { transform: scale(.88); }
-  .tick[data-shape="diamond"] .ring { width: 21px; height: 21px; border-radius: 4px; transform: rotate(45deg); }
-  .tick[data-shape="diamond"] .ring svg { transform: rotate(-45deg); }
-  .tick[data-shape="diamond"]:active .ring { transform: rotate(45deg) scale(.88); }
-  .tick[data-state="done"] .ring { background: var(--kept); border-color: var(--kept); }
-  .tick[data-state="done"] .ring path { stroke-dashoffset: 0; }
-  .tick[data-state="minimum"] .ring { background: linear-gradient(90deg, var(--kept) 50%, transparent 50%); border-color: var(--kept); }
+  .tick .tick-ring svg { width: 15px; height: 15px; fill: none; stroke: var(--on-kept); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+  .tick .tick-ring path { stroke-dasharray: 22; stroke-dashoffset: 22; transition: stroke-dashoffset 220ms var(--ease-out) 40ms; }
+  .tick:hover .tick-ring { border-color: var(--ink-1); }
+  .tick:active .tick-ring { transform: scale(.88); }
+  .tick[data-shape="diamond"] .tick-ring { width: 21px; height: 21px; border-radius: 4px; transform: rotate(45deg); }
+  .tick[data-shape="diamond"] .tick-ring svg { transform: rotate(-45deg); }
+  .tick[data-shape="diamond"]:active .tick-ring { transform: rotate(45deg) scale(.88); }
+  .tick[data-state="done"] .tick-ring { background: var(--kept); border-color: var(--kept); }
+  .tick[data-state="done"] .tick-ring path { stroke-dashoffset: 0; }
+  .tick[data-state="minimum"] .tick-ring { background: linear-gradient(90deg, var(--kept) 50%, transparent 50%); border-color: var(--kept); }
   .tick:disabled { cursor: default; }
-  .tick:disabled .ring { border-color: var(--ink-mute); }
+  .tick:disabled .tick-ring { border-color: var(--ink-mute); }
 
   /* ---------- meter: 8 px (6 thin), sunken track, base ink + optional gain + cap ---------- */
   .meter { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--ink-0) 8%, var(--sunken)); box-shadow: inset 0 0 0 1px var(--line-2); position: relative; overflow: hidden; }
@@ -322,7 +324,7 @@
   .rail a[aria-current="page"] { color: var(--ink-0); background: var(--raised); }
   .rail .r-plus > span { width: 48px; height: 48px; border-radius: 16px; background: var(--ink-0); color: var(--page); display: grid; place-items: center; }
   .rail .r-plus { margin-bottom: 10px; }
-  .rail .grow { flex: 1; }
+  .rail .rail-grow { flex: 1; }
   .rail .badge { position: absolute; top: 6px; right: 14px; box-shadow: 0 0 0 2px var(--bar); }
 
   .sidebar {
@@ -411,8 +413,9 @@
 
   /* T2 Seal card: at the dock, or inside a result panel / week card with no button of its own. */
   .seal-card { pointer-events: auto; background: var(--overlay); border: 1px solid var(--line-2); border-radius: 18px; padding: 16px; box-shadow: var(--shadow-pop); position: relative; overflow: hidden; transform: translateY(16px); opacity: 0; transition: transform 320ms var(--ease-out), opacity var(--t-base); }
-  .seal-card.show, .seal-card.inline { transform: none; opacity: 1; }
-  .seal-card.inline { box-shadow: none; }
+  /* In a panel: .seal-inline (a bare `.inline` is Tailwind's display:inline utility). */
+  .seal-card.show, .seal-card.seal-inline { transform: none; opacity: 1; }
+  .seal-card.seal-inline { box-shadow: none; }
   .seal-card .sc-top { display: flex; gap: 14px; align-items: center; }
   .seal-card .sc-t { flex: 1; min-width: 0; }
   .seal-card h3 { font: 600 20px/24px var(--font-display); margin: 0; }

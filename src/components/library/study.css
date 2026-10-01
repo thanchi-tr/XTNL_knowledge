@@ -21,7 +21,8 @@
   input.st-input.num { font-family: var(--font-mono); }
   .st-label { display: block; font: 600 13px/18px var(--font-ui); color: var(--ink-1); margin-bottom: 6px; }
   .st-hint { font-size: 13px; line-height: 18px; color: var(--ink-2); margin-top: 6px; }
-  .st-error { font-size: 13px; line-height: 18px; color: var(--owed); }
+  /* An action's error: ink, not owed (colour reports kept / owed / held, never "something went wrong"). */
+  .st-error { font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
   .st-note { font-size: 13px; line-height: 18px; color: var(--ink-2); }
   .st-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
@@ -152,7 +153,8 @@
   .add-vcol .add-ans { color: var(--ink-1); font-size: 14px; }
   .add-sim { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-top: 8px; }
   .add-sim .meter { flex: 1; }
-  .add-evidence { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .add-summary { margin: 10px 0 0; color: var(--ink-1); }
+  .add-evidence { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
   .add-also { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
   .add-also li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .add-created { display: flex; gap: 12px; align-items: flex-start; }
@@ -164,7 +166,7 @@
     display: flex; gap: 8px; padding: 12px 0; margin-top: 2px;
     background: linear-gradient(transparent, var(--page) 30%);
   }
-  .add-sticky .grow { flex: 1; }
+  .add-sticky .add-grow { flex: 1; }
   .add-decide { display: flex; flex-direction: column; gap: 12px; }
   .add-decide dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 13px; color: var(--ink-2); }
   .add-decide dt { color: var(--ink-1); font-weight: 600; }
@@ -196,6 +198,12 @@
    so that page stays off the `main` container (no cq-main) and sizes by media
    query; the other pages here opt into the container. */
 @layer components {
+  /* Inputs are 16 px on phones so the browser never zooms into them. base.css
+     says so in @layer base, which this layer outranks, so the lane says it
+     again (after .st-input, same layer: this wins). */
+  @media (max-width: 599px) {
+    .st-input { font-size: 16px; }
+  }
   @media (min-width: 600px) {
     .page.add-page { padding: 8px 24px 40px; }
     .add-two { grid-template-columns: 1fr 1fr; }

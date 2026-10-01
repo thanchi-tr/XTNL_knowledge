@@ -1,24 +1,25 @@
 "use client";
 
 /**
- * The hub's supporting cards: the loadout strip (a link to You › Loadout,
- * with the modifiers it actually applies to a review), active penalties
- * (each announced with how it clears), and Recent ideas (linking to
- * /library/[id]). Presentational; the numbers come from the page.
+ * The hub's supporting cards: what is in effect on a review right now (the
+ * folded modifiers, active boons with when they end, active penalties with
+ * how they clear), and Recent ideas (linking to /library/[id]).
+ * Presentational; the numbers come from the page.
+ *
+ * The loadout strip itself is L4's one implementation
+ * (src/components/skills/LoadoutStrip.tsx, the mini coins and "7 of 10"),
+ * rendered by the server page and handed to the hub as a node.
  */
 import Link from "next/link";
 import { formatExpiry } from "@/lib/format-date";
 import { Chip } from "@/components/ui/Chip";
-import { Icon } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 
-export interface LoadoutSummary {
-  equipped: number;
-  slots: number;
-  /** What the loadout does to a review right now ("Review yield +18%"), from modifier-display.ts. */
-  lines: string[];
-  /** Active boons, each with its effect and when it ends. */
-  boons: { label: string; effect: string; until: Date }[];
+export interface BoonSummary {
+  kind: string;
+  label: string;
+  effect: string;
+  until: Date;
 }
 
 export interface PenaltySummary {
@@ -27,6 +28,16 @@ export interface PenaltySummary {
   effect: string;
   clears: string;
   until: Date;
+}
+
+/** Everything that changes what a review pays right now. */
+export interface ReviewEffects {
+  /** The folded modifiers that move a review ("Review yield +18%"), from modifier-display.ts. */
+  lines: string[];
+  /** Active boons, each with its effect and when it ends. */
+  boons: BoonSummary[];
+  /** Active penalties, each with its effect, how it clears and when it ends. */
+  penalties: PenaltySummary[];
 }
 
 export interface RecentIdea {
@@ -39,28 +50,35 @@ export interface RecentIdea {
   mastered: boolean;
 }
 
-export function LoadoutStrip({ loadout }: { loadout: LoadoutSummary }) {
-  const bits = [...loadout.lines, ...loadout.boons.map((b) => `${b.label} ${b.effect} until ${formatExpiry(b.until)}`)];
-  return (
-    <Link className="card rv-strip" href="/you/loadout">
-      <Icon name="grid" className="ink-2" />
-      <span className="grow">
-        <b className="ink-0">
-          Loadout {loadout.equipped} of {loadout.slots}
-        </b>
-        {bits.length > 0 ? ` · ${bits.join(" · ")}` : " · nothing changes a review right now"}
-      </span>
-      <Icon name="chev" className="ink-2" size={16} />
-    </Link>
-  );
+/** True when the effects card has anything to say. */
+export function hasEffects(e: ReviewEffects): boolean {
+  return e.lines.length + e.boons.length + e.penalties.length > 0;
 }
 
-export function PenaltyCard({ penalties }: { penalties: PenaltySummary[] }) {
-  if (penalties.length === 0) return null;
+export function EffectsCard({ effects }: { effects: ReviewEffects }) {
+  if (!hasEffects(effects)) return null;
   return (
-    <section className="card" aria-label="Active penalties">
-      {penalties.map((p) => (
-        <div key={`${p.kind}:${p.until.toISOString()}`} className="rv-penalty">
+    <section className="card" aria-labelledby="rv-fx-h">
+      <div className="rv-fx-head">
+        <div id="rv-fx-h" className="t-eyebrow">
+          In effect on a review
+        </div>
+        {effects.lines.length > 0 && <p className="t-meta ink-1">Altogether: {effects.lines.join(" · ")}</p>}
+      </div>
+      {effects.boons.map((b) => (
+        <div key={`boon:${b.kind}:${b.until.toISOString()}`} className="rv-effect">
+          {/* A boon in effect is held (the shell's Asks sheet and You › Loadout say it the same way). */}
+          <Chip tone="held" icon="star">
+            {b.label}
+          </Chip>
+          <div style={{ minWidth: 0 }}>
+            <b style={{ display: "block", fontWeight: 600 }}>{b.effect}</b>
+            <span className="t-meta">Ends {formatExpiry(b.until)}.</span>
+          </div>
+        </div>
+      ))}
+      {effects.penalties.map((p) => (
+        <div key={`penalty:${p.kind}:${p.until.toISOString()}`} className="rv-effect">
           <Chip tone="owed">{p.label}</Chip>
           <div style={{ minWidth: 0 }}>
             <b style={{ display: "block", fontWeight: 600 }}>{p.effect}</b>
@@ -83,7 +101,7 @@ export function RecentIdeas({ ideas }: { ideas: RecentIdea[] }) {
         {ideas.map((i) => (
           <Link key={i.id} className="rv-idea" href={`/library/${i.id}`}>
             <div style={{ minWidth: 0 }}>
-              <b>{i.title}</b>
+              <b title={i.title}>{i.title}</b>
               <span className="t-meta">
                 <span>{i.domainName}</span>
                 <span>{i.nextLabel}</span>

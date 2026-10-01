@@ -5,11 +5,11 @@
 @import "./styles/components.css";
 @import "./styles/effects.css";
 @import "./styles/legacy.css";
-/* Art files still global until L4 re-homes them (each starts with the layer order). */
-@import "./atmosphere.css";
-@import "./field-tier.css";
-@import "./equip-attach.css";
-@import "./bar-charge.css";
+/* The art sheets are not global: atmosphere, equip-attach, bar-charge and
+   powerbar render only in the /dev/style/art previews (its layout imports
+   them), skies only under /skills and the art layout, cataclysm* only with the
+   ceremony, and field-tier has no users. arcane, insignia and capture are
+   imported by layout.tsx while legacy pages still use them. */
 /* tailwind.config.mts and its @config are gone: the v4 @theme blocks below replace them. */
 
 /* =====================================================================
@@ -18,7 +18,7 @@
      theme      tokens.css (and Tailwind's own theme variables)
      base       Tailwind preflight, then styles/base.css (document, type roles)
      components styles/components.css (ui/* and the shell), legacy.css,
-                today.css, capture.css
+                every lane's sheet (today.css, capture.css, review.css, …)
      art        the emblem, sky and cataclysm art (L4)
      effects    styles/effects.css (the reward layers), art one-shots
      utilities  Tailwind utilities: always last, so a utility class wins
@@ -55,16 +55,9 @@
   --text-meta--line-height: 18px;
   --text-eyebrow: 12px;
   --text-eyebrow--line-height: 16px;
-
-  /* LEGACY utility names (were in tailwind.config.mts); delete as their uses reach 0.
-     No --color-base: it would make `text-base` ambiguous. */
-  --color-ink-3: var(--ink-2);
-  --color-sub: var(--sunken);
-  --color-green: var(--kept);
-  --color-red: var(--owed);
-  --color-crimson: var(--owed);
-  --color-arcane-bright: var(--held);
-  --radius-control: 12px;
+  /* The legacy utility names (text-ink-3, bg-sub, text-green, text-red,
+     text-crimson, text-arcane-bright, rounded-control) reached 0 uses and
+     are gone. */
 }
 
 /* Same-named bindings carry literal values (no cycle). tokens.css states the
@@ -75,33 +68,6 @@
   --ease-out: cubic-bezier(.16, 1, .3, 1);
   --ease-inout: cubic-bezier(.65, 0, .35, 1);
   --ease-stamp: cubic-bezier(.34, 1.56, .64, 1);
-
-  /* LEGACY: SessionCard's delta readout (L2 replaces it with the gateway's fly). */
-  --animate-float-up-fade: float-up-fade .9s ease-out forwards;
-  @keyframes float-up-fade {
-    0% { transform: translateY(0); opacity: 0; }
-    20% { opacity: 1; }
-    100% { transform: translateY(-14px); opacity: 0; }
-  }
-}
-
-@layer components {
-  /* RETIRED: the phone's corner capture button (the tab bar's + replaces it).
-     QuickCapture (L1) still renders it until CaptureFab.tsx is deleted. */
-  .capture-fab[data-capture-fab] { display: none; }
-}
-
-@layer effects {
-  /* Kept for scripts/life-day-check.ts, which reads this block by name. The
-     motion pref (html[data-motion], tokens.css) is the real switch now;
-     remove this with that assertion. */
-  @media (prefers-reduced-motion: reduce) {
-    :root .today-tick-ring, :root .today-tick-check,
-    :root .today-row-title, :root .today-bar-fill,
-    :root button.capture-chip { transition: none; }
-    :root .today-sheet, :root .today-toast, :root .capture-sheet,
-    :root .capture-backdrop, :root .capture-toast { animation: none; }
-    :root .today-tick:active .today-tick-ring,
-    :root .capture-fab:active { transform: none; }
-  }
+  /* animate-float-up-fade (SessionCard's old delta readout) is gone: the
+     runner flies its token through the motion gateway. */
 }

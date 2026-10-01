@@ -16,6 +16,12 @@
  *   markCataclysm(eventId)   the unlock flow flags an event as a first-of-depth unlock
  *   wantsCataclysm(event)    whether the backdrop will play it
  *
+ * L3's AscensionCurtain draws both by default for any emblem event (lazily,
+ * and with a suffixed id on a Replay, so the Cataclysm plays once). The
+ * unlock flow (UnlockButton) therefore only flags the Cataclysm and presents
+ * the event with the tapped coin to fly from:
+ *   markCataclysm(ev.id); present(ev, { fromEl })
+ *
  * Nothing here is random: the Cataclysm variant is chosen by the emblem's
  * attribute (cataclysm-variants.ts) and its geometry is deterministic.
  */

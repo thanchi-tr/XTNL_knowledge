@@ -25,7 +25,10 @@
   button:disabled { cursor: not-allowed; }
   code, pre, kbd, samp { font-family: var(--font-mono); }
 
-  /* Inputs are 16 px on phones so the browser never zooms into them. */
+  /* Inputs are 16 px on phones so the browser never zooms into them. This
+     is @layer base, so a component class that sets its own input size (in
+     @layer components) must repeat the phone rule itself; shell-check
+     asserts every such class does. */
   @media (max-width: 599px) {
     input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px; }
   }
@@ -68,4 +71,13 @@
   .c-mp { color: var(--mp); }
   .cur { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums lining-nums; }
   .cur svg.g { width: 13px; height: 13px; }
+  /* .cur is for a glyph and a FIGURE (it never breaks). A glyph beside a
+     sentence wraps instead (Today's focus line is .focus-what): a nowrap
+     sentence spills past its card at 344/375 (ui-audit's spill check). */
+
+  /* An action's error line: ink, never owed (owed reports debt, not a failed
+     save), with an ink diamond so it does not rest on colour alone. Use with
+     role="alert". */
+  .t-error { display: flex; gap: 8px; align-items: baseline; margin: 0; font: 600 13px/18px var(--font-ui); color: var(--ink-0); }
+  .t-error::before { content: ""; width: 7px; height: 7px; flex: none; transform: translateY(-1px) rotate(45deg); border: 1.5px solid currentColor; border-radius: 1.5px; }
 }

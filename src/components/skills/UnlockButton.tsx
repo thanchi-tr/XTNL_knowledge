@@ -7,20 +7,35 @@
  *   Tap 2  "Confirm: spend 1,200 MP"    spends. The server re-checks every gate.
  *
  * On success: the MP figures on the page count down to the new balance
- * ([data-mp-balance] elements), the emblem's Ascension is queued (T3; L3's
- * curtain plays it, with the Cataclysm backdrop on a first deep unlock), and
- * the route refreshes so the ladder shows it owned. The gold voice is used
- * only here and for Equip now in a ceremony.
+ * ([data-mp-balance] elements) and the emblem's Ascension is presented (T3,
+ * through L3's stage.present) with what only this flow knows: the tapped
+ * ladder coin for the art to fly from, and the first-of-depth flag that lets
+ * the Cataclysm play (markCataclysm). The curtain draws the emblem art and
+ * the attribute sky band itself (ceremony-art's CeremonyArt and
+ * CeremonyBackdrop; Full motion only for the Cataclysm, never on a Replay).
+ * The route then refreshes so the ladder shows it owned. The gold voice is
+ * used only here and for Equip now in a ceremony.
  */
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { unlockSkill } from "@/app/actions/skills";
-import { enqueue } from "@/lib/celebrate";
 import { countTo } from "@/lib/motion";
 import { Button } from "@/components/ui/Button";
+import { present, presentAll } from "@/components/celebrate/stage";
+import { ActionError } from "@/components/home/ActionError";
 import { markCataclysm } from "./ceremony-art";
 
 const whole = (v: number) => Math.round(v).toLocaleString("en-GB");
+
+/**
+ * The node the art flies from: the emblem's coin on the ladder or the graph
+ * (`data-emblem`, outside the detail sheet, so still connected after the sheet
+ * closes), else the coin in the detail itself, else the button.
+ */
+function originOf(code: string, wrap: HTMLElement | null): Element | null {
+  const sel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(code) : code;
+  return document.querySelector(`[data-emblem="${sel}"]`) ?? wrap?.closest(".dt-body")?.querySelector(".dt-art .coin") ?? wrap;
+}
 
 interface Props {
   skillCode: string;
@@ -35,6 +50,7 @@ interface Props {
 
 export function UnlockButton({ skillCode, ready, masteryCost, balance, blockedNote, onUnlocked }: Props) {
   const router = useRouter();
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const [armed, setArmed] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -59,8 +75,12 @@ export function UnlockButton({ skillCode, ready, masteryCost, balance, blockedNo
         format: whole,
       });
       const [ascension, ...rest] = v.events;
-      if (ascension && v.firstOfDepth) markCataclysm(ascension.id);
-      for (const ev of [ascension, ...rest]) if (ev) enqueue(ev);
+      if (ascension) {
+        if (v.firstOfDepth) markCataclysm(ascension.id);
+        present(ascension, { fromEl: originOf(skillCode, wrapRef.current) });
+      }
+      // Anything the detector added (a title, a band): queued after it, default art.
+      presentAll(rest);
       setArmed(false);
       onUnlocked?.();
       router.refresh();
@@ -79,7 +99,7 @@ export function UnlockButton({ skillCode, ready, masteryCost, balance, blockedNo
   }
 
   return (
-    <div>
+    <div ref={wrapRef}>
       <Button variant="gold" size="lg" block onClick={press} disabled={isPending} aria-describedby={`unlock-note-${skillCode}`}>
         {isPending ? "Unlocking…" : armed ? `Confirm: spend ${whole(masteryCost)} MP` : `Unlock for ${whole(masteryCost)} MP`}
       </Button>
@@ -88,11 +108,7 @@ export function UnlockButton({ skillCode, ready, masteryCost, balance, blockedNo
           ? `Balance after: ${whole(after)} MP. This cannot be undone.`
           : "Two taps: spending MP asks you to confirm."}
       </p>
-      {error && (
-        <p role="alert" className="t-meta dt-note" style={{ color: "var(--owed)" }}>
-          {error}
-        </p>
-      )}
+      {error && <ActionError className="dt-note">{error}</ActionError>}
     </div>
   );
 }

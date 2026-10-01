@@ -6,9 +6,12 @@
  *
  *   <AsksBell/>     top-bar icon button with an ink count (asks.count; nothing at 0)
  *   <AsksSheet open onClose items/>   the derived feed as rows: a tone diamond, the
- *                   title, one line of detail and the row's one action. The same
- *                   feed renders as AskCards on Today (L1). Nothing here expires:
- *                   every row is a live fact that disappears when it resolves.
+ *                   title, one line of detail and the row's one action. The rows
+ *                   that ask come first and are exactly the bell's count; the
+ *                   boons and debuffs in effect follow under their own heading
+ *                   and are not counted. The same feed renders as AskCards on
+ *                   Today (L1). Nothing here expires: every row is a live fact
+ *                   that disappears when it resolves.
  */
 import Link from "next/link";
 import { useState } from "react";
@@ -18,7 +21,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { cx } from "@/components/ui/cx";
 import { useShell } from "./shell-store";
-import type { ShellAsk } from "./shell-types";
+import { EFFECTS_GROUP, type ShellAsk } from "./shell-types";
 
 export function AsksBell() {
   const [open, setOpen] = useState(false);
@@ -41,18 +44,32 @@ export function AsksBell() {
 }
 
 export function AsksSheet({ open, onClose, items }: { open: boolean; onClose: () => void; items: ShellAsk[] }) {
+  const asking = items.filter((a) => a.group !== EFFECTS_GROUP);
+  const effects = items.filter((a) => a.group === EFFECTS_GROUP);
   return (
     <Sheet open={open} onClose={onClose} title="Asks" description="Things waiting on you, derived from the ledger. Nothing here expires." id="asks">
-      {items.length === 0 ? (
+      {asking.length === 0 ? (
         <p className="t-meta" style={{ padding: "8px 4px" }}>
           Nothing is waiting on you right now.
         </p>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          {items.map((a) => (
+          {asking.map((a) => (
             <AskRow key={a.id} ask={a} onNavigate={onClose} />
           ))}
         </div>
+      )}
+      {effects.length > 0 && (
+        <section aria-labelledby="asks-effects" style={{ marginTop: 16 }}>
+          <h3 id="asks-effects" className="t-eyebrow" style={{ margin: "0 4px 8px" }}>
+            In effect
+          </h3>
+          <div className="card" style={{ overflow: "hidden" }}>
+            {effects.map((a) => (
+              <AskRow key={a.id} ask={a} onNavigate={onClose} />
+            ))}
+          </div>
+        </section>
       )}
     </Sheet>
   );

@@ -20,7 +20,7 @@ function EffectRows({ debuffs, boons }: { debuffs: ActiveDebuffRow[]; boons: Act
         return (
           <li key={`d-${d.kind}-${i}`}>
             <Chip tone="owed">{meta.label}</Chip>
-            <span className="grow">
+            <span className="fx-body">
               <b>{meta.effectText(d.magnitude)}</b>
               <span className="t-meta" style={{ display: "block" }}>
                 {meta.blurb} Lifts {formatExpiry(d.expiresAt)}.
@@ -36,7 +36,7 @@ function EffectRows({ debuffs, boons }: { debuffs: ActiveDebuffRow[]; boons: Act
             <Chip tone="held" icon="star">
               {meta.label}
             </Chip>
-            <span className="grow">
+            <span className="fx-body">
               <b>{meta.effectText(b.magnitude)}</b>
               <span className="t-meta" style={{ display: "block" }}>
                 Until {formatExpiry(b.expiresAt)}.
@@ -74,7 +74,7 @@ export function LoadoutEffects({ lines, debuffs, boons }: { lines: ModifierLine[
       <ul className="fx-list">
         {lines.map((l) => (
           <li key={l.label}>
-            <span className="grow">
+            <span className="fx-body">
               <b>{l.label}</b>
               <span className="t-meta" style={{ display: "block" }}>
                 {l.hook}

@@ -11,7 +11,7 @@
 import type { SubmitReviewResult } from "@/app/actions/review";
 import type { BossResolution, BossState } from "@/lib/bosses";
 import { BOSS_UNLOCK_LEVEL, bossBatchSize, bossFor, bossMasteryReward, bossNeedCorrect, bossRequiredAccuracy, boonClaimUntil } from "@/lib/bosses";
-import { BOON_KINDS } from "@/lib/boon-meta";
+import { BOON_KINDS, BOON_META } from "@/lib/boon-meta";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { addDays, type DayKey } from "@/lib/life-day";
 import { medallionMaterial } from "@/lib/materials";
@@ -20,7 +20,9 @@ import { historyOf, trueFactOf, type HistoryRow } from "@/lib/review-facts";
 import { COMBO_CAP, MASTERY_BONUS, MASTERY_LEVEL, comboMultiplier, domainLevelProgress, reviewPayout } from "@/lib/xp";
 import { formatAmount, formatNumber } from "@/components/ui/format";
 import type { CardResult, RunCard } from "@/components/workspace/review-model";
-import type { LoadoutSummary, PenaltySummary, RecentIdea } from "@/components/workspace/ReviewHub";
+import type { RecentIdea, ReviewEffects } from "@/components/workspace/ReviewHub";
+import type { StripSlot } from "@/components/skills/LoadoutStrip";
+import { SKILL_POOL } from "@/lib/skill-pool";
 
 export const FX_TODAY: DayKey = "2026-10-01";
 const NOW = new Date("2026-10-01T08:41:00+10:00");
@@ -189,8 +191,7 @@ export interface ReviewFixtureData {
   bosses: BossState[];
   boss: { fieldId: string; name: string; need: number; total: number };
   bossVictory: Exclude<BossResolution, { outcome: "rejected" }>;
-  loadout: LoadoutSummary;
-  penalties: PenaltySummary[];
+  effects: ReviewEffects;
   recent: RecentIdea[];
 }
 
@@ -332,19 +333,31 @@ export function reviewFixtures(): ReviewFixtureData {
     bosses,
     boss: { fieldId, name: bossFor(fieldId, tier).name, need: bossNeedCorrect(tier, total), total },
     bossVictory,
-    loadout: { equipped: 7, slots: 10, lines: ["Review yield +20%"], boons: [] },
-    penalties: [
-      {
-        kind: "STAGNATION",
-        label: "Stagnation",
-        effect: "−8% points per review",
-        clears: "Lifts after a week; add new ideas to the field so the next week's quota is met.",
-        until: new Date(NOW.getTime() + 4 * 86_400_000),
-      },
-    ],
+    effects: {
+      lines: ["Review yield +20%"],
+      boons: [BOON_KINDS[0]].map((k) => ({ kind: k, label: BOON_META[k].label, effect: BOON_META[k].effectText(BOON_META[k].magnitude), until: new Date(NOW.getTime() + 20 * 3_600_000) })),
+      penalties: [
+        {
+          kind: "STAGNATION",
+          label: "Stagnation",
+          effect: "−8% points per review",
+          clears: "Lifts after a week; add new ideas to the field so the next week's quota is met.",
+          until: new Date(NOW.getTime() + 4 * 86_400_000),
+        },
+      ],
+    },
     recent: [
       { id: "fx-4", title: "Coin tosses, exactly k heads", domainName: "Combinatorics", nextLabel: "next in 26 days", level: 7, mastered: false },
       { id: "fx-9", title: "Law of large numbers, weak form", domainName: "Probability", nextLabel: "next in 160 days", level: 12, mastered: true },
     ],
   };
+}
+
+/**
+ * The hub's loadout strip (L4's LoadoutStrip): 7 of 10 slots filled, one
+ * dormant. Separate from reviewFixtures() because a Skill never crosses into
+ * the client half; the gated page renders the strip on the server.
+ */
+export function reviewFixtureStrip(): StripSlot[] {
+  return Array.from({ length: 10 }, (_, slot) => ({ slot, skill: slot < 7 ? (SKILL_POOL[slot * 97] ?? null) : null, active: slot !== 3 }));
 }

@@ -19,9 +19,14 @@
  */
 import type { Board, BoardData, Quest } from "./today-board";
 import { STUDY_METRICS } from "./today-board";
+import { REVIEW_QUEST_CARDS } from "./review-facts";
 
-/** Reviews that meet the quest whatever the backlog (the M2 rule's ≥ 15). */
-export const QUEST_CAP = 15;
+/**
+ * Reviews that meet the quest whatever the backlog (the M2 rule's ≥ 15).
+ * The /review hub's own constant (review-facts.ts), so the Quest ring, Next
+ * up and the hub can never disagree about the target.
+ */
+export const QUEST_CAP: number = REVIEW_QUEST_CARDS;
 /** What a Full day pays once M2's daily settlement exists. Stated, never paid here. */
 export const FULL_DAY_MP = 0.5;
 

@@ -37,11 +37,7 @@
   background: var(--ink-2);
 }
 
-/* The review card keeps its positioning context; the rotating conic is gone. */
-.arcane-circle {
-  position: relative;
-  isolation: isolate;
-}
+/* .arcane-circle is gone: its only user (SessionCard) no longer renders it. */
 }
 
 @layer effects {
