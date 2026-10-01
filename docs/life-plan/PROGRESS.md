@@ -50,10 +50,10 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
   - [x] Fix round (parser, server, sheet lanes + verifier) and lead fixes; P2 one-box ideas left OFF (answer kept as the draft note)
   - [x] Gates: tsc, eslint, life:check (9 scripts), ui:check, novelty, skills:stats, next build, ui-audit 121/121; browser pass at 344 px on the rehearsal server
   - [x] Committed and pushed
-- [ ] M5 — refitted spec `m5-refit.md` (no migration; inert until LIFE_LAUNCH_DAY is set)
-  - [ ] Phase A (contract + 4 lanes on files the capture build does not own) + 2 reviewers
-  - [ ] Phase B (Today integration: tasks.ts, today-board.ts, GoalsStrip, TodayBoard) after the capture build merges
-  - [ ] Launch (LIFE_LAUNCH_DAY), rehearsal, browser pass, commit
+- [x] M5 — refitted spec `m5-refit.md` (no migration) — LAUNCHED 2026-10-01
+  - [x] Phase A (contract + 4 lanes) + 2 reviewers, findings fixed
+  - [x] Phase B (Today integration) + 2 reviewers, findings fixed
+  - [x] Launch: rehearsal, dry run reviewed with the user, LIFE_LAUNCH_DAY 2026-10-01 (f3add68), --apply (DECAY_GRACE only; second run wrote nothing)
 - [ ] M2
 - [~] M3 — dropped by the user
 - [~] M4 — dropped by the user
@@ -104,3 +104,4 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — Weight tracking done. Migration 20261015000000_body_weight applied to Supabase (ref xvlkujmtdcpaoxdftgpl checked; diff shows only the known drift). Review (1 blocker, 3 major, 5 minor) fixed: rate fitted to raw readings, stale/short-history honesty, goal edits keep the start, 'far' projection, unit sync with the capture sheet, notes kept on replace, passed by-date. Gates: tsc, life:check (+weight 107, weight-capture 646), ui:check (+train 169), novelty, skills:stats, next build, ui-audit 125/125; browser at 344 px on rehearsal (card, target, projection, capture weigh-in → no task/ledger row, lookalike lines stay tasks). NEXT: resume M5 (fix phase A review findings, then phase B).
 - 2026-10-01 — User: "continue phase 5". Workflow m5-fix-and-phase-b (run wf_e92d5bcd-5df; findings scratchpad m5-findings.json): core fixes (C1-C7, U1/U5/U6/U7 core parts), then UI fixes + phase B (F15) in parallel, then docs + 2 reviewers. Lead decisions: drop the '(or a paid Mid goal)' clause; hero shows 'life MP last week'; Close hidden on Today before launch; goal closes serialised; flood guard models the task pull. dev-rehearsal.mjs now sets XTNL_LIFE_JUDGE=1 and XTNL_LIFE_LAUNCH_DAY (default 2026-09-21). After: fix reviews, gates, rehearsal browser pass, commit + push; then the launch dry run on production for the user's review (no --apply without the user's go-ahead).
 - 2026-10-01 — M5 review fixes + phase B done (run wf_e92d5bcd-5df, then a fixer for 1 major + 10 minor). Gates: tsc, life:check (12 scripts incl. character 323, today-ui 518), ui:check (you 293, celebration 217), balance:horizon (1–9, 9b), novelty, skills:stats, next build, ui-audit 125/125. Rehearsal (local DB, epoch moved to 2026-09-14, launch 2026-09-21): dry run planned W38 backfill + W39; --apply wrote 8 WEEK rows + DECAY_GRACE, a second --apply wrote nothing; /today/week shows the verdicts; Today goal card 'pays 1 MP when done' + Close; a 0 close (not measured / too new) leaves the strip with an honest notice; a concurrent pair of closes on a 4-day-old done SHORT paid exactly 1 MP once ('Already closed.' for the other). Goal-age why reworded to 'set today; it pays once 3 days old'. NEXT: production launch dry run for the user's review; --apply only on the user's go-ahead; then M2.
+- 2026-10-01 — M5 LAUNCHED with the user's go-ahead: LIFE_LAUNCH_DAY 2026-10-01 pushed (f3add68); --apply on Supabase (ref checked): 0 weeks, 0 goals, DECAY_GRACE written; a second --apply wrote nothing. First paid week 28 Sep–4 Oct, judged from Wed 7 Oct. NEXT: M2 (docs/life-plan/m2.md; likely needs a refit like M5).
