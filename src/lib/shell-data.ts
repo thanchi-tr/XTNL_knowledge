@@ -12,23 +12,34 @@
  * field levels, the notification feed with its counts), under one key with
  * every tag, so a tick, a review or an unlock refreshes the shell on the next
  * render. Fails to null: the shell must never take a page down.
+ *
+ * M5: the character level counts the four life tracks once life is
+ * launched (loadLifeTracks; before launch every track is 0 and nothing
+ * changes), the crest edges are each track's level ÷ depth cap, and the
+ * title's epithet reads scores that include life (loadProgression).
  */
 import { ALL_TAGS, cached } from "./cache";
+import { loadLifeTracks } from "./life-tracks-server";
 import { crestMaterial } from "./materials";
 import { loadNotifications, type Notice } from "./notifications";
 import { loadFieldLevels } from "./queries";
 import { loadProgression } from "./skill-effects";
 import { getSkill } from "./skill-pool";
 import { TITLE_BANDS, computeTitle } from "./titles";
-import { askCount, asksFromNotices, characterLevelOf, type ShellData } from "../components/shell/shell-types";
+import { askCount, asksFromNotices, characterLevelOf, trackLevelsOf, type ShellData } from "../components/shell/shell-types";
 
 async function build(userId: string): Promise<ShellData> {
-  const [progression, fields, feed] = await Promise.all([
+  const [progression, fields, feed, life] = await Promise.all([
     loadProgression(userId),
     loadFieldLevels(),
     loadNotifications(userId).catch(() => null),
+    loadLifeTracks(userId).catch(() => null),
   ]);
-  const { level, progress } = characterLevelOf(fields.map((f) => f.level));
+  const launched = life?.launched === true;
+  const { level, progress } = characterLevelOf(
+    fields.map((f) => f.level),
+    launched ? trackLevelsOf(life?.levels) : []
+  );
   // Owned, not equipped: a title is earned once (titles.ts), so the crest and
   // the sidebar agree with /you, /you/stats and the title detectors even
   // while the Ultimate sits on the bench.
@@ -46,7 +57,7 @@ async function build(userId: string): Promise<ShellData> {
       epithet: title.epithet,
       nextTitle: nextBand?.name ?? null,
       nextTitleAt: nextBand?.min ?? null,
-      tracks: null, // M5: track level ÷ depth cap per edge
+      tracks: launched ? (life?.edges ?? null) : null, // track level ÷ depth cap per edge
       transcendent,
     },
     badges: {

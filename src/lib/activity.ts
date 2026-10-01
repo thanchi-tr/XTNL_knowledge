@@ -84,6 +84,16 @@ function isTrack(t: unknown): t is Track {
 }
 
 /**
+ * Records that pay nothing yet belong to a track (M5): a week's verdict
+ * ('week:<TRACK>:<week>') and a life mint ('mp:LIFE_WEEK_KEPT:<TRACK>:…',
+ * 'mp:GOAL:<id>'). An explicit allowlist: every other non-TRACK row stores
+ * null, so a stray track on a review or a day-open never reads as life.
+ * Life XP still sums only sink = 'TRACK', so keeping the track here moves no
+ * level.
+ */
+const TRACKED_RECORD_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySource>(["WEEK", "MP_MINT"]);
+
+/**
  * The row an input becomes. Exported for the backfill script, which writes
  * with `createMany` and must apply exactly the same defaults.
  *
@@ -98,6 +108,8 @@ export function activityData(userId: string, e: ActivityInput): Prisma.ActivityE
   if (sink === "TRACK") {
     // A TRACK row with no track would be XP that no level can ever count.
     if (!isTrack(e.track)) throw new Error(`A ${e.source} row paid to TRACK needs a track (got ${String(e.track)}).`);
+    track = e.track;
+  } else if (TRACKED_RECORD_SOURCES.has(e.source) && isTrack(e.track)) {
     track = e.track;
   }
   return {

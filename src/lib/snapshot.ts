@@ -31,9 +31,22 @@ import {
   type SnapshotPart,
   type SnapshotScope,
   type StreakPart,
+  type TracksPart,
 } from "./celebration-detect";
 import { HABIT_WINDOW_DAYS, habitStrength, perDutyStreak } from "./habit";
 import { addDays, dateColumn, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
+import {
+  GOAL_DEPTH_CAP,
+  GOAL_MINT_PREFIX,
+  GOAL_RULES,
+  goalIdOfMintKey,
+  isBackfillDetail,
+  parseMintDetail,
+  parseWeekRowKey,
+  weekKeptMintKey,
+} from "./life-economy";
+import { loadLifeTracks } from "./life-tracks-server";
+import { TRACKS, type Track } from "./life-types";
 import { parseRule } from "./recurrence";
 import { getSkill, SKILL_POOL } from "./skill-pool";
 import { HELD_SOURCES, computeStreak, streakWindowStart } from "./streak-curve";
@@ -60,7 +73,8 @@ const STREAK_READ_DAYS = 400;
 const LEDGER_READ_DAYS = 63;
 
 const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
-  levels: ["fields", "ideas", "progress"],
+  // 'life': the levels part carries the track levels once life is launched.
+  levels: ["fields", "ideas", "progress", "life"],
   mastered: ["progress", "ideas", "activity"],
   streak: ["activity"],
   skills: ["progress"],
@@ -74,20 +88,41 @@ const PART_TAGS: Record<SnapshotPart, CacheTag[]> = {
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-async function readLevels(userId: string): Promise<LevelsPart> {
-  const [fields, owned] = await Promise.all([
+/**
+ * The life tracks as of this snapshot's instant. `now` is passed on purpose:
+ * loadLifeTracks is wrapped in React cache(), keyed by its arguments, and
+ * every captureSnapshot has its own `now`, so the after snapshot of an action
+ * never receives the before snapshot's object (the rule at the top of this
+ * file). The ledger under it is process-cached on 'life', which every TRACK,
+ * WEEK and MP write invalidates.
+ */
+function readLife(userId: string, now: Date) {
+  return loadLifeTracks(userId, now);
+}
+
+async function readLevels(userId: string, now: Date): Promise<LevelsPart> {
+  const [fields, owned, life] = await Promise.all([
     prisma.field.findMany({
       relationLoadStrategy: "join",
       orderBy: { name: "asc" },
       select: { id: true, name: true, level: true, domains: { select: { id: true, name: true, level: true } } },
     }),
     prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true } }),
+    readLife(userId, now),
   ]);
   return {
     fields: fields.map((f) => ({ id: f.id, name: f.name, level: f.level })),
     domains: fields.flatMap((f) => f.domains.map((d) => ({ id: d.id, name: d.name, fieldId: f.id, level: d.level }))),
     ultimates: owned.filter((o) => getSkill(o.skillCode)?.rank === "ULTIMATE").length,
+    // Only once launched: the character counts tracks only when both snapshots carry them.
+    ...(life.launched ? { tracks: { ...life.levels } } : {}),
   };
+}
+
+/** The four track levels (all 0 before launch, so nothing diffs). */
+async function readTracks(userId: string, now: Date): Promise<TracksPart> {
+  const life = await readLife(userId, now);
+  return { levels: { ...life.levels } };
 }
 
 async function readMastered(userId: string): Promise<MasteredPart> {
@@ -141,12 +176,53 @@ async function readSkills(userId: string): Promise<SkillsPart> {
   return { owned: owned.map((o) => ({ code: o.skillCode, paid: o.masteryPaid })), mp: round2(agg._sum.delta ?? 0) };
 }
 
+const isTrack = (t: unknown): t is Track => typeof t === "string" && (TRACKS as readonly string[]).includes(t);
+const GOAL_DEPTH_BY_REASON = new Map<string, number>(Object.values(GOAL_RULES).map((r) => [r.reason, r.depth]));
+
+/**
+ * Closed goals (closedScore set: closing is explicit and final), each with
+ * what its 'mp:GOAL:<id>' decision row paid, the why and the track, and the
+ * track depth the close added. Depth is replayed from the paid goal rows in
+ * order (day, then time): what a close adds is min(2, total after) −
+ * min(2, total before) on its track, the same rule as the payout's depth.
+ */
 async function readGoals(userId: string): Promise<GoalsPart> {
-  const rows = await prisma.taskTemplate.findMany({
-    where: { userId, kind: "GOAL", OR: [{ completedAt: { not: null } }, { closedScore: { not: null } }] },
-    select: { id: true, title: true, horizon: true, goalMp: true, closedScore: true, krTarget: true, krUnit: true },
-  });
-  return { done: rows };
+  const [rows, mints] = await Promise.all([
+    prisma.taskTemplate.findMany({
+      where: { userId, kind: "GOAL", closedScore: { not: null } },
+      select: { id: true, title: true, horizon: true, goalMp: true, closedScore: true, krTarget: true, krUnit: true, track: true },
+    }),
+    prisma.activityEvent.findMany({
+      where: { userId, source: "MP_MINT", dedupeKey: { startsWith: GOAL_MINT_PREFIX } },
+      select: { dedupeKey: true, track: true, templateId: true, day: true, occurredAt: true, qty: true, detail: true },
+    }),
+  ]);
+  const goalMints = mints
+    .map((m) => ({ ...m, goalId: goalIdOfMintKey(m.dedupeKey) }))
+    .filter((m): m is typeof m & { goalId: string } => m.goalId != null)
+    .sort((x, y) => x.day.getTime() - y.day.getTime() || x.occurredAt.getTime() - y.occurredAt.getTime() || (x.dedupeKey ?? "").localeCompare(y.dedupeKey ?? ""));
+  const trackOfGoal = new Map(rows.map((r) => [r.id, r.track]));
+  const decided = new Map<string, { paid: number; why: string | null; track: string | null; depth: number }>();
+  const depthSoFar = new Map<string, number>();
+  for (const m of goalMints) {
+    const { reason, why } = parseMintDetail(m.detail);
+    const paid = round2(Math.max(0, m.qty ?? 0));
+    const track = isTrack(m.track) ? m.track : isTrack(trackOfGoal.get(m.goalId)) ? (trackOfGoal.get(m.goalId) as Track) : null;
+    let depth = 0;
+    if (paid > 0 && track) {
+      const before = depthSoFar.get(track) ?? 0;
+      const after = before + (GOAL_DEPTH_BY_REASON.get(reason) ?? 0);
+      depth = Math.min(GOAL_DEPTH_CAP, after) - Math.min(GOAL_DEPTH_CAP, before);
+      depthSoFar.set(track, after);
+    }
+    decided.set(m.goalId, { paid, why, track, depth });
+  }
+  return {
+    done: rows.map(({ track, ...r }) => {
+      const d = decided.get(r.id);
+      return d ? { ...r, paid: d.paid, why: d.why, track: d.track ?? track, depth: d.depth } : { ...r, track };
+    }),
+  };
 }
 
 async function readBosses(userId: string): Promise<BossesPart> {
@@ -166,22 +242,34 @@ async function readBosses(userId: string): Promise<BossesPart> {
   };
 }
 
+/**
+ * Kept WEEK rows (each with the MP its kept-week mint paid) and PR rows, in
+ * one query. A WEEK row's track is its stored column (activity.ts keeps it on
+ * WEEK and MP_MINT rows), else the one in its dedupe key. A kept week's mint
+ * shares its day (the week's Sunday), so the same window reads both.
+ */
 async function readLedger(userId: string, now: Date): Promise<LedgerPart> {
   const since = dateColumn(addDays(todayKey(now), -LEDGER_READ_DAYS));
   const rows = await prisma.activityEvent.findMany({
-    where: { userId, source: { in: ["WEEK", "PR"] }, day: { gte: since } },
+    where: { userId, source: { in: ["WEEK", "PR", "MP_MINT"] }, day: { gte: since } },
     select: { id: true, source: true, track: true, day: true, xp: true, qty: true, detail: true, dedupeKey: true },
   });
+  const minted = new Map<string, number>();
+  for (const r of rows) if (r.source === "MP_MINT" && r.dedupeKey) minted.set(r.dedupeKey, r.qty ?? 0);
   const weeks: LedgerRow[] = [];
   const prs: LedgerRow[] = [];
   for (const r of rows) {
+    if (r.source === "MP_MINT") continue;
     const day = keyOfDateColumn(r.day);
     const row: LedgerRow = { key: r.dedupeKey ?? r.id, track: r.track, day, xp: r.xp, qty: r.qty, detail: r.detail };
     if (r.source === "WEEK") {
-      // M5: qty 1 = kept, 0 = not; a backfilled week counts for depth only and is never a moment.
-      if (!(r.qty != null && r.qty > 0) || r.detail === "backfill") continue;
-      const m = /^week:[^:]+:(.+)$/.exec(r.dedupeKey ?? "");
-      weeks.push({ ...row, week: m ? m[1] : weekKeyOf(day) });
+      // qty 1 = kept, 0 = not; a backfilled week ('backfill · …') counts for depth only and is never a moment.
+      if (!(r.qty != null && r.qty > 0) || isBackfillDetail(r.detail)) continue;
+      const key = parseWeekRowKey(r.dedupeKey);
+      const track = isTrack(r.track) ? r.track : (key?.track ?? null);
+      const week = key?.weekKey ?? weekKeyOf(day);
+      const mp = track ? minted.get(weekKeptMintKey(track, week)) : undefined;
+      weeks.push({ ...row, track, week, ...(mp != null ? { mp: round2(mp) } : {}) });
     } else prs.push(row);
   }
   return { weeks, prs };
@@ -230,7 +318,7 @@ async function readReady(userId: string): Promise<ReadyPart> {
   return { codes };
 }
 
-type ReadablePart = Exclude<SnapshotPart, "tracks">;
+type ReadablePart = SnapshotPart;
 
 /**
  * Reads the parts a scope asks for. A part that fails to read is left out, so
@@ -238,13 +326,12 @@ type ReadablePart = Exclude<SnapshotPart, "tracks">;
  */
 export async function readProgress(userId: string, opts: ReadProgressOptions = {}): Promise<ProgressData> {
   const now = opts.now ?? new Date();
-  // `tracks` is not read until M5 lands life-tracks.ts; its detector is ready.
   // With no scope, `habits` (every recurring template's 400 days) is read only for named templates.
   const namedHabits = Boolean(opts.templateIds && opts.templateIds.length);
-  const wanted = partsOf(opts.scope).filter((p): p is ReadablePart => p !== "tracks" && !(p === "habits" && opts.scope == null && !namedHabits));
+  const wanted = partsOf(opts.scope).filter((p): p is ReadablePart => !(p === "habits" && opts.scope == null && !namedHabits));
   const idsKey = opts.templateIds && opts.templateIds.length ? [...opts.templateIds].sort().join(",") : "all";
   const loaders: Record<ReadablePart, () => Promise<unknown>> = {
-    levels: () => readLevels(userId),
+    levels: () => readLevels(userId, now),
     mastered: () => readMastered(userId),
     streak: () => readStreak(userId, now),
     skills: () => readSkills(userId),
@@ -252,6 +339,7 @@ export async function readProgress(userId: string, opts: ReadProgressOptions = {
     bosses: () => readBosses(userId),
     ledger: () => readLedger(userId, now),
     habits: () => readHabits(userId, now, opts.templateIds),
+    tracks: () => readTracks(userId, now),
     ready: () => readReady(userId),
   };
   const results = await Promise.all(

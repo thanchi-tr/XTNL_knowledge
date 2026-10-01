@@ -232,6 +232,13 @@ export interface FieldContribution {
   fieldName: string;
   level: number;
   composition: Composition;
+  /**
+   * Where the row comes from: a Field (the default when absent) or a life
+   * track ('Life · Body', M5: life-tracks.ts lifeContributionRows). Scores
+   * never read it; attribution (sourcesFor, the You sheet's top-3 notes)
+   * does, so a life row is never mistaken for a Field.
+   */
+  source?: "FIELD" | "LIFE";
 }
 
 export type AttributeScores = Record<Attribute, number>;
@@ -259,13 +266,18 @@ export function computeAttributeScores(contributions: FieldContribution[]): Attr
   return scores;
 }
 
-/** Which Fields feed a given attribute, strongest first — for UI attribution. */
-export function sourcesFor(attribute: Attribute, contributions: FieldContribution[]) {
+/**
+ * Which Fields (and, from M5, life tracks) feed a given attribute, strongest
+ * first — for UI attribution. Each source carries its row's `source`
+ * ('FIELD' when the row does not say), so a 'Life · Body' row reads as life.
+ */
+export function sourcesFor(attribute: Attribute, contributions: readonly FieldContribution[]) {
   return contributions
     .map((c) => ({
       fieldName: c.fieldName,
       weight: c.composition[attribute],
       contribution: (c.level * c.composition[attribute]) / COMPOSITION_TOTAL,
+      source: c.source ?? ("FIELD" as const),
     }))
     .filter((s) => s.contribution > 0)
     .sort((a, b) => b.contribution - a.contribution);

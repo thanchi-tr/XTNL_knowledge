@@ -9,9 +9,11 @@
 import type { Material } from "@/lib/materials";
 import type { Notice } from "@/lib/notifications";
 import type { TrackEdges } from "@/components/ui/Crest";
+import { characterLevel } from "@/lib/character";
+import { TRACKS } from "@/lib/life-types";
 
 export interface ShellCharacter {
-  /** Character level (today: the account level from field levels; M5 may redefine it here). */
+  /** Character level: floor(Σ L^0.75) over the Field levels and, once life is launched (M5), the four track levels. */
   level: number | null;
   /** 0..1 toward level + 1. */
   progress: number | null;
@@ -23,7 +25,7 @@ export interface ShellCharacter {
   /** The next title band's name, and the level it starts at. */
   nextTitle: string | null;
   nextTitleAt: number | null;
-  /** M5 track edges (level ÷ depth cap); null until tracks exist. */
+  /** M5 track edges (level ÷ depth cap); null until life is launched. */
   tracks: TrackEdges | null;
   transcendent: boolean;
 }
@@ -66,11 +68,29 @@ export function crestLabel(c: ShellCharacter | null | undefined): string {
   return `Character level ${c.level}${who ? `, ${who}` : ""}. Open your sheet`;
 }
 
-/** The character level and its fraction toward the next: floor(Σ fieldLevel^0.75) and the remainder. */
-export function characterLevelOf(fieldLevels: number[]): { level: number; progress: number } {
-  const raw = fieldLevels.reduce((sum, lvl) => sum + Math.pow(Math.max(0, lvl), 0.75), 0);
-  const level = Math.floor(raw);
-  return { level, progress: Math.max(0, Math.min(1, raw - level)) };
+/**
+ * The character level and its fraction toward the next: floor(Σ L^0.75) over
+ * the Field levels, then the track levels (M5; a compatible extension of
+ * this frozen contract), and the remainder. Delegates to lib/character.ts,
+ * the one formula. With no tracks it is exactly the pre-M5 number
+ * (`.level === xp.fieldLevel(fieldLevels)`). Track levels are the plain
+ * levels (trackLevelsOf), never the bonus-scaled ones the attributes read.
+ */
+export function characterLevelOf(fieldLevels: readonly number[], trackLevels: readonly number[] = []): { level: number; progress: number } {
+  return characterLevel(fieldLevels, trackLevels);
+}
+
+/**
+ * Track levels as characterLevelOf's second list, in one fixed order
+ * (life-types TRACKS: Body, Duty, Craft, Care) so every caller sums the same
+ * floats. Absent (not launched, or a snapshot without tracks): [].
+ */
+export function trackLevelsOf(levels: Readonly<Partial<Record<string, number>>> | null | undefined): number[] {
+  if (!levels) return [];
+  return TRACKS.map((t) => {
+    const l = levels[t];
+    return typeof l === "number" && Number.isFinite(l) ? l : 0;
+  });
 }
 
 /** The feed's group for standing boons and debuffs: facts in effect, not asks. */

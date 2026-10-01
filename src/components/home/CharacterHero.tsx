@@ -1,9 +1,11 @@
 /**
- * The sheet's hero (final-you.html): the Crest at 96 with its band and (from
- * M5) its track edges, the title and epithet, "Character level 14 · Mind
- * leads", the meter to the next level with the next title named, that
- * title's blurb, and the purse. Every figure is real; a missing one is left
- * out rather than faked.
+ * The sheet's hero (final-you.html): the Crest at 96 with its band and,
+ * once life counts, its track edges (each track's level over its depth cap),
+ * the title and epithet, "Character level 14 · Mind leads", the meter to the
+ * next level with the next title named, that title's blurb, and the purse:
+ * mastery points, life MP this week against the weekly cap (once life
+ * counts), ideas mastered and emblems. Every figure is real; a missing one is
+ * left out rather than faked.
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTE_META } from "@/lib/attributes";
@@ -11,7 +13,8 @@ import { crestMaterial } from "@/lib/materials";
 import { Crest } from "@/components/ui/Crest";
 import { CurrencyGlyph } from "@/components/ui/Icon";
 import type { TrackEdges } from "@/components/ui/Crest";
-import type { TitleDistance } from "./sheet-math";
+import { cx } from "@/components/ui/cx";
+import { mpFigure, type TitleDistance } from "./sheet-math";
 import { LastSeenMeter } from "./LastSeenMeter";
 
 const whole = (v: number) => Math.floor(v).toLocaleString("en-GB");
@@ -25,10 +28,14 @@ interface Props {
   dominant: Attribute | null;
   distance: TitleDistance;
   tracks: TrackEdges | null;
+  /** Capped life MP minted this life week, against the cap. Null before life counts: no cell. */
+  lifeMp?: { used: number; cap: number } | null;
   balance: number;
   mastered: number;
   owned: number;
   poolSize: number;
+  /** The level meter's last-seen key (fixtures pass their own, so they never move the real one). */
+  seenKey?: string;
 }
 
 export function CharacterHero(p: Props) {
@@ -63,7 +70,7 @@ export function CharacterHero(p: Props) {
         )}
       </div>
       <LastSeenMeter
-        seenKey="you:level"
+        seenKey={p.seenKey ?? "you:level"}
         value={p.progress}
         label={`Character level ${p.level}, ${pct}% to level ${next}`}
         valueText={`${pct}% to level ${next}`}
@@ -75,7 +82,7 @@ export function CharacterHero(p: Props) {
       )}
       {p.transcendent && <p className="blurb">Beyond the level ladder: an Ultimate emblem is yours.</p>}
 
-      <div className="purse">
+      <div className={cx("purse", p.lifeMp && "p4")}>
         <div>
           <div className="v">
             <CurrencyGlyph kind="mp" />
@@ -83,6 +90,16 @@ export function CharacterHero(p: Props) {
           </div>
           <div className="k">mastery points</div>
         </div>
+        {p.lifeMp && (
+          <div>
+            <div className="v">
+              <CurrencyGlyph kind="mp" />
+              {mpFigure(p.lifeMp.used)}
+              <small>/ {mpFigure(p.lifeMp.cap)}</small>
+            </div>
+            <div className="k">life MP this week</div>
+          </div>
+        )}
         <div>
           <div className="v">{p.mastered.toLocaleString("en-GB")}</div>
           <div className="k">ideas mastered</div>

@@ -2,19 +2,23 @@
  * The character sheet's sections (final-you.html ?tab=sheet), presentational:
  *
  *   <ReadyCallout/>      gold border, the orbiting coin, "An emblem is ready", View
- *   <TrackRow/>          one life track: sigil, level, 8-week pips, meter (ink banked +
- *                        this week's gain in the currency that fed it), the honest line
- *   <LifeTracks/>        the rows that exist: Knowledge now; Duty, Craft, Body, Care with life tracks (M5)
+ *   <TrackRow/>          one track: sigil, level, kept-week pips, meter (ink banked + this
+ *                        week's gain in the currency that fed it, the cap tick when capped),
+ *                        the honest line
+ *   <LifeTracks/>        Duty, Craft, Body and Care once life counts, then Knowledge;
+ *                        Knowledge alone before
  *   <AttributeRadar/>    13-gon with the dashed 7-days-ago ghost, polygon markers in their
  *                        hues, 12 px HTML labels over the scaled plot, and the top three
  *                        with a true note each
- *   <MasteryCard/>       ideas mastered and Field tiers (goals, rungs and PRs join as they exist)
+ *   <MasteryCard/>       Goals and mastery: the goal ladder, ideas mastered, Field tiers and
+ *                        habits by rung (GoalLadder.tsx)
  *
- * Fixtures for the M5 rows render on /dev/style/art/you only.
+ * Every figure is read from loadSheet; fixtures render on /dev/style/art/you only.
  */
-import Link from "next/link";
 import { ATTRIBUTE_META } from "@/lib/attributes";
 import { attributeSlug } from "@/lib/attribute-themes";
+import type { GoalLadder as GoalLadderData } from "@/lib/goals";
+import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
 import { getSkill } from "@/lib/skill-pool";
 import { depthOf, sidesFor } from "@/lib/skill-form";
 import { RANK_META } from "@/lib/skill-visuals";
@@ -24,8 +28,11 @@ import { Sigil, type TrackSigil } from "@/components/ui/Icon";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { SkillLogo } from "@/components/skills/SkillLogo";
 import { cx } from "@/components/ui/cx";
-import { RADAR_VIEWBOX_ATTR, polygonPoints, type KnowledgeRow, type RadarLayout, type TopAttribute } from "./sheet-math";
+import { RADAR_VIEWBOX_ATTR, lifeTrackRows, polygonPoints, type KnowledgeRow, type RadarLayout, type TopAttribute } from "./sheet-math";
+import { GoalLadder, type RungCounts } from "./GoalLadder";
 import { LastSeenMeter } from "./LastSeenMeter";
+
+export { knowledgeLine } from "./sheet-math";
 
 const whole = (v: number) => Math.round(v).toLocaleString("en-GB");
 
@@ -55,21 +62,24 @@ export function ReadyCallout({ ready, balance }: { ready: { code: string; name: 
 
 // ─── Life tracks ────────────────────────────────────────────────────────────
 
-export type WeekPip = "kept" | "held" | "missed";
+/** One judged week of a track: life-tracks.ts WeekMark ('held' only once rest days exist). */
+export type WeekPip = WeekMark;
 
 export interface TrackRowProps {
   sigil: TrackSigil;
   name: string;
   level: number;
-  /** 0..1 banked at the start of the week (ink). */
+  /** 0..1 banked at the end of last week (ink). */
   banked: number;
   /** 0..1 now (banked + this week's gain, in the currency that fed it). */
   now: number;
   gainKind: "xp" | "pts";
-  /** The last 8 weeks, oldest first (M5). */
+  /** The last ≤ 8 judged weeks, oldest first (life tracks; never padded). */
   weeks?: WeekPip[];
-  /** Depth cap as a 0..1 tick on the meter (M5). */
+  /** The depth-cap tick as a 0..1 position on the meter (passed at 1 when the track is capped). */
   cap?: number;
+  /** XP is banked at the depth cap: the meter is full, and only kept weeks raise the level. */
+  capped?: boolean;
   /** The honest line under the meter. */
   line: string;
   seenKey: string;
@@ -77,8 +87,9 @@ export interface TrackRowProps {
 
 const PIP_WORD: Record<WeekPip, string> = { kept: "kept", held: "held", missed: "not kept" };
 
-export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap, line, seenKey }: TrackRowProps) {
+export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap, capped, line, seenKey }: TrackRowProps) {
   const pct = Math.floor(Math.max(0, Math.min(0.999, now)) * 100);
+  const valueText = capped ? `capped at level ${level}` : `${pct}% to level ${level + 1}`;
   return (
     <div className="trk-row">
       <Sigil track={sigil} />
@@ -87,7 +98,11 @@ export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap
           <b>{name}</b>
           <span className="lv">{level}</span>
           {weeks && weeks.length > 0 && (
-            <span className="wk" role="img" aria-label={`Last ${weeks.length} weeks: ${weeks.map((w) => PIP_WORD[w]).join(", ")}`}>
+            <span
+              className="wk"
+              role="img"
+              aria-label={`Last ${weeks.length} judged ${weeks.length === 1 ? "week" : "weeks"}: ${weeks.map((w) => PIP_WORD[w]).join(", ")}`}
+            >
               {weeks.map((w, i) => (
                 <i key={i} className={w === "kept" ? "k" : w === "held" ? "h" : undefined} />
               ))}
@@ -99,8 +114,8 @@ export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap
           value={banked}
           gain={now > banked ? { value: now, kind: gainKind } : undefined}
           cap={cap}
-          label={`${name}, level ${level}, ${pct}% to ${level + 1}`}
-          valueText={`${pct}% to level ${level + 1}`}
+          label={`${name}, level ${level}, ${valueText}`}
+          valueText={valueText}
         />
         <div className="t-meta">{line}</div>
       </div>
@@ -108,28 +123,20 @@ export function TrackRow({ sigil, name, level, banked, now, gainKind, weeks, cap
   );
 }
 
-export function knowledgeLine(k: KnowledgeRow): string {
-  const fields = `${k.fields} ${k.fields === 1 ? "Field" : "Fields"}, breadth-weighted`;
-  if (k.gained === null) return `${fields} · this week's gain shows once a week of snapshots exists`;
-  if (k.gained <= 0.0005) return `${fields} · no Field moved this week`;
-  return `${fields} · ${k.grewMost ? `${k.grewMost} grew most this week` : "grew this week"}`;
-}
-
-export function LifeTracks({ knowledge }: { knowledge: KnowledgeRow }) {
+/**
+ * The life tracks (Duty, Craft, Body, Care, each capped by kept weeks), then
+ * Knowledge. Before life counts the card holds Knowledge alone and promises
+ * nothing.
+ */
+export function LifeTracks({ knowledge, life }: { knowledge: KnowledgeRow; life: { launched: boolean; rows: readonly LifeTrackRow[] } }) {
+  const rows = lifeTrackRows(knowledge, life);
   return (
     <div>
-      <SectionHeader title="Life tracks" aside="Duty, Craft, Body and Care arrive with life tracks" />
+      <SectionHeader title="Life tracks" aside={rows.length > 1 ? "levels capped by kept weeks" : "from your Fields"} />
       <section className="card">
-        <TrackRow
-          sigil="know"
-          name="Knowledge"
-          level={knowledge.level}
-          banked={knowledge.banked}
-          now={knowledge.now}
-          gainKind="pts"
-          line={knowledgeLine(knowledge)}
-          seenKey="you:track:knowledge"
-        />
+        {rows.map((r) => (
+          <TrackRow key={r.seenKey} {...r} />
+        ))}
       </section>
     </div>
   );
@@ -137,11 +144,22 @@ export function LifeTracks({ knowledge }: { knowledge: KnowledgeRow }) {
 
 // ─── Attributes ─────────────────────────────────────────────────────────────
 
-export function AttributeRadar({ radar, hasGhost, top }: { radar: RadarLayout; hasGhost: boolean; top: TopAttribute[] }) {
+export function AttributeRadar({
+  radar,
+  hasGhost,
+  top,
+  life = { launched: false, contributes: false },
+}: {
+  radar: RadarLayout;
+  hasGhost: boolean;
+  top: TopAttribute[];
+  /** launched: life counts toward attributes; contributes: a track has a level and feeds them now. */
+  life?: { launched: boolean; contributes: boolean };
+}) {
   const described = top.map((t) => `${ATTRIBUTE_META[t.attribute].label} ${t.value.toFixed(0)}`).join(", ");
   return (
     <div>
-      <SectionHeader title="Attributes" aside="13, from your Fields" />
+      <SectionHeader title="Attributes" aside={life.contributes ? "13, from your Fields and life tracks" : "13, from your Fields"} />
       <section className="card radar-c">
         <div className="radar-plot">
           <svg viewBox={RADAR_VIEWBOX_ATTR} role="img" aria-label={`Attribute radar${hasGhost ? " with 7 days ago dashed" : ""}. Top three: ${described || "none yet"}.`}>
@@ -184,7 +202,7 @@ export function AttributeRadar({ radar, hasGhost, top }: { radar: RadarLayout; h
           </ul>
         ) : (
           <p className="t-meta" style={{ textAlign: "center" }}>
-            Attributes grow from Field levels. Review an idea and the first one appears.
+            {life.launched ? "Attributes grow from Field levels and life tracks." : "Attributes grow from Field levels. Review an idea and the first one appears."}
           </p>
         )}
       </section>
@@ -194,49 +212,38 @@ export function AttributeRadar({ radar, hasGhost, top }: { radar: RadarLayout; h
 
 // ─── Goals and mastery ──────────────────────────────────────────────────────
 
+/**
+ * Goals and mastery: the goal ladder (what each goal states it pays, how far
+ * it has got, and what closing now would pay and why), goals closed in the
+ * last 30 days, then ideas mastered, Field tiers and habits by rung.
+ */
 export function MasteryCard({
+  ladder,
+  launched,
+  today,
   mastered,
   tiers,
+  rungs,
   pays,
 }: {
+  /** loadGoalLadder; null when it could not be read (then no goal line is claimed either way). */
+  ladder: GoalLadderData | null;
+  /** Life counts: goals state and pay MP. Before, the ladder shows progress only. */
+  launched: boolean;
+  /** The life day (for due labels). */
+  today: string;
   mastered: number;
   tiers: { established: number; highest: string | null; highestField: string | null };
+  /** Habits by rung; null when they could not be read. */
+  rungs: RungCounts | null;
   /** IDEA_MASTERY_POINTS and MASTERY_LEVEL, passed in by the page. */
   pays: { points: number; level: number };
 }) {
   return (
     <div>
-      <SectionHeader title="Goals and mastery" aside="goals join when they pay MP" />
+      <SectionHeader title="Goals and mastery" aside={launched ? "goals pay MP when finished" : undefined} />
       <section className="card">
-        <div className="mo">
-          <span className="art">
-            <Sigil track="know" />
-          </span>
-          <div className="mo-body">
-            <b>
-              {mastered.toLocaleString("en-GB")} {mastered === 1 ? "idea" : "ideas"} mastered
-            </b>
-            <span className="t-meta">
-              Each pays {pays.points} MP the day it reaches level {pays.level}.
-            </span>
-          </div>
-        </div>
-        <div className="mo">
-          <span className="art">
-            <Sigil track="craft" />
-          </span>
-          <div className="mo-body">
-            <b>
-              {tiers.established} {tiers.established === 1 ? "Field" : "Fields"} Established or above
-            </b>
-            <span className="t-meta">
-              {tiers.highest && tiers.highestField ? `Highest: ${tiers.highestField}, ${tiers.highest}.` : "No Field has a tier yet."}{" "}
-              <Link className="link" href="/library">
-                Library
-              </Link>
-            </span>
-          </div>
-        </div>
+        <GoalLadder ladder={ladder} launched={launched} today={today} mastered={mastered} tiers={tiers} rungs={rungs} pays={pays} />
       </section>
     </div>
   );

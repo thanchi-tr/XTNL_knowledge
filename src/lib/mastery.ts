@@ -1,4 +1,5 @@
 import { cache } from "react";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate } from "./cache";
 import { gradeMasteryAttestation } from "./gemini";
@@ -6,6 +7,8 @@ import { SKILL_POOL } from "./skill-pool";
 import { loadProgressionFresh, unlockBlockers } from "./skill-effects";
 import { dayEndOf, dayKeyOf, dayStartOf } from "./life-day";
 import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity";
+import { DECAY_GRACE_REASON, LIFE_MP_REASONS, mintDetail, round2, type LifeMintInput, type LifeMpReason } from "./life-economy";
+import type { ActivityInput } from "./life-types";
 
 /**
  * The mastery-point economy. `MasteryLedgerEntry` is append-only (see its
@@ -25,6 +28,11 @@ import { activityOp, invalidateActivity, isDuplicateActivity } from "./activity"
  *      life-day.ts).
  *
  *   4. **Decay** debits idle points — see `decayStaleMastery`.
+ *
+ * Life (M5) mints through `mintLifeMasteryOps`: 1.5 per kept track-week and
+ * what a closed goal states, within the 8 MP life-week cap (life-economy.ts),
+ * each as an MP_MINT decision row plus a ledger entry, idempotent on the
+ * row's dedupe key.
  *
  * All four paths are deliberately slow. Driving one Idea from level 1 to
  * mastery yields ~2.3 points total, and the top of the tree costs
@@ -176,6 +184,74 @@ export async function submitAttestation(
 }
 
 // ============================================================================
+// Life mints (M5): kept weeks and goals
+// ============================================================================
+
+/** One planned life mint and the instant it is written (the judge's or the close's `now`). */
+export type LifeMint = LifeMintInput & { now: Date };
+
+/** The MasteryLedgerEntry a paying life mint writes. */
+export interface LifeLedgerEntryData {
+  userId: string;
+  delta: number;
+  reason: LifeMpReason;
+  detail: string;
+}
+
+/**
+ * The rows one life mint becomes, pure (scripts/character-check.ts §6):
+ *
+ *   event   the MP_MINT decision row: sink NONE, the track, sourceId = the
+ *           goal's template id, day = the mint's life day, qty = MP paid,
+ *           detail = mintDetail(reason, why), and the dedupe key that makes
+ *           it happen once ('mp:LIFE_WEEK_KEPT:<TRACK>:<week>', 'mp:GOAL:<id>');
+ *   ledger  the MasteryLedgerEntry with the same delta, reason and detail, or
+ *           null when it pays 0 (a goal closed for nothing writes the
+ *           decision row alone).
+ *
+ * The delta is taken as planned (already rounded and capped by the caller);
+ * anything negative or not finite reads as 0, so a mint can never debit.
+ * LIFE_PR is reserved and refused.
+ */
+export function lifeMintData(userId: string, mint: LifeMint): { event: ActivityInput; ledger: LifeLedgerEntryData | null } {
+  if (!(LIFE_MP_REASONS as readonly string[]).includes(mint.reason)) {
+    throw new Error(`Not a life mastery reason: ${String(mint.reason)}`);
+  }
+  const delta = Number.isFinite(mint.delta) && mint.delta > 0 ? round2(mint.delta) : 0;
+  const detail = mintDetail(mint.reason, mint.why);
+  const event: ActivityInput = {
+    source: "MP_MINT",
+    sink: "NONE",
+    track: mint.track ?? null,
+    templateId: mint.templateId ?? null,
+    sourceId: mint.templateId ?? null,
+    day: mint.day,
+    occurredAt: mint.now,
+    qty: delta,
+    countsForStreak: false,
+    detail,
+    dedupeKey: mint.dedupeKey,
+  };
+  return { event, ledger: delta > 0 ? { userId, delta, reason: mint.reason, detail } : null };
+}
+
+/**
+ * The ops for one life mint, un-awaited, for a `$transaction([...])` array:
+ * the MP_MINT row first, then the MasteryLedgerEntry only when it pays. A
+ * replayed dedupe key raises P2002 on the first op and rolls back both, so a
+ * key pays exactly once across renders, devices and retries.
+ *
+ * Callers run invalidate('progress', 'life', 'activity') after the commit:
+ * the balance is cached under 'progress' and MP_MINT rows are sink NONE.
+ */
+export function mintLifeMasteryOps(userId: string, mint: LifeMint): Prisma.PrismaPromise<unknown>[] {
+  const { event, ledger } = lifeMintData(userId, mint);
+  const ops: Prisma.PrismaPromise<unknown>[] = [activityOp(userId, event)];
+  if (ledger) ops.push(prisma.masteryLedgerEntry.create({ data: ledger }));
+  return ops;
+}
+
+// ============================================================================
 // Idle-point decay
 // ============================================================================
 
@@ -217,9 +293,11 @@ export async function decayStaleMastery(userId: string, now: Date = new Date()):
   if (decayedToday) return { status: "skipped", why: "already_today" };
 
   // The idle clock resets on any real spend, and on the previous decay tick
-  // so erosion is paced daily rather than compounding from one old date.
+  // so erosion is paced daily rather than compounding from one old date. A
+  // zero-delta DECAY_GRACE row (M5's launch writes one: life can make an
+  // emblem affordable overnight) resets it too.
   const lastActivity = await prisma.masteryLedgerEntry.findFirst({
-    where: { userId, reason: { in: ["SKILL_UNLOCK", "DECAY"] } },
+    where: { userId, reason: { in: ["SKILL_UNLOCK", "DECAY", DECAY_GRACE_REASON] } },
     orderBy: { createdAt: "desc" },
     select: { createdAt: true },
   });

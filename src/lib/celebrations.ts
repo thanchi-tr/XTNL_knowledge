@@ -96,7 +96,18 @@ const CAUSE_WORD: Record<string, string> = {
   boss: "boss encounter",
   unlock: "unlock",
   settle: "settlement",
+  // The one-time launch moment (scripts/life-launch.ts): the jump no before-snapshot would see.
+  launch: "life tracks joining your character",
 };
+/** Causes that read without an article: 'Moved by life tracks joining your character.' */
+const NO_ARTICLE = new Set(["launch"]);
+
+/** 'Moved by a review.' / 'Moved by life tracks joining your character.' (null without a cause). */
+export function causeSentence(cause: string | undefined): string | null {
+  if (!cause) return null;
+  const word = CAUSE_WORD[cause] ?? cause;
+  return NO_ARTICLE.has(cause) ? `Moved by ${word}.` : `Moved by a ${word}.`;
+}
 
 async function enrich(drafts: CelebrationDraft[], userId: string, after: ProgressData, opts: DetectOptions): Promise<void> {
   const jobs: Promise<void>[] = [];
@@ -148,10 +159,10 @@ async function enrich(drafts: CelebrationDraft[], userId: string, after: Progres
 
   await Promise.all(jobs);
 
-  const word = opts.cause ? (CAUSE_WORD[opts.cause] ?? opts.cause) : null;
-  if (word) {
+  const sentence = causeSentence(opts.cause);
+  if (sentence) {
     for (const d of drafts) {
-      if (d.tier === 3 && !d.facts.cause && !d.facts.grants?.length) d.facts.cause = `Moved by a ${word}.`;
+      if (d.tier === 3 && !d.facts.cause && !d.facts.grants?.length) d.facts.cause = sentence;
     }
   }
 }

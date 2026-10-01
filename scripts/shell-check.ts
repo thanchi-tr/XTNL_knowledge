@@ -12,7 +12,14 @@ import { runInNewContext } from "node:vm";
 import { DEV_STYLE_PAGES, SECTIONS, activeSub, longDate, sectionOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
-import { EFFECTS_GROUP, askCount, asksFromNotices, asksOfYou, characterLevelOf, levelCaption, toneOf } from "../src/components/shell/shell-types";
+import { EFFECTS_GROUP, askCount, asksFromNotices, asksOfYou, characterLevelOf, levelCaption, toneOf, trackLevelsOf } from "../src/components/shell/shell-types";
+import { ATTRIBUTES, computeAttributeScores, emptyComposition, sourcesFor, type Composition, type FieldContribution } from "../src/lib/attributes";
+import { characterRaw } from "../src/lib/character";
+import { depthCap, trackDepth, xpForLevel } from "../src/lib/life-economy";
+import { TRACK_SEED } from "../src/lib/life-lexicon";
+import { emptyLifeLedger, keptWeekBonusPercent, lifeContributionRows, lifeContributionsAt, notLaunchedView, type TrackState } from "../src/lib/life-tracks";
+import type { Track } from "../src/lib/life-types";
+import { scoresWithStreak, type FieldRow } from "../src/lib/skill-effects";
 import type { Notice } from "../src/lib/notifications";
 import {
   KIND_TIER,
@@ -283,6 +290,19 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   }
   const p = characterLevelOf([4, 9, 2]).progress;
   check("character progress is the fraction toward the next level", p >= 0 && p < 1);
+  // M5: one character level over Fields and life tracks (a compatible extension).
+  const both = 4 ** 0.75 + 9 ** 0.75 + 2 ** 0.75 + 3 ** 0.75 + 1;
+  const withTracks = characterLevelOf([4, 9, 2], [3, 1]);
+  check("character level over Fields and tracks: characterLevelOf([4,9,2], [3,1]).level = floor(Σ both)", withTracks.level === Math.floor(both), `${withTracks.level} vs ${both}`);
+  check("  with progress in [0, 1)", withTracks.progress >= 0 && withTracks.progress < 1 && Math.abs(withTracks.level + withTracks.progress - characterRaw([4, 9, 2], [3, 1])) < 1e-12);
+  for (const levels of [[], [1], [4, 9, 2], [16, 16], [30, 1, 7, 12, 3]]) {
+    const a = characterLevelOf(levels);
+    const b = characterLevelOf(levels, []);
+    const z = characterLevelOf(levels, trackLevelsOf(notLaunchedView("2026-10-01").levels));
+    check(`no tracks, or not launched (all 0), is today's level for [${levels}]`, a.level === b.level && a.progress === b.progress && z.level === fieldLevel(levels) && z.progress === a.progress);
+  }
+  eq("trackLevelsOf: TRACKS order (Body, Duty, Craft, Care), missing as 0", trackLevelsOf({ DUTY: 3, BODY: 1, OTHER: 9 }), [1, 3, 0, 0]);
+  eq("trackLevelsOf: absent is no tracks", [trackLevelsOf(null), trackLevelsOf(undefined)], [[], []]);
   eq("caption: next level is a new title", levelCaption({ level: 14, progress: 0.864, nextTitle: "Practitioner", nextTitleAt: 15 }), "86% to Practitioner at 15");
   eq("caption: next level inside the band", levelCaption({ level: 16, progress: 0.5, nextTitle: "Scholar", nextTitleAt: 21 }), "50% to level 17");
   eq("caption: never 100% before the level lands", levelCaption({ level: 3, progress: 0.9999, nextTitle: null, nextTitleAt: null }), "99% to level 4");
@@ -319,6 +339,90 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   const shellData = read("src/lib/shell-data.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
   check("shell title counts OWNED Ultimates (titles are earned once), not equipped ones", /ownedCodes\.filter\(/.test(shellData) && !/activeSkills/.test(shellData));
   check("shell bell count comes from the listed rows (askCount), not the feed's own tally", /askCount\(/.test(shellData) && !/feed\??\.actionable/.test(shellData));
+  check(
+    "shell: the life read never takes the shell down, and tracks count only once launched",
+    /loadLifeTracks\(userId\)\.catch\(\(\) => null\)/.test(shellData) && /launched \? trackLevelsOf\(life\?\.levels\) : \[\]/.test(shellData)
+  );
+  check("shell: crest edges only once launched (null before)", /tracks: launched \? \(life\?\.edges \?\? null\) : null/.test(shellData));
+  check("shell: the title reads the new level and the progression scores (life included)", /computeTitle\(level, progression\.scores, ultimateCount\)/.test(shellData));
+}
+
+// ── the attribute seam (m5-refit F7; character-check §3b lives here, lane B) ─
+{
+  const comp = (parts: Partial<Composition>): Composition => ({ ...emptyComposition(), ...parts });
+  const rows: FieldRow[] = [
+    { id: "fa", name: "Fitness", level: 10, composition: comp({ PHYSICAL: 50, MIND: 50 }) },
+    { id: "fb", name: "Statistics", level: 4, composition: comp({ MIND: 100 }) },
+    { id: "fc", name: "Ethics", level: 7.3, composition: comp({ REASON: 40, COMPASSION: 35, SELF_RESPECT: 25 }) },
+  ];
+  const bonuses: Record<string, number> = { fa: 10, fc: 4.5 };
+  // The pre-M5 formula, verbatim: Field rows only, streak bonus × multiplier.
+  const preM5 = (mult: number) =>
+    computeAttributeScores(
+      rows.map((f) => ({ fieldName: f.name, level: f.level * (1 + ((bonuses[f.id] ?? 0) * mult) / 100), composition: f.composition }))
+    );
+  const state = (track: Track, level: number, keptStreak = 0): TrackState => {
+    const bonusPercent = keptWeekBonusPercent(keptStreak);
+    return {
+      track,
+      xp: xpForLevel(level),
+      pointsLevel: level,
+      keptWeeks: keptStreak,
+      keptStreak,
+      goalDepth: 0,
+      depth: trackDepth(keptStreak),
+      cap: depthCap(trackDepth(keptStreak)),
+      level,
+      atCap: false,
+      bonusPercent,
+      effectiveLevel: level * (1 + bonusPercent / 100),
+      composition: comp(TRACK_SEED[track]),
+    };
+  };
+  const body3 = lifeContributionRows([state("BODY", 3)]);
+
+  eq("seam: scoresWithStreak(rows, bonuses, 1, []) is the pre-M5 result", scoresWithStreak(rows, bonuses, 1, []), preM5(1));
+  eq("seam: and with no fourth argument", scoresWithStreak(rows, bonuses, 1), preM5(1));
+  eq("seam: an amplified multiplier (1.5) with no life rows is the pre-M5 result", scoresWithStreak(rows, bonuses, 1.5, []), preM5(1.5));
+  eq("seam: life rows from an empty ledger change nothing", scoresWithStreak(rows, bonuses, 1, lifeContributionsAt(emptyLifeLedger("2026-10-05"), "2026-10-20")), preM5(1));
+  eq("seam: the not-launched view's contributions change nothing", scoresWithStreak(rows, bonuses, 1, notLaunchedView("2026-10-01").contributions), preM5(1));
+  eq("seam: a level-0 track adds no row", lifeContributionRows([state("CARE", 0)]).length, 0);
+
+  // A COVENANT / STREAK_AMPLIFIER multiplier scales Field streaks only: the life share is the same at 1 and 1.5.
+  const exactRows: FieldRow[] = [rows[0], rows[1]];
+  const exactBonus: Record<string, number> = { fa: 10 };
+  const share = (mult: number) => {
+    const withLife = scoresWithStreak(exactRows, exactBonus, mult, body3);
+    const without = scoresWithStreak(exactRows, exactBonus, mult, []);
+    return Object.fromEntries(ATTRIBUTES.map((a) => [a, withLife[a] - without[a]]));
+  };
+  const s1 = share(1);
+  const s15 = share(1.5);
+  const alone = computeAttributeScores(body3);
+  check(
+    "seam: a COVENANT multiplier of 1.5 leaves the life share unchanged (it is the life rows' own scores)",
+    ATTRIBUTES.every((a) => Math.abs(s15[a] - s1[a]) < 1e-9 && Math.abs(s1[a] - alone[a]) < 1e-9),
+    JSON.stringify({ s1, s15 })
+  );
+  check("seam: … while the Field streak itself is amplified (PHYSICAL 5.5 → 5.75)", scoresWithStreak(exactRows, exactBonus, 1, []).PHYSICAL === 5.5 && scoresWithStreak(exactRows, exactBonus, 1.5, []).PHYSICAL === 5.75);
+  eq("seam: a BODY L3 row adds PHYSICAL 1.38", scoresWithStreak([], {}, 1, body3).PHYSICAL, 1.38);
+  eq("seam: … on top of the Fields, exactly (5.5 + 1.38)", scoresWithStreak(exactRows, exactBonus, 1, body3).PHYSICAL, 6.88);
+  eq("seam: with a 10-week kept streak it adds 1.66 (× 1.20, its only multiplier)", scoresWithStreak([], {}, 1.5, lifeContributionRows([state("BODY", 3, 10)])).PHYSICAL, 1.66);
+
+  const contributions: FieldContribution[] = [...rows.map((f) => ({ fieldName: f.name, level: f.level, composition: f.composition })), ...body3];
+  const physical = sourcesFor("PHYSICAL", contributions);
+  check(
+    "seam: sourcesFor carries source 'LIFE' on life rows and 'FIELD' on Field rows",
+    physical.some((s) => s.fieldName === "Life · Body" && s.source === "LIFE") && physical.filter((s) => s.fieldName !== "Life · Body").every((s) => s.source === "FIELD"),
+    JSON.stringify(physical)
+  );
+
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const effects = strip(read("src/lib/skill-effects.ts"));
+  check("seam: the base pass, the second pass and loadAttributeScores all pass the life rows", (effects.match(/scoresWithStreak\(rows, streakBonuses, [^)]*, lifeRows\)/g) ?? []).length === 3);
+  check("seam: loadProgression is tagged fields, progress and life", /cached\(`progression:\$\{userId\}`, \["fields", "progress", "life"\]/.test(effects));
+  const rates = strip(read("src/lib/progress-rate.ts"));
+  check("seam: the score rate adds life at both ends, once launched, and is tagged 'life'", (rates.match(/lifeContributionsAt\(/g) ?? []).length === 2 && /isLaunched\(today\)/.test(rates) && /\["fields", "progress", "life"\]/.test(rates));
 }
 
 // ── the capture event the shell dispatches is the one QuickCapture hears ────

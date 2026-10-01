@@ -136,7 +136,7 @@ D. WORKOUT PRICE (M4, pure body-grade.ts)
   - A PR needs ≥ 3 prior qualifying sessions and must beat the noise floor: distance +2%, pace −1%.
   - Only sensor sessions qualify; MANUAL never does.
   - Caps: ≤ 1 paying PR per metric per 7 days, ≤ 3 per week.
-  - Pays +10 raw XP through the knee, plus 0.5 MP from M5.
+  - Pays +10 raw XP through the knee. (The 0.5 MP planned for M5 is gone with M4: LIFE_PR is reserved and never minted.)
 - Gauges: CTL = 42-day and ATL = 7-day EWMA of daily load; Form = CTL − ATL. Shown only after 28 days, otherwise 'calibrating n/28'. No injury or ACWR claims.
 
 E. COMPULSORY DEBT (M2)
@@ -151,34 +151,111 @@ E. COMPULSORY DEBT (M2)
 - A freeze, rest, sick or vacation day means EXCUSED with no debt, unless the task is compulsoryOnRest (meds).
 - Archiving a template never erases its open debt; its make-up card stays. 'Accept the loss' is available after 14 days only when LifeSettings.debtWriteOff is on (user decision, default off). It keeps the DEBT row and adds DEBT_WRITTEN_OFF.
 
-F. TRACKS AND LEVELS (M5)
-- Four fixed tracks with seed compositions taken verbatim from attribute-inference.ts:
-  - BODY: PHYSICAL 46, STUBBORNNESS 24, SELF_RESPECT 20, FAITH 10 (line 134).
-  - DUTY: STUBBORNNESS 36, SELF_RESPECT 26, FAITH 22, PHYSICAL 16 (line 138).
-  - CRAFT: MIND 34, CRITICAL_THINKING 24, SELF_RESPECT 22, STUBBORNNESS 20 (line 139).
-  - CARE: COMPASSION 30, SELF_RESPECT 28, FAITH 24, REASON 18 (line 140).
-- trackXp = max(0, Σ xp where sink TRACK).
-- pointsLevel = floor(√xp/7).
-- depth = √keptWeeks + goalDepth (MID 1 and LONG 3, only for paying goals) + (BODY only) min(3, 0.1 × paid PRs).
+F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tracks.ts, judgement in life-weeks.ts)
+- Four fixed tracks. Their seed compositions are TRACK_SEED in src/lib/life-lexicon.ts:
+  - BODY: PHYSICAL 46, STUBBORNNESS 24, SELF_RESPECT 20, FAITH 10.
+  - DUTY: STUBBORNNESS 36, SELF_RESPECT 26, FAITH 22, PHYSICAL 16.
+  - CRAFT: MIND 34, CRITICAL_THINKING 24, SELF_RESPECT 22, STUBBORNNESS 20.
+  - CARE: COMPASSION 30, SELF_RESPECT 28, FAITH 24, REASON 18.
+- trackXp = max(0, Σ xp where sink TRACK). Only life-tracks-server.ts loadLifeLedger reads it.
+- pointsLevel = floor(√xp/7) (TRACK_LEVEL_STEP 7): level 1 at 49 XP, level 5 at 1,225, level 10 at 4,900.
+- depth = 1.25·√keptWeeks + min(2, goal depth).
+  - A paid MID adds 1 and a paid LONG adds 2 (GOAL_DEPTH, capped at GOAL_DEPTH_CAP 2 per track).
+  - A goal closed for 0 MP adds nothing.
+  - There is no PR term.
+  - With 1.25, 52 kept weeks (a year) reach depth 9.01, so a cap of 10 in the same week as 4,900 XP. Capping goal depth at 2 closes it as a flood channel.
 - level = min(pointsLevel, 1 + floor(depth)). Every track starts at level 0.
-- Kept week, each with an effort floor:
-  - BODY: WHO MEM ≥ the pro-rated target and ≥ 2 strength days.
-  - DUTY: ≥ 3 compulsory occurrences, all DONE / made up within 48 h / MVV / EXCUSED, plus Σ Duty raw ≥ 30. With no compulsory tasks: ≥ 5 Duty completions on ≥ 3 days and ≥ 30 raw.
-  - CRAFT and CARE: completions on ≥ 3 distinct days and ≥ 30 raw.
-  - A vacation week counts neither way.
-- Attribute contribution: {fieldName: 'Life · Body', level: L × (1 + streakBonusPercent(7 × consecutive kept weeks)/100), composition: effectiveFieldComposition(seed, XP-weighted compositions per compositionKey)}.
-- characterLevel = floor(Σ over Fields and tracks of L^0.75).
-- Golden values: trackLevel(1225 xp, 16 weeks) = 5; (7800, 45 weeks, 10 PRs) = 8; (49, 0) = 1; (10, 0) = 0; (4900, 0) = 1.
+- The depth line's 'n more kept weeks raise it': n = max(1, ceil(((floor(depth) + 1 − goal depth)/1.25)² − keptWeeks)).
+  - 25 kept weeks → 7 more (cap 7 → 8 at 32).
+  - 52 kept weeks → 12 more.
+  - It is exact: n weeks raise the cap and n − 1 do not.
+- Judging kept weeks (lazy and idempotent; it replaces M2's Sunday settlement step, which will call the same function):
+  - Week W is its Monday–Sunday life days. It is judged from Wednesday 04:00 after its Sunday: the latest judgeable week is the one whose Sunday is on or before today − 3 (WEEK_JUDGE_LAG_DAYS).
+    - That is one day later than the record window strictly needs, so M2's 48-hour make-ups never come too late.
+    - The judge runs in after() on page reads, at most 12 weeks per run, oldest first. Rendering twice never judges twice.
+  - The epoch week is judged on its days ≥ epochDay.
+  - Inputs are live TASK rows with sink TRACK:
+    - An UNDO 'undo:<id>' removes row <id>.
+    - days = distinct days with a live row; completions = live rows; raw = Σ rawXp.
+    - #play, study-linked and other sink-NONE completions never count.
+  - CRAFT and CARE: kept iff completions fall on ≥ 3 distinct days (KEPT_MIN_DAYS) and raw ≥ 30 (KEPT_MIN_RAW).
+  - BODY: the same, plus ≥ 150 effort minutes (BODY_EFFORT_MINUTES).
+    - Effort minutes come from EXERCISE-category receipts only, as minutes × the weight of the receipt's band (its B factor): INTRO 5 → 0, STANDARD 10 → 1, DEMANDING 20 and SEVERE 35 → 2. This is WHO's moderate-equivalent rule applied to the band.
+    - HEALTH minutes never count.
+    - There is no strength-day rule and no pro-rating until M2's rest days.
+  - DUTY: count the occurrences of every compulsory TASK or HABIT template, on any track, on days ≥ max(startDay, epochDay) and before the day it was archived:
+    - Fixed schedules: occurrencesBetween over the week.
+    - TARGET:n/W: n occurrences. kept = min(n, distinct kept days); held = min(n − kept, distinct held days); the rest are missed. Skip it that week if the template started after Monday. Monthly targets are not judged weekly.
+    - A compulsory one-off due in the week: one occurrence, kept or held by a done instance on or before its due day.
+    - The outcome comes from habit.ts instanceOutcome: DONE and DONE_LATE are kept; DONE_MVV, SKIPPED and EXCUSED hold; MISSED, WRITTEN_OFF or no instance are missed. UNDONE reads as absent.
+    - Any missed occurrence means the week is not kept.
+    - Otherwise, with ≥ 3 occurrences (DUTY_MIN_OCCURRENCES), it is kept iff Duty raw ≥ 30.
+    - Otherwise, with 0–2 occurrences, it is kept iff there are ≥ 5 Duty completions (DUTY_FALLBACK_COMPLETIONS) on ≥ 3 days and raw ≥ 30.
+    - An MVV holds the must and still needs the floor.
+  - Held days (rest, vacation) are an input that M2 fills. In M5 there are none, so no week is 'held'.
+  - Each judgement is one WEEK row per track: 'week:<TRACK>:<YYYY-Www>', qty 1 when kept or 0, day = the week's Sunday.
+    - Its detail is the reason line. Kept: 'Kept · 4 days · 52.0 raw XP'; BODY adds ' · 180 effort min', and DUTY adds ' · 5 musts kept' when there were musts.
+    - Not kept: 'Not kept · ' plus only the failing parts, from '2 of 3 days', '12.0 of 30 raw XP', '90 of 150 effort min', '1 must missed (Tue)' and '4 of 5 completions'.
+  - Backfill: a week whose Sunday is before LIFE_LAUNCH_DAY is written 'backfill · <reason>'. It counts for depth, but it mints no MP and plays no Seal.
+- keptWeeks counts every kept week, backfill included. keptStreak is the trailing run of kept weeks ending at the latest judged week. A not-kept week ends it; the unjudged current week does not.
+- Attribute contribution, one row per track with level > 0:
+  - {fieldName: 'Life · Body', level: L × (1 + streakBonusPercent(7 × keptStreak)/100), composition, source: 'LIFE'}.
+  - composition = effectiveFieldComposition(TRACK_SEED[track], the XP-weighted compositions of the track's compositionKeys). Keys with XP ≤ 0 are dropped; with none left, it is the seed.
+  - The bonus reaches its +20% cap after 10 kept weeks. It is not amplified by STREAK_AMPLIFIER (COVENANT), which multiplies Field streak bonuses only.
+- characterLevel = floor(Σ over Fields and tracks of L^0.75). It uses the plain track level, never the bonus-scaled one. With no tracks it equals xp.fieldLevel exactly.
+- Golden values (scripts/character-check.ts §1), as trackLevel(xp, keptWeeks[, goal depth]):
+  - (1225, 16) = 5; (7800, 45) = 9; (49, 0) = 1; (10, 0) = 0; (4900, 0) = 1.
+  - (4900, 52) = 10; (4899, 52) = 9; (4900, 51) = 9 (depth 8.927).
+  - (1225, 10) = 4; (1225, 11) = 5.
+  - (4900, 30, LONG) = 9 (depth 8.847); (4900, 30, MID + LONG) = 9 (goal depth capped at 2); (4900, 44, MID) = 10 (depth 9.292).
+  - A BODY L3 row adds PHYSICAL 1.38, or 1.66 with a 10-week kept streak (× 1.20).
+  - The old (7800, 45 weeks, 10 PRs) = 8 golden is gone with the PR term.
 
-G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion)
-- LIFE_WEEK_KEPT 1.5 per track, LIFE_FULL_DAY 0.5, LIFE_PR 0.5, GOAL_SHORT 1.0.
-  - GOAL_SHORT is committed and binary, needs a lifetime ≥ 3 days, and ≤ 2 pay per week.
-  - All four are capped together at 8 MP per life week.
-- GOAL_MID = 6 × g, paid only if g ≥ 0.7, lifetime ≥ 21 days, and ≤ 2 paying per 30 days.
-- GOAL_LONG = 20 × g, paid only if g ≥ 0.7, lifetime ≥ 90 days, and ≤ 1 per 91 days.
-- The goal amount is frozen and shown when the goal is created ('Pays 6 MP at ≥ 70%'). Goals pay no XP themselves; their children do.
-- Budget. Worst case is 8/7 + 12/30 + 20/91 = 1.76 MP/day, which is 2.85% of the measured 61.96 MP/day. The whole-pool horizon moves from 13.7 to 13.3 years. balance-horizon asserts this stays ≤ 3%.
-- No MP is ever paid for past weeks or for backfill.
+G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants in src/lib/life-economy.ts)
+- Reasons (LIFE_MP):
+  - LIFE_WEEK_KEPT pays 1.5 per kept track, minted on the week's Sunday: 'mp:LIFE_WEEK_KEPT:<TRACK>:<YYYY-Www>', why 'kept week <weekKey>'.
+  - GOAL_SHORT pays 1, GOAL_MID 6 × g and GOAL_LONG 20 × g, minted on the close day: 'mp:GOAL:<goalId>'.
+  - LIFE_FULL_DAY (0.5) is minted from M2's settlement, through the same helper and cap.
+  - LIFE_PR is dropped with M4. It stays reserved and is never minted.
+  - Every mint's detail (MP_MINT.detail and MasteryLedgerEntry.detail) is '<REASON> · <why>', or the reason alone, for example 'GOAL_MID · 2 Mid goals paid in the last 30 days'.
+- The weekly cap is 8 MP per life week (LIFE_MP_WEEK_CAP; Monday–Sunday, by the mint's day). It is shared by LIFE_WEEK_KEPT, GOAL_SHORT and LIFE_FULL_DAY (CAPPED_REASONS).
+  - The trim order inside a week is: Short goals at close (they come first in time), then kept tracks in BODY, DUTY, CRAFT, CARE order, then full days (M2).
+  - A trimmed kept week's why adds ' · trimmed by the weekly cap'.
+  - In M5 the most a week can pay is 4 × 1.5 + 2 × 1 = 8, so nothing is trimmed until M2.
+  - MID and LONG goals are limited by their own windows, not by this cap.
+- Goals (GOAL_RULES):
+
+  | Horizon | Stated | Pays | Min lifetime | Limit | Depth |
+  |---|---|---|---|---|---|
+  | SHORT | 1 | 1, binary: needs g = 1 | 3 d | ≤ 2 paying per life week | 0 |
+  | MID | 6 | round2(6 × g) from g ≥ 0.7 | 21 d | ≤ 2 paying per rolling 30 d | 1 |
+  | LONG | 20 | round2(20 × g) from g ≥ 0.7 | 90 d | ≤ 1 paying per rolling 91 d | 2 |
+
+  - A rolling window is the days (close − N, close].
+  - goalMp is stated and frozen when the goal is created. Goals open at launch get it from the launch script.
+  - The copy is 'pays ⬡ 1 when done' (SHORT) or 'pays ⬡ 6 × progress from 70%' (MID; LONG with 20).
+- Closing is explicit and final.
+  - g = min(1, progress), measured as of min(close day, due day), so progress after the due day never counts.
+  - Measured metrics: CHILDREN (done one-off steps ÷ steps) and MANUAL (Σ GOAL_PROGRESS ÷ krTarget). REVIEWS, IDEAS, WORKOUTS and RUN_KM read 'not measured' in M5.
+  - The first gate that fails sets the why and pays 0:
+    1. 'before life MP began';
+    2. 'not measured: add a step or a number';
+    3. 'not finished' (SHORT) or 'below 70%';
+    4. 'set N days ago (21 needed)';
+    5. '2 Short goals already paid this week', '2 Mid goals paid in the last 30 days' or 'a Long goal paid in the last 91 days'.
+  - A SHORT that passes pays 1, trimmed to the room left in the close day's life week ('the life week's 8 MP cap is reached' when there is none).
+  - Depth added = min(GOAL_DEPTH[h], 2 − the track's current goal depth) when it pays, else 0.
+- Every close writes exactly one MP_MINT decision row 'mp:GOAL:<id>', with qty = MP paid. A qty-0 row records a close that paid nothing, with its why.
+  - A MasteryLedgerEntry is written only when it pays.
+  - A double tap hits the dedupe key ('Already closed.').
+- A missed goal reads 'Carried 0.55', with no debt.
+- Goals never pay XP and never write TRACK rows; their children pay as tasks.
+- No MP is paid for a week whose Sunday is before LIFE_LAUNCH_DAY (backfill), and no goal pays before launch.
+- Budget. scripts/balance-horizon.ts prints a LIFE block and exits 1 on any failed assertion.
+  - Knowledge income is 61.964 MP/day (25 × 0.1 × 10.5 + 10/7 × 25).
+  - The worst case is 8/7 + 6 × 2/30 + 20 × 1/91 = 1.7626 MP/day, 2.845% of knowledge: within 3% (1.8589). The whole-pool horizon moves from 13.71 to 13.33 years.
+  - The committed case (the cap every week plus a Mid a quarter) is 1.209 MP/day, giving 13.45 years.
+  - It also asserts that M5's weekly maximum fills the cap exactly; the steady basket's volume; pacing (steady level 10 at week 49, light at 81, heavy volume at most one level above steady at week 52, and the worst case not before week 32); and that life alone stays below every tier-5 attribute gate (worst SELF_RESPECT 13.82 < 14.2).
 
 H. CALIBRATION
 - scripts/life-grade-check.ts (PASS/FAIL, exit 1, novelty-check style):
@@ -196,7 +273,7 @@ I. WHAT THE USER SEES
 - Grade chip: 'lexical · 40%' → 'sizing…' → 'AI · 84%' (rationale on hover) → 'self-rated' → 'frozen'.
 - Receipt, for example: 'Demanding 20 × 150 min 1.33 × on time 1.00 × one-off 1.00 × 1st today 1.00 = 26.7 · full rate (46 of 100 used today) → Duty'.
 - Size panel: band blurbs ('Routine, no real resistance', 'Ordinary focused effort', 'Sustained strain, concentration or discomfort', 'Near your limit, or high stakes'), basis, source and confidence, prompt version, and 'Adjust size'.
-- /today/rules renders every constant straight from life-grade.ts and body-grade.ts.
+- /today/rules renders every constant straight from life-grade.ts and body-grade.ts. Its 'Tracks and kept weeks' card (M5) renders from life-economy.ts.
 
 J. SERVER CLAMPS AND WORST FORGED CASE
 - Reported minutes: [0.5, 2] × est_eff, and ≤ 480. Typed estimate 1..480, with est_eff ≤ 2 × machineMinutes.
@@ -205,4 +282,6 @@ J. SERVER CLAMPS AND WORST FORGED CASE
 - Steps: ≤ 30,000 per interval, ≤ 100,000 per day.
 - The completion day is computed on the server and can only be today, or yesterday inside the record window.
 - Worst forged day: 300 life XP (the knee cap).
-- Life MP cannot be forged beyond the weekly cap, because PR MP needs sensor sessions.
+- Life MP cannot be forged beyond the weekly cap of 8 (kept weeks and Short goals).
+  - Mid and Long goals are bounded by their windows and lifetimes, and pay only on measured progress (steps or logged numbers).
+  - No life MP is minted from PRs.

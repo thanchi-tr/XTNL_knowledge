@@ -22,6 +22,14 @@
  *     broadest (domain → field → character → title/band), and an unlock
  *     absorbs the title and band it caused. The claimed keys are written as
  *     tombstones (mergedInto) so they can never play on their own later.
+ *     Life (M5): a track level-up folds into the character or title moment
+ *     it lifted; otherwise into the week Seal of the same diff; otherwise it
+ *     plays alone. So one kept week is at most one week Seal plus one
+ *     character or title moment.
+ *   - The character counts track levels only when BOTH snapshots carry them
+ *     (LevelsPart.tracks): a stale or pre-launch read never invents a level.
+ *   - Every amount is what was paid (a goal's decision row, a week's mints),
+ *     never what was promised.
  *   - Every T2/T3 passes honestyProblem(): an exact number plus What moved or a cause.
  */
 import {
@@ -41,27 +49,30 @@ import { ATTRIBUTE_META, emptyComposition, type AttributeScores } from "./attrib
 import { fieldTier } from "./field-tier";
 import { HABIT_RUNGS, keptToNextRung, rungOf, type HabitRung } from "./habit";
 import { addDays, weekKeyOf, weekStartKeyOf, type DayKey } from "./life-day";
+import { GOAL_RULES, LIFE_MP, LIFE_MP_WEEK_CAP, isBackfillDetail, parseWeekRowKey, type GoalRule } from "./life-economy";
+import { TRACKS, type Horizon } from "./life-types";
 import { MATERIALS, crestBandStarts, crestMaterial, medallionMaterial, rankMaterial, type Material } from "./materials";
 import { depthOf } from "./skill-form";
 import { getSkill, type SkillRank } from "./skill-pool";
 import { TITLE_BANDS, bandForLevel, computeTitle } from "./titles";
 import { MASTERY_LEVEL } from "./xp";
-import { characterLevelOf } from "../components/shell/shell-types";
+import { characterLevelOf, trackLevelsOf } from "../components/shell/shell-types";
 
 // ─── Snapshot shape ─────────────────────────────────────────────────────────
 
 export const SNAPSHOT_VERSION = 1 as const;
 
 /**
- * levels    Field and Domain levels, plus owned Ultimates (they replace the title)
+ * levels    Field and Domain levels, owned Ultimates (they replace the title),
+ *           and the track levels once life is launched (the character counts them)
  * mastered  IDEA_MASTERED ledger rows: idea → MP paid
  * streak    the daily streak (a 400-day window, so 100 and 365 are reachable)
  * skills    owned emblems and the MP balance
- * goals     finished goals
+ * goals     closed goals, with what their decision row paid
  * bosses    per-Field boss tier and victories
- * ledger    WEEK and PR ledger rows (M4/M5 write them)
+ * ledger    kept WEEK rows (with their MP) and PR rows
  * habits    per-template habit strength (only the templates asked for)
- * tracks    M5 track levels (read once M5 lands; the detector is ready)
+ * tracks    the four life track levels
  * ready     emblems that meet every gate now (opt-in: it is the costly read)
  */
 export type SnapshotPart = "levels" | "mastered" | "streak" | "skills" | "goals" | "bosses" | "ledger" | "habits" | "tracks" | "ready";
@@ -87,12 +98,16 @@ export const SNAPSHOT_SCOPES = {
   idea: ["levels", "streak"],
   /** A boss attempt resolved. */
   boss: ["levels", "mastered", "streak", "bosses"],
-  /** A tick, a make-up or a record-yesterday. Pass templateIds for the rung. */
-  tick: ["streak", "habits", "goals"],
+  /**
+   * A tick, a make-up or a record-yesterday. Pass templateIds for the rung.
+   * A tick pays track XP, so it reads the tracks and the levels (the
+   * character counts tracks once life is launched).
+   */
+  tick: ["streak", "habits", "goals", "levels", "tracks"],
   /** An emblem unlock (the title can change with a first Ultimate). */
   unlock: ["skills", "levels"],
-  /** M2/M5 settlement: kept weeks, PRs, rungs, goals, tracks. */
-  settle: ["streak", "ledger", "habits", "goals", "tracks"],
+  /** The week judge (M5) and M2's settlement: kept weeks, PRs, rungs, goals, tracks and the character they lift. */
+  settle: ["streak", "ledger", "habits", "goals", "tracks", "levels"],
   /** Everything except `ready`. */
   all: ["levels", "mastered", "streak", "skills", "goals", "bosses", "ledger", "habits", "tracks"],
 } as const satisfies Record<string, readonly SnapshotPart[]>;
@@ -109,6 +124,12 @@ export interface LevelsPart {
   domains: { id: string; name: string; fieldId: string; level: number }[];
   /** Owned ULTIMATE emblems. One or more replaces the level title with a Transcendent rank. */
   ultimates: number;
+  /**
+   * BODY | DUTY | CRAFT | CARE → track level, present only once life is
+   * launched. The character counts them only when both snapshots carry them.
+   * Optional, so snapshots stored before M5 still parse.
+   */
+  tracks?: Record<string, number>;
 }
 export interface MasteredPart {
   /** ideaId → MP the IDEA_MASTERED row paid. */
@@ -130,10 +151,21 @@ export interface GoalRow {
   id: string;
   title: string;
   horizon: string | null;
+  /** The MP stated (frozen) when the goal was set. Never stated as paid. */
   goalMp: number | null;
+  /** g at the close, 0..1. */
   closedScore: number | null;
   krTarget: number | null;
   krUnit: string | null;
+  // M5, from the goal's 'mp:GOAL:<id>' decision row. Optional: older snapshots parse.
+  /** MP the close actually paid (0 allowed). Absent when no decision row was read: then no MP is stated. */
+  paid?: number;
+  /** Why it paid less than its scaled amount, or nothing ('set 12 days ago (21 needed)'); null when paid in full. */
+  why?: string | null;
+  /** The goal's track (BODY | DUTY | CRAFT | CARE). */
+  track?: string | null;
+  /** Track depth the close added: 0 when it paid nothing or the track's goal depth was already at its cap. */
+  depth?: number;
 }
 export interface GoalsPart {
   done: GoalRow[];
@@ -161,6 +193,8 @@ export interface LedgerRow {
   xp: number;
   qty: number | null;
   detail: string | null;
+  /** Kept WEEK rows: the MP its 'mp:LIFE_WEEK_KEPT:<track>:<week>' row paid (absent: none read). */
+  mp?: number;
 }
 export interface LedgerPart {
   weeks: LedgerRow[];
@@ -240,7 +274,11 @@ const fmtInt = (v: number) => Math.round(v).toLocaleString("en-GB");
 /** 12 → "12", 12.5 → "12.5": no trailing ".0" on whole figures. */
 const fmtAuto = (v: number) => (Number.isInteger(v) ? fmtInt(v) : fmt(v, 1));
 const round2 = (v: number) => Math.round(v * 100) / 100;
+/** MP as paid, to at most 2 dp with no trailing zeros: 4.8, 18, 1.5, 0.25. */
+const fmtMp = (v: number) => round2(v).toLocaleString("en-GB", { maximumFractionDigits: 2 });
 const pct = (fraction: number) => `${Math.floor(Math.max(0, Math.min(0.999, fraction)) * 100)}%`;
+/** A goal's g as a percent, floored to 0.1 and never above 100: 0.8 → "80%", 0.8333 → "83.3%", 1 → "100%". */
+const goalPct = (g: number) => `${(Math.floor(Math.max(0, Math.min(1, g)) * 1000 + 1e-6) / 10).toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** "Duty, Craft and Body". */
 const listOf = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
@@ -259,7 +297,6 @@ export function longDay(key: DayKey): string {
 
 const RANK_LABEL: Record<SkillRank, string> = { PURE: "Pure", SYNERGY: "Synergy", CAPSTONE: "Capstone", APEX: "Apex", ULTIMATE: "Ultimate" };
 const TRACK_LABEL: Record<string, string> = { BODY: "Body", DUTY: "Duty", CRAFT: "Craft", CARE: "Care" };
-const HORIZON_LABEL: Record<string, string> = { SHORT: "Short", MID: "Mid", LONG: "Long" };
 const trackLabel = (t: string | null) => (t ? (TRACK_LABEL[t] ?? t.charAt(0) + t.slice(1).toLowerCase()) : "Life");
 
 const NO_SCORES: AttributeScores = emptyComposition();
@@ -276,8 +313,16 @@ function fieldRaw(fieldId: string, domains: LevelsPart["domains"]): number {
   return domains.filter((d) => d.fieldId === fieldId).reduce((s, d) => s + Math.pow(Math.max(0, d.level), 0.75), 0);
 }
 
-/** Domain, field, character, title and band: one moment per diff, the broadest one. */
-function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
+/**
+ * Domain, field, character, title and band: one moment per diff, the broadest one.
+ *
+ * The character counts the track levels only when BOTH snapshots carry them;
+ * otherwise both sides are Fields-only, so a stale or pre-launch read never
+ * invents a level. When the moment is a title, a band or a character level,
+ * the diff's track level-ups (`trackUps`, from detectTracks) fold in as
+ * lower drafts, and a track that lifted the character is named as the cause.
+ */
+function detectLevels(b: LevelsPart, a: LevelsPart, trackUps: readonly CelebrationDraft[] = []): CelebrationDraft[] {
   const prevDomain = new Map(b.domains.map((d) => [d.id, d]));
   const prevField = new Map(b.fields.map((f) => [f.id, f]));
   const fieldName = new Map(a.fields.map((f) => [f.id, f.name]));
@@ -336,8 +381,13 @@ function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
     );
   }
 
-  const cb = characterLevelOf(b.fields.map((f) => f.level));
-  const ca = characterLevelOf(a.fields.map((f) => f.level));
+  const withTracks = b.tracks != null && a.tracks != null;
+  const tracksB = withTracks ? trackLevelsOf(b.tracks) : [];
+  const tracksA = withTracks ? trackLevelsOf(a.tracks) : [];
+  const cb = characterLevelOf(b.fields.map((f) => f.level), tracksB);
+  const ca = characterLevelOf(a.fields.map((f) => f.level), tracksA);
+  // Tracks whose whole level rose (TRACKS order), for the cause line.
+  const movedTracks = TRACKS.map((t, i) => ({ name: trackLabel(t), from: Math.floor(tracksB[i] ?? 0), to: Math.floor(tracksA[i] ?? 0) })).filter((t) => withTracks && t.to > t.from);
   const rawB = cb.level + cb.progress;
   const rawA = ca.level + ca.progress;
   const transB = b.ultimates > 0;
@@ -357,11 +407,15 @@ function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
         { label: "Σ L^0.75", value: `${fmt(rawB, 2)} → ${fmt(rawA, 2)}` },
       ]
     : [];
+  // A track names the cause only when no Field moved and the character really rose.
+  const trackCause = !movedFields.length && levelUp && movedTracks.length ? movedTracks[0] : null;
   const causeLine = movedFields.length
     ? `${movedFields[0].name} reached level ${movedFields[0].to}, which lifted your character level`
-    : transA && !transB
-      ? "An Ultimate emblem is yours, so the level ladder no longer names you"
-      : null;
+    : trackCause
+      ? `${trackCause.name} reached level ${trackCause.to}, which lifted your character level`
+      : transA && !transB
+        ? "An Ultimate emblem is yours, so the level ladder no longer names you"
+        : null;
 
   let main: CelebrationDraft | null = null;
   if (titleChanged || bandUp) {
@@ -399,6 +453,10 @@ function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
     if (!levelUp && main.what.length === 0) main.what.push({ label: "Title", value: `${rankB} → ${rankA}` });
   } else if (levelUp) {
     const nextBand = transA ? null : (TITLE_BANDS.find((t) => t.min > ca.level) ?? null);
+    const lines = [
+      trackCause ? `${causeLine}.` : null,
+      nextBand ? `${nextBand.name} at level ${nextBand.min}: ${plural(nextBand.min - ca.level, "level")} to go.` : null,
+    ].filter((l): l is string => Boolean(l));
     main = draft(
       "character-level",
       `level:${ca.level}`,
@@ -407,7 +465,7 @@ function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
         title: `Level ${ca.level} · still ${rankA}`,
         numeral: { from: cb.level, to: ca.level },
         material: bandA,
-        lines: nextBand ? [`${nextBand.name} at level ${nextBand.min}: ${plural(nextBand.min - ca.level, "level")} to go.`] : undefined,
+        lines: lines.length ? lines : undefined,
         href: "/you",
       },
       [...charRows],
@@ -416,7 +474,8 @@ function detectLevels(b: LevelsPart, a: LevelsPart): CelebrationDraft[] {
   }
 
   // Merge: the broadest event is the moment; the rest become its What-moved rows.
-  const lower = [...domainUps, ...fieldUps];
+  // Track level-ups fold only into a character, title or band moment (one cause, one moment).
+  const lower = [...domainUps, ...fieldUps, ...(main ? trackUps : [])];
   if (!main) {
     if (fieldUps.length) main = fieldUps[0];
     else if (domainUps.length) main = domainUps[0];
@@ -573,44 +632,84 @@ function detectSkills(b: SkillsPart, a: SkillsPart): CelebrationDraft[] {
   return out;
 }
 
+const ruleOf = (horizon: string | null): GoalRule | null => (horizon && horizon in GOAL_RULES ? GOAL_RULES[horizon as Horizon] : null);
+
+/**
+ * A finished goal: only a newly closed one whose g reached its horizon's bar
+ * (SHORT 1, MID and LONG 0.7). A missed goal never gets a Seal. The Seal
+ * states what its decision row paid ('mp:GOAL:<id>'), never the goalMp
+ * promised: '+4.8 MP: 6 × 80%', or 'It pays no MP: <why>' with the progress
+ * as its number. With no decision row read (paid absent) no MP is stated.
+ */
 function detectGoals(b: GoalsPart, a: GoalsPart): CelebrationDraft[] {
   const had = new Set(b.done.map((g) => g.id));
-  return a.done
-    .filter((g) => !had.has(g.id))
-    .map((g) => {
-      const long = g.horizon === "LONG";
-      const mp = g.goalMp != null && g.goalMp > 0 ? round2(g.goalMp) : null;
-      const progress = g.closedScore != null ? Math.round(Math.max(0, Math.min(1, g.closedScore)) * 100) : 100;
-      const horizon = g.horizon ? (HORIZON_LABEL[g.horizon] ?? g.horizon) : null;
-      const what: WhatMoved[] = [
-        ...(horizon ? [{ label: "Horizon", value: horizon }] : []),
-        ...(g.krTarget != null ? [{ label: "Key result", value: `${fmtAuto(g.krTarget)}${g.krUnit ? ` ${g.krUnit}` : ""}` }] : []),
-        mp != null ? { label: "MP paid", value: `+${fmt(mp)}` } : { label: "Progress", value: `${progress}%` },
-      ];
-      const facts: CelebrationFacts = long
-        ? {
-            eyebrow: "Long goal finished",
-            kicker: "Long goal finished",
-            title: g.title,
-            grants: mp != null ? [`+${fmt(mp)} MP, the payout frozen when you set it`] : [],
-            cause: `Finished at ${progress}% of its key result.`,
-            amounts: mp != null ? [{ kind: "mp", value: mp, label: "MP" }] : undefined,
-            numeral: mp != null ? undefined : { from: null, to: progress },
-            material: "gold",
-            art: { type: "medallion", material: "gold", numeral: progress },
-            href: "/you",
-          }
-        : {
-            eyebrow: "Goal finished",
-            title: g.title,
-            lines: [mp != null ? `It pays the ${fmt(mp)} MP stated when you set it.` : `Finished at ${progress}% of its key result.`],
-            amounts: mp != null ? [{ kind: "mp", value: mp, label: "MP" }] : undefined,
-            numeral: mp != null ? undefined : { from: null, to: progress },
-            material: g.horizon === "MID" ? "silver" : "bronze",
-            href: "/you",
-          };
-      return draft(long ? "goal-long" : "goal-finished", `goal:${g.id}`, facts, what);
-    });
+  const out: CelebrationDraft[] = [];
+  for (const g of a.done) {
+    if (had.has(g.id) || g.closedScore == null || !Number.isFinite(g.closedScore)) continue;
+    const rule = ruleOf(g.horizon);
+    const score = Math.max(0, Math.min(1, g.closedScore));
+    // Unknown horizon: only a goal finished in full celebrates.
+    if (score + 1e-9 < (rule?.bar ?? 1)) continue;
+    const long = g.horizon === "LONG";
+    const progress = Math.floor(score * 100 + 1e-6);
+    const share = goalPct(score);
+    const stated = g.goalMp != null && g.goalMp > 0 ? g.goalMp : (rule?.stated ?? null);
+    const paid = typeof g.paid === "number" && Number.isFinite(g.paid) ? round2(Math.max(0, g.paid)) : null;
+    const pays = paid != null && paid > 0;
+    const depth = pays && typeof g.depth === "number" && g.depth > 0 ? g.depth : 0;
+    const track = g.track ? trackLabel(g.track) : null;
+    const horizon = rule?.name ?? g.horizon;
+    const why = g.why ? g.why.replace(/\.$/, "") : null;
+
+    // How the paid amount came about, in words.
+    const payLine = !pays
+      ? null
+      : rule?.binary || stated == null
+        ? stated != null && round2(stated) === paid
+          ? `It pays the ${fmtMp(paid)} MP stated when you set it.`
+          : `It pays ${fmtMp(paid)} MP${stated != null ? ` of the ${fmtMp(stated)} stated` : ""}${why ? `: ${why}` : ""}.`
+        : `It pays ${fmtMp(paid)} MP: ${fmtMp(stated)} × ${share}.`;
+    const finishedLine =
+      paid === 0 ? `Finished at ${share}. It pays no MP${why ? `: ${why}` : ""}.` : `Finished at ${share} of its key result.`;
+
+    const what: WhatMoved[] = [
+      ...(horizon ? [{ label: "Horizon", value: horizon }] : []),
+      ...(g.krTarget != null ? [{ label: "Key result", value: `${fmtAuto(g.krTarget)}${g.krUnit ? ` ${g.krUnit}` : ""}` }] : []),
+      pays ? { label: "MP paid", value: `+${fmtMp(paid)}` } : { label: "Progress", value: share },
+      ...(depth > 0 && track ? [{ label: `${track} depth`, value: `+${depth}` }] : []),
+    ];
+    const amounts = pays ? [{ kind: "mp" as const, value: paid, label: "MP" }] : undefined;
+    const numeral = pays ? undefined : { from: null, to: progress };
+    const facts: CelebrationFacts = long
+      ? {
+          eyebrow: "Long goal finished",
+          kicker: "Long goal finished",
+          title: g.title,
+          grants: pays
+            ? [
+                stated != null ? `+${fmtMp(paid)} MP: ${fmtMp(stated)} × ${share}` : `+${fmtMp(paid)} MP`,
+                ...(depth > 0 && track ? [`${track} depth +${depth}`] : []),
+              ]
+            : [],
+          cause: pays ? `Finished at ${share} of its key result.` : finishedLine,
+          amounts,
+          numeral,
+          material: "gold",
+          art: { type: "medallion", material: "gold", numeral: progress },
+          href: "/you",
+        }
+      : {
+          eyebrow: "Goal finished",
+          title: g.title,
+          lines: [payLine ?? finishedLine],
+          amounts,
+          numeral,
+          material: g.horizon === "MID" ? "silver" : "bronze",
+          href: "/you",
+        };
+    out.push(draft(long ? "goal-long" : "goal-finished", `goal:${g.id}`, facts, what));
+  }
+  return out;
 }
 
 const BOSS_MATERIAL = (tier: number): Material => (tier >= 5 ? "gold" : tier >= 3 ? "silver" : tier >= 2 ? "bronze" : "iron");
@@ -645,18 +744,31 @@ function detectBosses(b: BossesPart, a: BossesPart): CelebrationDraft[] {
   return out;
 }
 
+/** A WEEK row's track: the stored column, else the one in its dedupe key ('week:<TRACK>:<week>'). */
+const weekTrackOf = (r: LedgerRow): string | null => r.track ?? parseWeekRowKey(r.key)?.track ?? null;
+
 function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
   const out: CelebrationDraft[] = [];
-  // Kept weeks: one Seal per week card, not one per track.
+  // Kept weeks: one Seal per week card, not one per track. A backfilled week
+  // (judged before life MP began) counts for depth only and is never a moment.
   const hadWeeks = new Set(b.weeks.map((w) => w.key));
   const byWeek = new Map<string, LedgerRow[]>();
   for (const w of a.weeks) {
-    if (hadWeeks.has(w.key)) continue;
+    if (hadWeeks.has(w.key) || isBackfillDetail(w.detail) || !(w.qty != null && w.qty > 0)) continue;
     const wk = w.week ?? weekKeyOf(w.day);
     byWeek.set(wk, [...(byWeek.get(wk) ?? []), w]);
   }
   for (const [wk, rows] of [...byWeek.entries()].sort(([x], [y]) => (x < y ? -1 : 1))) {
-    const tracks = [...new Set(rows.map((r) => trackLabel(r.track)))];
+    const tracks = [...new Set(rows.map((r) => trackLabel(weekTrackOf(r))))];
+    // What the week's kept-track mints paid (a track trimmed to nothing by the cap has no mint).
+    const mp = round2(rows.reduce((s, r) => s + (typeof r.mp === "number" && r.mp > 0 ? r.mp : 0), 0));
+    const full = round2(rows.length * LIFE_MP.WEEK_KEPT);
+    const mpLine =
+      mp <= 0
+        ? null
+        : mp + 1e-9 >= full
+          ? `+${fmtMp(LIFE_MP.WEEK_KEPT)} MP for each kept track.`
+          : `+${fmtMp(mp)} MP, trimmed by the life week's cap of ${fmtMp(LIFE_MP_WEEK_CAP)}.`;
     out.push(
       draft(
         "week-kept",
@@ -664,13 +776,17 @@ function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
         {
           eyebrow: "Kept week",
           title: `${tracks.length} of 4 tracks kept`,
-          lines: [`${listOf(tracks)} ${tracks.length === 1 ? "was" : "were"} kept the week of ${longDay(weekStartKeyOf(rows[0].day))}.`],
+          lines: [`${listOf(tracks)} ${tracks.length === 1 ? "was" : "were"} kept the week of ${longDay(weekStartKeyOf(rows[0].day))}.`, ...(mpLine ? [mpLine] : [])],
+          amounts: mp > 0 ? [{ kind: "mp", value: mp, label: "MP" }] : undefined,
           numeral: { from: null, to: tracks.length },
           material: tracks.length >= 4 ? "gold" : tracks.length >= 3 ? "silver" : "bronze",
           href: "/today/week",
         },
         tracks.map((t) => ({ label: `${t} track`, value: "kept" })),
-        rows.filter((r) => r.track).map((r) => `week:${r.track}:${wk}`)
+        rows.flatMap((r) => {
+          const t = weekTrackOf(r);
+          return t ? [`week:${t}:${wk}`] : [];
+        })
       )
     );
   }
@@ -771,7 +887,10 @@ export function diffProgress(before: ProgressData, after: ProgressData, opts: Di
   const out: CelebrationDraft[] = [];
 
   const skills = both("skills") ? detectSkills(before.skills!, after.skills!) : [];
-  let levels = both("levels") ? detectLevels(before.levels!, after.levels!) : [];
+  // Track level-ups: folded into the character or title moment they lifted,
+  // else into the latest week Seal of this diff, else they play alone.
+  const trackUps = both("tracks") ? detectTracks(before.tracks!, after.tracks!) : [];
+  let levels = both("levels") ? detectLevels(before.levels!, after.levels!, trackUps) : [];
   // An unlock absorbs the title and band it caused: one curtain for one tap.
   const unlock = skills.find((s) => s.tier === 3);
   if (unlock && levels.length && levels[0].tier === 3) {
@@ -788,13 +907,25 @@ export function diffProgress(before: ProgressData, after: ProgressData, opts: Di
     levels = [];
   }
   out.push(...skills, ...levels);
+  const taken = new Set(out.flatMap((d) => [d.dedupeKey, ...d.claims]));
+  let looseTracks = trackUps.filter((t) => !taken.has(t.dedupeKey));
   if (both("mastered")) out.push(...detectMastered(before.mastered!, after.mastered!));
   if (both("streak")) out.push(...detectStreak(before.streak!, after.streak!));
   if (both("goals")) out.push(...detectGoals(before.goals!, after.goals!));
   if (both("bosses")) out.push(...detectBosses(before.bosses!, after.bosses!));
-  if (both("ledger")) out.push(...detectLedger(before.ledger!, after.ledger!));
+  if (both("ledger")) {
+    const ledger = detectLedger(before.ledger!, after.ledger!);
+    let week = -1;
+    for (let i = 0; i < ledger.length; i++) if (ledger[i].kind === "week-kept") week = i;
+    if (looseTracks.length && week >= 0) {
+      // The level-ups lead the latest week Seal's What-moved list; their keys are claimed.
+      ledger[week] = fold(ledger[week], looseTracks);
+      looseTracks = [];
+    }
+    out.push(...ledger);
+  }
   if (both("habits")) out.push(...detectHabits(before.habits!, after.habits!));
-  if (both("tracks")) out.push(...detectTracks(before.tracks!, after.tracks!));
+  out.push(...looseTracks);
 
   // Newly unlockable: no kind of its own (the orbit on You › Skills shows it);
   // it rides as a What-moved row on the loudest moment of the same diff.

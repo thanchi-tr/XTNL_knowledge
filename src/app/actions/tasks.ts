@@ -8,6 +8,8 @@ import { applySizing } from "@/lib/life-sizing";
 import { captureSnapshot, detectCelebrations, type CaptureOptions } from "@/lib/celebrations";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { withMoments } from "@/lib/today-board";
+import { closeGoalCore, readGoalCloseInput, rescheduleGoalCore } from "@/lib/goals-server";
+import { closeDecision, type GoalPayout } from "@/lib/goals";
 import { createFromCapture, type CapturedItem } from "./capture";
 import {
   againCore,
@@ -47,6 +49,11 @@ import {
  * snapshot before and after with the same scope, diffed by
  * detectCelebrations (redesign.md › Rewards). The board presents the
  * T2/T3s; it chimes its own T1s, so it ignores the returned ones.
+ *
+ * Goals (M5): closeGoal pays a goal's stated MP once, within the gates in
+ * goals.ts (closeGoal returns its moments too); previewGoalClose is the same
+ * decision, read-only; rescheduleGoal moves only the due day. No UI calls
+ * them until the Today integration (phase B).
  */
 
 export type TaskActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -256,6 +263,54 @@ export async function goalProgress(
   return run("goalProgress", opts, (userId) =>
     aroundTick(userId, { scope: GOAL_PARTS }, () => goalProgressCore(userId, templateId, typeof qty === "number" ? qty : 1, new Date(), opId))
   );
+}
+
+/** Closing a goal can move the goals, a track's depth (and so its level) and the character level. */
+const GOAL_CLOSE_PARTS = ["goals", "levels", "tracks"] as const;
+
+/** What closing a goal paid: the MP minted, g as measured, why it paid less than stated (or null), and the track depth added. */
+export interface GoalCloseResult {
+  paid: number;
+  g: number | null;
+  why: string | null;
+  depth: number;
+}
+
+/**
+ * Closes a goal: explicit and final. Pays what goals.ts closeDecision says
+ * (its stated MP within the gates and caps, 0 allowed, never XP), writes the
+ * one 'mp:GOAL:<id>' decision row, and returns the moments (a finished goal's
+ * Seal) as `celebrations`. A second tap gets 'Already closed.' and pays nothing.
+ */
+export async function closeGoal(goalId: string, opts?: TaskActionOptions): Promise<TaskActionResult<WithCelebrations<GoalCloseResult>>> {
+  if (!isId(goalId)) return noId();
+  return run("closeGoal", opts, (userId) =>
+    aroundTick(userId, { scope: GOAL_CLOSE_PARTS }, async () => {
+      const res = await closeGoalCore(userId, goalId, new Date());
+      if (!res.ok) return res;
+      const p = res.payout;
+      return { ok: true as const, value: { paid: p.pays, g: p.g, why: p.why, depth: p.depth } };
+    })
+  );
+}
+
+/** What closing a goal now would pay, and why: read-only (the Close sheet's figure). null when the goal is not open. */
+export async function previewGoalClose(goalId: string): Promise<TaskActionResult<GoalPayout | null>> {
+  if (!isId(goalId)) return noId();
+  return run("previewGoalClose", undefined, async (userId) => {
+    const input = await readGoalCloseInput(userId, goalId, new Date());
+    return { ok: true as const, value: input ? closeDecision(input) : null };
+  });
+}
+
+/** Moves an open goal's due day (today to ten years out). Its horizon and stated MP stay as they were set. */
+export async function rescheduleGoal(goalId: string, day: DayKey, opts?: TaskActionOptions): Promise<TaskActionResult<{ dueDay: DayKey }>> {
+  if (!isId(goalId)) return noId();
+  if (typeof day !== "string" || !DAY_KEY_RE.test(day)) return { ok: false, error: "Pick a day." };
+  return run("rescheduleGoal", opts, async (userId) => {
+    const res = await rescheduleGoalCore(userId, goalId, day);
+    return res.ok ? { ok: true as const, value: { dueDay: day } } : res;
+  });
 }
 
 /** Renames a task; its grade and repeat-decay group stay. */

@@ -28,6 +28,7 @@ import { resolveResonance, foldSetGrants, type LoadoutResonance } from "./loadou
 import { loadAugments, computeRate, type CapitalRate } from "./capital";
 import { weekStartOf } from "./life-day";
 import type { OwnedAugment } from "./augments";
+import { loadLifeTracks } from "./life-tracks-server";
 
 /**
  * The database half of the progression system: reads Field/streak/skill/
@@ -85,7 +86,8 @@ export interface ProgressionState {
   capitalRate: CapitalRate;
 }
 
-interface FieldRow {
+/** One Field as the attribute scores read it: its level and effective composition. */
+export interface FieldRow {
   id: string;
   name: string;
   level: number;
@@ -155,33 +157,61 @@ async function loadFieldRows(): Promise<FieldRow[]> {
  * >1 once a STREAK_AMPLIFIER skill is active). Streak never touches
  * `composition`, so which attributes benefit is still entirely a function
  * of what the Field trains.
+ *
+ * M5: `lifeRows` (life-tracks.ts LifeContribution, 'Life · Body' at its
+ * effectiveLevel) are appended after the Field rows, unamplified: the
+ * streak multiplier (STREAK_AMPLIFIER / COVENANT) scales Field streak
+ * bonuses only, and a life row's one multiplier is its own kept-week bonus,
+ * already inside its level. With no life rows the scores are exactly the
+ * pre-M5 ones (the same rows, in the same order).
  */
-function scoresWithStreak(
-  rows: FieldRow[],
+export function scoresWithStreak(
+  rows: readonly FieldRow[],
   streakBonuses: Record<string, number>,
-  streakMultiplier: number
+  streakMultiplier: number,
+  lifeRows: readonly FieldContribution[] = []
 ): AttributeScores {
   const contributions: FieldContribution[] = rows.map((f) => {
     const bonusPercent = (streakBonuses[f.id] ?? 0) * streakMultiplier;
     return { fieldName: f.name, level: f.level * (1 + bonusPercent / 100), composition: f.composition };
   });
-  return computeAttributeScores(contributions);
+  return computeAttributeScores(lifeRows.length ? [...contributions, ...lifeRows] : contributions);
 }
 
-/** Raw attribute scores — streak bonus included at its base (1x, pre-STREAK_AMPLIFIER) strength, no RESONANCE applied. */
+/**
+ * The life tracks' attribute rows (M5). Empty before launch (the view is
+ * the not-launched one), and empty when the read fails: a flaky life read
+ * hides life for one cache window, it never takes progression (and every
+ * page with it) down. The failure is logged.
+ */
+async function loadLifeRows(userId: string, now?: Date): Promise<FieldContribution[]> {
+  try {
+    const life = await loadLifeTracks(userId, now);
+    return life.launched ? life.contributions : [];
+  } catch (err) {
+    console.error("[progression] life tracks read failed; attributes read Fields only", err);
+    return [];
+  }
+}
+
+/**
+ * Raw attribute scores — streak bonus included at its base (1x, pre-STREAK_AMPLIFIER) strength, no RESONANCE applied.
+ * Life rows included (M5), so the Seal's epithet (celebrations.ts) follows a PHYSICAL lead from Body.
+ */
 export async function loadAttributeScores(userId: string): Promise<AttributeScores> {
-  const [rows, streakBonuses] = await Promise.all([loadFieldRows(), loadFieldStreakBonuses(userId)]);
-  return scoresWithStreak(rows, streakBonuses, 1);
+  const [rows, streakBonuses, lifeRows] = await Promise.all([loadFieldRows(), loadFieldStreakBonuses(userId), loadLifeRows(userId)]);
+  return scoresWithStreak(rows, streakBonuses, 1, lifeRows);
 }
 
 async function loadProgressionUncached(userId: string, now: Date): Promise<ProgressionState> {
-  const [rows, streakBonuses, owned, debuffs, boons, augments] = await Promise.all([
+  const [rows, streakBonuses, owned, debuffs, boons, augments, lifeRows] = await Promise.all([
     loadFieldRows(),
     loadFieldStreakBonuses(userId),
     prisma.unlockedSkill.findMany({ where: { userId }, select: { skillCode: true, equippedSlot: true } }),
     loadActiveDebuffs(userId, now),
     loadActiveBoons(userId, now),
     loadAugments(userId),
+    loadLifeRows(userId, now),
   ]);
 
   const ownedSkills = owned
@@ -206,7 +236,7 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
   // resolved up front and applied in every pass below.
   const penalty = foldDebuffs(NEUTRAL_MODIFIERS, debuffs).attributePenaltyPercent;
 
-  const baseScores = scoresWithStreak(rows, streakBonuses, 1);
+  const baseScores = scoresWithStreak(rows, streakBonuses, 1, lifeRows);
   const firstPass = equippedSkills.filter((s) => meetsRequirements(s, baseScores, 0, penalty));
   // Attenuated on both passes. Gating on printed values and then paying out
   // attenuated ones would let a loadout unlock skills on strength it does
@@ -220,7 +250,8 @@ async function loadProgressionUncached(userId: string, now: Date): Promise<Progr
     firstResonance.sets
   );
 
-  const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier);
+  // The amplifier scales Field streaks only; the life rows ride along unamplified.
+  const scores = scoresWithStreak(rows, streakBonuses, firstFold.streakMultiplier, lifeRows);
   const isActive = (s: Skill) => meetsRequirements(s, scores, firstFold.resonancePercent, penalty);
   const activeSkills = equippedSkills.filter(isActive);
   const dormantSkills = equippedSkills.filter((s) => !isActive(s));
@@ -275,8 +306,11 @@ export const loadProgression = cache(async (userId: string): Promise<Progression
   // render — the nav's title badge and the page body both want progression,
   // and without it every route paid for it twice. `cached` then holds the
   // result across requests, which is what actually gets a page under a
-  // second when one round trip costs ~816ms.
-  return cached(`progression:${userId}`, ["fields", "progress"], () =>
+  // second when one round trip costs ~816ms. 'life' (M5): the life tracks
+  // feed the scores, so a tick, a judged week or a goal close recomputes
+  // progression once; its inner loaders (field rows, streak bonuses,
+  // augments) stay warm under their own keys.
+  return cached(`progression:${userId}`, ["fields", "progress", "life"], () =>
     loadProgressionUncached(userId, new Date())
   );
 });

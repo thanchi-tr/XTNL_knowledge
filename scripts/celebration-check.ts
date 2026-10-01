@@ -49,10 +49,15 @@ import {
   SNAPSHOT_SCOPES,
   type CelebrationDraft,
   type CelebrationStore,
+  type GoalRow,
+  type LedgerRow,
+  type LevelsPart,
   type NewCelebrationRow,
   type ProgressData,
+  type SnapshotPart,
   type StoredCelebration,
 } from "../src/lib/celebration-detect";
+import { characterLevelOf, trackLevelsOf } from "../src/components/shell/shell-types";
 import { DEFAULT_PREFS, KIND_TIER, T2_KINDS, T3_KINDS, honestyProblem, makeEvent, type CelebrationEvent } from "../src/lib/celebration-types";
 import { closeRun, enqueue, nextIndex, openRun, registerPresenter } from "../src/lib/celebrate";
 import { fixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
@@ -572,10 +577,170 @@ function staging() {
   check("voice: only an inline, animated Seal that asks (announce) speaks; the recap list (animate={false}) stays silent", /inline && announce && animate && firstAnnouncement\(ev\.id\)/.test(seal));
 }
 
+// ── 12. Life (M5 refit F9): weeks, tracks, the character, goals ─────────────
+function life() {
+  const all: CelebrationDraft[] = [];
+  const run = (b: ProgressData, a: ProgressData) => {
+    const d = diffProgress(b, a);
+    all.push(...d);
+    return d;
+  };
+  const W = "2026-W40";
+  const SUNDAY = "2026-10-04";
+  const week = (track: string | null, extra: Partial<LedgerRow> = {}): LedgerRow => ({
+    key: `week:${track ?? "BODY"}:${W}`,
+    week: W,
+    track,
+    day: SUNDAY,
+    xp: 0,
+    qty: 1,
+    detail: "Kept · 4 days · 52.0 raw XP",
+    ...extra,
+  });
+  const ledger = (weeks: LedgerRow[]): ProgressData => ({ parts: ["ledger"], ledger: { weeks, prs: [] } });
+  const empty = ledger([]);
+
+  // Weeks: the track comes from the row (activity.ts now keeps it on WEEK rows).
+  const kept = run(empty, ledger([week("BODY", { mp: 1.5 }), week("DUTY", { mp: 1.5, key: `week:DUTY:${W}` }), week("CARE", { mp: 1.5, key: `week:CARE:${W}` })]));
+  check(
+    "week: each row's own track names it (Body, Duty, Care) and is claimed",
+    kept.length === 1 && kept[0].what.map((w) => w.label).join() === "Body track,Duty track,Care track" && ["week:BODY:2026-W40", "week:DUTY:2026-W40", "week:CARE:2026-W40"].every((k) => kept[0].claims.includes(k)),
+    `${kept[0]?.what.map((w) => w.label).join()} | ${kept[0]?.claims.join()}`
+  );
+  check("week: Σ mp 4.5 states amounts 4.5 and '+1.5 MP for each kept track.'", kept[0]?.facts.amounts?.[0]?.kind === "mp" && kept[0].facts.amounts[0].value === 4.5 && (kept[0].facts.lines ?? []).includes("+1.5 MP for each kept track."), JSON.stringify(kept[0]?.facts));
+  const legacy = run(empty, ledger([week(null, { key: `week:CRAFT:${W}` })]));
+  check("week: a row stored with no track reads it from its dedupe key (never 'Life')", legacy.length === 1 && legacy[0].what[0]?.label === "Craft track" && legacy[0].claims.includes("week:CRAFT:2026-W40"), JSON.stringify(legacy[0]?.what));
+  const trimmed = run(empty, ledger([week("BODY", { mp: 1.5 }), week("DUTY", { mp: 1.5, key: `week:DUTY:${W}` }), week("CRAFT", { mp: 1, key: `week:CRAFT:${W}` }), week("CARE", { key: `week:CARE:${W}` })]));
+  check("week: a capped week states what was paid and why ('+4 MP, trimmed by the life week's cap of 8.')", trimmed[0]?.facts.amounts?.[0]?.value === 4 && (trimmed[0]?.facts.lines ?? []).includes("+4 MP, trimmed by the life week's cap of 8."), JSON.stringify(trimmed[0]?.facts.lines));
+  const noMp = run(empty, ledger([week("BODY")]));
+  check("week: no mint read, no MP stated (the count is the number)", noMp.length === 1 && noMp[0].facts.amounts == null && noMp[0].facts.numeral?.to === 1 && (noMp[0].facts.lines ?? []).length === 1);
+  check("week: a backfill week fires nothing", run(empty, ledger([week("BODY", { detail: "backfill · Kept · 4 days · 52.0 raw XP" })])).length === 0);
+  check("week: a not-kept week (qty 0) fires nothing", run(empty, ledger([week("BODY", { qty: 0, detail: "Not kept · 2 of 3 days" })])).length === 0);
+
+  // Tracks and the character.
+  const levels = (fieldLevels: number[], tracks?: Record<string, number>): LevelsPart => ({
+    fields: fieldLevels.map((level, i) => ({ id: `f${i}`, name: `F${i}`, level })),
+    domains: [],
+    ultimates: 0,
+    ...(tracks ? { tracks } : {}),
+  });
+  const T = (body: number, duty = 2, craft = 0, care = 0) => ({ BODY: body, DUTY: duty, CRAFT: craft, CARE: care });
+  const settle = (fields: number[], tracks: Record<string, number>, weeks: LedgerRow[]): ProgressData => ({
+    parts: ["ledger", "tracks", "levels"],
+    ledger: { weeks, prs: [] },
+    tracks: { levels: tracks },
+    levels: levels(fields, tracks),
+  });
+  const charOf = (fields: number[], tracks: Record<string, number>) => characterLevelOf(fields, trackLevelsOf(tracks)).level;
+  check("fixture sanity: Body 3 → 4 keeps the character at 6; Body 4 → 5 lifts it 6 → 7", charOf([3], T(3)) === 6 && charOf([3], T(4)) === 6 && charOf([3], T(5)) === 7);
+  const keptWeek = [week("BODY", { mp: 1.5 }), week("DUTY", { mp: 1.5, key: `week:DUTY:${W}` })];
+  const folded = run(settle([3], T(3), []), settle([3], T(4), keptWeek));
+  check(
+    "settle: a track level-up in the same diff as a kept week folds into the week Seal (claims track:BODY:4, its row leads)",
+    folded.length === 1 && folded[0].dedupeKey === "week:2026-W40" && folded[0].claims.includes("track:BODY:4") && folded[0].what[0]?.label === "Body track" && folded[0].what[0]?.value === "L3 → L4",
+    `${keys(folded).join()} | ${folded[0]?.claims.join()} | ${JSON.stringify(folded[0]?.what)}`
+  );
+  const lifted = run(settle([3], T(4), []), settle([3], T(5), keptWeek));
+  check("settle: a track level-up that lifts the character folds into the character moment; the week Seal stays separate (2 moments)", same(keys(lifted), ["level:7", "week:2026-W40"]) && lifted[0].claims.includes("track:BODY:5") && !lifted[1].claims.includes("track:BODY:5"), `${keys(lifted).join()} | ${lifted[0]?.claims.join()}`);
+  check("settle: the character moment names the track as its cause", (lifted[0]?.facts.lines ?? [])[0] === "Body reached level 5, which lifted your character level.", (lifted[0]?.facts.lines ?? []).join(" / "));
+  check("settle: one kept week is at most one week Seal plus one character or title moment", lifted.filter((d) => d.kind === "week-kept").length === 1 && lifted.length <= 2);
+  const alone = run({ parts: ["tracks"], tracks: { levels: T(3) } }, { parts: ["tracks"], tracks: { levels: T(4) } });
+  check("tracks: a level-up with no week and no character change plays alone", same(keys(alone), ["track:BODY:4"]));
+
+  // Asymmetric tracks: the character counts them only when both snapshots carry them.
+  const asym = run({ parts: ["levels"], levels: levels([3]) }, { parts: ["levels"], levels: levels([3], T(10, 10, 10, 10)) });
+  check("levels: before without tracks, after with them: no character moment", asym.length === 0, keys(asym).join());
+  const stale = run({ parts: ["levels"], levels: levels([3], T(10, 10, 10, 10)) }, { parts: ["levels"], levels: levels([3]) });
+  check("levels: before with tracks, after without: nothing either", stale.length === 0, keys(stale).join());
+
+  // A tick reads levels and tracks now; Body 1 → 2 alone is one track-level Seal.
+  check("scopes: tick reads streak, habits, goals, levels and tracks", (["streak", "habits", "goals", "levels", "tracks"] as SnapshotPart[]).every((p) => partsOf("tick").includes(p)));
+  check("scopes: settle reads ledger, tracks and levels", (["ledger", "tracks", "levels", "goals", "habits", "streak"] as SnapshotPart[]).every((p) => partsOf("settle").includes(p)));
+  const tick = (body: number): ProgressData => ({
+    parts: partsOf("tick"),
+    streak: { today: "2026-10-01", current: 12, todayActive: true, held: 0 },
+    habits: { rows: [{ id: "tpl-walk", title: "Walk", strength: 0.31, kept: 4 }] },
+    goals: { done: [] },
+    levels: levels([3], T(body, 0)),
+    tracks: { levels: T(body, 0) },
+  });
+  check("fixture sanity: the tick keeps the character at 3", charOf([3], T(1, 0)) === 3 && charOf([3], T(2, 0)) === 3);
+  const ticked = run(tick(1), tick(2));
+  check("tick: Body L1 → L2 alone is one track-level Seal", ticked.length === 1 && ticked[0].kind === "track-level" && ticked[0].dedupeKey === "track:BODY:2" && ticked[0].tier === 2, keys(ticked).join());
+
+  // The launch moment: every track 0 before; one Ascension with the tracks folded in.
+  const launchAfter: ProgressData = { parts: ["levels", "tracks"], levels: levels([10, 4], T(3, 4, 2, 1)), tracks: { levels: T(3, 4, 2, 1) } };
+  const launchBefore: ProgressData = { parts: ["levels", "tracks"], levels: levels([10, 4], T(0, 0, 0, 0)), tracks: { levels: T(0, 0, 0, 0) } };
+  const launch = run(launchBefore, launchAfter);
+  check(
+    "launch: one moment (8 → 16, the bronze re-forge) claiming every track level-up",
+    launch.length === 1 && launch[0].dedupeKey === "band:bronze" && ["track:BODY:3", "track:DUTY:4", "track:CRAFT:2", "track:CARE:1"].every((k) => launch[0].claims.includes(k)),
+    `${keys(launch).join()} | ${launch[0]?.claims.join()}`
+  );
+  check("launch: the grants name the track that lifted the character", (launch[0]?.facts.grants ?? [])[0] === "Body reached level 3, which lifted your character level", (launch[0]?.facts.grants ?? []).join(" / "));
+
+  // Goals: what was paid, never what was promised; a missed goal never gets a Seal.
+  const goal = (g: Partial<GoalRow>): GoalRow => ({ id: "goal-x", title: "Read 12 books", horizon: "MID", goalMp: 6, closedScore: 0.8, krTarget: 12, krUnit: "books", ...g });
+  const goals = (g: GoalRow): [ProgressData, ProgressData] => [
+    { parts: ["goals"], goals: { done: [] } },
+    { parts: ["goals"], goals: { done: [g] } },
+  ];
+  check("goals: a MID closed below 70% gets no Seal", run(...goals(goal({ closedScore: 0.69, paid: 0, why: "below 70%" }))).length === 0);
+  check("goals: a SHORT closed below 100% gets no Seal", run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 0.9, paid: 0, why: "not finished" }))).length === 0);
+  check("goals: a goal never closed (closedScore null) gets no Seal", run(...goals(goal({ closedScore: null }))).length === 0);
+  const mid = run(...goals(goal({ paid: 4.8, why: null, track: "DUTY", depth: 1 })));
+  check(
+    "goals: a MID paid 4.8 states 4.8 ('It pays 4.8 MP: 6 × 80%.'), never 6",
+    mid.length === 1 &&
+      mid[0].kind === "goal-finished" &&
+      mid[0].facts.amounts?.length === 1 &&
+      mid[0].facts.amounts[0].value === 4.8 &&
+      (mid[0].facts.lines ?? [])[0] === "It pays 4.8 MP: 6 × 80%." &&
+      !JSON.stringify(mid[0].what).includes("+6"),
+    JSON.stringify({ facts: mid[0]?.facts, what: mid[0]?.what })
+  );
+  check("goals: What moved has 'MP paid +4.8' and 'Duty depth +1'", mid[0]?.what.some((w) => w.label === "MP paid" && w.value === "+4.8") && mid[0]?.what.some((w) => w.label === "Duty depth" && w.value === "+1"));
+  const short = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1, paid: 1, why: null, track: "BODY", depth: 0 })));
+  check("goals: a SHORT paid in full says 'It pays the 1 MP stated when you set it.' and adds no depth row", (short[0]?.facts.lines ?? [])[0] === "It pays the 1 MP stated when you set it." && !short[0]?.what.some((w) => /depth/.test(w.label)), JSON.stringify(short[0]?.facts.lines));
+  const zero = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1, paid: 0, why: "set 1 day ago (3 needed)", track: "BODY" })));
+  check(
+    "goals: finished but paid 0 states the why, with the progress as its number",
+    zero.length === 1 && (zero[0].facts.lines ?? [])[0] === "Finished at 100%. It pays no MP: set 1 day ago (3 needed)." && zero[0].facts.amounts == null && zero[0].facts.numeral?.to === 100,
+    JSON.stringify(zero[0]?.facts)
+  );
+  const unknown = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1 })));
+  check("goals: with no decision row read, no MP is stated at all", unknown.length === 1 && unknown[0].facts.amounts == null && !/MP/.test((unknown[0].facts.lines ?? []).join(" ")), JSON.stringify(unknown[0]?.facts.lines));
+  const long = run(...goals(goal({ title: "Ship the course", horizon: "LONG", goalMp: 20, closedScore: 0.9, paid: 18, why: null, track: "CRAFT", depth: 2 })));
+  check(
+    "goals: a LONG is the goal-long Ascension (T3) with grants ['+18 MP: 20 × 90%', 'Craft depth +2']",
+    long.length === 1 && long[0].kind === "goal-long" && long[0].tier === 3 && (long[0].facts.grants ?? []).join("|") === "+18 MP: 20 × 90%|Craft depth +2" && long[0].facts.amounts?.[0]?.value === 18,
+    JSON.stringify(long[0]?.facts.grants)
+  );
+  const longZero = run(...goals(goal({ horizon: "LONG", goalMp: 20, closedScore: 0.9, paid: 0, why: "set 89 days ago (90 needed)", track: "CRAFT" })));
+  check("goals: a LONG paid 0 says why on its cause line, with no grant", longZero[0]?.facts.cause === "Finished at 90%. It pays no MP: set 89 days ago (90 needed)." && (longZero[0]?.facts.grants ?? []).length === 0, JSON.stringify(longZero[0]?.facts));
+
+  // Every Seal and Ascension above is honest.
+  const dishonest = all.filter((d) => d.tier >= 2).map((d) => [d.dedupeKey, honestyProblem(draftToEvent(d, "x"))] as const).filter(([, p]) => p !== null);
+  check(`life: every T2/T3 here passes honestyProblem (${all.filter((d) => d.tier >= 2).length} moments)`, dishonest.length === 0, dishonest.map(([k, p]) => `${k}: ${p}`).join("; "));
+  check("life: no moment claims its own key", all.every((d) => !d.claims.includes(d.dedupeKey)));
+
+  // The server half reads what the detectors need.
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const snap = strip(read(join(ROOT, "src/lib/snapshot.ts")));
+  check("snapshot: the tracks part is read (no 'tracks' exclusion left)", !/Exclude<SnapshotPart, "tracks">/.test(snap) && /tracks: \(\) => readTracks\(userId, now\)/.test(snap));
+  check("snapshot: life is read with the snapshot's own instant (never React-cached across before/after)", /loadLifeTracks\(userId, now\)/.test(snap) && /readLevels\(userId, now\)/.test(snap));
+  check("snapshot: the levels part is invalidated by 'life'", /levels: \[[^\]]*"life"[^\]]*\]/.test(snap));
+  check("snapshot: backfill is detail?.startsWith('backfill') (isBackfillDetail), never an exact match", /isBackfillDetail\(r\.detail\)/.test(snap) && !/=== "backfill"/.test(snap));
+  check("snapshot: kept weeks carry their mint (weekKeptMintKey) and goals their decision row (goalIdOfMintKey)", /weekKeptMintKey\(/.test(snap) && /goalIdOfMintKey\(/.test(snap) && /closedScore: \{ not: null \}/.test(snap));
+  const celebrations = strip(read(join(ROOT, "src/lib/celebrations.ts")));
+  check("celebrations: CAUSE_WORD has the launch ('life tracks joining your character'), read without an article", /launch: "life tracks joining your character"/.test(celebrations) && /NO_ARTICLE = new Set\(\["launch"\]\)/.test(celebrations));
+}
+
 (async () => {
   await persistence();
   queue();
   input();
+  life();
   await classNames();
   await channel();
   shellChunk();

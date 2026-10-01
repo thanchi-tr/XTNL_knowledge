@@ -7,7 +7,8 @@ import { Amount } from "@/components/ui/Amount";
 import { Meter } from "@/components/ui/Meter";
 import { SectionHeader } from "@/components/ui/Tabs";
 import { DividendLine, TitleRing } from "@/components/home/StatsParts";
-import { loadStats } from "../_lib/stats";
+import { KeptWeeks, TrackLines } from "@/components/home/TrackCharts";
+import { loadStats, type LifeStats } from "../_lib/stats";
 
 export const metadata: Metadata = { title: "Stats" };
 
@@ -20,9 +21,48 @@ const lvl = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 /**
  * You › Stats (final-you.html ?tab=stats): the old Overview and Dashboard
  * merged, on tokens. Ink series, hue only for state (the queue) and currency
- * glyphs. Track levels over 12 weeks and the kept-weeks heatmap appear once
- * life tracks exist (M5); their components render on /dev/style/art/you.
+ * glyphs. Once life counts, Track levels (up to 12 judged weeks, from the
+ * second one) and the kept-weeks heatmap lead the page; before, neither
+ * shows. Fixtures for both render on /dev/style/art/you.
  */
+
+/** Track levels and kept weeks, from judged weeks only. */
+function LifeCharts({ life }: { life: LifeStats }) {
+  const points = Math.max(0, ...life.series.map((t) => t.points.length));
+  const judged = life.kept.labels.length;
+  return (
+    <>
+      <div>
+        <SectionHeader title="Track levels" aside={points >= 2 ? `${points} judged weeks` : undefined} />
+        <section className="card chart-c">
+          {points >= 2 ? <TrackLines series={life.series} weeks={points} /> : <p className="t-meta">Levels chart from the second judged week.</p>}
+        </section>
+      </div>
+      <div>
+        <SectionHeader title="Kept weeks" aside={judged > 0 ? `${judged} judged ${judged === 1 ? "week" : "weeks"}` : undefined} />
+        <section className="card pad">
+          {judged > 0 && life.kept.rows.length > 0 ? (
+            <>
+              <KeptWeeks rows={life.kept.rows} labels={life.kept.labels} />
+              <p className="t-meta" style={{ marginTop: 10 }}>
+                Filled: kept · outline: not kept.
+              </p>
+            </>
+          ) : (
+            <p className="t-meta">
+              No week has been judged yet.{" "}
+              <Link className="link" href="/today/week">
+                Last week
+              </Link>{" "}
+              says when the first one is.
+            </p>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
 export default async function StatsPage() {
   const userId = getCurrentUserId();
   // Today's Field snapshot (the 7-day comparisons), after the response.
@@ -75,6 +115,7 @@ export default async function StatsPage() {
 
       <div className="you-grid">
         <div className="you-stack">
+          {s.life.launched && <LifeCharts life={s.life} />}
           <div>
             <SectionHeader title="Field levels" aside={s.hasGhost ? "change over 7 days" : "ranked by level"} />
             <section className="card pad">

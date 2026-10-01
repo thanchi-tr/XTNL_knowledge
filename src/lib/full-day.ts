@@ -20,6 +20,7 @@
 import type { Board, BoardData, Quest } from "./today-board";
 import { STUDY_METRICS } from "./today-board";
 import { REVIEW_QUEST_CARDS } from "./review-facts";
+import { LIFE_MP } from "./life-economy";
 
 /**
  * Reviews that meet the quest whatever the backlog (the M2 rule's ≥ 15).
@@ -27,8 +28,12 @@ import { REVIEW_QUEST_CARDS } from "./review-facts";
  * up and the hub can never disagree about the target.
  */
 export const QUEST_CAP: number = REVIEW_QUEST_CARDS;
-/** What a Full day pays once M2's daily settlement exists. Stated, never paid here. */
-export const FULL_DAY_MP = 0.5;
+/**
+ * What a Full day pays once M2's daily settlement exists (life-economy
+ * LIFE_MP.FULL_DAY, the one source; minted under LIFE_FULL_DAY through the
+ * 8 MP life-week cap). Stated, never paid here.
+ */
+export const FULL_DAY_MP: number = LIFE_MP.FULL_DAY;
 
 export type FullDayRingKind = "musts" | "quest" | "life";
 

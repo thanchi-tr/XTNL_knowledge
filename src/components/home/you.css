@@ -31,6 +31,15 @@
   .purse .v small { font: 500 13px var(--font-ui); color: var(--ink-2); }
   .purse .v svg.g { width: 16px; height: 16px; }
   .purse .k { font-size: 12px; color: var(--ink-2); margin-top: 5px; }
+  /* Four cells once life counts (life MP this week): two by two in a narrow
+     hero, one row from 440 px of hero (the hero is its own container). */
+  .hero-c { container: hero / inline-size; }
+  .purse.p4 { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+  .purse.p4 > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  @container hero (min-width: 440px) {
+    .purse.p4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .purse.p4 > div:nth-child(3) { border-left: 1px solid var(--line-1); padding-left: 12px; }
+  }
 
   /* ---------- ready callout ---------- */
   .ready-c { display: flex; gap: 12px; align-items: center; padding: 12px 12px 12px 14px; border-color: color-mix(in srgb, var(--gold-m) 40%, transparent); }
@@ -49,6 +58,12 @@
   .wk i.h { background: var(--hatch); border-color: var(--held); }
   .trk-row .meter { margin: 8px 0 6px; }
   .trk-row .t-meta b { color: var(--ink-1); font-weight: 600; }
+
+  /* ---------- the life note (14 days after life starts counting) ---------- */
+  .life-note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px; }
+  .life-note .ln-sigils { display: flex; gap: 6px; flex: none; color: var(--ink-1); }
+  .life-note .ln-sigils > svg.sig { width: 18px; height: 18px; }
+  .life-note .ln-copy { flex: 1 1 240px; min-width: 0; margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink-1); }
 
   /* ---------- attribute radar ---------- */
   /* The plot scales with the card, the labels do not: they are HTML placed by
@@ -80,6 +95,14 @@
   .mo .art > svg.sig { width: 22px; height: 22px; }
   .mo b { font-weight: 600; display: block; }
   .mo .mo-body { flex: 1; min-width: 0; }
+  .mo .art > svg.i { width: 22px; height: 22px; }
+
+  /* ---------- the goal ladder (Goals and mastery) ---------- */
+  .gl-line { display: block; }
+  .gl-title { overflow-wrap: anywhere; }
+  .gl-closed .gl-title { color: var(--ink-1); }
+  .gl-carried { color: var(--ink-1); }
+  .gl-sub { margin: 0; padding: 12px 14px 2px; border-top: 1px solid var(--line-1); }
 
   /* ---------- loadout grid (5×2) ----------
      Namespaced (.lo-*): legacy.css still styles a bare `.slot` 46×46 for the
@@ -127,7 +150,12 @@
   }
   .tl-lbl.at-end { transform: translate(-100%, -50%); }
   .tl-lbl.series { color: var(--ink-1); }
-  .heat { display: grid; grid-template-columns: 64px repeat(12, minmax(0, 1fr)); gap: 4px; align-items: center; font-size: 12px; color: var(--ink-2); }
+  /* One column per judged week (--weeks, set by <KeptWeeks/>; at most 12), so a
+     short history never wraps a row header into the previous row. */
+  .heat {
+    display: grid; grid-template-columns: 64px repeat(var(--weeks, 12), minmax(0, 1fr)); max-width: calc(64px + var(--weeks, 12) * 40px);
+    gap: 4px; align-items: center; font-size: 12px; color: var(--ink-2);
+  }
   .heat i { height: 16px; border-radius: 3px; border: 1px solid var(--line-2); }
   .heat i.k { background: var(--kept); border-color: var(--kept); }
   .heat i.h { background: var(--hatch); border-color: var(--held); }

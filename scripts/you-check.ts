@@ -18,9 +18,21 @@
  * copy, and every lane stylesheet animates only transform, opacity and
  * stroke-dashoffset, gates every loop on --ambient-play, and names no class
  * that Tailwind also emits as a utility.
+ *
+ * Life on the sheet (§4d–§4k): the character level agrees with the shell
+ * with tracks too, a life row is named as the top-three source with its
+ * exact share ('from Life · Body +2.8'), the ghost moves only by a life
+ * row's level change, Life tracks renders 5 rows once life counts and 1
+ * before, the goal ladder's copy (stated payout, preview, carried, closed),
+ * habits by rung, the life note guards storage, the kept-weeks cells are
+ * named by week, the track lines draw 2–12 points, the figure and date
+ * labels, the first judged week, and (§8) the rules card types no number
+ * by hand.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { ATTRIBUTES, type AttributeScores } from "../src/lib/attributes";
 import { honestyProblem, type CelebrationEvent } from "../src/lib/celebration-types";
 import { NEUTRAL_MODIFIERS, unlockBlockers } from "../src/lib/skill-gates";
@@ -45,18 +57,37 @@ import {
 } from "../src/components/skills/ladder";
 import { buildUnlockEvent, firstOfDepth, mergeUnlockEvents, unlockDedupeKey } from "../src/components/skills/unlock-event";
 import {
+  LIFE_NOTE_DAYS,
   RADAR_VIEWBOX,
   characterRaw,
+  firstWeekJudgement,
   ghostScores,
   knowledgeRow,
+  lifeCompositions,
+  lifeNoteDue,
+  lifeTrackRows,
+  longDayLabel,
+  mainSource,
+  mainSourceOf,
+  mpFigure,
   niceMax,
   polygonPoints,
   radarLayout,
   radarPercent,
+  shortDayLabel,
+  sourceLabel,
   titleDistance,
   topAttributes,
+  weekdayDayLabel,
+  type FieldComposition,
 } from "../src/components/home/sheet-math";
-import { endLabelTops } from "../src/components/home/TrackCharts";
+import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../src/components/home/TrackCharts";
+import { LifeTracks } from "../src/components/home/SheetSections";
+import { goalRowCopy, rungsLine } from "../src/components/home/GoalLadder";
+import { LIFE_NOTE_KEY, readNoteDismissed, writeNoteDismissed } from "../src/components/home/LifeNote";
+import { statedPayoutCopy, type GoalLadderItem, type GoalPayout } from "../src/lib/goals";
+import { GOAL_RULES } from "../src/lib/life-economy";
+import type { LifeTrackRow } from "../src/lib/life-tracks";
 import { momentMeta, momentMonths } from "../src/app/you/_lib/moments";
 
 const ROOT = join(__dirname, "..");
@@ -273,6 +304,204 @@ function scoresOf(v: (a: string, i: number) => number): AttributeScores {
   check("moments: dated by the life-zone day", momentMeta(ev, "Australia/Sydney") === "Ascension · 1 Oct · Spent 10 MP · 5 left");
   check("moments: the zone is honoured (UTC reads 30 Sept)", momentMonths([ev], "UTC")[0].month === "September 2026" && momentMeta(ev, "UTC").includes("30 Sept"));
   check("moments: undated rows group together", momentMonths([{ ...ev, createdAt: undefined }, { ...ev, createdAt: "nope" }])[0].events.length === 2);
+}
+
+// ── 4d. Life joins the sheet's arithmetic ──────────────────────────────────
+const comp = (w: Partial<Record<string, number>>) => Object.fromEntries(ATTRIBUTES.map((a) => [a, w[a] ?? 0])) as FieldComposition["composition"];
+/** life-lexicon TRACK_SEED.BODY: PHYSICAL 46 / STUBBORNNESS 24 / SELF_RESPECT 20 / FAITH 10. */
+const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH: 10 });
+{
+  const levels = [8.4, 3, 12.5, 0, 1];
+  const tracks = [3, 1, 0, 7];
+  const shell = characterLevelOf(levels, tracks);
+  const raw = characterRaw(levels, tracks);
+  check("sheet: character level and progress agree with the shell, with tracks", Math.floor(raw) === shell.level && Math.abs(raw - Math.floor(raw) - shell.progress) < 1e-9);
+  const before = levels.reduce((sum, l) => sum + Math.pow(Math.max(0, l), 0.75), 0);
+  check("sheet: characterRaw(levels) is the Fields-only sum, unchanged for one argument", characterRaw(levels) === before && characterRaw(levels, []) === before && characterRaw(levels, [0, 0, 0, 0]) === before);
+  check("sheet: tracks add L^0.75 each", Math.abs(characterRaw([4, 9, 2], [3, 1]) - (4 ** 0.75 + 9 ** 0.75 + 2 ** 0.75 + 3 ** 0.75 + 1)) < 1e-12);
+
+  // A life row is named as the top-three source with its exact share; a Field keeps its name alone.
+  const field = { name: "Stats", level: 4, composition: comp({ PHYSICAL: 10, MIND: 90 }) };
+  const life = lifeCompositions([{ fieldName: "Life · Body", level: 6, composition: BODY_SEED, source: "LIFE" }]);
+  const sources: FieldComposition[] = [field, ...life];
+  const src = mainSourceOf("PHYSICAL", sources);
+  check("mainSourceOf: 'Life · Body' when the life row contributes most", src?.name === "Life · Body" && src.source === "LIFE" && Math.abs(src.value - 2.76) < 1e-9);
+  check("mainSourceOf: a Field when the Field contributes most", mainSourceOf("MIND", sources)?.name === "Stats" && mainSourceOf("MIND", sources)?.source === "FIELD");
+  check("mainSourceOf: null when nothing feeds the attribute", mainSourceOf("LOGIC", sources) === null && mainSource("LOGIC", sources) === null);
+  check("mainSource keeps its name-only answer", mainSource("PHYSICAL", sources) === "Life · Body" && mainSource("MIND", [field]) === "Stats");
+  const scores = scoresOf((a) => (a === "MIND" ? 20 : a === "PHYSICAL" ? 9 : a === "STUBBORNNESS" ? 4 : 0));
+  const top = topAttributes(scores, null, (a) => sourceLabel(mainSourceOf(a, sources)));
+  check("top three: a life source reads 'from Life · Body +2.8'", top[1]?.attribute === "PHYSICAL" && top[1].note === "from Life · Body +2.8", top[1]?.note ?? "");
+  check("top three: a Field source keeps 'from <Field>'", sourceLabel({ name: "Stats", value: 3.2, source: "FIELD" }) === "Stats" && sourceLabel(null) === null);
+
+  // The ghost moves only by a life row's level change.
+  const now = { ...scoresOf(() => 0), MIND: 10, PHYSICAL: 1.38, STUBBORNNESS: 0.72, SELF_RESPECT: 0.6, FAITH: 0.3 };
+  const rows: FieldComposition[] = [{ name: "A", level: 10, composition: comp({ MIND: 100 }) }, ...lifeCompositions([{ fieldName: "Life · Body", level: 3, composition: BODY_SEED, source: "LIFE" }])];
+  const g = ghostScores(now, rows, [{ name: "A", level: 10 }, { name: "Life · Body", level: 2 }]);
+  check(
+    "ghost: a life row at 2 a week ago (3 now) scales only the attributes it feeds, by 2/3",
+    g !== null && g.MIND === 10 && g.LOGIC === 0 && Math.abs(g.PHYSICAL - 0.92) < 1e-9 && Math.abs(g.FAITH - 0.2) < 1e-9
+  );
+  const g0 = ghostScores(now, rows, [{ name: "A", level: 10 }]);
+  check("ghost: a life row absent a week ago reads as 0 then, Fields untouched", g0 !== null && g0.MIND === 10 && g0.PHYSICAL === 0);
+  const same = ghostScores(now, rows, [{ name: "A", level: 10 }, { name: "Life · Body", level: 3 }]);
+  check("ghost: unchanged life and Field levels → the ghost equals today", same !== null && ATTRIBUTES.every((a) => same[a] === now[a]));
+}
+
+// ── 4e. Life tracks: 5 rows once life counts, 1 before ─────────────────────
+{
+  const row = (track: LifeTrackRow["track"], name: string, extra: Partial<LifeTrackRow> = {}): LifeTrackRow => ({
+    track,
+    name,
+    sigil: track.toLowerCase() as LifeTrackRow["sigil"],
+    level: 3,
+    xp: 500,
+    nextXp: 784,
+    cap: 5,
+    atCap: false,
+    keptWeeks: 9,
+    keptStreak: 2,
+    goalDepth: 0,
+    banked: 0.3,
+    now: 0.4,
+    weeks: ["kept", "missed", "kept"],
+    line: "500 / 784 XP · depth cap 5 · 2 more kept weeks raise it",
+    edge: 0.6,
+    ...extra,
+  });
+  const rows = [row("DUTY", "Duty", { atCap: true, now: 1, banked: 1 }), row("CRAFT", "Craft"), row("BODY", "Body"), row("CARE", "Care", { level: 0, xp: 0, weeks: [] })];
+  const k = knowledgeRow([{ name: "A", level: 10 }], []);
+  const on = lifeTrackRows(k, { launched: true, rows });
+  check("life tracks: launched → Duty, Craft, Body, Care, then Knowledge", on.map((r) => r.name).join(",") === "Duty,Craft,Body,Care,Knowledge");
+  check("life tracks: the cap tick only on a capped row, at 1", on[0].cap === 1 && on[0].capped === true && on[1].cap === undefined && !on[1].capped);
+  check("life tracks: pips pass through, never padded", on[1].weeks?.length === 3 && on[3].weeks?.length === 0 && on[4].weeks === undefined);
+  check("life tracks: life rows gain in xp, Knowledge in pts", on.slice(0, 4).every((r) => r.gainKind === "xp") && on[4].gainKind === "pts");
+  check("life tracks: not launched → Knowledge alone, rows or not", lifeTrackRows(k, { launched: false, rows }).length === 1 && lifeTrackRows(k, { launched: false, rows: [] })[0].name === "Knowledge");
+  const count = (html: string) => (html.match(/class="trk-row"/g) ?? []).length;
+  const htmlOn = renderToStaticMarkup(createElement(LifeTracks, { knowledge: k, life: { launched: true, rows } }));
+  const htmlOff = renderToStaticMarkup(createElement(LifeTracks, { knowledge: k, life: { launched: false, rows: [] } }));
+  check("life tracks: renders 5 rows when launched and 1 when not", count(htmlOn) === 5 && count(htmlOff) === 1, `${count(htmlOn)} / ${count(htmlOff)}`);
+  check("life tracks: the aside never promises tracks before they count", htmlOn.includes("levels capped by kept weeks") && !htmlOff.includes("arrive with life tracks") && !htmlOff.includes("kept weeks"));
+}
+
+// ── 4f. The goal ladder's copy ─────────────────────────────────────────────
+{
+  const payout = (h: "SHORT" | "MID" | "LONG", g: number, pays: number, why: string | null, depth = 0): GoalPayout => ({
+    horizon: h,
+    track: "DUTY",
+    reason: GOAL_RULES[h].reason,
+    stated: GOAL_RULES[h].stated,
+    bar: GOAL_RULES[h].bar,
+    scaled: pays,
+    g,
+    pays,
+    why,
+    depth,
+  });
+  const item = (h: "SHORT" | "MID" | "LONG", extra: Partial<GoalLadderItem>): GoalLadderItem => ({
+    id: "g",
+    title: "T",
+    horizon: h,
+    track: "DUTY",
+    stated: GOAL_RULES[h].stated,
+    copy: statedPayoutCopy(h),
+    g: 0.5,
+    progressLabel: "",
+    dueDay: null,
+    pastDue: false,
+    carried: null,
+    preview: null,
+    closed: null,
+    ...extra,
+  });
+  const today = "2026-10-01";
+  const short = goalRowCopy(item("SHORT", { track: "CARE", g: 0.5, progressLabel: "1 of 2 steps", dueDay: "2026-10-12", preview: payout("SHORT", 0.5, 0, "not finished") }), true, today);
+  check("ladder: SHORT meta names horizon, track, %, label and due", short.meta === "Short · Care · 50% · 1 of 2 steps · due 12 Oct", short.meta);
+  check("ladder: SHORT states 'pays ⬡ 1 when done'", short.pays === "pays ⬡ 1 when done", short.pays ?? "");
+  check("ladder: a 0 preview says why", short.preview === "Closing now pays 0: not finished", short.preview ?? "");
+  const mid = goalRowCopy(item("MID", { g: 0.6999, progressLabel: "7 of 10 books", preview: payout("MID", 0.6999, 0, "below 70%") }), true, today);
+  check("ladder: MID states 'pays ⬡ 6 × progress from 70%'", mid.pays === "pays ⬡ 6 × progress from 70%", mid.pays ?? "");
+  check("ladder: g is never rounded up past the bar (0.6999 is 69%)", mid.meta === "Mid · Duty · 69% · 7 of 10 books", mid.meta);
+  const paying = goalRowCopy(item("MID", { g: 0.8, preview: payout("MID", 0.8, 4.8, null, 1) }), true, today);
+  check("ladder: a paying preview states the exact figure", paying.preview === "Closing now pays ⬡ 4.8", paying.preview ?? "");
+  const carried = goalRowCopy(item("SHORT", { g: 0.55, dueDay: "2026-09-28", pastDue: true, carried: 0.55 }), true, today);
+  check("ladder: past due and unfinished is carried, never owed", carried.carried === "Carried 0.55 · reschedule or close it on Today" && carried.meta.endsWith("was due 28 Sep"), carried.carried ?? "");
+  const closed = goalRowCopy(item("MID", { g: 0.8, closed: { paid: 4.8, depth: 1, day: "2026-09-26", why: null } }), true, today);
+  check("ladder: closed and paid", closed.closed === "Closed · paid ⬡ 4.8 · Duty depth +1" && closed.pays === null && closed.preview === null, closed.closed ?? "");
+  const closed0 = goalRowCopy(item("SHORT", { g: 1, closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago (3 needed)" } }), true, today);
+  check("ladder: closed for nothing says why", closed0.closed === "Closed · paid 0: set 1 day ago (3 needed)", closed0.closed ?? "");
+  const before = goalRowCopy(item("MID", { g: 0.8, preview: payout("MID", 0.8, 0, "before life MP began") }), false, today);
+  check("ladder: before life counts, no stated MP and no preview", before.pays === null && before.preview === null && before.meta === "Mid · Duty · 80%");
+  const far = goalRowCopy(item("LONG", { g: null, dueDay: "2027-03-01" }), true, today);
+  check("ladder: unmeasured shows no %, a due day in another year shows the year", far.meta === "Long · Duty · due 1 Mar 2027", far.meta);
+  check("rungs: highest first, empty rungs left out", rungsLine({ Automatic: 1, Established: 3, Forming: 0, Seeded: 4 }) === "Automatic 1 · Established 3 · Seeded 4");
+  check("rungs: the spec line", rungsLine({ Automatic: 1, Established: 3, Forming: 2, Seeded: 4 }) === "Automatic 1 · Established 3 · Forming 2 · Seeded 4");
+  check("rungs: none → null (the row says so in words)", rungsLine({ Automatic: 0, Established: 0, Forming: 0, Seeded: 0 }) === null && rungsLine(null) === null);
+}
+
+// ── 4g. The life note guards storage ───────────────────────────────────────
+{
+  const throwing = {
+    getItem: (): string | null => {
+      throw new Error("SecurityError");
+    },
+    setItem: (): void => {
+      throw new Error("QuotaExceededError");
+    },
+  };
+  const mem = new Map<string, string>();
+  const memory = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) };
+  check("life note: no storage → not dismissed (it renders)", readNoteDismissed(null) === false && readNoteDismissed(undefined) === false);
+  check("life note: a throwing storage reads as not dismissed", readNoteDismissed(throwing) === false);
+  let threw = false;
+  try {
+    check("life note: a throwing write reports false", writeNoteDismissed(throwing) === false);
+  } catch {
+    threw = true;
+  }
+  check("life note: a throwing write never throws", !threw);
+  check("life note: an empty store renders it", readNoteDismissed(memory) === false);
+  check("life note: dismissal round-trips under its v1 key", writeNoteDismissed(memory) === true && readNoteDismissed(memory) === true && mem.get(LIFE_NOTE_KEY) === "1" && LIFE_NOTE_KEY === "xtnl:you:life-note:v1");
+  const src = read("src/components/home/LifeNote.tsx").replace(/\/\*[\s\S]*?\*\//g, "");
+  check("life note: storage is touched only through the guarded helpers", !/localStorage\.(getItem|setItem|removeItem)/.test(src) && (src.match(/window\.localStorage/g) ?? []).length === 1);
+  check("life note: shows for 14 days from the launch day, only once life counts", LIFE_NOTE_DAYS === 14 && lifeNoteDue(true, "2026-10-05", "2026-10-05") && lifeNoteDue(true, "2026-10-05", "2026-10-18") && !lifeNoteDue(true, "2026-10-05", "2026-10-19") && !lifeNoteDue(true, "2026-10-05", "2026-10-04") && !lifeNoteDue(false, "2026-10-05", "2026-10-06") && !lifeNoteDue(true, null, "2026-10-06"));
+}
+
+// ── 4h. Kept weeks and track lines ─────────────────────────────────────────
+{
+  check("kept weeks: a labelled cell reads 'Week of 28 Sep: kept'", keptCellLabel("kept", 0, "28 Sep") === "Week of 28 Sep: kept" && keptCellLabel("missed", 2) === "Week 3: not kept");
+  const html = renderToStaticMarkup(createElement(KeptWeeks, { rows: [{ name: "Duty", weeks: ["kept", "missed"] }, { name: "Care", weeks: ["missed", "kept"] }], labels: ["21 Sep", "28 Sep"] }));
+  check("kept weeks: cells carry their week labels", html.includes('aria-label="Week of 21 Sep: kept"') && html.includes('aria-label="Week of 28 Sep: kept"') && html.includes('aria-label="Week of 21 Sep: not kept"'));
+  check("kept weeks: the grid has one column per judged week", /--weeks:\s*2/.test(html));
+
+  const two = trackLinesGeometry([{ name: "Duty", points: [1, 2] }, { name: "Care", points: [0, 0] }]);
+  const xs = two.lines[0].points.split(" ").map((p) => Number(p.split(",")[0]));
+  const finite = two.lines.every((l) => l.points.split(/[ ,]/).every((v) => Number.isFinite(Number(v))));
+  check("track lines: 2 points span the plot (24 → 286), all finite", two.weeks === 2 && xs[0] === 24 && xs[1] === 286 && finite);
+  check("track lines: end labels after the last point, ticks from 0", two.ends[0].text === "Duty 2" && two.ends[0].x === 294 && two.ticks[0].value === 0);
+  const twelve = trackLinesGeometry([{ name: "Duty", points: [4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7] }]);
+  check("track lines: 12 points, evenly spaced", twelve.weeks === 12 && twelve.lines[0].points.split(" ").length === 12 && twelve.lines[0].points.endsWith("286.0," + twelve.lines[0].points.split(",").pop()));
+  const empty = trackLinesGeometry([]);
+  check("track lines: no series draws nothing, without NaN", empty.lines.length === 0 && empty.ticks.every((t) => Number.isFinite(t.y)));
+}
+
+// ── 4i. Figures and dates ──────────────────────────────────────────────────
+{
+  check("mpFigure: as paid (2 dp at most, no trailing zeros)", mpFigure(6 * 0.8) === "4.8" && mpFigure(1.5) === "1.5" && mpFigure(8) === "8" && mpFigure(0) === "0" && mpFigure(1346) === "1,346" && mpFigure(0.555) === "0.56");
+  check("dates: '28 Sep' (not Intl's 'Sept')", shortDayLabel("2026-09-28") === "28 Sep" && shortDayLabel("2026-09-28", "2026-10-01") === "28 Sep");
+  check("dates: another year shows the year", shortDayLabel("2027-01-05", "2026-10-01") === "5 Jan 2027");
+  check("dates: long forms", longDayLabel("2026-09-28") === "28 September" && weekdayDayLabel("2026-10-07") === "Wednesday 7 October");
+}
+
+// ── 4j. The first judged week (/today/week before any verdict) ─────────────
+{
+  const f = firstWeekJudgement("2026-09-29", "2026-10-01");
+  check(
+    "first week: epoch in the week of 28 September → judged Wednesday 7 October, not yet due",
+    f.monday === "2026-09-28" && f.sunday === "2026-10-04" && f.judgeDay === "2026-10-07" && !f.due && weekdayDayLabel(f.judgeDay) === "Wednesday 7 October" && longDayLabel(f.monday) === "28 September"
+  );
+  check("first week: due from its Wednesday, not on Tuesday", !firstWeekJudgement("2026-09-29", "2026-10-06").due && firstWeekJudgement("2026-09-29", "2026-10-07").due);
+  check("first week: an old epoch is due now", firstWeekJudgement("2026-06-01", "2026-10-01").due);
 }
 
 // ── 5. Palette on tokens ────────────────────────────────────────────────────
@@ -505,6 +734,32 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
 
   // Tailwind-colliding class names retired from the lane.
   check("classes: no bare `grow` class (Tailwind's flex-grow utility)", !lane.some((f) => f.endsWith(".tsx") && /className="grow"/.test(read(f))));
+
+  // Life pages: no milestone codes, no capture-owned imports, every rule number imported.
+  const lifePages = ["src/app/today/week/page.tsx", "src/app/today/rules/page.tsx"];
+  const lifeMilestones = lifePages.filter((f) => /\bM[1-9]\b/.test(code(f)));
+  check("copy: no milestone codes on /today/week and /today/rules", lifeMilestones.length === 0, lifeMilestones.join(", "));
+  check("week: /today/week imports nothing capture-owned (components/today/**)", !/@\/components\/today\//.test(read("src/app/today/week/page.tsx")));
+  check("week: /today/week judges after the response and is never prerendered", /after\(async \(\) => \{\s*await maybeJudgeWeeks\(userId\)/.test(read("src/app/today/week/page.tsx")) && /export const dynamic = "force-dynamic"/.test(read("src/app/today/week/page.tsx")));
+  check("you: the sheet judges after its snapshot", /recordTodaySnapshot\(\);[\s\S]{0,40}finally \{\s*await maybeJudgeWeeks\(userId\)/.test(read("src/app/you/page.tsx")));
+  const rules = read("src/app/today/rules/page.tsx");
+  const start = rules.indexOf("function TracksRules()");
+  const body = start >= 0 ? rules.slice(rules.indexOf("return (", start), rules.indexOf("\n}\n", start)) : "";
+  // Strip every {…} expression (balanced), leaving the JSX's literal text and tags.
+  let text = "";
+  let depth = 0;
+  for (const ch of body) {
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    else if (depth === 0) text += ch;
+  }
+  const typed = [...text.matchAll(/\d+/g)].map((m) => m[0]);
+  check("rules: the Tracks and kept weeks card types no number by hand", start >= 0 && body.length > 500 && typed.length === 0, typed.join(", "));
+  const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/life-economy"/)?.[1] ?? "";
+  const needed = ["TRACK_LEVEL_STEP", "TRACK_DEPTH_WEEK_COEF", "KEPT_MIN_DAYS", "KEPT_MIN_RAW", "BODY_EFFORT_MINUTES", "DUTY_MIN_OCCURRENCES", "DUTY_FALLBACK_COMPLETIONS", "WEEK_JUDGE_LAG_DAYS", "LIFE_MP", "LIFE_MP_WEEK_CAP", "CAPPED_REASONS", "GOAL_RULES", "GOAL_DEPTH_CAP"];
+  const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
+  check("rules: the card's constants are imported from life-economy", missing.length === 0, missing.join(", "));
+  check("rules: Full day still pays from daily settlement; goals never pay XP", /pays from daily settlement/.test(rules) && /Goals never pay XP/.test(rules));
 }
 
 (async () => {

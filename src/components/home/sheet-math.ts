@@ -1,27 +1,47 @@
 /**
  * The character sheet's arithmetic (pure: the pages, /dev/style/art and
  * scripts/you-check.ts share it). No invented numbers: every output is a
- * function of real field levels, attribute scores and snapshots, and a
- * missing input yields null rather than a placeholder.
+ * function of real field levels, track levels, attribute scores and
+ * snapshots, and a missing input yields null rather than a placeholder.
  *
- *   characterRaw(levels)                 Σ fieldLevel^0.75 (the continuous character level)
+ *   characterRaw(fields, tracks = [])    Σ L^0.75 over Field and life-track levels (character.ts)
  *   titleDistance(raw, transcendent)     the next title, its level, and the fraction of the
  *                                        way through the current title band (never drops on success)
  *   knowledgeRow(now, weekAgo)           the Knowledge track: level, banked, this week's gain, who grew most
- *   ghostScores(scores, fields, ghosts)  attribute scores 7 days ago, from the Field levels then
+ *   knowledgeLine(row)                   its honest line
+ *   lifeTrackRows(knowledge, life)       the Life tracks card's rows: Duty, Craft, Body, Care once
+ *                                        life counts, then Knowledge (Knowledge alone before)
+ *   lifeCompositions(contributions)      life rows as radar sources ('Life · Body', source LIFE)
+ *   ghostScores(scores, fields, ghosts)  attribute scores 7 days ago, from the Field and life levels then
+ *   mainSourceOf(a, comps) / mainSource  the row that feeds an attribute most (with its share)
+ *   sourceLabel(src)                     'Life · Body +2.8' for a life row, the Field's name otherwise
  *   radarLayout(axes, ghost)             13-gon geometry: rings, spokes, polygons, markers, labels
  *   polygonPoints(sides, cx, cy, r)      the attribute glyph (3–7 sides, the SkillLogo silhouette)
  *   topAttributes(scores, ghost, top)    the top three with a true note each
+ *   mpFigure(v)                          an MP figure: 2 dp at most, en-GB ('4.8', '1,346', '0')
+ *   shortDayLabel / longDayLabel /       '28 Sep' / '28 September' / 'Wednesday 7 October', read
+ *   weekdayDayLabel                      from the day key's own calendar date (no clock, no zone)
+ *   lifeNoteDue(launched, launchDay, d)  the 'Life now counts' note: launch day + 13 days
+ *   firstWeekJudgement(epochDay, today)  before any judged week: which week is first, and when
  */
 import type { Attribute } from "@prisma/client";
-import { ATTRIBUTES, COMPOSITION_TOTAL, type AttributeScores, type Composition } from "@/lib/attributes";
+import { ATTRIBUTES, COMPOSITION_TOTAL, type AttributeScores, type Composition, type FieldContribution } from "@/lib/attributes";
+import { characterRaw as characterRawOf } from "@/lib/character";
+import { round2 } from "@/lib/life-economy";
+import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "@/lib/life-day";
+import type { LifeTrackRow, WeekMark } from "@/lib/life-tracks";
+import { judgeDayOf, lastJudgeableSunday } from "@/lib/life-weeks";
 import { TITLE_BANDS } from "@/lib/titles";
 
 // ─── Character level and titles ─────────────────────────────────────────────
 
-/** Σ fieldLevel^0.75: floor() is the character level, the remainder is the way to the next. */
-export function characterRaw(fieldLevels: readonly number[]): number {
-  return fieldLevels.reduce((s, l) => s + Math.pow(Math.max(0, l), 0.75), 0);
+/**
+ * Σ L^0.75 over the Field levels, then the life-track levels: floor() is the
+ * character level, the remainder is the way to the next. With no tracks it
+ * is exactly the Fields-only sum it always was (character.ts).
+ */
+export function characterRaw(fieldLevels: readonly number[], trackLevels: readonly number[] = []): number {
+  return characterRawOf(fieldLevels, trackLevels);
 }
 
 export interface TitleDistance {
@@ -102,12 +122,88 @@ export function knowledgeRow(now: readonly FieldLevelRow[], weekAgo: readonly Fi
   return { level, banked, now: frac, gained: Math.max(0, rawNow - rawThen), grewMost, fields: now.length };
 }
 
+export function knowledgeLine(k: KnowledgeRow): string {
+  const fields = `${k.fields} ${k.fields === 1 ? "Field" : "Fields"}, breadth-weighted`;
+  if (k.gained === null) return `${fields} · this week's gain shows once a week of snapshots exists`;
+  if (k.gained <= 0.0005) return `${fields} · no Field moved this week`;
+  return `${fields} · ${k.grewMost ? `${k.grewMost} grew most this week` : "grew this week"}`;
+}
+
+// ─── The Life tracks card ───────────────────────────────────────────────────
+
+/** One row of the Life tracks card, as <TrackRow/> draws it. */
+export interface TrackRowData {
+  sigil: "body" | "duty" | "craft" | "care" | "know";
+  name: string;
+  level: number;
+  /** 0..1 at the end of last week (ink). */
+  banked: number;
+  /** 0..1 now (banked + this week's gain, in the currency that fed it). */
+  now: number;
+  gainKind: "xp" | "pts";
+  /** The last ≤ 8 judged weeks, oldest first (life tracks only; never padded). */
+  weeks?: WeekMark[];
+  /** The depth-cap tick, passed only when the track is capped (at 1). */
+  cap?: number;
+  /** XP is waiting on kept weeks: the meter is full and the level cannot rise on XP. */
+  capped?: boolean;
+  line: string;
+  seenKey: string;
+}
+
+/**
+ * The Life tracks card's rows. Once life counts: the four tracks in the
+ * order trackRowsView gives them (Duty, Craft, Body, Care), then Knowledge.
+ * Before launch (or with no rows): Knowledge alone, so no life level is
+ * ever shown before it is earned.
+ */
+export function lifeTrackRows(knowledge: KnowledgeRow, life: { launched: boolean; rows: readonly LifeTrackRow[] }): TrackRowData[] {
+  const tracks: TrackRowData[] = life.launched
+    ? life.rows.map((r) => ({
+        sigil: r.sigil,
+        name: r.name,
+        level: r.level,
+        banked: r.banked,
+        now: r.now,
+        gainKind: "xp" as const,
+        weeks: r.weeks,
+        ...(r.atCap ? { cap: 1, capped: true } : {}),
+        line: r.line,
+        seenKey: `you:track:${r.track.toLowerCase()}`,
+      }))
+    : [];
+  return [
+    ...tracks,
+    {
+      sigil: "know",
+      name: "Knowledge",
+      level: knowledge.level,
+      banked: knowledge.banked,
+      now: knowledge.now,
+      gainKind: "pts",
+      line: knowledgeLine(knowledge),
+      seenKey: "you:track:knowledge",
+    },
+  ];
+}
+
 // ─── Attributes: the 7-day ghost ────────────────────────────────────────────
 
 export interface FieldComposition {
   name: string;
   level: number;
   composition: Composition;
+  /** 'LIFE' for a life track's row ('Life · Body'); a Field when absent. */
+  source?: "FIELD" | "LIFE";
+}
+
+/**
+ * The life tracks' attribute rows as radar sources: {name 'Life · Body',
+ * level: the bonus-scaled level the attributes read, composition}, marked
+ * LIFE so the top-three note can say how much the row gives.
+ */
+export function lifeCompositions(contributions: readonly FieldContribution[]): FieldComposition[] {
+  return contributions.map((c) => ({ name: c.fieldName, level: c.level, composition: c.composition, source: "LIFE" as const }));
 }
 
 /**
@@ -140,18 +236,35 @@ export function ghostScores(
   return out;
 }
 
-/** Which Field feeds an attribute most, for the top-three list. */
-export function mainSource(a: Attribute, fields: readonly FieldComposition[]): string | null {
-  let best: string | null = null;
-  let most = 0;
-  for (const f of fields) {
+export interface MainSource {
+  name: string;
+  /** level × weight / 100: the row's share of the attribute (exact for a life row). */
+  value: number;
+  source: "FIELD" | "LIFE";
+}
+
+/** Which row (a Field or a life track) feeds an attribute most, and by how much. Null when none does. */
+export function mainSourceOf(a: Attribute, comps: readonly FieldComposition[]): MainSource | null {
+  let best: MainSource | null = null;
+  for (const f of comps) {
     const c = (f.level * f.composition[a]) / COMPOSITION_TOTAL;
-    if (c > most) {
-      most = c;
-      best = f.name;
-    }
+    if (c > (best?.value ?? 0)) best = { name: f.name, value: c, source: f.source ?? "FIELD" };
   }
   return best;
+}
+
+/** Which Field feeds an attribute most, for the top-three list. */
+export function mainSource(a: Attribute, fields: readonly FieldComposition[]): string | null {
+  return mainSourceOf(a, fields)?.name ?? null;
+}
+
+/**
+ * The top-three note's source: 'Life · Body +2.8' for a life row (its share
+ * of the attribute is exact: level × weight), the Field's name otherwise.
+ */
+export function sourceLabel(src: MainSource | null): string | null {
+  if (!src) return null;
+  return src.source === "LIFE" ? `${src.name} +${src.value.toFixed(1)}` : src.name;
 }
 
 // ─── Radar geometry ─────────────────────────────────────────────────────────
@@ -260,4 +373,64 @@ export function topAttributes(
     const src = sourceOf(a);
     return { attribute: a, value: scores[a], note: src ? `from ${src}` : "from your Fields" };
   });
+}
+
+// ─── Figures and dates ──────────────────────────────────────────────────────
+
+/** An MP figure as it was paid: 2 dp at most, no trailing zeros, en-GB grouping ('4.8', '1.5', '1,346', '0'). */
+export function mpFigure(v: number): string {
+  const r = round2(v);
+  return (Object.is(r, -0) ? 0 : r).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function partsOf(key: DayKey): [number, number, number] {
+  const [y, m, d] = key.split("-").map(Number);
+  return [y, m, d];
+}
+
+/** '28 Sep'; with `today` in another year, '28 Sep 2027'. (A fixed table: Intl's en-GB says 'Sept'.) */
+export function shortDayLabel(key: DayKey, today?: DayKey): string {
+  const [y, m, d] = partsOf(key);
+  const year = today && partsOf(today)[0] !== y ? ` ${y}` : "";
+  return `${d} ${MONTH_SHORT[m - 1]}${year}`;
+}
+
+/** '28 September'. */
+export function longDayLabel(key: DayKey): string {
+  const [, m, d] = partsOf(key);
+  return `${d} ${MONTH_LONG[m - 1]}`;
+}
+
+/** 'Wednesday 7 October'. */
+export function weekdayDayLabel(key: DayKey): string {
+  const [y, m, d] = partsOf(key);
+  return `${WEEKDAY_LONG[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTH_LONG[m - 1]}`;
+}
+
+// ─── Life: the launch note and the first judged week ────────────────────────
+
+/** The 'Life now counts' note shows for this many days from the launch day. */
+export const LIFE_NOTE_DAYS = 14;
+
+/** True from the launch day through the next LIFE_NOTE_DAYS − 1 days, and only once life counts. */
+export function lifeNoteDue(launched: boolean, launchDay: DayKey | null, today: DayKey): boolean {
+  if (!launched || !launchDay) return false;
+  const since = daysBetween(launchDay, today);
+  return since >= 0 && since < LIFE_NOTE_DAYS;
+}
+
+/**
+ * Before any week is judged: the first week to be (the one holding the
+ * epoch day: the judge starts there), the day it is first judged
+ * (life-weeks judgeDayOf: the Wednesday after its Sunday), and whether that
+ * day has already come (then it is judged on the next page read).
+ */
+export function firstWeekJudgement(epochDay: DayKey, today: DayKey): { monday: DayKey; sunday: DayKey; judgeDay: DayKey; due: boolean } {
+  const monday = weekStartKeyOf(epochDay);
+  const sunday = addDays(monday, 6);
+  return { monday, sunday, judgeDay: judgeDayOf(sunday), due: sunday <= lastJudgeableSunday(today) };
 }

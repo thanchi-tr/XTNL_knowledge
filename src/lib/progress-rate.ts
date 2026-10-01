@@ -1,8 +1,18 @@
 import { cache } from "react";
 import { prisma } from "./prisma";
 import { cached } from "./cache";
-import { computeAttributeScores, emptyComposition, type AttributeScores, type Composition } from "./attributes";
+import {
+  computeAttributeScores,
+  emptyComposition,
+  type AttributeScores,
+  type Composition,
+  type FieldContribution,
+} from "./attributes";
 import { ATTRIBUTES } from "./attributes";
+import { keyOfDateColumn, todayKey } from "./life-day";
+import { isLaunched } from "./life-economy";
+import { lifeContributionsAt, type LifeLedger } from "./life-tracks";
+import { loadLifeLedger } from "./life-tracks-server";
 
 /**
  * Observed rates of progress, measured from history rather than assumed.
@@ -35,11 +45,12 @@ export interface ProgressRates {
 export const loadProgressRates = cache(async (userId: string): Promise<ProgressRates> => {
   // Rates move on the scale of days; a few seconds of staleness is
   // meaningless here, and the three round trips behind them are not.
-  return cached(`progressRates:${userId}`, ["fields", "progress"], async () => {
+  // 'life' (M5): the life tracks are part of the attribute scores measured.
+  return cached(`progressRates:${userId}`, ["fields", "progress", "life"], async () => {
     const now = new Date();
     const [masteryPerDay, scoreResult] = await Promise.all([
       measureMasteryRate(userId, now),
-      measureScoreRate(now),
+      measureScoreRate(userId, now),
     ]);
 
     return {
@@ -94,24 +105,37 @@ async function measureMasteryRate(userId: string, now: Date): Promise<number | n
  * window; they are user-editable and not versioned, so a recent composition
  * edit will distort this. That is acceptable for an estimate and is why the
  * UI labels the output as approximate.
+ *
+ * M5: once life is launched, the life tracks' attribute rows join both
+ * ends — `lifeContributionsAt(ledger, then)` and `(ledger, today)`, with
+ * `then` the oldest snapshot day already used — so track growth inside the
+ * window counts as growth, and the launch itself (life rows appearing at
+ * once) never reads as a rate. Before launch, or with no epoch day, nothing
+ * changes. A failed life read measures Fields alone.
  */
-async function measureScoreRate(now: Date): Promise<{ scorePerDay: Record<string, number> | null; observedDays: number }> {
+async function measureScoreRate(userId: string, now: Date): Promise<{ scorePerDay: Record<string, number> | null; observedDays: number }> {
   const since = new Date(now.getTime() - SCORE_RATE_WINDOW_DAYS * 86_400_000);
 
-  const fields = await prisma.field.findMany({
-    select: {
-      id: true,
-      name: true,
-      level: true,
-      attributes: { select: { attribute: true, weight: true } },
-      snapshots: {
-        where: { day: { gte: since } },
-        orderBy: { day: "asc" },
-        take: 1,
-        select: { day: true, level: true },
+  const [fields, ledger] = await Promise.all([
+    prisma.field.findMany({
+      select: {
+        id: true,
+        name: true,
+        level: true,
+        attributes: { select: { attribute: true, weight: true } },
+        snapshots: {
+          where: { day: { gte: since } },
+          orderBy: { day: "asc" },
+          take: 1,
+          select: { day: true, level: true },
+        },
       },
-    },
-  });
+    }),
+    loadLifeLedger(userId).catch((err): LifeLedger | null => {
+      console.error("[progress-rate] life ledger read failed; measuring Fields only", err);
+      return null;
+    }),
+  ]);
 
   const compositions = new Map<string, Composition>();
   for (const f of fields) {
@@ -131,16 +155,24 @@ async function measureScoreRate(now: Date): Promise<{ scorePerDay: Record<string
   // One day of history cannot distinguish a trend from a single session.
   if (observedDays < 2) return { scorePerDay: null, observedDays };
 
-  const thenScores = computeAttributeScores(
-    fields.map((f) => ({
+  // Life rows at both ends, only once launched (the same gate as loadLifeTracks).
+  const today = todayKey(now);
+  const life = ledger && ledger.epochDay != null && isLaunched(today) ? ledger : null;
+  const lifeThen: FieldContribution[] = life ? lifeContributionsAt(life, keyOfDateColumn(oldest)) : [];
+  const lifeNow: FieldContribution[] = life ? lifeContributionsAt(life, today) : [];
+
+  const thenScores = computeAttributeScores([
+    ...fields.map((f) => ({
       fieldName: f.name,
       level: f.snapshots[0]?.level ?? f.level,
       composition: compositions.get(f.id)!,
-    }))
-  );
-  const nowScores = computeAttributeScores(
-    fields.map((f) => ({ fieldName: f.name, level: f.level, composition: compositions.get(f.id)! }))
-  );
+    })),
+    ...lifeThen,
+  ]);
+  const nowScores = computeAttributeScores([
+    ...fields.map((f) => ({ fieldName: f.name, level: f.level, composition: compositions.get(f.id)! })),
+    ...lifeNow,
+  ]);
 
   const scorePerDay: Record<string, number> = {};
   for (const a of ATTRIBUTES) {

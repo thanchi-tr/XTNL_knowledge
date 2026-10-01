@@ -98,7 +98,9 @@ export const STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySourc
  * app) must not keep a streak alive: that is the bug the old Idea.updatedAt
  * streak had, where the midnight degrade cron counted as a day's work. Debts,
  * adjustments, freezes and reflections are bookkeeping, not activity. An
- * UNDO has its own −1 unit and must never also add one.
+ * UNDO has its own −1 unit and must never also add one. A week's verdict
+ * (WEEK, dated its Sunday) and a life mint (MP_MINT) are written after the
+ * fact: neither may make a past day active.
  */
 export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<ActivitySource>([
   "STEPS",
@@ -109,6 +111,8 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<Activit
   "FREEZE_USE",
   "REFLECTION",
   "UNDO",
+  "WEEK",
+  "MP_MINT",
 ]);
 
 /**

@@ -1,7 +1,9 @@
 @layer theme, base, components, art, effects, utilities;
 /* How a day is judged (/today/rules), L1. Kit cards and type roles; one
    column on phones, two from a main width of 640. Tables and formulas
-   scroll sideways on their own, never the page. */
+   scroll sideways on their own, never the page.
+   Also the Last week card of /today/week (.today-week), which imports this
+   sheet: the two pages publish and apply the same weekly rules. */
 @layer components {
   .today-rules .rules-intro { display: grid; gap: 6px; padding: 4px 4px 16px; max-width: 72ch; }
   .today-rules .rules-intro .t-body { color: var(--ink-1); }
@@ -25,4 +27,16 @@
   .today-rules .rules-list, .today-rules .rules-bullets { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
   .today-rules .rules-examples { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
   .today-rules .rules-examples .t-mono { overflow-wrap: anywhere; }
+
+  /* ---------- /today/week: the last judged week ---------- */
+  .today-week .lw-head { margin: 0; padding: 14px 14px 6px; font: 600 19px/24px var(--font-display); overflow-wrap: anywhere; }
+  .today-week .lw-head-plain { margin: 0; font: 600 19px/24px var(--font-display); }
+  .today-week .lw-rows { list-style: none; margin: 0; padding: 0; }
+  .today-week .lw-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 12px 14px; }
+  .today-week .lw-row + .lw-row { border-top: 1px solid var(--line-1); }
+  .today-week .lw-row > svg.sig { width: 20px; height: 20px; margin-top: 1px; }
+  .today-week .lw-row b { display: block; font-weight: 600; }
+  .today-week .lw-line { display: block; overflow-wrap: anywhere; }
+  .today-week .lw-foot { margin: 0; padding: 10px 14px 14px; border-top: 1px solid var(--line-1); }
+  .today-week .lw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 }

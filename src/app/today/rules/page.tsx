@@ -2,7 +2,37 @@ import "./rules.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { DAY_START_HOUR } from "@/lib/life-day";
+import { DAY_START_HOUR, todayKey } from "@/lib/life-day";
+import {
+  BODY_EFFORT_MINUTES,
+  CAPPED_REASONS,
+  DUTY_FALLBACK_COMPLETIONS,
+  DUTY_MIN_OCCURRENCES,
+  EFFORT_CATEGORY,
+  EFFORT_WEIGHT,
+  GOAL_DEPTH,
+  GOAL_DEPTH_CAP,
+  GOAL_RULES,
+  KEPT_MIN_DAYS,
+  KEPT_MIN_RAW,
+  LIFE_MP,
+  LIFE_MP_REASON_LABEL,
+  LIFE_MP_WEEK_CAP,
+  TRACK_DEPTH_GRACE,
+  TRACK_DEPTH_WEEK_COEF,
+  TRACK_LEVEL_STEP,
+  WEEK_JUDGE_LAG_DAYS,
+  WEEK_JUDGE_MAX_WEEKS,
+  depthCap,
+  isLaunched,
+  lifeLaunchDay,
+  trackDepth,
+  xpForLevel,
+  type LifeMpReason,
+} from "@/lib/life-economy";
+import { keptWeekBonusPercent } from "@/lib/life-tracks";
+import { longDayLabel, mpFigure } from "@/components/home/sheet-math";
+import { CurrencyGlyph } from "@/components/ui/Icon";
 import { FULL_DAY_MP, QUEST_CAP } from "@/lib/full-day";
 import {
   BAND_BASE,
@@ -143,6 +173,174 @@ const MODE_WORDS: Record<PayMode, string> = {
   PLAY: "#play: logged and kept in the streak, never paid, so something done for its own sake is not turned into a job.",
   STUDY: "Study-linked ('review 20', 'add 3 ideas'): the reviews and ideas already paid, so the task pays nothing on top.",
 };
+
+const WEEKDAY_AFTER_SUNDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** What each life MP reason pays, in words built from the constants. */
+const MP_ROWS: { reason: LifeMpReason; amount: number; per: string; note?: string }[] = [
+  { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "paid on the week's Sunday" },
+  { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "when finished" },
+  { reason: "GOAL_MID", amount: GOAL_RULES.MID.stated, per: "× progress" },
+  { reason: "GOAL_LONG", amount: GOAL_RULES.LONG.stated, per: "× progress" },
+  { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
+];
+
+/** How the reasons that share the weekly cap read in a sentence. */
+const CAPPED_WORDS: Record<LifeMpReason, string> = {
+  LIFE_WEEK_KEPT: "kept weeks",
+  GOAL_SHORT: "Short goals",
+  LIFE_FULL_DAY: "Full days",
+  GOAL_MID: "Mid goals",
+  GOAL_LONG: "Long goals",
+};
+
+/** The level used to illustrate the XP scale. */
+const SAMPLE_LEVEL = 10;
+
+/** A whole number of kept weeks after which the bonus stops growing. */
+function bonusFullAt(): number {
+  const most = keptWeekBonusPercent(10_000);
+  let n = 1;
+  while (keptWeekBonusPercent(n) < most - 1e-9) n++;
+  return n;
+}
+
+/**
+ * Tracks and kept weeks: every number below is read from life-economy.ts
+ * and life-tracks.ts (scripts/you-check.ts holds that no figure in this
+ * card is typed by hand).
+ */
+function TracksRules() {
+  const launchDay = lifeLaunchDay();
+  const today = todayKey();
+  const inForce = isLaunched(today, launchDay);
+  const edge = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
+  const judgeDay = WEEKDAY_AFTER_SUNDAY[WEEK_JUDGE_LAG_DAYS % WEEKDAY_AFTER_SUNDAY.length];
+  const year = Math.floor(365 / 7);
+  const fullAt = bonusFullAt();
+  const pct = (n: number) => (Math.round(n * 10) / 10).toLocaleString("en-GB");
+  const capped = CAPPED_REASONS.map((r) => CAPPED_WORDS[r]);
+  return (
+    <Card
+      title="Tracks and kept weeks"
+      sub={inForce && launchDay ? `In force since ${longDayLabel(launchDay)}` : "Not yet in force: no week is judged and nothing here is paid yet"}
+      wide
+    >
+      <Formula>
+        level = min(⌊√XP / {TRACK_LEVEL_STEP}⌋, {TRACK_DEPTH_GRACE} + ⌊depth⌋)
+      </Formula>
+      <Formula>
+        depth = {TRACK_DEPTH_WEEK_COEF} · √(kept weeks) + goal depth
+      </Formula>
+      <p>
+        {TRACK_LABEL.BODY}, {TRACK_LABEL.DUTY}, {TRACK_LABEL.CRAFT} and {TRACK_LABEL.CARE} each start with no XP and no level;
+        a track&apos;s XP is the life XP its tasks paid. Level {SAMPLE_LEVEL} needs {xpForLevel(SAMPLE_LEVEL).toLocaleString("en-GB")} XP, and a year of kept
+        weeks ({year}) allows level {depthCap(trackDepth(year))}. XP past the cap is banked, never lost: it counts the
+        moment a kept week raises the cap. A paid Mid goal adds {GOAL_DEPTH.MID} depth to its track and a paid Long goal{" "}
+        {GOAL_DEPTH.LONG}, at most {GOAL_DEPTH_CAP} per track.
+      </p>
+      <ul className="rules-bullets">
+        <li>
+          Every track keeps its week with completions on at least {KEPT_MIN_DAYS} days and at least {KEPT_MIN_RAW} raw XP.{" "}
+          {TRACK_LABEL.CRAFT} and {TRACK_LABEL.CARE} need nothing more.
+        </li>
+        <li>
+          {TRACK_LABEL.BODY} also needs {BODY_EFFORT_MINUTES} effort minutes from {CATEGORY_LABEL[EFFORT_CATEGORY]} tasks: minutes ×{" "}
+          {EFFORT_WEIGHT.STANDARD} at {BAND_META.STANDARD.label}, × {EFFORT_WEIGHT.DEMANDING} at {BAND_META.DEMANDING.label} or{" "}
+          {BAND_META.SEVERE.label}, × {EFFORT_WEIGHT.INTRO} at {BAND_META.INTRO.label}.
+        </li>
+        <li>
+          {TRACK_LABEL.DUTY}: any missed must breaks the week. With {DUTY_MIN_OCCURRENCES} or more musts due that week, the raw XP
+          floor is all it needs; with fewer, it needs {DUTY_FALLBACK_COMPLETIONS} {TRACK_LABEL.DUTY} completions on {KEPT_MIN_DAYS}{" "}
+          days. A must done at its minimum holds; #play and study tasks never count.
+        </li>
+      </ul>
+      <p>
+        A week runs Monday to Sunday and is judged from {judgeDay} {edge} after its Sunday, so a Sunday ticked the next day
+        still counts. A judged week is final. Up to {WEEK_JUDGE_MAX_WEEKS} weeks are judged at a time, oldest first.
+      </p>
+      <p>
+        A run of kept weeks lifts the track&apos;s share of its attributes: +{pct(keptWeekBonusPercent(1))}% after one, and
+        +{pct(keptWeekBonusPercent(fullAt))}% (the most) from {fullAt} in a row. Streak amplifiers never touch it.
+      </p>
+      <div className="rules-scroll">
+        <table className="rules-table">
+          <tbody>
+            {MP_ROWS.map((r) => (
+              <tr key={r.reason}>
+                <td className="b">{LIFE_MP_REASON_LABEL[r.reason]}</td>
+                <td className="num">
+                  <span className="cur">
+                    <CurrencyGlyph kind="mp" />
+                    {mpFigure(r.amount)}
+                  </span>
+                </td>
+                <td className="ink-2">
+                  {r.per}
+                  {r.note ? ` · ${r.note}` : ""}
+                  {(CAPPED_REASONS as readonly string[]).includes(r.reason) ? " · weekly cap" : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        At most {LIFE_MP_WEEK_CAP} MP a life week from {capped.slice(0, -1).join(", ")} and {capped[capped.length - 1]}{" "}
+        together: Short goals take their share first, then kept tracks, then Full days.
+      </p>
+      <div className="rules-scroll">
+        <table className="rules-table">
+          <tbody>
+            <tr>
+              <th scope="col" className="t-eyebrow">
+                Goal
+              </th>
+              <th scope="col" className="t-eyebrow">
+                States
+              </th>
+              <th scope="col" className="t-eyebrow">
+                Pays
+              </th>
+              <th scope="col" className="t-eyebrow">
+                Set at least
+              </th>
+              <th scope="col" className="t-eyebrow">
+                Paying at most
+              </th>
+              <th scope="col" className="t-eyebrow">
+                Depth
+              </th>
+            </tr>
+            {Object.values(GOAL_RULES).map((g) => (
+              <tr key={g.horizon}>
+                <td className="b">{g.name}</td>
+                <td className="num">
+                  <span className="cur">
+                    <CurrencyGlyph kind="mp" />
+                    {mpFigure(g.stated)}
+                  </span>
+                </td>
+                <td className="ink-1">{g.binary ? "when finished" : `× progress, from ${pct(g.bar * 100)}%`}</td>
+                <td className="num">
+                  {g.minLifetimeDays} {g.minLifetimeDays === 1 ? "day" : "days"}
+                </td>
+                <td className="ink-1">
+                  {g.maxPaying} {g.window === "LIFE_WEEK" ? "a life week" : `in ${g.windowDays} days`}
+                </td>
+                <td className="num">+{g.depth}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        A goal states its MP when it is set, and that figure never changes. Closing is final: a goal closed short of its bar
+        pays nothing and is carried, never owed. Goal depth is capped at {GOAL_DEPTH_CAP} per track. Goals never pay XP.
+      </p>
+    </Card>
+  );
+}
 
 const EXAMPLE_BASE: PriceInput = {
   band: "STANDARD",
@@ -423,6 +621,8 @@ export default function RulesPage() {
           </p>
           <Samples head={["rung", "from"]} rows={HABIT_RUNGS.map((r) => [r.rung, f2(r.from)])} />
         </Card>
+
+        <TracksRules />
 
         <Card title="Not yet in force" sub="Arrives with compulsory duties; nothing is charged today">
           <p>

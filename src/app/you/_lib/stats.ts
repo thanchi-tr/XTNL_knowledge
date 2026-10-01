@@ -1,16 +1,40 @@
 /**
  * You › Stats reads (server only): the old Overview and Dashboard merged into
  * one honest set of figures. Everything is counted from real rows.
+ *
+ * Once life counts, the character level includes the track levels (as on
+ * the sheet and in the shell), and `life` carries the track levels at each
+ * judged Sunday and the kept-weeks grid, both read from the WEEK rows the
+ * judge wrote (life-tracks.ts levelSeries, keptWeekGrid). Before launch
+ * `life.launched` is false and nothing life-shaped is read or shown.
  */
 import { isDue } from "@/lib/due";
 import { getCapitalBalance, pendingDividend } from "@/lib/capital";
+import { todayKey } from "@/lib/life-day";
+import { keptWeekGrid, levelSeries, notLaunchedView, type WeekMark } from "@/lib/life-tracks";
+import { loadLifeLedger, loadLifeTracks } from "@/lib/life-tracks-server";
+import { TRACKS } from "@/lib/life-types";
 import { loadFieldTree } from "@/lib/queries";
 import { loadProgression } from "@/lib/skill-effects";
 import { getSkill } from "@/lib/skill-pool";
 import { getGhostLevelsFromDaysAgo } from "@/lib/snapshot";
 import { getDailyStreak } from "@/lib/streak";
 import { domainLevelProgress, MASTERY_LEVEL } from "@/lib/xp";
-import { characterRaw, titleDistance, type TitleDistance } from "@/components/home/sheet-math";
+import { characterRaw, shortDayLabel, titleDistance, type TitleDistance } from "@/components/home/sheet-math";
+import type { TrackSeries } from "@/components/home/TrackCharts";
+
+/** Judged weeks the Stats charts cover at most. */
+export const STATS_WEEKS = 12;
+
+export interface LifeStats {
+  launched: boolean;
+  /** Duty, Craft, Body, Care: the integer level at each of the last ≤ 12 judged Sundays, oldest first. */
+  series: TrackSeries[];
+  /** The last ≤ 12 judged weeks: one label per column ('28 Sep', the Monday) and the same columns per track. */
+  kept: { labels: string[]; rows: { name: string; weeks: WeekMark[] }[] };
+}
+
+const NO_LIFE: LifeStats = { launched: false, series: [], kept: { labels: [], rows: [] } };
 
 export interface StatsData {
   level: number;
@@ -29,6 +53,7 @@ export interface StatsData {
   questionTypes: { name: string; count: number }[];
   dividend: { amount: number; perHour: number; capped: boolean; balance: number };
   hasGhost: boolean;
+  life: LifeStats;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -42,17 +67,42 @@ const TYPE_LABEL: Record<string, string> = {
   DIAGRAM: "Diagram",
 };
 
+/** The life charts' data, from the cached ledger. A failed read hides them rather than draw an empty history. */
+async function loadLifeStats(userId: string): Promise<LifeStats> {
+  try {
+    const ledger = await loadLifeLedger(userId);
+    const series = levelSeries(ledger, STATS_WEEKS);
+    const grid = keptWeekGrid(ledger, STATS_WEEKS);
+    return {
+      launched: true,
+      series: series.tracks.map((t) => ({ name: t.name, points: t.levels })),
+      kept: { labels: grid.weeks.map((w) => shortDayLabel(w.monday)), rows: grid.rows.map((r) => ({ name: r.name, weeks: r.weeks })) },
+    };
+  } catch (err) {
+    console.error("[stats] life ledger unavailable", err);
+    return NO_LIFE;
+  }
+}
+
 export async function loadStats(userId: string, now = new Date()): Promise<StatsData> {
-  const [tree, progression, ghosts, streak, balance] = await Promise.all([
+  const [tree, progression, ghosts, streak, balance, life] = await Promise.all([
     loadFieldTree(),
     loadProgression(userId),
     getGhostLevelsFromDaysAgo(7),
     getDailyStreak(userId).catch(() => null),
     getCapitalBalance(userId).catch(() => 0),
+    loadLifeTracks(userId).catch(() => notLaunchedView(todayKey(now))),
   ]);
-  const pending = await pendingDividend(userId, progression.activeSkills).catch(() => ({ amount: 0, perHour: 0, capped: false, hoursAccrued: 0 }));
+  const [pending, lifeStats] = await Promise.all([
+    pendingDividend(userId, progression.activeSkills).catch(() => ({ amount: 0, perHour: 0, capped: false, hoursAccrued: 0 })),
+    life.launched ? loadLifeStats(userId) : Promise.resolve(NO_LIFE),
+  ]);
 
-  const raw = characterRaw(tree.map((f) => f.level));
+  // Track levels in TRACKS order, as the shell and the sheet sum them.
+  const raw = characterRaw(
+    tree.map((f) => f.level),
+    TRACKS.map((t) => life.levels[t])
+  );
   const level = Math.floor(raw);
   const ultimates = progression.ownedCodes.filter((c) => getSkill(c)?.rank === "ULTIMATE").length;
   const distance = titleDistance(raw, ultimates > 0);
@@ -105,5 +155,6 @@ export async function loadStats(userId: string, now = new Date()): Promise<Stats
     questionTypes: [...types.entries()].map(([k, n]) => ({ name: TYPE_LABEL[k] ?? k, count: n })).sort((a, b) => b.count - a.count),
     dividend: { amount: pending.amount, perHour: pending.perHour, capped: pending.capped, balance },
     hasGhost: ghosts.length > 0,
+    life: lifeStats,
   };
 }

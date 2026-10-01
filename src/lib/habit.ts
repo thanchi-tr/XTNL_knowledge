@@ -66,8 +66,13 @@ const KEEPS = new Set(["DONE", "DONE_LATE"]);
 const HOLDS = new Set(["DONE_MVV", "SKIPPED", "EXCUSED"]);
 const BREAKS = new Set(["MISSED", "WRITTEN_OFF"]);
 
-/** One day's instances read together: any kept slot keeps the day; an UNDONE row is as if absent. */
-function dayOutcome(statuses: readonly string[] | undefined): Exclude<Outcome, "pending"> | null {
+/**
+ * One day's instances read together: any kept slot keeps the day; an UNDONE
+ * row is as if absent. kept: DONE, DONE_LATE; held: DONE_MVV, SKIPPED,
+ * EXCUSED; missed: MISSED, WRITTEN_OFF; null when nothing counts. The habits
+ * and the week judge (life-weeks.ts, DUTY's occurrences) share this one rule.
+ */
+export function instanceOutcome(statuses: readonly string[] | undefined): Exclude<Outcome, "pending"> | null {
   if (!statuses) return null;
   if (statuses.some((s) => KEEPS.has(s))) return "kept";
   if (statuses.some((s) => HOLDS.has(s))) return "held";
@@ -109,7 +114,7 @@ export function outcomesOf(
   const window = opts.recordWindowDays ?? RECORD_WINDOW_DAYS;
   const days = byDay(instances);
   return occurrencesBetween(rule, startDay, windowStart(startDay, today, opts.since), today).map((day) => {
-    const o = dayOutcome(days.get(day));
+    const o = instanceOutcome(days.get(day));
     return { day, outcome: o ?? (daysBetween(day, today) <= window ? "pending" : "missed") };
   });
 }
@@ -140,7 +145,7 @@ function periodsOf(rule: Rule & { kind: "TARGET" }, startDay: DayKey, today: Day
     let kept = 0;
     let held = 0;
     for (let d = p.start; d <= p.end && d <= today; d = addDays(d, 1)) {
-      const o = dayOutcome(days.get(d));
+      const o = instanceOutcome(days.get(d));
       if (o === "kept") kept += 1;
       else if (o === "held") held += 1;
     }
