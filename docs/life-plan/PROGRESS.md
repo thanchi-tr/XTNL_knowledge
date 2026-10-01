@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T11:54+1000 — interactive session: capture-build AND m5-phase-a workflows running until 2026-10-01T16:54+1000
+    HEARTBEAT: 2026-10-01T11:56+1000 — interactive session: capture-build running until 2026-10-01T15:56+1000; M5 PAUSED until capture is pushed (user request)
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -88,3 +88,4 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — Capture spec saved to docs/life-plan/capture.md; build workflow `capture-build` launched.
 - 2026-10-01 — M5 refitted for "no M2/M3/M4" (docs/life-plan/m5-refit.md). Phase A launched in parallel with the capture build on disjoint files (workflow m5-phase-a).
 - RESUME NOTE (capture + M5 phase A, running in parallel): capture-build = run wf_9b001cf4-d7c (journal: C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_9b001cf4-d7c/journal.jsonl); m5-phase-a = run wf_c899e331-f74 (journal: .../subagents/workflows/wf_c899e331-f74/journal.jsonl). Scripts in .../workflows/scripts/. If cut off: read the journals, inspect git status, rerun only missing lanes. Then: fix reviews, tsc/lint/life:check/ui:check/balance:horizon/next build, ui-audit (MSYS_NO_PATHCONV=1 node scripts/ui-audit.mjs --base http://localhost:3100), browser pass on the rehearsal server, commit capture; then M5 phase B (Today integration), launch (LIFE_LAUNCH_DAY via scripts/life-launch.ts, dry-run first), commit; then M2.
+- 2026-10-01 — User: "push the change before proceed to milestone 5". M5 phase A workflow stopped before it wrote any file (lane 0 had just started). Order now strictly: finish + verify + push capture, THEN resume M5 (rerun m5-phase-a from its script).
