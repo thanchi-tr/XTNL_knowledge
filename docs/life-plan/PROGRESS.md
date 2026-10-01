@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T11:16+1000 — interactive session: capture-build workflow running until 2026-10-01T16:16+1000 (contracts → parser → server+ideas → sheet → 2 reviewers)
+    HEARTBEAT: 2026-10-01T11:54+1000 — interactive session: capture-build AND m5-phase-a workflows running until 2026-10-01T16:54+1000
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -46,7 +46,10 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
   - [x] Celebrations migration rehearsed locally, applied to Supabase (20261010000000_celebrations)
   - [x] Browser-verified; committed and pushed
 - [ ] Improve the capture feature — spec `capture.md` (19 items, no migration)
-- [ ] M5
+- [ ] M5 — refitted spec `m5-refit.md` (no migration; inert until LIFE_LAUNCH_DAY is set)
+  - [ ] Phase A (contract + 4 lanes on files the capture build does not own) + 2 reviewers
+  - [ ] Phase B (Today integration: tasks.ts, today-board.ts, GoalsStrip, TodayBoard) after the capture build merges
+  - [ ] Launch (LIFE_LAUNCH_DAY), rehearsal, browser pass, commit
 - [ ] M2
 - [~] M3 — dropped by the user
 - [~] M4 — dropped by the user
@@ -83,3 +86,4 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — Redesign finished: 6 fix lanes (85 items) + lead cleanup (retired AppNav/Logo/aliases, dead files, footer key warning). Gates: life:check, ui:check (shell 169, contrast 204/204, review, celebration, you, study-side), tsc, lint, next build, ui-audit 121/121 at 344/375/932/1440 on the rehearsal server.
 - 2026-10-01 — Capture design done (workflow capture-improve-design, run wf_13df9456-534; journal under subagents/workflows/wf_13df9456-534). Next: build it.
 - 2026-10-01 — Capture spec saved to docs/life-plan/capture.md; build workflow `capture-build` launched.
+- 2026-10-01 — M5 refitted for "no M2/M3/M4" (docs/life-plan/m5-refit.md). Phase A launched in parallel with the capture build on disjoint files (workflow m5-phase-a).
