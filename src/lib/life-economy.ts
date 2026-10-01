@@ -423,7 +423,7 @@ export function isMeasuredGoalMetric(metric: string | null | undefined): boolean
  * commit only (a code constant survives a 'life' reset; a LifeSettings
  * stamp would not).
  */
-export const LIFE_LAUNCH_DAY = null as DayKey | null;
+export const LIFE_LAUNCH_DAY = "2026-10-01" as DayKey | null;
 
 /** Outside production, a valid 'YYYY-MM-DD' here overrides LIFE_LAUNCH_DAY (the rehearsal server). */
 export const LIFE_LAUNCH_DAY_ENV = "XTNL_LIFE_LAUNCH_DAY";
