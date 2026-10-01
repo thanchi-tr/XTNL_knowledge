@@ -21,6 +21,8 @@ interface Props {
   onProgress: (goalId: string) => void;
   /** The frozen payout per goal, once goals pay (M5). Without it the line says goals pay through their steps. */
   payoutOf?: (goalId: string) => GoalPayout | null;
+  /** A goal just captured: outlined for a moment, and said (TodayBoard finds it by data-template-id). */
+  justAdded?: string | null;
 }
 
 const HORIZON_ORDER: Horizon[] = ["SHORT", "MID", "LONG"];
@@ -34,7 +36,7 @@ const HORIZON_LABEL: Record<Horizon, string> = { SHORT: "Short", MID: "Mid", LON
  * habits read "82% kept (28 d)": context, not progress. Goals pay nothing
  * of their own yet; their steps do, and the line says which.
  */
-export function GoalsStrip({ goals, busy, onProgress, payoutOf }: Props) {
+export function GoalsStrip({ goals, busy, onProgress, payoutOf, justAdded = null }: Props) {
   const list = HORIZON_ORDER.flatMap((h) => goals[h]);
 
   return (
@@ -49,10 +51,14 @@ export function GoalsStrip({ goals, busy, onProgress, payoutOf }: Props) {
         ) : (
           list.map((g) => {
             const pay = payoutOf?.(g.template.id) ?? null;
+            const fresh = justAdded === g.template.id;
             return (
-              <div key={g.template.id} className="goal">
+              <div key={g.template.id} className="goal" data-template-id={g.template.id} data-just-added={fresh ? "1" : undefined}>
                 <div className="gh">
-                  <b>{g.template.title}</b>
+                  <b>
+                    {g.template.title}
+                    {fresh && <span className="sr-only">, just added</span>}
+                  </b>
                   <span>
                     {HORIZON_LABEL[g.horizon]}
                     {g.dueLabel ? ` · ${g.dueLabel}` : ""}

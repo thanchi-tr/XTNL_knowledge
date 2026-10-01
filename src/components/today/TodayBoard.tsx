@@ -8,6 +8,7 @@ import {
   applyOps,
   buildBoard,
   canUndo,
+  placeOf,
   projectRow,
   questOf,
   reflected,
@@ -22,6 +23,9 @@ import { fullDayInputOf, fullDayOf, type FullDayRingKind } from "@/lib/full-day"
 import { isTypingTarget } from "@/lib/capture-parse";
 import { announce, chime, mark } from "@/lib/celebrate";
 import type { T1Kind } from "@/lib/celebration-types";
+import type { PlaceLane } from "@/lib/life-types";
+import { motionLevel } from "@/lib/motion";
+import type { CapturedItem } from "@/app/actions/capture";
 import {
   againTask,
   archiveTask,
@@ -37,7 +41,7 @@ import {
   unarchiveTask,
   undoCompletion,
 } from "@/app/actions/tasks";
-import { openCapture } from "@/components/capture/events";
+import { CAPTURED_EVENT, openCapture } from "@/components/capture/events";
 import { presentAll } from "@/components/celebrate/stage";
 import { Button } from "@/components/ui/Button";
 import { Icon, Sigil } from "@/components/ui/Icon";
@@ -139,6 +143,15 @@ const serverNow = (): number => Date.now() + (clockSkew ?? 0);
 const firedMoments = new Set<string>();
 /** A day moment only follows a tap made this recently (never a refresh, never arrival). */
 const MOMENT_WINDOW_MS = 4000;
+
+/** How long the board looks for a capture's row (the refreshed props may land after the toast). */
+const SEEK_MS = 5000;
+/** How long a found capture stays outlined (and says 'just added'). */
+const JUST_ADDED_MS = 1600;
+/** Places that live inside the collapsed Anytime card: a capture there opens it. */
+const ANYTIME_PLACES: ReadonlySet<PlaceLane> = new Set<PlaceLane>(["anytime", "later", "upcoming"]);
+/** The flash link a capture toast's 'View' writes: /today#t-<templateId>. */
+const FLASH_HASH = /^#t-([A-Za-z0-9_-]{1,64})$/;
 
 function without<V>(record: Record<string, V>, key: string): Record<string, V> {
   const next = { ...record };
@@ -257,6 +270,101 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
   const closeReceipt = useCallback(() => setReceiptKey(null), []);
   const closeInbox = useCallback(() => setInboxOpen(false), []);
+
+  // ── A capture lands: open where it went, find its row, outline it ───────
+  //
+  // The sheet fires CAPTURED_EVENT with the server's CapturedItem (its
+  // `where` is today-board placeOf, the rule this board files by), and a
+  // toast's 'View' link elsewhere arrives as /today#t-<id>. Either way the
+  // board opens the place (Anytime for anytime, planned later and coming
+  // up; the Inbox row only flashes, its sheet stays shut), waits for the
+  // row to be drawn (the refreshed props can land after the toast; it gives
+  // up after SEEK_MS), scrolls it into view (smoothly only in Full motion)
+  // and outlines it for JUST_ADDED_MS, with 'just added' in its name.
+
+  /** A capture to find: its template id, and when the search began. */
+  const [seek, setSeek] = useState<{ id: string; at: number } | null>(null);
+  /** The template whose row (or goal) is outlined right now. */
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  /** A capture went to the Inbox: its row flashes. */
+  const [inboxFlash, setInboxFlash] = useState(false);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+
+  const showCaptured = useCallback((id: string, lane: PlaceLane | null) => {
+    if (lane === "inbox") {
+      setInboxFlash(true);
+      return;
+    }
+    if (lane && ANYTIME_PLACES.has(lane)) setAnytimeOpen(true);
+    setSeek({ id, at: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    const onCaptured = (e: Event) => {
+      const item = (e as CustomEvent<CapturedItem | undefined>).detail;
+      if (!item || typeof item.id !== "string") return;
+      showCaptured(item.id, item.where?.lane ?? null);
+    };
+    window.addEventListener(CAPTURED_EVENT, onCaptured);
+    return () => window.removeEventListener(CAPTURED_EVENT, onCaptured);
+  }, [showCaptured]);
+
+  // '#t-<id>' on arrival: flash that row, then drop the hash so a reload or Back never flashes again.
+  useEffect(() => {
+    const m = FLASH_HASH.exec(window.location.hash);
+    if (!m) return;
+    const raf = window.requestAnimationFrame(() => {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      showCaptured(m[1], null);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [showCaptured]);
+
+  // Look once the board has drawn: on every new board, and once Anytime opens.
+  useEffect(() => {
+    if (!seek) return;
+    const raf = window.requestAnimationFrame(() => {
+      const sel = `[data-template-id="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(seek.id) : seek.id}"]`;
+      const el = boardRef.current?.querySelector<HTMLElement>(sel);
+      if (el) {
+        el.scrollIntoView({ block: "nearest", behavior: motionLevel() === "full" ? "smooth" : "instant" });
+        setJustAdded(seek.id);
+        setSeek(null);
+        return;
+      }
+      // Not drawn yet. A '#t-' link names no place: once the data holds the
+      // template, open the place the board files it in.
+      const t = current.templates.find((x) => x.id === seek.id);
+      if (!t) return;
+      const lane = placeOf(t, current.today, current.instances.filter((i) => i.templateId === t.id), current.stats[t.id]?.lastDone ?? null).lane;
+      if (lane === "inbox") {
+        setInboxFlash(true);
+        setSeek(null);
+      } else if (ANYTIME_PLACES.has(lane)) {
+        setAnytimeOpen(true);
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [seek, current, anytimeOpen]);
+
+  // Give up on a row that never comes (archived meanwhile, or done earlier and off the board).
+  useEffect(() => {
+    if (!seek) return;
+    const t = window.setTimeout(() => setSeek((s) => (s && s.at === seek.at ? null : s)), Math.max(0, seek.at + SEEK_MS - Date.now()));
+    return () => window.clearTimeout(t);
+  }, [seek]);
+
+  useEffect(() => {
+    if (!justAdded) return;
+    const t = window.setTimeout(() => setJustAdded(null), JUST_ADDED_MS);
+    return () => window.clearTimeout(t);
+  }, [justAdded]);
+
+  useEffect(() => {
+    if (!inboxFlash) return;
+    const t = window.setTimeout(() => setInboxFlash(false), JUST_ADDED_MS);
+    return () => window.clearTimeout(t);
+  }, [inboxFlash]);
 
   /**
    * Sends one write whose optimistic op (if any) is already applied, and on
@@ -759,6 +867,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         }}
         onToggleReceipt={() => setReceiptKey((k) => (k === key ? null : key))}
         onMinimum={row.lane === "must" && row.template.mvv ? (from) => complete(row, { mvv: true }, from) : undefined}
+        justAdded={justAdded === row.template.id}
       >
         <TaskDrawer
           row={row}
@@ -876,7 +985,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
   return (
     <div className="page today-board cq-main">
-      <div className="board">
+      <div className="board" ref={boardRef}>
         <div className="c1">
           {dayEnded && !notice && (
             <div role="status" className="card today-note o1">
@@ -981,13 +1090,22 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
 
         <div className="c3">
           <div className="o9">
-            <GoalsStrip goals={board.goals} busy={busyGoals} onProgress={progressGoal} />
+            <GoalsStrip goals={board.goals} busy={busyGoals} onProgress={progressGoal} justAdded={justAdded} />
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
-            <button type="button" className="collapsed" onClick={() => setInboxOpen(true)} aria-haspopup="dialog">
+            <button
+              type="button"
+              className="collapsed"
+              onClick={() => setInboxOpen(true)}
+              aria-haspopup="dialog"
+              data-just-added={inboxFlash ? "1" : undefined}
+            >
               <Icon name="inbox" className="ink-1" />
-              <b>Inbox</b>
+              <b>
+                Inbox
+                {inboxFlash && <span className="sr-only">, a capture just landed here</span>}
+              </b>
               <span>{board.inbox.length > 0 ? `${board.inbox.length} to sort` : "empty"}</span>
               <Icon name="chev" size={16} className="ink-2" />
             </button>
@@ -1006,13 +1124,32 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
                 {anytimeOpen && (
                   <div id="anytime-rows" className="anytime-rows">
                     {board.anytime.map(renderRow)}
+                    {board.laterRows.length > 0 && (
+                      <div className="today-upcoming">
+                        <p className="t-eyebrow">Planned later</p>
+                        <ul>
+                          {board.laterRows.map((l) => (
+                            <li key={l.templateId} data-template-id={l.templateId} data-just-added={justAdded === l.templateId ? "1" : undefined}>
+                              <span className="today-upcoming-title">
+                                {l.title}
+                                {justAdded === l.templateId && <span className="sr-only">, just added</span>}
+                              </span>
+                              <span className="today-upcoming-day">{l.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {upcoming.length > 0 && (
                       <div className="today-upcoming">
                         <p className="t-eyebrow">Coming up</p>
                         <ul>
                           {upcoming.map((u) => (
-                            <li key={u.templateId}>
-                              <span className="today-upcoming-title">{u.title}</span>
+                            <li key={u.templateId} data-template-id={u.templateId} data-just-added={justAdded === u.templateId ? "1" : undefined}>
+                              <span className="today-upcoming-title">
+                                {u.title}
+                                {justAdded === u.templateId && <span className="sr-only">, just added</span>}
+                              </span>
                               <span className="today-upcoming-day">{u.label}</span>
                             </li>
                           ))}

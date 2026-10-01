@@ -5,6 +5,7 @@ import { loadDailyFocus } from "@/lib/daily-focus";
 import { loadProgression } from "@/lib/skill-effects";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/user";
+import { ideaDraftContent, validDraftId } from "@/lib/idea-filing";
 import { AddIdeaForm, type AddFormField } from "@/components/AddIdeaForm";
 import { Chip } from "@/components/ui/Chip";
 
@@ -16,26 +17,29 @@ export const metadata: Metadata = { title: "New idea" };
 const COMPOSITION_PREVIEW_COUNT = 4;
 
 interface IdeaDraft {
+  /** The IDEA_DRAFT row: creating the idea archives it (the draftId rule in ideas.ts). */
+  id: string;
   question: string;
   answer: string;
 }
 
 /**
  * An 'idea: …' line from the capture sheet, waiting in the Inbox. The line
- * may carry its answer after '::' ('why do bonds fall :: rates rise'), the
- * form M3's one-box capture will also write. Fails soft to no draft: a
- * missing or foreign id just opens the empty form.
+ * may carry its answer after '::' ('why do bonds fall :: rates rise'), which
+ * capture stores as the note; ideaDraftContent also reads drafts written
+ * before that. Fails soft to no draft: a missing, archived or foreign id
+ * just opens the empty form.
  */
-async function loadIdeaDraft(id: string | undefined): Promise<IdeaDraft | null> {
-  if (!id || id.length > 64) return null;
+async function loadIdeaDraft(param: string | undefined): Promise<IdeaDraft | null> {
+  const id = validDraftId(param);
+  if (!id) return null;
   try {
     const row = await prisma.taskTemplate.findFirst({
       where: { id, userId: getCurrentUserId(), kind: "IDEA_DRAFT", archivedAt: null },
-      select: { title: true, note: true },
+      select: { id: true, title: true, note: true, rawText: true },
     });
     if (!row) return null;
-    const [question, ...rest] = row.title.split(/\s*::\s*/);
-    return { question: question.trim(), answer: (row.note ?? rest.join(" :: ")).trim() };
+    return { id: row.id, ...ideaDraftContent(row) };
   } catch {
     return null;
   }
@@ -57,7 +61,9 @@ async function loadFocus() {
  * Study › New idea (the Form template, max 640). Question first; Field and
  * Domain are guessed from it; Advanced holds the format and the collection;
  * a sticky Check first / Create. A quick-capture draft (?draft=<id>) fills
- * the default Short fields.
+ * the default Short fields, and creating the idea clears it from the Inbox
+ * (the form passes its id; the server archives it). Without a draft, the
+ * form fills itself from the capture sheet's handoff or its own autosave.
  *
  * This page stays off the `main` container (no cq-main): the word-hint strip
  * is a fixed layer rendered inside the form.
@@ -113,7 +119,7 @@ export default async function AddIdeaPage({
             {draft.answer && <span className="ink-2"> · {draft.answer}</span>}
           </p>
           <p className="t-meta" style={{ margin: 0 }}>
-            Filled in below. The line stays in your Inbox until you drop it there.
+            Creating this idea clears it from your Inbox.
           </p>
         </div>
       )}
@@ -122,6 +128,7 @@ export default async function AddIdeaPage({
         vocabulary={vocabulary}
         initialQuestion={draft?.question ?? ""}
         initialAnswer={draft?.answer ?? ""}
+        draftId={draft?.id}
         focus={focus}
       />
     </div>

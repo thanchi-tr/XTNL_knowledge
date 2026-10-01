@@ -1,10 +1,21 @@
 @layer theme, base, components, art, effects, utilities;
-/* ═══ QUICK CAPTURE (L1, redesign "Sigil & Slate") ═══════════════════════
+/* ═══ QUICK CAPTURE (redesign "Sigil & Slate"; capture improvement, lane B) ═══
    The one-line capture sheet (components/capture/QuickCapture.tsx),
    portalled to <body> under [data-capture-ui]. Built on the kit: the scrim
    is the kit's `.scrim.show`, the chips are the kit's quiet `.chip` and
    40 px `.chip.btn-chip`, the buttons are `.btn`, the toast is the app's
    one ToastDock. Only placement and the sheet's own furniture live here.
+
+   Two layouts (data-layout):
+   - "pinned": under 600 px, and any coarse-pointer sheet. A column pinned
+     to the top of the keyboard (--kb): the header, then a scroll region
+     (the 'Added here' list, the status, unsent lines, the parse chips, the
+     warning, Feeds) that takes all the growth, then a fixed region (the
+     insert or suggestion row, the 52 px line, the 44 px actions, one line
+     of hint). Nothing below the line changes height, so the line never
+     moves while chips appear (the Fold's cover screen, keyboard up).
+   - "panel": a fine pointer from 600 — the centred 560 panel in the
+     mockup's order (line, chips, buttons).
 
    Layers: above any other sheet (a capture can open over the inbox), below
    the fx layer and the ceremony. Motion: one short rise on open (transform
@@ -14,11 +25,8 @@
 @layer components {
 
 /* ── Scrim and sheet ─────────────────────────────────────────────────────
-   A bottom sheet on phones, lifted by the on-screen keyboard (--kb, from
-   visualViewport) so the line and its chips sit just above the keys; a
-   centred 560 panel from 600. Never a transform at rest: the floating
-   word-hint strip is position: fixed, and a transformed ancestor would
-   become its containing block. */
+   Never a transform at rest: a transformed ancestor would become the
+   containing block of anything fixed inside it. */
 /* The portal's root: it only carries [data-capture-ui] over the scrim and the sheet. */
 .capture-root { display: contents; }
 .scrim.capture-backdrop { z-index: calc(var(--z-sheet) + 2); }
@@ -29,11 +37,14 @@
   left: 0;
   right: 0;
   bottom: var(--kb, 0px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   max-height: calc(100vh - var(--kb, 0px) - 16px);
   max-height: calc(100dvh - var(--kb, 0px) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px max(16px, env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: 8px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: var(--overlay);
   color: var(--ink-0);
   border-radius: var(--r-sheet) var(--r-sheet) 0 0;
@@ -43,12 +54,34 @@
 }
 /* The keyboard is up: the home-indicator inset is under the keys, not here. */
 .capture-sheet[data-kb="1"] { padding-bottom: 12px; }
-/* The word-hint strip floats against the keyboard, which is where this
-   sheet's bottom edge is; room is made so it sits below the chips, not on them. */
-.capture-sheet[data-hints="1"] { padding-bottom: 60px; }
-/* The in-flow word-hint strip (WordHintBar, components/WordComplete.css's .wc-bar) sits
-   above the line: room above it, none below (the line has its own margin). */
-.capture-sheet .wc-bar:not([data-floating]) { margin: 10px 0 0; }
+.capture-sheet > .grabber { flex: none; margin-bottom: 0; }
+.capture-sheet > .sheet-h { flex: none; }
+
+/* Pinned: only the region above the line scrolls; the line and its buttons stay put. */
+.capture-sheet[data-layout="pinned"] { gap: 0; overflow: hidden; }
+.capture-sheet[data-layout="pinned"] > .grabber { margin-bottom: 8px; }
+.capture-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+}
+.capture-fixed {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+@media (max-width: 599px) {
+  /* The cover screen has no room for the subtitle; the dialog keeps it as its description. */
+  .capture-sheet .sheet-h .sub { display: none; }
+}
 
 @media (min-width: 600px) {
   .capture-sheet {
@@ -62,16 +95,24 @@
     border: 1px solid var(--line-2);
   }
   .capture-sheet .grabber { display: none; }
+  /* The unfolded Fold with its keyboard up: still the 560 panel, sitting on the keys. */
+  .capture-sheet[data-kb="1"] {
+    top: auto;
+    bottom: calc(var(--kb, 0px) + 12px);
+    max-height: calc(100vh - var(--kb, 0px) - 24px);
+    max-height: calc(100dvh - var(--kb, 0px) - 24px);
+  }
 }
 
 .capture-count { flex: none; align-self: center; }
 
 /* ── The line: 52 px, 16 px text (no zoom on phones) ─────────────────── */
+.capture-form { margin: 0; }
 .capture-input {
   display: block;
   width: 100%;
   min-height: 52px;
-  margin-top: 12px;
+  margin: 0;
   padding: 0 14px;
   border-radius: 14px;
   border: 1px solid var(--line-ctl);
@@ -82,8 +123,82 @@
 .capture-input::placeholder { color: var(--ink-2); }
 .capture-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
+/* 'Editing “Gym legs” · Cancel', above the line while an edit is open. */
+.capture-editing {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 40px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ink-1);
+}
+.capture-editing-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── The insert row (and the suggestions that share its slot) ─────────────
+   One row of 40 px quiet chips that scrolls sideways and never wraps, so it
+   is always one row tall; a ▾ chip swaps the row for its options. The
+   scrollbar is hidden, so an edge with chips past it fades (InsertRow sets
+   data-fade while the row overflows). */
+.capture-insert {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.capture-insert::-webkit-scrollbar { display: none; }
+.capture-insert[data-fade="end"] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.capture-insert[data-fade="start"] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 24px), transparent);
+}
+.capture-insert[data-fade="both"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+/* 40 px wide at the least (the icon-only back chip), its content centred. */
+.capture-ins { flex: none; min-width: 40px; max-width: 240px; justify-content: center; text-transform: none; }
+.capture-ins:disabled { cursor: default; color: var(--ink-2); }
+.capture-ins-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.capture-ins svg.i.capture-ins-chev { width: 12px; height: 12px; transform: rotate(90deg); color: var(--ink-2); }
+.capture-ins-eyebrow {
+  flex: none;
+  font: 600 12px/16px var(--font-ui);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+/* The Fold's cover screen: the ▾ glyphs go (aria-expanded still says it is a menu), so more chips fit. */
+@media (max-width: 399px) {
+  .capture-ins svg.i.capture-ins-chev { display: none; }
+}
+
+/* An idea line keeps the player's word hints in this slot, in flow and with
+   their height reserved: the strip never floats over the keys here. */
+.capture-hints { min-height: 46px; }
+.capture-sheet .wc-bar,
+.capture-sheet .wc-bar:not([data-floating]) { margin: 0; }
+.capture-sheet .wc-bar[data-floating="1"] {
+  position: static;
+  padding: 0;
+  background: none;
+  border-top: 0;
+  box-shadow: none;
+}
+
 /* ── Parse chips: one dialect, all quiet ──────────────────────────────── */
-.capture-chips { margin-top: 12px; }
+.capture-chips { display: flex; flex-direction: column; gap: 8px; }
 .capture-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -102,38 +217,86 @@ button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
 /* 'Must' is told apart by shape: the ink diamond of the Must lane. */
 .capture-must { width: 8px; height: 8px; transform: rotate(45deg); border: 1.5px solid currentColor; border-radius: 1.5px; flex: none; }
 .capture-grade { color: var(--ink-1); cursor: default; min-height: 40px; }
+button.capture-grade { cursor: pointer; }
 
-.capture-warning { margin-top: 8px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
+/* A Must with no day: the line, then the four ways to give it one. */
+.capture-warning { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 18px; color: var(--ink-0); }
+.capture-warning p { margin: 0; }
+.capture-fixes {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.capture-fixes::-webkit-scrollbar { display: none; }
 
 .capture-feeds {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 12px;
-  margin-top: 10px;
+  margin: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--ink-1);
 }
 .capture-grade-basis { font-size: 12px; color: var(--ink-2); }
 
-.capture-note { margin-top: 8px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
-.capture-error { margin-top: 8px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-0); }
+.capture-note { margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+.capture-error { margin: 0; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-0); }
 
 /* ── Actions ──────────────────────────────────────────────────────────── */
-.capture-acts { display: flex; gap: 8px; margin-top: 16px; }
+.capture-acts { display: flex; gap: 8px; }
 .capture-acts .capture-save { flex: 1; }
+/* The rows' quiet buttons (Edit, Undo, Retry, Dismiss): 40 px. */
+.btn.capture-row-btn { min-height: 40px; padding: 0 10px; }
 
-/* Lines the server never confirmed: kept, with a way to resend. */
+/* ── 'Added here' and the paste preview ───────────────────────────────── */
+.capture-added { display: flex; flex-direction: column; gap: 4px; }
+.capture-added-h { margin: 0; }
+.capture-added-list,
+.capture-paste-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.capture-added-row,
+.capture-paste-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 2px 2px 2px 12px;
+  border-radius: 12px;
+  background: var(--sunken);
+  border: 1px solid var(--line-1);
+}
+.capture-added-row[data-removed="1"] { background: transparent; }
+.capture-added-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.capture-added-title { font: 600 14px/18px var(--font-ui); color: var(--ink-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-added-meta { font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-added-gone { color: var(--ink-1); }
+.capture-added-acts { flex: none; display: flex; }
+.capture-added-more { align-self: flex-start; }
+.capture-paste { display: flex; flex-direction: column; gap: 8px; }
+.capture-paste-h { margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); }
+
+/* Lines not confirmed yet: waiting to retry on their own, or failed with the server's reason. */
 .capture-failed {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  margin: 12px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 .capture-failed li {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
   border-radius: 12px;
@@ -146,7 +309,6 @@ button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
 
 /* The save toast, while the sheet is open: a status line inside it. */
 .capture-status {
-  margin-top: 12px;
   padding: 4px 4px 4px 12px;
   border-radius: 12px;
   font-size: 14px;
@@ -158,33 +320,58 @@ button.capture-chip:focus-visible .capture-chip-x { color: var(--ink-0); }
 .capture-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .capture-status-head { color: var(--ink-0); font-weight: 600; }
 
-/* 'Gym legs · Mon · Thu · compulsory · ≈ 21', in the sheet and in the dock. */
-.capture-toast-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
-.capture-toast-line > * + *::before { content: "·"; padding-right: 6px; color: var(--ink-2); font-weight: 400; }
-.capture-toast-line > .sr-only::before { content: none; }
+/* 'Gym legs → Habits · next Mon · ≈ 21 · Edit', in the sheet and in the dock.
+   The '·' is its own aria-hidden span, outside every link and button. */
+.capture-toast-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.capture-toast-sep { color: var(--ink-2); font-weight: 400; }
 .capture-toast-title { color: var(--ink-0); font-weight: 600; }
+.capture-toast-act { font-weight: 600; }
 
-/* ── Footer: the grammar, the keys, the full idea form ────────────────── */
-.capture-foot { margin-top: 12px; }
-.capture-legend { font: 500 12px/1.6 var(--font-mono); color: var(--ink-2); margin-bottom: 6px; }
+/* ── Footer: one line of hint, and the full idea form ─────────────────── */
+.capture-foot { display: flex; flex-direction: column; gap: 4px; }
+.capture-legend {
+  margin: 0;
+  font: 500 12px/1.6 var(--font-mono);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .capture-foot-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 4px 12px;
+  gap: 12px;
+  min-height: 40px;
   font-size: 13px;
   color: var(--ink-2);
 }
-/* A key hint is noise on a touch screen. */
-@media (hover: none), (max-width: 599px) {
-  .capture-keys { display: none; }
+.capture-keys { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-idea-link { flex: none; }
+
+/* ── The + button's dot: lines waiting to save (QuickCapture sets the
+   attribute; each capture button is described by #capture-unsent). Static. */
+html[data-capture-unsent] :is(.tab-plus, .r-plus, .sb-capture) { position: relative; }
+html[data-capture-unsent] :is(.tab-plus, .r-plus, .sb-capture)::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-0);
+  box-shadow: 0 0 0 2px var(--bar);
+  pointer-events: none;
 }
+html[data-capture-unsent] .tab-plus::after { top: 4px; right: calc(50% - 32px); }
+html[data-capture-unsent] .r-plus::after { top: 2px; right: 8px; }
+html[data-capture-unsent] .sb-capture::after { top: -3px; right: -3px; }
 
 @keyframes capture-rise {
   from { opacity: 0; transform: translateY(12px); }
   /* `none`, not translateY(0): a transform left on the sheet would make it
-     the containing block for the fixed word-hint strip. */
+     the containing block for anything fixed inside it. */
   to { opacity: 1; transform: none; }
 }
 @keyframes capture-fade {

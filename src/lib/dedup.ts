@@ -1,6 +1,7 @@
 import type { QuestionType } from "@prisma/client";
 import { prisma } from "./prisma";
-import { embedText, synthesizeNodeData, synthesizeEnrichment, type SynthesizedNodeData } from "./gemini";
+import { embedText, synthesizeNodeData, synthesizeEnrichment, withModelTimeout, type SynthesizedNodeData } from "./gemini";
+import { ENRICH_FAILED, IDEA_SYNTH_TIMEOUT_MS, modelOr, type IdeaActionError } from "./idea-filing";
 import { toVectorLiteral } from "./vector";
 import { SIMILARITY_MERGE_MIN, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN, SIMILARITY_NOVELTY_MAX } from "./xp";
 import { cardTextFromStored, judge, type CardText, type Neighbour, type NoveltyVerdict, type Relation } from "./novelty";
@@ -211,9 +212,11 @@ export async function previewCandidate(
   fieldId: string,
   card: CardText,
   contentText: string,
-  mergeThreshold = SIMILARITY_MERGE_MIN
+  mergeThreshold = SIMILARITY_MERGE_MIN,
+  /** A vector the caller already paid for (previewIdea embeds once, with a deadline). */
+  precomputed?: number[]
 ): Promise<CandidatePreview> {
-  const embedding = await embedText(contentText);
+  const embedding = precomputed ?? (await embedText(contentText));
   const { neighbours, elsewhere } = await neighbourhood(fieldId, embedding);
   const verdict = verdictFor(card, neighbours, elsewhere, mergeThreshold);
   const named = new Map([...(verdict.match ? [verdict.match] : []), ...verdict.also].map((m) => [m.id, m]));
@@ -279,12 +282,15 @@ export async function analyzeCandidate(
   };
 
   if (verdict.action === "CREATE_NEW_NODE" || !target) {
-    const node = await synthesizeNodeData(fieldName, contentText);
+    // The branch is already decided, so synthesis only writes prose: when it
+    // fails or runs past its deadline the node is filed without it (the
+    // Idea's title, premise and prompt are nullable) rather than lost.
+    const node = await modelOr(() => synthesizeNodeData(fieldName, contentText), IDEA_SYNTH_TIMEOUT_MS, () => null, "dedup: node synthesis");
     return {
       embedding,
       neighbours,
       targetDomainId: null,
-      decision: { ...base, action: "CREATE_NEW_NODE", target_node_id: null, node_data: toNodeData(node) },
+      decision: { ...base, action: "CREATE_NEW_NODE", target_node_id: null, node_data: node ? toNodeData(node) : null },
     };
   }
 
@@ -342,12 +348,16 @@ export interface EnrichResult {
  * Creates no Idea and moves no points: enrichment is explicitly not a new
  * node, so awarding XP for it would make re-submitting paraphrases a
  * scoring exploit.
+ *
+ * A failed or timed-out synthesis writes nothing and says so (ENRICH_FAILED),
+ * never "no new information": that would be the model's verdict, and there
+ * was none.
  */
 export async function enrichNode(
   targetNodeId: string,
   candidateText: string,
   similarity: number
-): Promise<EnrichResult> {
+): Promise<EnrichResult | IdeaActionError> {
   const target = await prisma.idea.findUniqueOrThrow({
     where: { id: targetNodeId },
     select: { id: true, corePremise: true, question: true },
@@ -356,7 +366,15 @@ export async function enrichNode(
   // Ideas predating the dedup pipeline have no corePremise; their question
   // text is the best available stand-in for what the node already asserts.
   const existingPremise = target.corePremise ?? target.question;
-  const payload = await synthesizeEnrichment(existingPremise, candidateText);
+  const synthesized = await withModelTimeout(
+    Promise.resolve().then(() => synthesizeEnrichment(existingPremise, candidateText)),
+    IDEA_SYNTH_TIMEOUT_MS
+  );
+  if (!synthesized.ok) {
+    console.warn(`dedup: enrichment synthesis failed (${synthesized.error}); nothing was written.`);
+    return ENRICH_FAILED;
+  }
+  const payload = synthesized.value;
 
   if (!payload) {
     return { status: "no_new_information", targetNodeId: target.id, payload: null };

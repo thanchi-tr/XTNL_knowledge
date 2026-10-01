@@ -619,6 +619,27 @@ list:
   recap screen, the "✨ Mathematics & Statistics cleared!" toast, and the
   Field pill dropping to 0 all fired correctly. DB reseeded afterward.
 
+## Quick capture from anywhere on Windows (prefill links)
+
+The capture sheet reads a `#capture=<text>` fragment on any route. It opens
+with the line filled in and its chips drawn, so you can check them, and it
+waits for your Enter: a link can never save anything by itself. The text goes
+in the fragment, so it never reaches a server log, and the sheet removes it
+from the address as soon as it has been read. A `+` reads as a space (`%2B`
+is a plus), the text is cut at 500 characters, and a line you are already
+typing is kept: the sheet then says the link's text wasn't used.
+
+Two ways to reach it without hunting for the app's tab (no server API, no
+token, no third-party account). Replace `<host>` with where the app runs:
+
+- **PowerToys Command Palette** (Win+Alt+Space): add a bookmark with the
+  alias `t` and the URL `https://<host>/today#capture={query}`. Then
+  Win+Alt+Space, `t`, the line, Enter (opens the sheet), Enter (saves).
+- **Chrome or Edge site search**: Settings → Search engine → Manage search
+  engines and site search → Add, with the shortcut `t` and the URL
+  `https://<host>/today#capture=%s`. Then Ctrl+L in any tab, `t`, Space or
+  Tab, the line, Enter (opens the sheet), Enter (saves).
+
 ## Environment variables
 
 See `.env.example`:

@@ -3,6 +3,7 @@ import { embedText, nameNewDomain } from "./gemini";
 import { assignDomainComposition, fieldComposition } from "./attribute-assignment";
 import { toVectorLiteral } from "./vector";
 import { SIMILARITY_NOVELTY_MAX, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN } from "./xp";
+import { IDEA_NAMING_TIMEOUT_MS, fallbackDomainName, modelOr } from "./idea-filing";
 
 interface NearestIdea {
   id: string;
@@ -123,9 +124,19 @@ export async function routeFromNearest(
  * (fieldId, name) is deliberate: a constraint would raise on collision and
  * fail the whole submission, losing what the user typed, whereas the worst
  * case here is an Idea filed under an existing Domain that fits it.
+ *
+ * Naming is the one model call here, and the Idea does not wait on it: when
+ * it fails or runs past 8 s, `fallbackDomainName` names the Domain from the
+ * synthesis tags (`tags`, when synthesis worked) or the content's first
+ * words, and that name goes through the same existing-Domain match.
  */
-export async function createNoveltyDomain(fieldId: string, fieldName: string, contentText: string) {
-  const name = await nameNewDomain(fieldName, contentText);
+export async function createNoveltyDomain(fieldId: string, fieldName: string, contentText: string, tags: readonly string[] = []) {
+  const name = await modelOr(
+    () => nameNewDomain(fieldName, contentText),
+    IDEA_NAMING_TIMEOUT_MS,
+    () => fallbackDomainName(fieldName, tags, contentText),
+    "domain-discovery: naming"
+  );
 
   const existing = await prisma.domain.findFirst({
     where: { fieldId, name: { equals: name, mode: "insensitive" } },

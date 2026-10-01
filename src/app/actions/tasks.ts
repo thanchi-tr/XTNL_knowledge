@@ -160,10 +160,15 @@ export async function undoCompletion(instanceId: string, opts?: TaskActionOption
   return run("undoCompletion", opts, (userId) => undoCompletionCore(userId, instanceId));
 }
 
-/** The capture toast's Undo: takes a capture back within ten minutes. */
-export async function undoCapture(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<null>> {
+/**
+ * The capture toast's Undo: takes a capture back within ten minutes.
+ * `code: 'gone'`: the capture no longer exists, or an edit replaced it and
+ * the new line still stands (the sheet says so instead of 'Removed').
+ */
+export async function undoCapture(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<null> & { code?: "gone" }> {
   if (!isId(templateId)) return noId();
-  return run("undoCapture", opts, (userId) => undoCaptureCore(userId, templateId));
+  // run() hands back the core's own object, so its 'gone' code reaches the sheet as typed here.
+  return run("undoCapture", opts, (userId) => undoCaptureCore(userId, templateId)) as Promise<TaskActionResult<null> & { code?: "gone" }>;
 }
 
 /** Skips today's occurrence of a repeating, non-compulsory task. 0 XP; its streak holds. */

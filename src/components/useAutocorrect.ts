@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { autocorrectAtCaret, isBoundaryKey, type Correction } from "@/lib/autocorrect";
+import { autocorrectAtCaret, isBoundaryKey, type AutocorrectProfile, type Correction } from "@/lib/autocorrect";
 
 /**
  * Wires `autocorrect.ts` to a text field.
@@ -15,6 +15,9 @@ import { autocorrectAtCaret, isBoundaryKey, type Correction } from "@/lib/autoco
  * Silent rewriting is the failure mode that makes autocorrect infuriating:
  * you notice the wrong word three sentences later with no idea where it
  * came from.
+ *
+ * `profile` picks what may change: 'prose' (the default, the Add form's
+ * study writing) or 'task' (the capture line: typos only, never a name).
  */
 export interface AutocorrectHandlers {
   onKeyUp: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
@@ -27,7 +30,8 @@ const MAX_RECENT = 3;
 
 export function useAutocorrect(
   onChange: (next: string) => void,
-  enabled = true
+  enabled = true,
+  profile: AutocorrectProfile = "prose"
 ): AutocorrectHandlers {
   const [recent, setRecent] = useState<Correction[]>([]);
   // Undo (Ctrl+Z) restores the pre-correction text and would otherwise be
@@ -50,7 +54,7 @@ export function useAutocorrect(
 
       const el = e.currentTarget;
       const caret = el.selectionStart ?? el.value.length;
-      const result = autocorrectAtCaret(el.value, caret);
+      const result = autocorrectAtCaret(el.value, caret, { profile });
       if (result.text === el.value) return;
 
       el.value = result.text;
@@ -61,7 +65,7 @@ export function useAutocorrect(
         setRecent((prev) => [...result.corrections, ...prev].slice(0, MAX_RECENT));
       }
     },
-    [onChange, enabled]
+    [onChange, enabled, profile]
   );
 
   const clearRecent = useCallback(() => setRecent([]), []);

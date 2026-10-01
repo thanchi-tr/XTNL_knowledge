@@ -30,6 +30,14 @@ import { invalidate } from "@/lib/cache";
 import { recordActivity } from "@/lib/activity";
 import { countClozeBlanks } from "@/lib/idea-payload";
 import { EDITABLE_TYPES, type HistoryRow } from "@/components/library/library-model";
+import {
+  IDEA_SYNTH_TIMEOUT_MS,
+  embedOrError,
+  filingArchivesDraft,
+  modelOr,
+  validDraftId,
+  type IdeaActionError,
+} from "@/lib/idea-filing";
 
 /** Same discriminated-result shape the taxonomy and skill actions use. */
 export type SkillFreeResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -58,6 +66,14 @@ export interface SubmitIdeaInput {
    * are independent questions.
    */
   domainId?: string;
+  /**
+   * The quick-capture IDEA_DRAFT this idea finishes (/add?draft=<id>, or
+   * fileIdeaDraftCore). On created, merged, linked or enriched the server
+   * archives it (updateMany where id, userId, kind IDEA_DRAFT, archivedAt
+   * null), so the Inbox empties itself; a missing draft is ignored and a
+   * saturated result keeps it. Validated, at most 64 characters.
+   */
+  draftId?: string;
 }
 
 export type SubmitIdeaResult =
@@ -87,7 +103,13 @@ export type SubmitIdeaResult =
       domainId: string;
       similarity: number;
       decision: DedupDecision;
-    };
+    }
+  /**
+   * A known failure (the embedding service unreachable or timed out),
+   * returned rather than thrown because production hides thrown messages.
+   * Nothing was written; the form shows `message` and keeps every field.
+   */
+  | { status: "error"; message: string };
 
 /**
  * One IDEA_CREATE row in the life ledger (activity.ts) for a new Idea: the
@@ -106,47 +128,112 @@ async function recordIdeaCreated(userId: string, ideaId: string, yieldPoints: nu
 }
 
 /**
+ * The draftId rule: an IDEA_DRAFT this submission finishes leaves the Inbox.
+ * Only an open draft of this user's moves (a missing or foreign id matches
+ * nothing). Runs after the Idea is written and never fails the submission:
+ * a draft left behind is a tidy-up, an error here would invite a retry that
+ * files the idea twice.
+ */
+async function archiveIdeaDraft(userId: string, draftId: string | undefined): Promise<void> {
+  const id = validDraftId(draftId);
+  if (!id) return;
+  try {
+    const { count } = await prisma.taskTemplate.updateMany({
+      where: { id, userId, kind: "IDEA_DRAFT", archivedAt: null },
+      data: { archivedAt: new Date() },
+    });
+    if (count > 0) invalidate("life", "activity");
+  } catch (err) {
+    console.error("ideas: the Inbox draft could not be archived (the idea is saved):", err);
+  }
+}
+
+/**
+ * Write first, enrich later: when synthesis failed at submit time the Idea
+ * was filed without its title, premise, prompt and tags (all nullable), and
+ * this tries once more after the response. Fills only a row still without a
+ * title, so nothing written since is overwritten; a second failure leaves
+ * the Idea exactly as filed.
+ */
+function refillNodeDataLater(ideaId: string, fieldName: string, contentText: string): void {
+  after(async () => {
+    const node = await modelOr(() => synthesizeNodeData(fieldName, contentText), IDEA_SYNTH_TIMEOUT_MS, () => null, "ideas: node synthesis retry");
+    if (!node) return;
+    try {
+      const { count } = await prisma.idea.updateMany({
+        where: { id: ideaId, title: null },
+        data: { title: node.title, corePremise: node.corePremise, atomicPrompt: node.atomicPrompt, tags: node.tags },
+      });
+      if (count > 0) invalidate("ideas");
+    } catch (err) {
+      console.error("ideas: node data refill failed (the idea is saved):", err);
+    }
+  });
+}
+
+/**
  * Server-authoritative Idea creation.
  *
  * Two classifiers run here, in order, and they are not the same thing:
  *
  *   1. Deduplication (dedup.ts) — should this node exist at all? A
  *      near-identical match is folded into the existing Idea and no row is
- *      created. This embeds the candidate.
+ *      created.
  *   2. Domain routing (domain-discovery.ts) — given that it should exist,
- *      which Domain does it belong to? Reuses the embedding from step 1
- *      via `routeFromNearest`, so a submission costs one embedding call
+ *      which Domain does it belong to? Reuses the embedding via
+ *      `routeFromNearest`, so a submission costs one embedding call
  *      regardless of which branch it takes.
  *
  * The SATURATION band still returns without writing, exactly as before, so
  * the client can offer "Link Idea" — now alongside "Enrich", which merges
  * the candidate into the match instead of creating a sibling.
+ *
+ * A model hiccup never costs the text. The embedding (which dedup and
+ * routing both need) is the one call a submission cannot do without: when it
+ * fails or runs past 10 s nothing is written and the honest error comes back
+ * as a value, and the form keeps every field. Synthesis and Domain naming
+ * have stand-ins (dedup.ts, domain-discovery.ts), so the Idea is filed
+ * anyway.
  */
 export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResult> {
+  const userId = getCurrentUserId();
+  const res = await submitIdeaCore(userId, input);
+  // The draftId rule, by outcome (idea-filing.ts ARCHIVES_DRAFT): created and
+  // merged take the Inbox draft away; saturated and error keep it.
+  if (filingArchivesDraft(res.status)) await archiveIdeaDraft(userId, input.draftId);
+  return res;
+}
+
+/**
+ * The submission for one user: the body of `submitIdea`, which the browser
+ * calls and one-box filing reaches (idea-filing.ts). Not exported: every
+ * export of a "use server" module is a browser-callable action, and this
+ * one takes a userId.
+ */
+async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<SubmitIdeaResult> {
   const { question, answer, questionType } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
   const card = cardTextFromStored(questionType, question, answer);
 
-  const userId = getCurrentUserId();
   // Progression rather than modifiers alone: the daily focus draw is skewed
   // by which rare emblems are actually equipped, so it needs the loadout.
   const progression = await loadProgression(userId);
   const modifiers = progression.modifiers;
 
   /**
-   * The Field is chosen automatically when the caller does not name one.
-   *
-   * The embedding is computed here and handed to `analyzeCandidate` rather
-   * than letting it embed again — routing and deduplication ask different
-   * questions of the same vector, and embedding is the only external API
-   * call on the write path.
+   * The embedding is computed once, here, and handed to field routing and to
+   * `analyzeCandidate` rather than letting each embed again — routing and
+   * deduplication ask different questions of the same vector, and embedding
+   * is the only model call the write path cannot do without.
    */
+  const embedded = await embedOrError(() => embedText(contentText), "submitIdea: embedding");
+  if (!Array.isArray(embedded)) return embedded;
+
+  // The Field is chosen automatically when the caller does not name one.
   let fieldId = input.fieldId;
-  let precomputed: number[] | undefined;
   let routedField: FieldChoice | null = null;
   if (!fieldId) {
-    precomputed = await embedText(contentText);
-    routedField = await pickField(precomputed, contentText);
+    routedField = await pickField(embedded, contentText);
     if (!routedField) {
       // Only reachable with zero Fields in the account. Thrown rather than
       // returned because the result union describes where an Idea *went*,
@@ -165,7 +252,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
     contentText,
     card,
     mergeThreshold,
-    precomputed
+    embedded
   );
 
   if (decision.action === "MERGE_EXACT" && decision.target_node_id) {
@@ -223,7 +310,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
 
     domain =
       routing.classification === "NOVELTY"
-        ? await createNoveltyDomain(fieldId, field.name, contentText)
+        ? await createNoveltyDomain(fieldId, field.name, contentText, decision.node_data?.tags ?? [])
         : await prisma.domain.findUniqueOrThrow({ where: { id: routing.domainId } });
     classification = routing.classification;
     nSimilar = routing.nSimilar;
@@ -255,6 +342,8 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
       // Scored from the stored form, so the same function serves creation and
       // backfill and neither can drift from the other.
       difficulty: estimateDifficulty(questionType, question, answer).score,
+      // Null when synthesis failed or timed out (dedup.ts): filed anyway,
+      // and refilled after the response below.
       title: decision.node_data?.title,
       corePremise: decision.node_data?.core_premise,
       atomicPrompt: decision.node_data?.atomic_prompt,
@@ -285,6 +374,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
   after(async () => {
     await recordIdeaCreated(userId, idea.id, yieldPoints, idea.createdAt);
   });
+  if (!decision.node_data) refillNodeDataLater(idea.id, field.name, contentText);
 
   return {
     status: "created",
@@ -329,9 +419,10 @@ export interface PreviewIdeaResult extends CandidatePreview {
  * Writes nothing and creates no Idea — it exists so a near-duplicate can be
  * discovered *before* the user commits, rather than being told after the
  * fact that their submission was folded into something else. Costs one
- * embedding call; no synthesis (see `previewCandidate`).
+ * embedding call; no synthesis (see `previewCandidate`). When the embedding
+ * service is unreachable the check cannot run, and says so as a value.
  */
-export async function previewIdea(input: PreviewIdeaInput): Promise<PreviewIdeaResult> {
+export async function previewIdea(input: PreviewIdeaInput): Promise<PreviewIdeaResult | IdeaActionError> {
   const { question, answer, questionType } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
   const card = cardTextFromStored(questionType, question, answer);
@@ -343,19 +434,23 @@ export async function previewIdea(input: PreviewIdeaInput): Promise<PreviewIdeaR
   const progression = await loadProgression(userId);
   const modifiers = progression.modifiers;
 
-  // The same guess submitIdea makes when no Field is named. The embedding is
-  // cached (gemini.ts), so previewCandidate's own embed below costs nothing.
+  // One embedding, shared by the Field guess and the neighbour search, as in
+  // submitIdea; cached (gemini.ts), so the submission after it pays nothing.
+  const embedded = await embedOrError(() => embedText(contentText), "previewIdea: embedding");
+  if (!Array.isArray(embedded)) return embedded;
+
+  // The same guess submitIdea makes when no Field is named.
   let fieldId = input.fieldId;
   let routedField: FieldChoice | null = null;
   if (!fieldId) {
-    routedField = await pickField(await embedText(contentText), contentText);
+    routedField = await pickField(embedded, contentText);
     if (!routedField) throw new Error("Create a Field before adding ideas — there is nowhere to file this yet.");
     fieldId = routedField.fieldId;
   }
   const field = await prisma.field.findUniqueOrThrow({ where: { id: fieldId }, select: { name: true } });
 
   const [preview, focus] = await Promise.all([
-    previewCandidate(fieldId, card, contentText, SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta),
+    previewCandidate(fieldId, card, contentText, SIMILARITY_MERGE_MIN + modifiers.dedupThresholdDelta, embedded),
     loadDailyFocus(userId, progression.activeSkills),
   ]);
   const focusMultiplier = focus && focus.fieldId === fieldId && focus.multiplier > 1 ? focus.multiplier : null;
@@ -377,6 +472,14 @@ export interface EnrichIdeaInput {
   targetIdeaId: string;
   content: IdeaContent;
   similarity: number;
+  /**
+   * The quick-capture IDEA_DRAFT this idea finishes (/add?draft=<id>, or
+   * fileIdeaDraftCore). On created, merged, linked or enriched the server
+   * archives it (updateMany where id, userId, kind IDEA_DRAFT, archivedAt
+   * null), so the Inbox empties itself; a missing draft is ignored and a
+   * saturated result keeps it. Validated, at most 64 characters.
+   */
+  draftId?: string;
 }
 
 /**
@@ -388,17 +491,30 @@ export interface EnrichIdeaInput {
  * the path that does both, so the choice between them is a real one:
  * link when the candidate is its own idea that merely resembles another,
  * enrich when it is more detail about the same idea.
+ *
+ * Enriched archives the Inbox draft (the draftId rule); no new information
+ * and a failed synthesis keep it, and the failure comes back as a value.
  */
-export async function enrichIdea(input: EnrichIdeaInput): Promise<EnrichResult> {
+export async function enrichIdea(input: EnrichIdeaInput): Promise<EnrichResult | IdeaActionError> {
   const { question, answer, questionType } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
-  return enrichNode(input.targetIdeaId, contentText, input.similarity);
+  const res = await enrichNode(input.targetIdeaId, contentText, input.similarity);
+  if (res.status === "enriched") await archiveIdeaDraft(getCurrentUserId(), input.draftId);
+  return res;
 }
 
 export interface LinkIdeaInput {
   content: IdeaContent;
   collectionLabel: CollectionLabel;
   existingIdeaId: string;
+  /**
+   * The quick-capture IDEA_DRAFT this idea finishes (/add?draft=<id>, or
+   * fileIdeaDraftCore). On created, merged, linked or enriched the server
+   * archives it (updateMany where id, userId, kind IDEA_DRAFT, archivedAt
+   * null), so the Inbox empties itself; a missing draft is ignored and a
+   * saturated result keeps it. Validated, at most 64 characters.
+   */
+  draftId?: string;
 }
 
 export interface LinkIdeaResult {
@@ -417,8 +533,13 @@ export interface LinkIdeaResult {
  * result from submitIdea gets resolved instead of being dropped outright —
  * the new Idea still gets created, in the same Domain as its match, with
  * linkedIdeaIds recording the connection.
+ *
+ * Like submitIdea, it never loses the text to a model hiccup: an
+ * unreachable embedding service writes nothing and comes back as a value;
+ * failed synthesis files the Idea without node data and refills it later.
+ * Linked archives the Inbox draft (the draftId rule).
  */
-export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
+export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult | IdeaActionError> {
   const existing = await prisma.idea.findUniqueOrThrow({ where: { id: input.existingIdeaId } });
   const domain = await prisma.domain.findUniqueOrThrow({
     where: { id: existing.domainId },
@@ -432,10 +553,11 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
   // to title/tag search and unusable as a dedup target later.
   const userId = getCurrentUserId();
   const [embedding, node, modifiers] = await Promise.all([
-    embedText(contentText),
-    synthesizeNodeData(domain.field.name, contentText),
+    embedOrError(() => embedText(contentText), "linkIdea: embedding"),
+    modelOr(() => synthesizeNodeData(domain.field.name, contentText), IDEA_SYNTH_TIMEOUT_MS, () => null, "linkIdea: node synthesis"),
     loadModifiers(userId),
   ]);
+  if (!Array.isArray(embedding)) return embedding;
   const base = XP_BASE[questionType];
   const nSimilar = await countSimilarInDomain(existing.domainId, embedding);
   const yieldPoints = yieldXp(base, nSimilar, modifiers.lambda, modifiers.yieldFloorFraction);
@@ -455,10 +577,10 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
       dueDate,
       graceEndsAt: graceEndsAt(dueDate, level, modifiers.graceExtraDays),
       linkedIdeaIds: [existing.id],
-      title: node.title,
-      corePremise: node.corePremise,
-      atomicPrompt: node.atomicPrompt,
-      tags: node.tags,
+      title: node?.title,
+      corePremise: node?.corePremise,
+      atomicPrompt: node?.atomicPrompt,
+      tags: node?.tags ?? [],
     },
   });
 
@@ -479,6 +601,8 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult> {
   after(async () => {
     await recordIdeaCreated(userId, idea.id, yieldPoints, idea.createdAt);
   });
+  if (!node) refillNodeDataLater(idea.id, domain.field.name, contentText);
+  await archiveIdeaDraft(userId, input.draftId);
 
   return {
     ideaId: idea.id,

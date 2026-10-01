@@ -32,6 +32,8 @@ interface Props {
   onToggleReceipt: () => void;
   /** The minimum version, one tap from a Must row. */
   onMinimum?: (from: Element | null) => void;
+  /** Just captured (the board found it after a capture or a '#t-<id>' link): outlined for a moment, and said. */
+  justAdded?: boolean;
   /** The drawer, when open. */
   children?: ReactNode;
 }
@@ -64,7 +66,7 @@ export function TaskRow(props: Props) {
   const drawerId = `drawer-${row.key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 
   return (
-    <div className="t-row" data-state={row.state} data-lane={row.lane}>
+    <div className="t-row" data-state={row.state} data-lane={row.lane} data-template-id={t.id} data-just-added={props.justAdded ? "1" : undefined}>
       <div className={cx("row", done && "done")}>
         <Tick
           shape={must ? "diamond" : "circle"}
@@ -80,6 +82,7 @@ export function TaskRow(props: Props) {
             <span className="r-title today-row-title" data-pending={props.pendingTitle ? "1" : undefined}>
               {title}
               {props.pendingTitle && <span className="r-saving"> · saving…</span>}
+              {props.justAdded && <span className="sr-only">, just added</span>}
             </span>
             <span className="r-meta">
               {done ? <DoneMeta row={row} paidXp={paid?.xp ?? null} study={study} /> : <OpenMeta row={row} />}

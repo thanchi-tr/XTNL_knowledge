@@ -19,6 +19,7 @@ import type {
   ActivityInput,
   AutoMetric,
   Band,
+  BoardPlace,
   Category,
   DueKind,
   GradeSource,
@@ -798,6 +799,16 @@ export interface GoalCard {
   steps: number;
 }
 
+/** A one-off waiting for a later day, as Anytime's 'Planned later' list shows it. */
+export interface LaterRow {
+  templateId: string;
+  title: string;
+  /** The day it returns to the board. */
+  day: DayKey;
+  /** 'tomorrow', 'Sat', '15 Oct'; a put-off deadline adds its own day ('tomorrow · by Sat'). */
+  label: string;
+}
+
 export interface Board {
   today: DayKey;
   yesterday: DayKey;
@@ -809,6 +820,8 @@ export interface Board {
   goals: Record<Horizon, GoalCard[]>;
   /** Planned one-offs whose day is still ahead. */
   later: number;
+  /** The same one-offs, by the day they return (then title): what 'Planned later' lists. */
+  laterRows: LaterRow[];
   /** Σ est_eff of Must and Today (skipped rows excluded), in minutes. */
   planned: number;
   capacity: number;
@@ -864,6 +877,215 @@ export function describeTemplate(
 
 function ledgerFor(d: BoardData, day: DayKey): DayLedger {
   return day === d.today ? d.ledger.today : d.ledger.yesterday;
+}
+
+// ── Where a template sits (capture.md 'Say where it went') ────────────────
+
+/** One row a template puts on the board's lanes, and what that row says about its day. */
+export interface PlacedRow {
+  lane: Lane;
+  day: DayKey;
+  extra: Partial<Pick<BoardRow, "dueLabel" | "late" | "carriedFrom" | "progress">>;
+}
+
+/**
+ * Where one template sits on the board: its place in the board's own lane
+ * names, the rows it puts on the lanes, and how it shows when it has no row
+ * of its own (Anytime's 'Planned later' and 'Coming up' lines). buildBoard
+ * files every template by this function and the capture toast names
+ * `place`, so the toast and the board cannot disagree.
+ */
+export interface Placement {
+  place: BoardPlace;
+  /** Rows on the lanes (a deadline due yesterday has two: yesterday's and today's). Empty when it has none. */
+  rows: PlacedRow[];
+  /** A one-off waiting for a later day: the day it returns ('Planned later'). */
+  laterDay: DayKey | null;
+  /** A repeating task not on today's lanes: the next day it falls due ('Coming up'). */
+  upcomingDay: DayKey | null;
+  /** Counted in today's Habits tally, and whether it is kept; null when it is not one of today's habits. */
+  habit: { done: boolean } | null;
+}
+
+export interface PlaceContext {
+  today: DayKey;
+  /** Defaults to the day before `today`. */
+  yesterday?: DayKey;
+  /** This template's instances: today and yesterday at least, the current week or month for a TARGET habit. */
+  instances: readonly BoardInstance[];
+  /**
+   * The last day it was done over its whole history (TemplateStats.lastDone),
+   * which an AFTER rule reads. Defaults to the latest done instance given.
+   */
+  lastDone?: DayKey | null;
+}
+
+const PLACE_MUST: BoardPlace = { lane: "must", label: "Must" };
+const PLACE_PLANNED: BoardPlace = { lane: "planned", label: "Planned" };
+const PLACE_HABITS: BoardPlace = { lane: "habits", label: "Habits" };
+const PLACE_ANYTIME: BoardPlace = { lane: "anytime", label: "Anytime" };
+const PLACE_INBOX: BoardPlace = { lane: "inbox", label: "Inbox" };
+const PLACE_GOALS: BoardPlace = { lane: "goals", label: "Goals" };
+const PLACE_DONE_TODAY: BoardPlace = { lane: "done", label: "Done today" };
+
+/** 'Planned later · Fri 2 Oct'. */
+function laterPlace(day: DayKey): BoardPlace {
+  return { lane: "later", label: `Planned later · ${weekdayName(day)} ${shortDate(day)}` };
+}
+
+/** 'Habits · tomorrow', 'Habits · next Thu', 'Habits · next 15 Oct'; a habit not started yet reads 'from'. */
+function upcomingPlace(day: DayKey, today: DayKey, word: "next" | "from"): BoardPlace {
+  const when = dayName(day, today);
+  return { lane: "upcoming", label: when === "tomorrow" ? `Habits · ${word === "from" ? "from " : ""}tomorrow` : `Habits · ${word} ${when}` };
+}
+
+/**
+ * Where a template sits, and the rows it puts on the board (see Placement).
+ * Pure: buildBoard calls it for every template, and the server calls it on
+ * a row it has just written, so a capture's toast names the lane the board
+ * then shows it in.
+ *
+ *   goals      every goal
+ *   inbox      an inbox item or an idea draft
+ *   done       a one-off done today (or recorded for yesterday this
+ *              morning), a habit done today
+ *   must       compulsory and due today
+ *   planned    a one-off due today, carried, or a deadline within two days
+ *   habits     a repeating task due today (a TARGET still short of target)
+ *   later      a one-off planned for, or put off to, a later day
+ *   upcoming   a repeating task not due today ('Coming up'), or one not
+ *              started yet
+ *   anytime    undated, a distant deadline, a TARGET already met
+ */
+export function placementOf(t: BoardTemplate, ctx: PlaceContext): Placement {
+  const { today, instances: insts } = ctx;
+  const yesterday = ctx.yesterday ?? addDays(today, -1);
+  const only = (place: BoardPlace, more: Partial<Placement> = {}): Placement => ({
+    place,
+    rows: [],
+    laterDay: null,
+    upcomingDay: null,
+    habit: null,
+    ...more,
+  });
+
+  if (t.kind === "GOAL") return only(PLACE_GOALS);
+  if (t.inbox || t.kind === "IDEA_DRAFT") return only(PLACE_INBOX);
+  const rule = ruleOf(t);
+
+  if (!rule) {
+    // One-offs. Done today (or recorded for yesterday this morning) stays on
+    // the board ticked, so it can be undone; done earlier is gone.
+    const doneInst = insts.find(
+      (i) => isDoneStatus(i.status) && (i.day === today || (i.day === yesterday && i.source === "record-yesterday"))
+    );
+    if (t.completedAt && !doneInst) return only({ lane: "done", label: "Done" });
+    const due = dueLabelOf(t, today);
+    if (doneInst) {
+      const onYesterday = doneInst.day === yesterday;
+      const lane: Lane = onYesterday ? "yesterday" : t.compulsory ? "must" : "today";
+      return only(onYesterday ? { lane: "done", label: "Done yesterday" } : PLACE_DONE_TODAY, {
+        rows: [{ lane, day: doneInst.day, extra: { dueLabel: due.label, late: due.late } }],
+      });
+    }
+    // Put off to a later day: off the board until then, deadline untouched.
+    if (t.planDay && t.planDay > today) return only(laterPlace(t.planDay), { laterDay: t.planDay });
+    if (!t.dueDay) return only(PLACE_ANYTIME, { rows: [{ lane: "anytime", day: today, extra: {} }] });
+    if (t.dueKind === "DEADLINE") {
+      const gap = daysBetween(today, t.dueDay);
+      const rows: PlacedRow[] = [];
+      // Due yesterday: late if done now, but still on time if it was done
+      // yesterday and only the tick is late — the record window's promise.
+      if (yesterdayRecordable(t, null, yesterday, null)) rows.push({ lane: "yesterday", day: yesterday, extra: { dueLabel: "by yesterday" } });
+      if (gap <= 0) {
+        rows.push({ lane: t.compulsory ? "must" : "today", day: today, extra: { dueLabel: due.label, late: due.late } });
+        return only(t.compulsory ? PLACE_MUST : PLACE_PLANNED, { rows });
+      }
+      if (gap <= DEADLINE_LOOKAHEAD_DAYS) {
+        rows.push({ lane: "today", day: today, extra: { dueLabel: due.label } });
+        return only(PLACE_PLANNED, { rows });
+      }
+      rows.push({ lane: "anytime", day: today, extra: { dueLabel: due.label } });
+      return only({ lane: "anytime", label: `Anytime · ${due.label ?? `by ${shortDate(t.dueDay)}`}` }, { rows });
+    }
+    // PLANNED: on or after its day it is today's; before, it waits.
+    if (t.dueDay > today) return only(laterPlace(t.dueDay), { laterDay: t.dueDay });
+    return only(t.compulsory ? PLACE_MUST : PLACE_PLANNED, {
+      rows: [{ lane: t.compulsory ? "must" : "today", day: today, extra: { dueLabel: due.label, carriedFrom: due.carriedFrom } }],
+    });
+  }
+
+  // Recurring.
+  const lastDone = ctx.lastDone !== undefined ? ctx.lastDone : lastDoneOf(insts);
+  const doneToday = insts.some((i) => i.day === today && isDoneStatus(i.status));
+
+  if (rule.kind === "TARGET") {
+    // Not started yet ('3x/week from mon'): no row until its first day.
+    if (t.startDay > today) return only(upcomingPlace(t.startDay, today, "from"), { upcomingDay: t.startDay });
+    const doneKeys = [...new Set(insts.filter((i) => isDoneStatus(i.status)).map((i) => i.day))];
+    const pp = periodProgress(rule, today, doneKeys);
+    const progress: RowProgress = {
+      done: pp.done,
+      target: pp.target,
+      label: `${pp.done}/${pp.target} this ${rule.per === "W" ? "week" : "month"}`,
+      met: pp.met,
+    };
+    const habit = { done: doneToday || pp.met };
+    if (pp.met && !doneToday) return only(PLACE_ANYTIME, { rows: [{ lane: "anytime", day: today, extra: { progress } }], habit });
+    return only(doneToday ? PLACE_DONE_TODAY : t.compulsory ? PLACE_MUST : PLACE_HABITS, {
+      rows: [{ lane: t.compulsory ? "must" : "today", day: today, extra: { progress } }],
+      habit,
+    });
+  }
+
+  const rows: PlacedRow[] = [];
+  let place: BoardPlace;
+  let upcomingDay: DayKey | null = null;
+  let habit: Placement["habit"] = null;
+  const exp = expectedToday(t, rule, today, lastDone);
+  if (exp.due || doneToday) {
+    habit = { done: doneToday };
+    rows.push({
+      lane: t.compulsory ? "must" : "today",
+      day: today,
+      extra: { carriedFrom: exp.carriedFrom, dueLabel: exp.carriedFrom ? `from ${dayName(exp.carriedFrom, today)}` : null },
+    });
+    place = doneToday ? PLACE_DONE_TODAY : t.compulsory ? PLACE_MUST : PLACE_HABITS;
+  } else {
+    // Not today: Anytime's 'Coming up' lists it on the day it next falls due.
+    const next = nextDue(rule, t.startDay, addDays(today, 1), lastDone);
+    upcomingDay = next && next > today ? next : null;
+    place = upcomingDay ? upcomingPlace(upcomingDay, today, t.startDay > today ? "from" : "next") : { lane: "upcoming", label: "Habits" };
+  }
+
+  // Yesterday's occurrence, still recordable (yesterdayRecordable: the
+  // server's own gate). AFTER rules carry on their own, and a study task
+  // only ever completes on its day.
+  if (yesterdayRecordable(t, rule, yesterday, lastDone)) {
+    const y = insts.filter((i) => i.day === yesterday);
+    const judged = y.some((i) => SETTLED_STATUSES.has(i.status));
+    const doneY = y.find((i) => isDoneStatus(i.status));
+    // Open, or recorded this morning (so the tick shows and can be undone).
+    if (!judged && (!doneY || doneY.source === "record-yesterday")) rows.push({ lane: "yesterday", day: yesterday, extra: {} });
+  }
+  return { place, rows, laterDay: null, upcomingDay, habit };
+}
+
+/**
+ * The board place of one template in the board's own words ('Must',
+ * 'Habits · next Thu', 'Planned later · Fri 2 Oct', 'Anytime · by 30 Nov',
+ * 'Inbox', 'Goals', 'Done today'): placementOf's `place`, the lane
+ * buildBoard files it in. `instances` are the template's own.
+ */
+export function placeOf(t: BoardTemplate, today: DayKey, instances: readonly BoardInstance[] = [], lastDone?: DayKey | null): BoardPlace {
+  return placementOf(t, { today, instances, lastDone }).place;
+}
+
+/** A 'Planned later' line: when it comes back, and for a put-off deadline the day it is still due. */
+function laterRowOf(t: BoardTemplate, day: DayKey, today: DayKey): LaterRow {
+  const when = dayName(day, today);
+  const due = t.dueKind === "DEADLINE" && t.dueDay && t.dueDay !== day ? dueLabelOf(t, today).label : null;
+  return { templateId: t.id, title: t.title, day, label: due ? `${when} · ${due}` : when };
 }
 
 function sortRows(rows: BoardRow[]): BoardRow[] {
@@ -962,114 +1184,35 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     };
   };
 
+  const laneRows: Record<Lane, BoardRow[]> = { must, today: todayRows, yesterday: yesterdayRows, anytime };
+  const laterRows: LaterRow[] = [];
+
+  // Every template is filed by placementOf, the one rule the capture toast
+  // also names its place by.
   for (const t of d.templates) {
-    if (t.kind === "GOAL") {
+    const p = placementOf(t, {
+      today,
+      yesterday,
+      instances: instancesByTpl.get(t.id) ?? [],
+      lastDone: d.stats[t.id]?.lastDone ?? null,
+    });
+    if (p.place.lane === "goals") {
       goalTemplates.push(t);
       continue;
     }
-    if (t.inbox || t.kind === "IDEA_DRAFT") {
+    if (p.place.lane === "inbox") {
       inbox.push(t);
       continue;
     }
-    const rule = ruleOf(t);
-    const insts = instancesByTpl.get(t.id) ?? [];
-
-    if (!rule) {
-      // One-offs. Done today (or recorded for yesterday this morning) stays on
-      // the board ticked, so it can be undone; done earlier is gone.
-      const doneInst = insts.find(
-        (i) => isDoneStatus(i.status) && (i.day === today || (i.day === yesterday && i.source === "record-yesterday"))
-      );
-      if (t.completedAt && !doneInst) continue;
-      const due = dueLabelOf(t, today);
-      if (doneInst) {
-        const lane: Lane = doneInst.day === yesterday ? "yesterday" : t.compulsory ? "must" : "today";
-        const r = row(t, lane, doneInst.day, { dueLabel: due.label, late: due.late });
-        (lane === "must" ? must : lane === "yesterday" ? yesterdayRows : todayRows).push(r);
-        continue;
-      }
-      // Put off to a later day: off the board until then, deadline untouched.
-      if (t.planDay && t.planDay > today) {
-        later += 1;
-        continue;
-      }
-      if (!t.dueDay) {
-        anytime.push(row(t, "anytime", today));
-        continue;
-      }
-      if (t.dueKind === "DEADLINE") {
-        const gap = daysBetween(today, t.dueDay);
-        // Due yesterday: late if done now, but still on time if it was done
-        // yesterday and only the tick is late — the record window's promise.
-        if (yesterdayRecordable(t, null, yesterday, null)) {
-          yesterdayRows.push(row(t, "yesterday", yesterday, { dueLabel: "by yesterday" }));
-        }
-        if (gap <= 0) {
-          (t.compulsory ? must : todayRows).push(row(t, t.compulsory ? "must" : "today", today, { dueLabel: due.label, late: due.late }));
-        } else if (gap <= DEADLINE_LOOKAHEAD_DAYS) {
-          todayRows.push(row(t, "today", today, { dueLabel: due.label }));
-        } else {
-          anytime.push(row(t, "anytime", today, { dueLabel: due.label }));
-        }
-        continue;
-      }
-      // PLANNED: on or after its day it is today's; before, it waits.
-      if (t.dueDay > today) {
-        later += 1;
-        continue;
-      }
-      (t.compulsory ? must : todayRows).push(
-        row(t, t.compulsory ? "must" : "today", today, { dueLabel: due.label, carriedFrom: due.carriedFrom })
-      );
-      continue;
+    if (p.laterDay) {
+      later += 1;
+      laterRows.push(laterRowOf(t, p.laterDay, today));
     }
-
-    // Recurring.
-    const stats = d.stats[t.id];
-    const lastDone = stats?.lastDone ?? null;
-    const doneToday = insts.some((i) => i.day === today && isDoneStatus(i.status));
-
-    if (rule.kind === "TARGET") {
-      if (t.startDay > today) continue;
-      const doneKeys = [...new Set(insts.filter((i) => isDoneStatus(i.status)).map((i) => i.day))];
-      const pp = periodProgress(rule, today, doneKeys);
-      const progress: RowProgress = {
-        done: pp.done,
-        target: pp.target,
-        label: `${pp.done}/${pp.target} this ${rule.per === "W" ? "week" : "month"}`,
-        met: pp.met,
-      };
+    if (p.habit) {
       habitsTotal += 1;
-      if (doneToday || pp.met) habitsDone += 1;
-      if (pp.met && !doneToday) anytime.push(row(t, "anytime", today, { progress }));
-      else (t.compulsory ? must : todayRows).push(row(t, t.compulsory ? "must" : "today", today, { progress }));
-      continue;
+      if (p.habit.done) habitsDone += 1;
     }
-
-    const exp = expectedToday(t, rule, today, lastDone);
-    if (exp.due || doneToday) {
-      habitsTotal += 1;
-      if (doneToday) habitsDone += 1;
-      const lane: Lane = t.compulsory ? "must" : "today";
-      const r = row(t, lane, today, {
-        carriedFrom: exp.carriedFrom,
-        dueLabel: exp.carriedFrom ? `from ${dayName(exp.carriedFrom, today)}` : null,
-      });
-      (lane === "must" ? must : todayRows).push(r);
-    }
-
-    // Yesterday's occurrence, still recordable (yesterdayRecordable: the
-    // server's own gate). AFTER rules carry on their own, and a study task
-    // only ever completes on its day.
-    if (yesterdayRecordable(t, rule, yesterday, lastDone)) {
-      const y = insts.filter((i) => i.day === yesterday);
-      const judged = y.some((i) => SETTLED_STATUSES.has(i.status));
-      const doneY = y.find((i) => isDoneStatus(i.status));
-      // Open, or recorded this morning (so the tick shows and can be undone).
-      if (!judged && (!doneY || doneY.source === "record-yesterday")) {
-        yesterdayRows.push(row(t, "yesterday", yesterday));
-      }
-    }
+    for (const r of p.rows) laneRows[r.lane].push(row(t, r.lane, r.day, r.extra));
   }
 
   sortRows(must);
@@ -1077,6 +1220,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
   sortRows(yesterdayRows);
   sortRows(anytime);
   inbox.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  laterRows.sort((a, b) => a.day.localeCompare(b.day) || a.title.localeCompare(b.title) || a.templateId.localeCompare(b.templateId));
 
   // Capacity: what the day asks of you, done or not; a skipped card no longer asks.
   const planned = [...must, ...todayRows].filter((r) => r.state !== "skipped").reduce((s, r) => s + r.estMinutes, 0);
@@ -1098,6 +1242,7 @@ export function buildBoard(data: BoardData, ops: readonly BoardOp[] = []): Board
     inbox,
     goals: goalCards(goalTemplates, d, tplById),
     later,
+    laterRows,
     planned,
     capacity,
     over,

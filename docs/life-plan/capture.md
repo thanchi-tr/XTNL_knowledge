@@ -91,7 +91,7 @@ SERVER (Lane C)
 - recaptureCore:
   1. Read the old row's createdAt and archivedAt for this user. Not found → 'That capture is gone.' Older than CAPTURE_UNDO_MS → 'Too late to edit the line. Change it on Today.'
   2. createTemplateCore(parsed, {rawText, captureSource:'quick', captureKey}). The new row is written FIRST.
-  3. undoCaptureCore(userId, oldId). It nets a done-now tick to zero, and an already-archived row returns ok, so a retry is idempotent. If it fails, return the new item with oldKept:true.
+  3. undoCaptureCore(userId, oldId). It nets a done-now tick to zero, and an already-archived row returns ok, so a retry is idempotent — unless an edit replaced it and the new line still stands, which returns code 'gone' ('Your edit replaced that line. Undo the new one instead.'). If it fails, return the new item with oldKept:true. (As built: an edit archives the old row at the new row's createdAt, which links the two with no schema change; an archived old row whose edit key has no row returns 'gone', never a second row; a board tick on the old row is kept by re-ticking the new one unless the old line's own 'x' was removed.)
   4. after(): applySizing on the new id under createFromCapture's rules (not for GOAL, IDEA_DRAFT or duplicate).
   5. refresh() when asked.
 - CapturedItem gains replacedId?: string and oldKept?: boolean.
@@ -116,12 +116,12 @@ Manual, on the rehearsal server: an 'x run 30m' line edited to 'x run 45m' nets 
 
 **Spec.** THE ROW
 - One row of 40 px quiet chips directly above the input. It scrolls horizontally and never wraps: role='group', aria-label 'Add to the line'.
-- Chips: When ▾ · Repeat ▾ · Must · Time ▾ · Goal ▾ · Inbox · Idea.
+- Chips: When ▾ · Repeat ▾ · Must · Time ▾ · Goal ▾ · Inbox · Idea. Under 400 px: When · Repeat · Must · Time · Inbox · Idea · Goal (no ▾ glyphs), with an edge fade while the row overflows. Goal ▾ opens with 'New goal' (inserts 'goal: ', hidden when the line has a mode prefix), then 'Link to' and the open goals.
 - Under 600 px it replaces the legend. From 600 the legend stays as a one-line hint while the line is empty.
 - A ▾ chip swaps the row in place for its options. The first option chip is '‹' (back), and the opener carries aria-expanded. That keeps it to one row of height on the cover screen.
 
 OPTIONS AND THE TEXT EACH INSERTS
-- When: Today → 'today'; Tmr → 'tmr'; the five weekday names after tomorrow → 'fri' (the weak days insert 'on sat' / 'on sun'); Next week → 'next week'.
+- When: Today → 'today'; one 'Tmr · <weekday>' chip → 'tmr'; the five weekday names after tomorrow → 'sat'… (the weak days insert 'on sat' / 'on sun'); Next week → 'next week'.
 - Repeat: Daily → 'daily'; Weekdays → 'weekdays'; Every <today's weekday> → 'every thu'; 3×/week → '3x/week'; Weekly → 'weekly'.
 - Must:
   - inserts ' !' when the line already has a date or a fixed schedule (a planned date then becomes a deadline, per the parser rule);
@@ -140,7 +140,7 @@ INSERTION (pure, applyInsert(text, reverted, insert, parsed) in capture-ui.ts)
 INTERACTION
 - onMouseDown preventDefault, so focus and the keyboard stay up.
 - The caret goes to the end after an insert.
-- A polite live note: 'Added “tmr”'.
+- A polite live note: 'Added “tmr” to the line' (never to be mistaken for a save).
 - Chip title / aria-label: 'Add “tmr” to the line'.
 
 **Files.** New src/components/capture/InsertRow.tsx; src/components/capture/capture-ui.ts; QuickCapture.tsx; src/app/capture.css
@@ -546,6 +546,8 @@ The 'prose' profile's outputs are identical to today's for 20 existing samples.
 
 **Spec.** This is M3's one-box design. The user dropped M3 as a milestone, so confirm this one feature with a one-line question before building it.
 
+**Status (2026-10-01).** Built behind a switch and left OFF (IDEA_SELF_FILING in src/app/actions/capture.ts and IDEA_SELF_FILING_UI in src/components/capture/capture-ui.ts; today-ui-check fails if they differ). With it off, 'idea: Q :: A' saves an Inbox draft whose note is the whole answer, so nothing is lost; Finish carries both into /add.
+
 LANE A
 - In IDEA mode, the first '::' (any spaces around it) splits the line: the part after it is ParsedCapture.answer.
 - The token field is 'answer', labelled 'Answer: <first 24 chars>…'.
@@ -866,7 +868,7 @@ Never write test rows to production. Subagents run no DB commands.
 - Add closes the sheet.
 - The input does not move while chips appear.
 - 'Added here' shows the rows with Edit and Undo.
-- 'pay rent' + When·Fri + Must saves as By Fri 2 Oct, Must, in 12 taps.
+- 'pay rent' + When·'Tmr · Fri' + Must saves as By Fri 2 Oct, Must, in 12 taps (Thu 1 Oct 2026).
 - Back closes the sheet (P2).
 
 3. INNER SCREEN. With the keyboard up, the 560 panel sits above the keyboard.

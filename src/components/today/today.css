@@ -241,6 +241,20 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-upcoming-title { min-width: 0; color: var(--ink-1); overflow-wrap: anywhere; }
 .today-upcoming-day { flex: none; color: var(--ink-2); }
 
+/* ── A capture, found (capture.md 'Say where it went') ─────────────────── */
+/* A 2 px focus outline over the row it landed on, fading after a beat
+   (opacity only). Its resting state is the outline itself, so Still shows
+   it, unmoving, for the 1.6 s the board keeps the flag. Never colour alone:
+   the row's name says 'just added' while it is outlined. */
+.today-board [data-just-added="1"] { position: relative; }
+.today-board [data-just-added="1"]::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  outline: 2px solid var(--focus); outline-offset: -2px;
+  animation: today-just-added 1600ms var(--ease-out) 1 both;
+}
+.today-upcoming li[data-just-added="1"]::after { inset: -4px -6px; border-radius: 8px; }
+@keyframes today-just-added { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+
 .today-close .close-day { display: flex; gap: 12px; align-items: center; padding: 14px; width: 100%; text-align: left; background: none; border: 0; color: inherit; border-radius: var(--r-card); }
 .today-close .close-day:hover { background: var(--raised); }
 .today-close .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--sunken); color: var(--ink-1); flex: none; }
@@ -262,6 +276,9 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-inbox-item + .today-inbox-item { border-top: 1px solid var(--line-1); }
 .today-inbox-item .n b { font-weight: 500; display: block; overflow-wrap: anywhere; }
 .today-inbox-item .n .t-meta { display: block; }
+/* An idea draft's answer ('idea: Q :: A'), two lines at most; the full form shows all of it. */
+.today-inbox-answer { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--ink-1); overflow-wrap: anywhere; }
+.today-finish { text-decoration: none; }
 .today-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .today-undo-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; padding: 2px 4px 2px 12px; border-radius: 12px; font-size: 14px; color: var(--ink-1); background: var(--sunken); border: 1px solid var(--line-2); }
 .today-undo-line .txt { min-width: 0; overflow-wrap: anywhere; }

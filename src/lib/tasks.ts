@@ -6,6 +6,7 @@ import { activityOp, isDuplicateActivity, recordActivity } from "./activity";
 import {
   addDays,
   dateColumn,
+  dayKeyOf,
   dayStartOf,
   keyOfDateColumn,
   monthKeyOf,
@@ -14,8 +15,11 @@ import {
   type DayKey,
 } from "./life-day";
 import {
+  CAPTURE_BATCH_MAX,
+  CAPTURE_UNDO_MS,
   type AutoMetric,
   type Band,
+  type BoardPlace,
   type CaptureSource,
   type Category,
   type DueKind,
@@ -41,8 +45,9 @@ import {
   selfRatingOpensOn,
   toBand,
 } from "./life-grade";
-import { cleanCaptureKey, matchParentGoal } from "./capture-parse";
-import { allowsCompulsory, occursOn, parseRule } from "./recurrence";
+import { cleanCaptureKey, matchParentGoal, parseCapture } from "./capture-parse";
+import { captureShapeOf } from "./capture-shape";
+import { occursOn } from "./recurrence";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -60,11 +65,12 @@ import {
   lastDoneOf,
   moveBlockOf,
   paidIntroOf,
+  placeOf,
+  placementOf,
   planAutoCompletions,
   planCompletion,
   ruleOf,
   shortDate,
-  startDayFor,
   statsFor,
   streakDaysFor,
   taskEventInput,
@@ -577,6 +583,12 @@ export interface CreatedTask {
   doneNowError: string | null;
   /** This capture key was already saved (a retried send): the row returned is the one written the first time. */
   duplicate: boolean;
+  /**
+   * Where it went, in the board's own lane names: today-board placeOf over
+   * the inserted row (and the done-now tick, when one went through), the
+   * same rule buildBoard files it by.
+   */
+  where: BoardPlace;
 }
 
 const TITLE_MAX = 200;
@@ -599,6 +611,99 @@ export function loadOpenGoals(userId: string): Promise<{ id: string; title: stri
   );
 }
 
+/** The empty line's 'Recent' chips: how far back they read, and how many. */
+export const RECENT_CAPTURE_DAYS = 30;
+export const RECENT_CAPTURE_MAX = 8;
+
+/**
+ * The distinct lines of `rows` (newest first), at most `max`. Two lines
+ * are the same when they differ only in case and spacing; the newest
+ * spelling is kept, trimmed but otherwise as typed, so tapping the chip
+ * re-parses exactly the line that was saved. Pure.
+ */
+export function recentCaptureLines(rows: readonly { rawText: string | null }[], max: number = RECENT_CAPTURE_MAX): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rows) {
+    if (out.length >= max) break;
+    const text = (r.rawText ?? "").trim();
+    const key = text.replace(/\s+/g, " ").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+/**
+ * The player's last quick captures of tasks and habits (capture.md
+ * 'Suggestions from your own tasks'): the distinct lines of the last
+ * RECENT_CAPTURE_DAYS, newest first, at most RECENT_CAPTURE_MAX. A line
+ * taken back (Undo, or replaced by an Edit, both of which archive it) is
+ * left out: it is the misread one. Cached under 'life', which every
+ * capture clears.
+ */
+export function loadRecentCaptures(userId: string, now: Date = new Date()): Promise<string[]> {
+  return cached(`captureRecent:${userId}:${todayKey(now)}`, ["life"], async () => {
+    const rows = await prisma.taskTemplate.findMany({
+      where: {
+        userId,
+        captureSource: "quick",
+        kind: { in: ["TASK", "HABIT"] },
+        archivedAt: null,
+        createdAt: { gte: new Date(now.getTime() - RECENT_CAPTURE_DAYS * 86_400_000) },
+      },
+      select: { rawText: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      // Room for repeats: the same line captured daily still leaves seven others.
+      take: RECENT_CAPTURE_MAX * 6,
+    });
+    return recentCaptureLines(rows);
+  });
+}
+
+/** The sheet's duplicate note reads at most this many open titles. */
+export const ACTIVE_TITLES_MAX = 300;
+
+/** An open template's title and where it sits, for the sheet's quiet 'Already on your board' note. */
+export interface ActiveTitle {
+  /** normTitleOf(title), of the title as it reads now: the sheet matches on equality only. */
+  normTitle: string;
+  title: string;
+  where: BoardPlace;
+}
+
+/**
+ * Open templates (not archived, not completed), newest first, at most
+ * `max`, each with its place on the board — placementOf over the board's
+ * own read, so the note names the lane the board shows it in. Pure.
+ */
+export function activeTitlesOf(
+  core: Pick<BoardData, "today" | "yesterday" | "templates" | "instances" | "stats">,
+  max: number = ACTIVE_TITLES_MAX
+): ActiveTitle[] {
+  const byTpl = new Map<string, BoardInstance[]>();
+  for (const i of core.instances) {
+    const list = byTpl.get(i.templateId);
+    if (list) list.push(i);
+    else byTpl.set(i.templateId, [i]);
+  }
+  return core.templates
+    .filter((t) => !t.completedAt)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    .slice(0, Math.max(0, max))
+    .map((t) => ({
+      normTitle: normTitleOf(t.title),
+      title: t.title,
+      where: placementOf(t, { today: core.today, yesterday: core.yesterday, instances: byTpl.get(t.id) ?? [], lastDone: core.stats[t.id]?.lastDone ?? null }).place,
+    }));
+}
+
+/** The open titles for today's board, read from the board's own cached wave. */
+export async function loadActiveTitles(userId: string, now: Date = new Date()): Promise<ActiveTitle[]> {
+  return activeTitlesOf(await loadBoardCore(userId, todayKey(now), now));
+}
+
 /**
  * Writes a capture as one template with its lexical grade. One INSERT (the
  * day's ledger and the settings row are read alongside it, not after); the
@@ -610,13 +715,45 @@ export function loadOpenGoals(userId: string): Promise<{ id: string; title: stri
  * and the first row comes back. A done-now capture ('x run 30m') is
  * completed here too, so the result's XP is what was paid; if that tick
  * fails, the template is still returned (with the reason), never reported
- * as a failed save that a retry would duplicate.
+ * as a failed save that a retry would duplicate. A retried done-now line
+ * whose row was saved on an earlier life day is not ticked today
+ * (resentTickBlock): its work belongs to the day it was captured.
+ *
+ * An idea draft keeps its answer ('idea: Q :: A') as its note, whole: the
+ * title is the question. How a line is stored (its kind, days, Must, inbox
+ * and note) is capture-shape.ts captureShapeOf, which the sheet can import.
  */
 export async function createTemplateCore(
   userId: string,
   parsed: ParsedCapture,
   opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date }
 ): Promise<CreatedTask> {
+  const w = await insertCapture(userId, parsed, opts);
+  if (!wantsDoneNowTick(parsed, w.t)) return w.created;
+  return tickUnlessResent(userId, w);
+}
+
+/** What insertCapture wrote, and what a later done-now tick needs from it. */
+interface InsertedCapture {
+  created: CreatedTask;
+  t: BoardTemplate;
+  instances: BoardInstance[];
+  minutes: number | null;
+  today: DayKey;
+  now: Date;
+}
+
+/**
+ * createTemplateCore's write without the done-now tick: one INSERT (or the
+ * row a retried key already wrote), priced against today's real ledger and
+ * placed on the board. recaptureCore ticks only after the line it replaces
+ * has been taken back.
+ */
+async function insertCapture(
+  userId: string,
+  parsed: ParsedCapture,
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date }
+): Promise<InsertedCapture> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
   const title = parsed.title.trim().replace(/\s+/g, " ").slice(0, TITLE_MAX);
@@ -628,20 +765,7 @@ export async function createTemplateCore(
   const machineMinutes = Math.max(1, Math.round(sizing.machineMinutes));
   const estMinutes = typed != null ? Math.max(1, Math.min(EST_MINUTES_MAX, Math.round(typed))) : machineMinutes;
 
-  const kind: TaskKind = parsed.mode === "GOAL" ? "GOAL" : parsed.mode === "IDEA" ? "IDEA_DRAFT" : parsed.kind;
-  const rule = kind === "GOAL" || kind === "IDEA_DRAFT" ? null : parseRule(parsed.recurrence);
-  const recurrence = rule ? parsed.recurrence : null;
-  const parsedDue = parsed.dueDay && KEY_RE.test(parsed.dueDay) ? parsed.dueDay : null;
-  const parsedDueKind: DueKind | null = parsedDue ? (parsed.dueKind ?? "PLANNED") : null;
-  // A habit starts on its phase ('every 2 weeks on mon' → the coming Monday)
-  // and carries no due day of its own; a one-off or a goal keeps its date.
-  const startDay = rule ? startDayFor({ recurrence, dueDay: parsedDue, dueKind: parsedDueKind }, today) : today;
-  const dueDay = rule ? null : parsedDue;
-  const dueKind: DueKind | null = rule ? null : parsedDueKind;
-  // A duty needs something to be judged against: a schedule or a deadline.
-  // AFTER rules move with the last completion, so they never can.
-  const compulsory =
-    parsed.compulsory && kind !== "GOAL" && kind !== "IDEA_DRAFT" && (rule ? allowsCompulsory(rule) : dueKind === "DEADLINE");
+  const { kind, recurrence, startDay, dueDay, dueKind, compulsory, inbox, note } = captureShapeOf(parsed, today);
 
   // '^name': the same matcher and the same list the chip previewed.
   let parentId: string | null = null;
@@ -659,8 +783,9 @@ export async function createTemplateCore(
     title,
     normTitle: normTitleOf(title),
     rawText: opts.rawText.slice(0, RAW_MAX),
+    note,
     kind,
-    inbox: parsed.inbox || kind === "IDEA_DRAFT",
+    inbox,
     recurrence,
     startDay: dateColumn(startDay),
     dueDay: dueDay ? dateColumn(dueDay) : null,
@@ -722,27 +847,134 @@ export async function createTemplateCore(
   }
   invalidate("life", "activity");
 
-  const t = toBoardTemplate(row, now);
-  let projectedXp = planCompletion({ template: t, day: today, today, slot: 0, ledger: ledgerOf(today, totals, events), streakDays: 0 }).receipt.xp;
-  let completed = false;
-  let doneNowError: string | null = null;
+  // A new row has no instances yet. A retried send's row may have been
+  // ticked since (here, or on the board), so its place reads them.
+  const instances = duplicate ? await readCapturedInstances(userId, row.id, today) : [];
+  return capturedOf(row, { duplicate, instances, totals, events, minutes: typed, today, now });
+}
 
-  if (parsed.doneNow && t.kind !== "GOAL" && t.kind !== "IDEA_DRAFT") {
-    try {
-      const done = await completeInstanceCore(userId, row.id, { day: "today", minutes: typed, now });
-      if (done.ok) {
-        projectedXp = done.value.receipt.xp;
-        completed = true;
-      } else {
-        doneNowError = done.error;
-      }
-    } catch (err) {
-      console.error("Done-now tick failed after capture:", err);
-      doneNowError = "Saved, but the tick didn't go through. Tick it on Today.";
-    }
+/** A capture's row as the toast reports it: priced against today's real ledger, placed with its instances. */
+function capturedOf(
+  row: TemplateRow,
+  a: {
+    duplicate: boolean;
+    instances: BoardInstance[];
+    totals: readonly DayTotalRow[];
+    events: readonly TaskEventRow[];
+    minutes: number | null;
+    today: DayKey;
+    now: Date;
   }
+): InsertedCapture {
+  const t = toBoardTemplate(row, a.now);
+  const created: CreatedTask = {
+    id: row.id,
+    title: row.title,
+    projectedXp: planCompletion({ template: t, day: a.today, today: a.today, slot: 0, ledger: ledgerOf(a.today, a.totals, a.events), streakDays: 0 }).receipt.xp,
+    describe: describeTemplate(t, a.today),
+    completed: false,
+    doneNowError: null,
+    duplicate: a.duplicate,
+    where: placeOf(t, a.today, a.instances),
+  };
+  return { created, t, instances: a.instances, minutes: a.minutes, today: a.today, now: a.now };
+}
 
-  return { id: row.id, title: row.title, projectedXp, describe: describeTemplate(t, today), completed, doneNowError, duplicate };
+/**
+ * The row an edit's earlier send already wrote (recaptureCore's 'find'),
+ * reported as a retried save is: priced against today's ledger, placed with
+ * its instances. Nothing is written. Null when it no longer exists.
+ */
+async function readCaptured(userId: string, id: string, now: Date): Promise<InsertedCapture | null> {
+  const today = todayKey(now);
+  const [row, totals, events, instances] = await Promise.all([
+    prisma.taskTemplate.findFirst({ where: { id, userId }, select: TEMPLATE_SELECT }),
+    readDayTotals(userId, [today]),
+    readDayTaskEvents(userId, [today]),
+    readCapturedInstances(userId, id, today),
+  ]);
+  return row ? capturedOf(row, { duplicate: true, instances, totals, events, minutes: null, today, now }) : null;
+}
+
+/** A done-now line ('x run 30m') is ticked as it is saved; a goal or an idea draft never is. */
+function wantsDoneNowTick(parsed: Pick<ParsedCapture, "doneNow">, t: Pick<BoardTemplate, "kind">): boolean {
+  return parsed.doneNow && tickableKind(t);
+}
+
+/** Only a task or a habit is ticked: a goal pays through its steps, and an idea draft is filed, not done. */
+function tickableKind(t: Pick<BoardTemplate, "kind">): boolean {
+  return t.kind !== "GOAL" && t.kind !== "IDEA_DRAFT";
+}
+
+/** "Wed 30 Sep": the day a resent line was first saved, as its note names it. */
+const savedDayLabel = (day: DayKey) => `${weekdayName(day)} ${shortDate(day)}`;
+
+/**
+ * Why a resent done-now line is not ticked now, or null when it may be. A
+ * line resent (a lost response, a queued retry) on the life day its row was
+ * saved is ticked as before: completeInstanceCore returns the first tick's
+ * receipt, so nothing is paid twice. A row saved on an EARLIER life day is
+ * never ticked today: its work was done that day, and booking it now would
+ * pay it on the wrong day (or, if that day's tick landed, a second time).
+ * The note says which: ticked that day, or still to tick on Today. Pure.
+ */
+export function resentTickBlock(p: {
+  duplicate: boolean;
+  /** The row's createdAt (the first send's), as a Date or its ISO string. */
+  createdAt: Date | string;
+  today: DayKey;
+  instances: readonly Pick<BoardInstance, "day" | "status">[];
+}): string | null {
+  if (!p.duplicate) return null;
+  const saved = dayKeyOf(new Date(p.createdAt));
+  if (saved >= p.today) return null;
+  return p.instances.some((i) => i.day === saved && isDoneStatus(i.status))
+    ? `Saved and ticked on ${savedDayLabel(saved)}.`
+    : `Saved on ${savedDayLabel(saved)}; tick it on Today.`;
+}
+
+/** The done-now tick, unless the row is a resend saved on an earlier life day (resentTickBlock). */
+async function tickUnlessResent(userId: string, w: InsertedCapture): Promise<CreatedTask> {
+  const block = resentTickBlock({ duplicate: w.created.duplicate, createdAt: w.t.createdAt, today: w.today, instances: w.instances });
+  return block ? { ...w.created, doneNowError: block } : tickCaptured(userId, w.created, w.t, w);
+}
+
+/** A captured row's instances, for its place: its whole (short) life is enough. */
+async function readCapturedInstances(userId: string, templateId: string, today: DayKey): Promise<BoardInstance[]> {
+  const rows = await prisma.taskInstance.findMany({
+    where: { userId, templateId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
+    select: INSTANCE_SELECT,
+  });
+  return rows.map(toBoardInstance);
+}
+
+/**
+ * Ticks a done-now capture, so the result's XP is what the tick paid and its
+ * place is where the ticked row now sits ('Done today'). A refused or failed
+ * tick keeps the saved row and says why: never a failed save that a retry
+ * would duplicate.
+ */
+async function tickCaptured(
+  userId: string,
+  created: CreatedTask,
+  t: BoardTemplate,
+  a: { minutes: number | null; today: DayKey; now: Date; instances: readonly BoardInstance[] }
+): Promise<CreatedTask> {
+  try {
+    const done = await completeInstanceCore(userId, t.id, { day: "today", minutes: a.minutes, now: a.now });
+    if (!done.ok) return { ...created, doneNowError: done.error };
+    const v = done.value;
+    const ticked: BoardInstance = { id: v.instanceId, templateId: t.id, day: v.day, slot: v.slot, status: v.status, source: v.source, xpPaid: v.receipt.xp };
+    return {
+      ...created,
+      projectedXp: v.receipt.xp,
+      completed: true,
+      where: placeOf(t, a.today, [...a.instances.filter((i) => i.id !== ticked.id), ticked]),
+    };
+  } catch (err) {
+    console.error("Done-now tick failed after capture:", err);
+    return { ...created, doneNowError: "Saved, but the tick didn't go through. Tick it on Today." };
+  }
 }
 
 // ── Completion ────────────────────────────────────────────────────────────
@@ -1291,28 +1523,366 @@ export async function unarchiveCore(userId: string, templateId: string): Promise
   return ok(null);
 }
 
-/** How long the capture toast's Undo is honoured. */
-const CAPTURE_UNDO_MS = 10 * 60_000;
+/**
+ * How an edit marks the line it replaced. There is no column for it
+ * (capture.md: no schema change), so recaptureCore archives the old row at
+ * the new row's own createdAt, to the millisecond: a row created at exactly
+ * an archived row's archivedAt is what replaced it. An Undo or an Archive
+ * stamps the server's clock instead, which lands on another row's insert
+ * time only by a same-millisecond accident. Edits of edits (X → Y → Z) are
+ * followed this many hops.
+ */
+export const REPLACEMENT_HOPS = 5;
 
 /**
- * The capture toast's Undo: within ten minutes, takes a capture back. A
- * done-now capture's tick is undone first, so the XP nets to zero, then the
- * template is archived.
+ * The line that replaced an archived capture and still stands, following
+ * edits of edits up to REPLACEMENT_HOPS; null when the row was taken back
+ * (an Undo, an Archive) or is not archived, or when everything it became is
+ * gone too. `replacementOf` finds the row created at exactly an archived
+ * row's archivedAt: tasks.ts reads it from the database, the checks stub it.
  */
-export async function undoCaptureCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
+export async function standingReplacement(
+  row: { id: string; archivedAt: Date | null },
+  replacementOf: (archived: { id: string; archivedAt: Date }) => Promise<{ id: string; archivedAt: Date | null } | null>
+): Promise<string | null> {
+  if (!row.archivedAt) return null;
+  let cur = { id: row.id, archivedAt: row.archivedAt };
+  for (let hop = 0; hop < REPLACEMENT_HOPS; hop++) {
+    const next = await replacementOf(cur);
+    if (!next) return null;
+    if (!next.archivedAt) return next.id;
+    cur = { id: next.id, archivedAt: next.archivedAt };
+  }
+  return null;
+}
+
+/** standingReplacement's lookup for one player: the row inserted at exactly that archivedAt. */
+function replacementIn(userId: string) {
+  return (archived: { id: string; archivedAt: Date }) =>
+    prisma.taskTemplate.findFirst({
+      where: { userId, createdAt: archived.archivedAt, id: { not: archived.id } },
+      select: { id: true, archivedAt: true },
+    });
+}
+
+export const UNDO_CAPTURE_GONE = "That capture no longer exists.";
+export const UNDO_CAPTURE_TOO_LATE = "Too late to undo the capture. Archive it from Today instead.";
+export const UNDO_CAPTURE_REPLACED = "Your edit replaced that line. Undo the new one instead.";
+
+/** Undo's answer. `code: 'gone'` (actions/capture.ts CaptureErrorCode) when the capture is missing or an edit replaced it. */
+export type UndoCaptureResult = { ok: true; value: null } | { ok: false; error: string; code?: "gone" };
+
+export type UndoCapturePlan = { ok: true; steps: ("untick" | "archive")[] } | { ok: false; error: string; code?: "gone" };
+
+/**
+ * What the capture toast's Undo does. Pure; undoCaptureCore follows it.
+ *
+ * - A missing row is 'gone'.
+ * - An archived row is a repeat (a double tap, a retry after a lost answer):
+ *   a no-op ok, since what Undo promised is already true. Unless an edit
+ *   replaced it and the replacement still stands (`replacedBy`): then
+ *   'Removed' would be false, as the edited line is still on the board, so
+ *   it is refused as 'gone' with a sentence that says what happened.
+ * - Past CAPTURE_UNDO_MS it is too late (exactly ten minutes is still in).
+ * - Otherwise the row's ticks are netted to zero, then it is archived.
+ */
+export function planUndoCapture(p: { createdAt: Date | null; archivedAt: Date | null; now: Date; replacedBy?: string | null }): UndoCapturePlan {
+  if (!p.createdAt) return { ok: false, error: UNDO_CAPTURE_GONE, code: "gone" };
+  if (p.archivedAt) return p.replacedBy ? { ok: false, error: UNDO_CAPTURE_REPLACED, code: "gone" } : { ok: true, steps: [] };
+  if (p.now.getTime() - p.createdAt.getTime() > CAPTURE_UNDO_MS) return { ok: false, error: UNDO_CAPTURE_TOO_LATE };
+  return { ok: true, steps: ["untick", "archive"] };
+}
+
+/**
+ * The capture toast's Undo: within ten minutes (CAPTURE_UNDO_MS, the window
+ * the sheet's Undo and Edit are offered for), takes a capture back, as
+ * planUndoCapture decides. A done-now capture's tick is undone first, so the
+ * XP nets to zero, then the template is archived. An already-archived
+ * capture is ok, so a repeat is a no-op, unless an edit replaced it: that is
+ * reported, not passed off as removed. `opts.archivedAt` is recaptureCore's:
+ * the new row's createdAt, the link standingReplacement follows.
+ */
+export async function undoCaptureCore(
+  userId: string,
+  templateId: string,
+  now: Date = new Date(),
+  opts: { archivedAt?: Date } = {}
+): Promise<UndoCaptureResult> {
   const [row, instances] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: { createdAt: true, archivedAt: true } }),
     prisma.taskInstance.findMany({ where: { templateId, userId }, select: { id: true, status: true } }),
   ]);
-  if (!row) return fail("That capture no longer exists.");
-  if (row.archivedAt) return ok(null);
-  if (now.getTime() - row.createdAt.getTime() > CAPTURE_UNDO_MS) return fail("Too late to undo the capture. Archive it from Today instead.");
+  const replacedBy = row?.archivedAt ? await standingReplacement({ id: templateId, archivedAt: row.archivedAt }, replacementIn(userId)) : null;
+  const plan = planUndoCapture({ createdAt: row?.createdAt ?? null, archivedAt: row?.archivedAt ?? null, now, replacedBy });
+  if (!plan.ok) return plan;
+  if (plan.steps.length === 0) return ok(null);
   for (const i of instances) {
     if (!isDoneStatus(i.status)) continue;
     const undone = await undoCompletionCore(userId, i.id, now);
-    if (!undone.ok) return fail(undone.error);
+    if (!undone.ok) return { ok: false, error: undone.error };
   }
-  return archiveCore(userId, templateId, now);
+  return archiveCore(userId, templateId, opts.archivedAt ?? now);
+}
+
+// ── Edit a line just saved (capture.md 'Edit a line you just saved') ──────
+
+/**
+ * One step of an edit, in the order recaptureCore takes them:
+ *   find       (a resend only) return the row this edit's first send wrote: no write, no tick
+ *   create     write the new line
+ *   undo-old   take the old line back: its ticks net to zero, it is archived
+ *   tick-new   tick the new line, when it is done-now
+ *   keep-tick  tick the new line because the old row was ticked on Today: the edit keeps the completion
+ */
+export type RecaptureStep = "find" | "create" | "undo-old" | "tick-new" | "keep-tick";
+
+export type RecapturePlan = { ok: true; steps: RecaptureStep[] } | { ok: false; code?: "gone" | "too-late"; error: string };
+
+export const RECAPTURE_GONE = "That capture is gone.";
+export const RECAPTURE_TOO_LATE = "Too late to edit the line. Change it on Today.";
+export const RECAPTURE_SAME_KEY = "That edit was sent as the line it replaces, so nothing changed. Try again.";
+export const RECAPTURE_OLD_STANDS =
+  "Not ticked: the old line still stands, so the work would count twice. Archive it on Today, then tick this one.";
+/** A kept completion that could not be made again on the new line (a goal, a refused tick): the old tick is gone with the old line. */
+export const RECAPTURE_TICK_TAKEN_BACK = "The old line's tick was taken back.";
+/** A resent done-now edit whose row has no tick today: nothing is ticked on a resend. */
+export const RESENT_NOT_TICKED = "Saved by an earlier send, not ticked. Tick it on Today.";
+
+/**
+ * The steps an edit of a captured line takes. Pure; recaptureCore follows it.
+ *
+ * - The old row must exist for this player ('gone') and be at most
+ *   CAPTURE_UNDO_MS old ('too-late' past it; exactly ten minutes is still
+ *   in, as for the toast's Undo).
+ * - An old row already archived was taken by something: this same edit's
+ *   earlier send (a lost response, a reload), an earlier edit, an Undo or
+ *   an Archive. Only the first left a row under this edit's captureKey
+ *   (`keyRowId`), so only then is it a resend: its row comes back as it
+ *   stands ('find': no second row, no second tick), in the window or past
+ *   it. With no row under the key it is 'gone', never a second row beside
+ *   an earlier edit's.
+ * - An edit sent under the old line's own key would take back the very row
+ *   it writes: refused, and nothing changes.
+ * - The new line is written FIRST, so whatever fails after it costs the old
+ *   row's removal (reported as oldKept), never the new words.
+ * - A tick comes LAST, once the old row's ticks are netted out, so an edit
+ *   pays what the line typed right the first time would have (no repeat
+ *   decay against its own old tick, the knee base back where it was), and
+ *   an old line that could not be taken back never leaves the same work
+ *   paid twice. The new line is ticked when it is done-now ('tick-new'), or
+ *   when the old row was ticked on Today and its own line was not done-now
+ *   ('keep-tick': the edit keeps the completion, priced fresh). An old
+ *   done-now line ('x run 30m') edited without its 'x' is not ticked: the
+ *   'x' is what the edit took out.
+ */
+export function planRecapture(p: {
+  oldCreatedAt: Date | null;
+  oldArchived: boolean;
+  now: Date;
+  /** The new line is done-now. */
+  doneNow?: boolean;
+  /** The old row's id, to recognise a key that names it. */
+  oldId?: string;
+  /** The row already saved under this edit's captureKey (an earlier send of this same edit), or null. */
+  keyRowId?: string | null;
+  /** The old row has a tick standing, whatever made it. */
+  oldTicked?: boolean;
+  /** The old row's own line (its rawText, re-parsed: lineIsDoneNow) was done-now. */
+  oldDoneNow?: boolean;
+}): RecapturePlan {
+  if (!p.oldCreatedAt) return { ok: false, code: "gone", error: RECAPTURE_GONE };
+  if (p.keyRowId && p.keyRowId === p.oldId) return { ok: false, error: RECAPTURE_SAME_KEY };
+  if (p.oldArchived) return p.keyRowId ? { ok: true, steps: ["find"] } : { ok: false, code: "gone", error: RECAPTURE_GONE };
+  if (p.now.getTime() - p.oldCreatedAt.getTime() > CAPTURE_UNDO_MS) return { ok: false, code: "too-late", error: RECAPTURE_TOO_LATE };
+  const tick: RecaptureStep[] = p.doneNow ? ["tick-new"] : p.oldTicked && !p.oldDoneNow ? ["keep-tick"] : [];
+  return { ok: true, steps: ["create", "undo-old", ...tick] };
+}
+
+/**
+ * Whether a stored capture line reads as done-now ('x run 30m', 'done the
+ * dishes'), by the parser's own deterministic rule. The edit reads the old
+ * row's rawText through it. Pure.
+ */
+export function lineIsDoneNow(rawText: string | null | undefined, today: DayKey): boolean {
+  return typeof rawText === "string" && rawText.trim() !== "" && parseCapture(rawText, { today }).doneNow;
+}
+
+/**
+ * What a resent edit reports for the row its first send wrote, without
+ * writing or ticking anything: the tick standing on it today (completed,
+ * projectedXp = what that tick paid), or, for a done-now line with none,
+ * why it is not ticked. Pure.
+ */
+export function resentEditOf(
+  created: CreatedTask,
+  a: {
+    /** The line is done-now and its kind can be ticked. */
+    doneNow: boolean;
+    createdAt: Date | string;
+    today: DayKey;
+    instances: readonly Pick<BoardInstance, "day" | "slot" | "status" | "xpPaid">[];
+  }
+): CreatedTask {
+  const done = a.instances.filter((i) => i.day === a.today && isDoneStatus(i.status)).sort((x, y) => x.slot - y.slot)[0];
+  if (done) return { ...created, completed: true, projectedXp: done.xpPaid };
+  if (!a.doneNow) return created;
+  return { ...created, doneNowError: resentTickBlock({ duplicate: true, createdAt: a.createdAt, today: a.today, instances: a.instances }) ?? RESENT_NOT_TICKED };
+}
+
+/**
+ * The tick facts a saved line reports (actions/capture.ts itemOf): whether
+ * a tick went through with it, so projectedXp is what it paid, and why a
+ * tick it owed was not made. createTemplateCore ticks only a done-now line;
+ * recaptureCore also an edit that keeps the old row's tick from Today, so
+ * the facts are the result's, not re-derived from the new line's 'x'. Pure.
+ */
+export function tickFactsOf(created: Pick<CreatedTask, "completed" | "doneNowError">): { doneNow: boolean; doneNowError: string | null } {
+  return { doneNow: created.completed, doneNowError: created.doneNowError };
+}
+
+export type RecaptureResult =
+  | { ok: true; value: CreatedTask & { replacedId: string; oldKept: boolean } }
+  | { ok: false; error: string; code?: "gone" | "too-late" };
+
+/**
+ * Replaces a line captured under ten minutes ago with its edited text
+ * (`parsed` is the server's own parse of `rawText`), following
+ * planRecapture over one read wave: the old row (its age, whether it is
+ * archived, its own line, its ticks) and the row this edit's captureKey
+ * already wrote. Idempotent under that key: a resend returns the row its
+ * first send wrote (resentEditOf), never a second row or a second tick, and
+ * never takes the old one back twice. The old row is archived at the new
+ * row's createdAt, the link Undo follows (standingReplacement).
+ *
+ * `oldKept` is true when the new line was saved but the old one could not
+ * be taken back (its tick no longer undoable, say); a done-now line is then
+ * left unticked, with the reason. A tick made here, done-now or kept from
+ * the old row's tick on Today, is in the result (completed, and projectedXp
+ * is what it paid); when it could not be made, doneNowError says why.
+ */
+export async function recaptureCore(
+  userId: string,
+  oldId: string,
+  parsed: ParsedCapture,
+  opts: { rawText: string; captureKey?: string | null; captureSource?: CaptureSource; now?: Date }
+): Promise<RecaptureResult> {
+  const now = opts.now ?? new Date();
+  const today = todayKey(now);
+  const captureKey = cleanCaptureKey(opts.captureKey);
+  const validOld = typeof oldId === "string" && oldId.length > 0 && oldId.length <= 64;
+  const [old, oldTicks, keyRow] = await Promise.all([
+    validOld
+      ? prisma.taskTemplate.findFirst({ where: { id: oldId, userId }, select: { createdAt: true, archivedAt: true, rawText: true } })
+      : null,
+    validOld ? prisma.taskInstance.findMany({ where: { templateId: oldId, userId }, select: { status: true } }) : [],
+    captureKey ? prisma.taskTemplate.findFirst({ where: { userId, captureKey }, select: { id: true } }) : null,
+  ]);
+  const plan = planRecapture({
+    oldCreatedAt: old?.createdAt ?? null,
+    oldArchived: !!old?.archivedAt,
+    now,
+    doneNow: parsed.doneNow,
+    oldId,
+    keyRowId: keyRow?.id ?? null,
+    oldTicked: oldTicks.some((i) => isDoneStatus(i.status)),
+    oldDoneNow: old ? lineIsDoneNow(old.rawText, today) : false,
+  });
+  if (!plan.ok) return plan.code ? { ok: false, error: plan.error, code: plan.code } : { ok: false, error: plan.error };
+
+  if (plan.steps[0] === "find") {
+    const found = keyRow ? await readCaptured(userId, keyRow.id, now) : null;
+    if (!found) return { ok: false, error: RECAPTURE_GONE, code: "gone" };
+    const resent = resentEditOf(found.created, {
+      doneNow: wantsDoneNowTick(parsed, found.t),
+      createdAt: found.t.createdAt,
+      today: found.today,
+      instances: found.instances,
+    });
+    return ok({ ...resent, replacedId: oldId, oldKept: false });
+  }
+
+  const w = await insertCapture(userId, parsed, { rawText: opts.rawText, captureSource: opts.captureSource ?? "quick", captureKey, now });
+  // Sent under the old line's own key (a race past the plan's check), the 'new' row IS the old one: taking it back would lose the line.
+  if (w.created.id === oldId) return { ok: false, error: RECAPTURE_SAME_KEY };
+
+  let oldKept = false;
+  try {
+    const undone = await undoCaptureCore(userId, oldId, now, { archivedAt: new Date(w.t.createdAt) });
+    if (!undone.ok) {
+      oldKept = true;
+      console.warn("Recapture kept the old line:", undone.error);
+    }
+  } catch (err) {
+    console.error("Recapture could not take back the old line:", err);
+    oldKept = true;
+  }
+
+  let created = w.created;
+  if (plan.steps.includes("tick-new") && wantsDoneNowTick(parsed, w.t)) {
+    created = oldKept ? { ...created, doneNowError: RECAPTURE_OLD_STANDS } : await tickUnlessResent(userId, w);
+  } else if (plan.steps.includes("keep-tick") && !oldKept) {
+    // The old row's tick on Today was netted out with it; the edit keeps the
+    // completion on the new row, priced fresh. (Kept old line: its tick stands.)
+    const kept = tickableKind(w.t) ? await tickUnlessResent(userId, w) : created;
+    created = kept.completed
+      ? kept
+      : { ...kept, doneNowError: kept.doneNowError ? `${RECAPTURE_TICK_TAKEN_BACK} ${kept.doneNowError}` : RECAPTURE_TICK_TAKEN_BACK };
+  }
+  return ok({ ...created, replacedId: oldId, oldKept });
+}
+
+// ── A pasted list (capture.md 'Paste a list') ─────────────────────────────
+
+/** One pasted line as the batch hands it to the saver: its own validated key, the rest still to sanitize. */
+export interface CaptureBatchLine {
+  text: unknown;
+  reverted: unknown;
+  captureKey: string;
+}
+
+export type CaptureBatchOutcome<I> = { ok: true; item: I } | { ok: false; captureKey: string; error: string };
+
+export const BATCH_TOO_MANY = `Only ${CAPTURE_BATCH_MAX} lines can be added at once. This one is kept: add it again.`;
+export const BATCH_NO_KEY = "This line was sent without its save key, so a retry could add it twice. It is kept: add it again.";
+export const BATCH_SAME_KEY = "This line was sent with another line's save key. It is kept: add it again.";
+export const BATCH_THREW = "Couldn't save it. Your line is kept — try again.";
+
+/**
+ * Saves a pasted list one line at a time, in order, and answers for every
+ * line in the order sent. Each line is all-or-nothing on its own: `save`
+ * writes it under its captureKey (so a retry finds what an earlier send
+ * wrote), and a refusal or a throw fails only that line, with its key, so
+ * the sheet keeps it. A line past CAPTURE_BATCH_MAX, without a valid key,
+ * or reusing an earlier line's key is refused before anything is written:
+ * a shared key would make the second line come back as the first.
+ */
+export async function runCaptureBatch<I>(
+  lines: unknown,
+  save: (line: CaptureBatchLine) => Promise<LifeResult<I>>
+): Promise<CaptureBatchOutcome<I>[]> {
+  const list: unknown[] = Array.isArray(lines) ? lines : [];
+  const seen = new Set<string>();
+  const out: CaptureBatchOutcome<I>[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const raw = list[i] && typeof list[i] === "object" ? (list[i] as Record<string, unknown>) : {};
+    const key = cleanCaptureKey(raw.captureKey);
+    const sentKey = key ?? (typeof raw.captureKey === "string" ? raw.captureKey.slice(0, 64) : "");
+    const refuse = (error: string) => out.push({ ok: false, captureKey: sentKey, error });
+    if (i >= CAPTURE_BATCH_MAX) refuse(BATCH_TOO_MANY);
+    else if (!key) refuse(BATCH_NO_KEY);
+    else if (seen.has(key)) refuse(BATCH_SAME_KEY);
+    else {
+      seen.add(key);
+      try {
+        const res = await save({ text: raw.text, reverted: raw.reverted, captureKey: key });
+        out.push(res.ok ? { ok: true, item: res.value } : { ok: false, captureKey: key, error: res.error });
+      } catch (err) {
+        console.error("Pasted line not saved:", err);
+        refuse(BATCH_THREW);
+      }
+    }
+  }
+  return out;
 }
 
 

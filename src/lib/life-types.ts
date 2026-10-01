@@ -225,7 +225,9 @@ export interface CaptureToken {
     | "play"
     | "parent"
     | "mvv"
-    | "study";
+    | "study"
+    /** IDEA mode only: the part after the first '::' (capture.md P2 one-box ideas). Lane A reads it. */
+    | "answer";
   label: string;
 }
 
@@ -251,5 +253,35 @@ export interface ParsedCapture {
   doneNow: boolean;
   /** The '^name' text, matched to an open goal on the server. */
   parentHint: string | null;
+  /**
+   * IDEA mode: the text after the first '::' ('idea: Q :: A'), kept whole —
+   * the server stores it as the draft's note, never in the title. Null or
+   * absent when the line has no unreverted '::'. Lane A fills it.
+   */
+  answer?: string | null;
   tokens: CaptureToken[];
+}
+
+/** How long a capture can be taken back or edited (the toast's Undo, the sheet's Edit). Shared by the server's undo/recapture and the sheet's 'Added here' list. */
+export const CAPTURE_UNDO_MS = 10 * 60_000;
+
+/** The most lines one paste may add (createManyFromCapture enforces it; the sheet's preview caps at it). */
+export const CAPTURE_BATCH_MAX = 20;
+
+// ── Where a capture went ──────────────────────────────────────────────────
+
+/**
+ * The board place a template sits in, in the board's own lane names
+ * (capture.md 'Say where it went'). today-board.ts placeOf returns it and
+ * buildBoard files by it, so the toast and the board cannot disagree.
+ */
+export type PlaceLane = "must" | "planned" | "habits" | "upcoming" | "later" | "anytime" | "inbox" | "goals" | "done";
+export const PLACE_LANES: readonly PlaceLane[] = [
+  "must", "planned", "habits", "upcoming", "later", "anytime", "inbox", "goals", "done",
+];
+
+/** A lane and its label: 'Must', 'Habits · next Thu', 'Planned later · Fri 2 Oct', 'Anytime · by 30 Nov', 'Inbox', 'Done today'. */
+export interface BoardPlace {
+  lane: PlaceLane;
+  label: string;
 }

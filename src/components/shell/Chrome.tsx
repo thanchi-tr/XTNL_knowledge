@@ -52,7 +52,7 @@ export function TabBar() {
     <nav className="tabbar" aria-label="Sections" data-chrome="">
       {tab("today", today.href, today.label, "today")}
       {tab("study", study.href, study.label, "study")}
-      <button type="button" className="tab tab-plus" aria-label="Capture" aria-keyshortcuts="c Control+K" onClick={openCaptureSheet}>
+      <button type="button" className="tab tab-plus" aria-label="Capture" aria-keyshortcuts="c Control+K" aria-describedby="capture-unsent" onClick={openCaptureSheet}>
         <span>
           <Icon name="plus" />
         </span>
@@ -83,7 +83,7 @@ export function Rail() {
   };
   return (
     <nav className="rail" aria-label="Sections" data-chrome="">
-      <button type="button" className="r-plus" aria-keyshortcuts="c Control+K" onClick={openCaptureSheet}>
+      <button type="button" className="r-plus" aria-keyshortcuts="c Control+K" aria-describedby="capture-unsent" onClick={openCaptureSheet}>
         <span>
           <Icon name="plus" />
         </span>
@@ -123,7 +123,7 @@ export function Sidebar() {
           {caption && <span>{caption}</span>}
         </div>
       </Link>
-      <button type="button" className="btn btn-primary btn-block sb-capture" aria-keyshortcuts="c Control+K" onClick={openCaptureSheet}>
+      <button type="button" className="btn btn-primary btn-block sb-capture" aria-keyshortcuts="c Control+K" aria-describedby="capture-unsent" onClick={openCaptureSheet}>
         <Icon name="plus" />
         Capture
         <span className="kbd" aria-hidden="true">

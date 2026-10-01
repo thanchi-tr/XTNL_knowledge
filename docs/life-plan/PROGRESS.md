@@ -7,7 +7,7 @@ that works on the plan keeps it current.
 
 ## Heartbeat (the lock)
 
-    HEARTBEAT: 2026-10-01T11:56+1000 — interactive session: capture-build running until 2026-10-01T15:56+1000; M5 PAUSED until capture is pushed (user request)
+    HEARTBEAT: 2026-10-01T16:38+1000 — interactive session: capture pushed; next M5 phase A (rerun m5-phase-a) until 2026-10-01T19:38+1000
 
 Rules:
 - A session working on the plan rewrites the HEARTBEAT line at the start of
@@ -45,7 +45,11 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
   - [x] Reviews fixed; gates (contrast, UI audit at 344/375/932/1440, motion, perf, layers) green
   - [x] Celebrations migration rehearsed locally, applied to Supabase (20261010000000_celebrations)
   - [x] Browser-verified; committed and pushed
-- [ ] Improve the capture feature — spec `capture.md` (19 items, no migration)
+- [x] Improve the capture feature — spec `capture.md` (19 items, no migration)
+  - [x] Build: step0 contracts, A parser, C server, D ideas, B sheet; 2 reviews (5 major, 13 minor)
+  - [x] Fix round (parser, server, sheet lanes + verifier) and lead fixes; P2 one-box ideas left OFF (answer kept as the draft note)
+  - [x] Gates: tsc, eslint, life:check (9 scripts), ui:check, novelty, skills:stats, next build, ui-audit 121/121; browser pass at 344 px on the rehearsal server
+  - [x] Committed and pushed
 - [ ] M5 — refitted spec `m5-refit.md` (no migration; inert until LIFE_LAUNCH_DAY is set)
   - [ ] Phase A (contract + 4 lanes on files the capture build does not own) + 2 reviewers
   - [ ] Phase B (Today integration: tasks.ts, today-board.ts, GoalsStrip, TodayBoard) after the capture build merges
@@ -89,3 +93,6 @@ Shared specs: `vision.md`, `grading.md`, `data-model.md`, `setup-and-risks.md`, 
 - 2026-10-01 — M5 refitted for "no M2/M3/M4" (docs/life-plan/m5-refit.md). Phase A launched in parallel with the capture build on disjoint files (workflow m5-phase-a).
 - RESUME NOTE (capture + M5 phase A, running in parallel): capture-build = run wf_9b001cf4-d7c (journal: C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_9b001cf4-d7c/journal.jsonl); m5-phase-a = run wf_c899e331-f74 (journal: .../subagents/workflows/wf_c899e331-f74/journal.jsonl). Scripts in .../workflows/scripts/. If cut off: read the journals, inspect git status, rerun only missing lanes. Then: fix reviews, tsc/lint/life:check/ui:check/balance:horizon/next build, ui-audit (MSYS_NO_PATHCONV=1 node scripts/ui-audit.mjs --base http://localhost:3100), browser pass on the rehearsal server, commit capture; then M5 phase B (Today integration), launch (LIFE_LAUNCH_DAY via scripts/life-launch.ts, dry-run first), commit; then M2.
 - 2026-10-01 — User: "push the change before proceed to milestone 5". M5 phase A workflow stopped before it wrote any file (lane 0 had just started). Order now strictly: finish + verify + push capture, THEN resume M5 (rerun m5-phase-a from its script).
+- 2026-10-01 — Capture build complete (step0, A parser, C server, D ideas, B sheet). Reviews: 0 blocker, 5 major, 13 minor (recapture after an archived row, stale-day retries, empty-line insert fusing, focus loss on the cover screen, footer column; weak-word dates, xmas prefix, etc.). life:check now also runs capture-server-check and idea-capture-check. P2 one-box ideas left OFF (answer is kept as the draft note). Fix workflow `capture-fix` (run wf_74abc97e-98a; findings in the scratchpad fix-*.json) running: parser, server, sheet lanes + 1 verifier.
+- RESUME NOTE (capture-fix): journal C:/Users/Thanc/.claude/projects/C--Users-Thanc-OneDrive-Desktop-XTNL-idea/dd3bd260-2baf-4833-82dd-c7e980a42ad3/subagents/workflows/wf_74abc97e-98a/journal.jsonl. After it: fix verifier leftovers, switch capture-ui wherePreviewOf to src/lib/capture-shape.ts if the server lane made it, then tsc/lint/life:check/ui:check/novelty/skills:stats/next build, ui-audit, rehearsal browser pass (344 px first), commit + push capture, then M5 phase A.
+- 2026-10-01 — Capture done. Fix round (run wf_74abc97e-98a): parser (weak-word nouns, holiday prefixes), server (edit after an archived row → 'gone', never a second row; cross-day resends never tick; an edit keeps a board tick), sheet (C1/C2 client, U1–U13). Verifier: 1 major (a closing save waited behind the vocabulary refresh) + 6 minor, fixed by the lead along with: 'N added' counts rows (an edit of the same opening's line no longer adds one), undo 'gone' copy from the server, typed undoCapture code, wherePreviewOf on the shared capture-shape module, sat/sun stop-lists split by day. Gates: tsc, eslint, life:check (capture-parse 814, today-ui 466, capture-server, idea-capture 127, …), ui:check (953), novelty, skills:stats, next build, ui-audit 121/121; browser at 344 px on the rehearsal DB (12-tap Must, empty-line insert, Escape closes the menu first, burst + Done on Enter, edit replaces the row — DB shows the old archived and one live row — dock summary). Next: M5 phase A.

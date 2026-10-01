@@ -21,8 +21,21 @@
  * Saturday date, and 'review due' from yielding a deadline.
  *
  * Weak words — may, sat, sun, mar, march — are ordinary English far more
- * often than they are dates, so they count only after on / by / every.
- * 'meet may on sat' is a Saturday meeting with May, not a May meeting.
+ * often than they are dates, so they count only after on / by / every, or in
+ * a place nothing else could mean: a weak month before its day number
+ * ('march 5'), a weak day closing the line ('call mum sun', not 'enjoy the
+ * sun') or opening it ('sat: market'). 'meet may on sat' is a Saturday
+ * meeting with May, not a May meeting.
+ *
+ * Words whose reading depends on what is left around them — a weak day as the
+ * last word, 'a day' after a count, a spoken tag at the end — are read last,
+ * against the line with every other claim cut out: the same words the stored
+ * title will hold, so re-reading the title never finds something new.
+ *
+ * Vietnamese-English is read too (thứ 2, mai, tối nay, 30p, 2 tiếng, mỗi
+ * ngày, trước). The text is never rewritten — accented and unaccented forms
+ * are spelled out in the patterns — so every span is exact. The sheet
+ * normalises the line to NFC, so the patterns (written in NFC) see one form.
  */
 import { compareTwoStrings } from "string-similarity";
 import { addDays, daysBetween, weekdayOf, weekStartKeyOf, type DayKey } from "./life-day";
@@ -56,6 +69,8 @@ export const MIN_EST_MINUTES = 1;
 /** Reviews a 'review N' task can ask for, and ideas an 'add N ideas' task. */
 export const MAX_REVIEW_TARGET = 500;
 export const MAX_IDEA_TARGET = 50;
+/** A bare 'Nm' or 'Np' above this is a distance or a resolution ('swim 400m', '720p'), never minutes. */
+export const MAX_BARE_MINUTES = 240;
 
 export const COMPULSORY_WARNING = "Compulsory needs a fixed schedule or a deadline";
 
@@ -84,6 +99,90 @@ const WEAK_WORDS = new Set(["sat", "sun", "may", "mar", "march"]);
 const NUMBER_WORDS: Record<string, number> = {
   a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
 };
+/** Words that count something: 'read 1 chapter a day', 'stretch twice a day'. */
+const COUNT_WORDS = new Set(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "once", "twice", "thrice"]);
+
+/** Vietnamese weekday words after 'thứ': hai = Monday … bảy = Saturday. */
+const VN_DAY_WORDS: Record<string, number> = {
+  hai: 1, ba: 2, "tư": 3, tu: 3, "năm": 4, nam: 4, "sáu": 5, sau: 5, "bảy": 6, bay: 6,
+};
+
+// ── Typos (R10) ───────────────────────────────────────────────────────────
+
+/**
+ * Misspellings are read on a closed list, and lowercase only: a capitalised
+ * 'Firday' mid-line is more likely a name than a slip (the line's own first
+ * capital excepted; see capitalTypo). Every one becomes a chip showing the
+ * canonical meaning, so no read is silent.
+ */
+const TYPO_EXCLUDE = new Set(["frida", "very", "ever", "eery", "toady", "sunda", "monda"]);
+/** Spellings the grammar already reads in any case ('tomorow', 'tommorow'): never typos. */
+const KNOWN_SPELLINGS = new Set([
+  ...Object.keys(DAY_WORDS), ...Object.keys(DAY_PLURALS), ...Object.keys(MONTH_WORDS),
+  "today", "tonight", "tomorrow", "tomorow", "tommorow", "tommorrow", "tmrw", "tmr", "tmw", "tomoz",
+]);
+const FULL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+/** One deletion, one adjacent transposition, or one doubled letter. */
+function editVariants(word: string): string[] {
+  const out = new Set<string>();
+  for (let i = 0; i < word.length; i++) {
+    out.add(word.slice(0, i) + word.slice(i + 1));
+    out.add(word.slice(0, i + 1) + word[i] + word.slice(i + 1));
+    if (i + 1 < word.length) out.add(word.slice(0, i) + word[i + 1] + word[i] + word.slice(i + 2));
+  }
+  out.delete(word);
+  return [...out].filter((v) => !KNOWN_SPELLINGS.has(v) && !TYPO_EXCLUDE.has(v));
+}
+
+/** variant → weekday (1 = Mon). A variant two days could produce is dropped: it names neither. */
+const TYPO_DAYS: Record<string, number> = (() => {
+  const seen = new Map<string, number>();
+  FULL_DAYS.forEach((name, i) => {
+    for (const v of editVariants(name)) seen.set(v, seen.has(v) && seen.get(v) !== i + 1 ? 0 : i + 1);
+  });
+  const out: Record<string, number> = { wensday: 3, wendsday: 3 };
+  for (const [v, d] of seen) if (d > 0) out[v] = d;
+  return out;
+})();
+const TYPO_TOMORROW = [...editVariants("tomorrow").filter((v) => !(v in TYPO_DAYS)), "2moro"];
+const TYPO_TODAY = ["tonite", "2day"];
+const TYPO_EVERY = ["evry", "evrey", "evey", "eveyr"];
+const TYPO_DAILY = ["dialy", "dailly"];
+const TYPO_WEEKLY = ["weely", "wekly", "weekyl"];
+
+/** Every misspelling the grammar reads, and the word it is read as. */
+export const CAPTURE_TYPOS: Readonly<Record<string, string>> = Object.freeze({
+  ...Object.fromEntries(Object.entries(TYPO_DAYS).map(([v, d]) => [v, FULL_DAYS[d - 1]])),
+  ...Object.fromEntries(TYPO_TOMORROW.map((v) => [v, "tomorrow"])),
+  tonite: "tonight",
+  "2day": "today",
+  ...Object.fromEntries(TYPO_EVERY.map((v) => [v, "every"])),
+  ...Object.fromEntries(TYPO_DAILY.map((v) => [v, "daily"])),
+  ...Object.fromEntries(TYPO_WEEKLY.map((v) => [v, "weekly"])),
+});
+const TYPO_WORDS = new Set(Object.keys(CAPTURE_TYPOS));
+
+/**
+ * True when a match leans on a misspelling typed with a capital ('meet
+ * Firday'): that is a name, not a day. A capital that only opens the line
+ * does not count — phone keyboards capitalise the first word, and so does
+ * the stored title — so 'Tomrrow call mum' is still tomorrow.
+ *
+ * `at` is where `s` sits in `line`.
+ */
+function capitalTypo(s: string, at: number, line: string): boolean {
+  if (!/[A-Z]/.test(s)) return false;
+  const lineStart = line.search(/\S/);
+  const word = /[A-Za-z0-9]+/g;
+  for (let m = word.exec(s); m; m = word.exec(s)) {
+    const w = m[0];
+    if (w === w.toLowerCase() || !TYPO_WORDS.has(w.toLowerCase())) continue;
+    const opensLine = at + m.index === lineStart && w.slice(1) === w.slice(1).toLowerCase();
+    if (!opensLine) return true;
+  }
+  return false;
+}
 
 /**
  * Words that may follow 'review 20' without turning it into something else.
@@ -93,8 +192,11 @@ const NUMBER_WORDS: Record<string, number> = {
 const GRAMMAR_WORDS = new Set([
   "every", "each", "daily", "weekly", "monthly", "weekdays", "weekends", "fortnightly", "nightly",
   "today", "tonight", "tdy", "tomorrow", "tmr", "tmrw", "by", "due", "on", "until", "till", "for", "in",
-  "next", "this", "must", "and", "then", "before", "after", "once", "twice", "min",
-  ...Object.keys(DAY_WORDS), ...Object.keys(DAY_PLURALS), ...Object.keys(MONTH_WORDS),
+  "next", "this", "must", "and", "then", "before", "after", "once", "twice", "min", "within", "asap", "per",
+  "eod", "eow", "eom", "eoy", "fortnight", "weekend", "christmas", "xmas", "hashtag", "tag",
+  "mỗi", "moi", "hằng", "hàng", "hang", "trước", "truoc", "vào", "vao", "hôm", "hom", "ngày", "ngay", "mai", "mốt",
+  "tuần", "tuan", "tháng", "thang", "sáng", "sang", "trưa", "trua", "chiều", "chieu", "tối", "toi", "đêm", "dem", "lúc", "luc",
+  ...Object.keys(DAY_WORDS), ...Object.keys(DAY_PLURALS), ...Object.keys(MONTH_WORDS), ...TYPO_WORDS,
 ]);
 
 /**
@@ -125,25 +227,156 @@ const WD_SHORT = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTH_SHORT = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Longest first, so an alternation never settles for 'thu' inside 'thursday'. */
-function alt(words: Record<string, unknown>): string {
-  return Object.keys(words)
+function alt(words: Record<string, unknown> | readonly string[]): string {
+  return (Array.isArray(words) ? [...words] : Object.keys(words))
     .sort((a, b) => b.length - a.length)
     .join("|");
 }
 
-const DAY = `(?:${alt(DAY_WORDS)})`;
+const ENG_DAY = `(?:${alt({ ...DAY_WORDS, ...TYPO_DAYS })})`;
+/** 'thứ 2' … 'thứ 7', 'thứ hai' … 'thứ bảy', 'chủ nhật', 'cn', 't2' … 't7'. Unaccented 'thu 2' is English 'thu'. */
+const VN_DAY = `(?:thứ\\s*[2-7]|thứ\\s+(?:${alt(VN_DAY_WORDS)})|chủ\\s+nhật|chu\\s+nhat|cn|t[2-7])`;
+/** Any one weekday, English (with its misspellings) or Vietnamese. */
+const DAY = `(?:${VN_DAY}|${ENG_DAY})`;
 const DAY_PLURAL = `(?:${alt(DAY_PLURALS)})`;
 const MONTH = `(?:${alt(MONTH_WORDS)})`;
 const NUM_WORD = `(?:\\d{1,3}|${alt(NUMBER_WORDS)})`;
-const ANY_DAY_NAME = new RegExp(`${DAY_PLURAL}|${DAY}`, "gi");
+const EVERY = `(?:${alt(["every", ...TYPO_EVERY])})`;
+const DAILY = `(?:${alt(["daily", ...TYPO_DAILY])})`;
+const WEEKLY = `(?:${alt(["weekly", ...TYPO_WEEKLY])})`;
+const ANY_DAY_NAME = new RegExp(`${VN_DAY}|${DAY_PLURAL}|${ENG_DAY}`, "gi");
+/** A date's numbers ('15 oct', 'oct 15', '30/9', '15th'), so they are never taken for a count. */
+const DATE_NUMBER = new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?(?:\\s+of)?\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b|\\b\\d{1,2}\\/\\d{1,2}(?:\\/\\d{2,4})?\\b|\\b\\d{1,2}(?:st|nd|rd|th)\\b`, "gi");
+/** A Vietnamese day anywhere, so its digit ('thứ 2', 't2') is never taken for a count. */
+const VN_DAY_ANYWHERE = new RegExp(`(^|\\s)${VN_DAY}(?=\\s|$)`, "gi");
+/** Letters that may follow a word without ending it, Vietnamese included. */
+const WORD_CHAR = "a-z0-9\\u00C0-\\u024F\\u1E00-\\u1EFF";
 /** An explicit separator in a list of days: 'mon,thu', 'mon/thu', 'mon & thu', 'mon and thu'. */
 const LIST_SEP = `\\s*(?:,|\\/|&|\\+|\\band\\b)\\s*`;
+/** A day list's separator: an explicit one, or plain spaces ('gym mon wed fri'). */
+const SEP = `(?:${LIST_SEP}|\\s+)`;
 /** A day name that belongs to a schedule rather than a date: after every / each, or inside a list. */
 const SCHEDULE_BEFORE = new RegExp(
-  `(?:\\bevery(?:\\s+(?:other|second|alternate|first|third|fourth|last|\\d{1,2}(?:st|nd|rd|th)))?|\\beach|${DAY}${LIST_SEP})\\s*$`,
+  `(?:\\b${EVERY}(?:\\s+(?:other|second|alternate|first|third|fourth|last|\\d{1,2}(?:st|nd|rd|th)))?|\\beach|(?:^|\\s)(?:mỗi|moi)|${DAY}${LIST_SEP})\\s*$`,
   "i"
 );
-const LIST_AFTER = new RegExp(`^${LIST_SEP}${DAY}(?![a-z])`, "i");
+const LIST_AFTER = new RegExp(`^${LIST_SEP}${DAY}(?![${WORD_CHAR}])`, "i");
+/** A whole list of days, separators and all, for checking which separators it used. */
+const EXPLICIT_LIST = new RegExp(`^${DAY}(?:${LIST_SEP}${DAY})+$`, "i");
+
+/** 1 = Monday … 7 = Sunday for any day word the patterns accept; 0 for anything else. */
+const DAY_NUM = new Map<string, number>([...Object.entries(DAY_WORDS), ...Object.entries(DAY_PLURALS), ...Object.entries(TYPO_DAYS)]);
+function dayNumOf(word: string): number {
+  const w = word.toLowerCase().replace(/\s+/g, " ");
+  const n = DAY_NUM.get(w);
+  if (n) return n;
+  const digit = /^(?:thứ ?|t)([2-7])$/.exec(w);
+  if (digit) return Number(digit[1]) - 1;
+  const named = /^thứ (\S+)$/.exec(w);
+  if (named && Object.prototype.hasOwnProperty.call(VN_DAY_WORDS, named[1])) return VN_DAY_WORDS[named[1]];
+  return w === "cn" || w === "chủ nhật" || w === "chu nhat" ? 7 : 0;
+}
+const isWeakDay = (word: string): boolean => word.toLowerCase() === "sat" || word.toLowerCase() === "sun";
+
+/** Context words, compared without their punctuation. */
+const DONE_NOT_BEFORE = new Set(["with", "i", "we", "you", "they", "he", "she", "u", "anyone", "someone"]);
+const DISTANCE_VERBS = new Set(["swim", "run", "jog", "walk", "row", "hike", "cycle", "ride", "sprint", "paddle", "swam", "ran", "walked", "rowed", "jogged", "cycled"]);
+const LENGTH_WORDS = new Set(["rope", "cable", "wire", "fabric", "tape", "hose", "long", "wide", "tall", "deep", "high"]);
+const CLOCK_BEFORE_WORDS = new Set(["lúc", "luc", "at", "@"]);
+/** Parts of the day: next to an hour, on either side, they make it a time ('3h chiều', 'tối nay 8h'). */
+const PART_OF_DAY_WORDS = new Set(["sáng", "sang", "chiều", "chieu", "tối", "toi", "trưa", "trua", "đêm", "dem"]);
+const CLOCK_AFTER_WORDS = new Set([...PART_OF_DAY_WORDS, "am", "pm"]);
+/**
+ * 'mai' after these is a name ('gặp Mai', 'chị mai') or Tết's apricot blossom
+ * ('mua hoa mai', 'tưới cây mai', 'lặt lá mai'), never tomorrow. 'lá' has no
+ * unaccented form here: flat 'la' is 'là', and 'deadline la mai' is tomorrow.
+ */
+const MAI_NOT_AFTER = new Set([
+  "anh", "chị", "chi", "em", "cô", "co", "chú", "chu", "bác", "bac", "bạn", "ban", "với", "voi", "gặp", "gap", "cho",
+  "hoa", "cây", "cay", "chậu", "chau", "cành", "canh", "bán", "cái", "cai", "gốc", "goc", "vườn", "vuon", "nụ", "nu", "lá",
+]);
+/**
+ * 'mai' before these is a noun or 'some day', never tomorrow: 'mai mốt',
+ * 'mai vàng', 'mai táng', 'mai mối', 'mai rùa', 'mai cua', 'mai kia', 'mai
+ * này'. 'đây' has no unaccented form here: flat 'day' is 'dậy' ('mai day som').
+ */
+const MAI_NOT_BEFORE = new Set([
+  "mốt", "mot", "táng", "tang", "vàng", "vang", "mối", "moi", "rùa", "rua", "mực", "muc", "cua", "kia", "này", "nay", "đây",
+]);
+/**
+ * A weak day closing the line after these is a noun or a verb, not a date:
+ * 'enjoy the sun', 'plants need full sun', 'gets no sun', 'balcony gets
+ * morning sun', 'sea and sun', 'the exam i sat', 'where we sat'. ('from' is
+ * not one: 'holiday from sat' starts on Saturday.)
+ */
+const WEAK_DAY_NOUN_CONTEXT = ["the", "a", "in", "of", "this", "and", "against"];
+/**
+ * The words before a closing 'sat' or 'sun' that make it the noun or the verb,
+ * by day: sunlight's amounts, wants and times for 'sun' ('basil needs full
+ * sun', 'balcony gets morning sun'); a subject or auxiliary for the verb 'sat'
+ * ('the exam i sat'). Kept apart so 'drinks evening sat' is still a Saturday.
+ */
+const WEAK_DAY_NOT_AFTER: Record<"sat" | "sun", ReadonlySet<string>> = {
+  sun: new Set([
+    ...WEAK_DAY_NOUN_CONTEXT,
+    "no", "more", "some", "any", "much", "enough", "less", "little", "need", "needs", "get", "gets", "getting",
+    "like", "likes", "love", "loves", "hate", "hates", "prefer", "prefers", "want", "wants",
+    "full", "partial", "part", "direct", "bright", "filtered", "warm", "hot", "harsh",
+    "morning", "afternoon", "evening", "midday", "summer", "winter", "has", "have", "had",
+  ]),
+  sat: new Set([...WEAK_DAY_NOUN_CONTEXT, "i", "we", "he", "she", "they", "who", "has", "have", "had", "was", "were", "been"]),
+};
+/**
+ * Nouns a holiday describes rather than dates: 'due xmas cards' is the cards,
+ * like 'xmas shopping', not a deadline on 25 December for 'Cards'.
+ */
+const HOLIDAY_NOUNS = new Set([
+  "card", "cards", "party", "parties", "tree", "trees", "dinner", "lunch", "brunch", "breakfast", "shopping", "shop",
+  "gift", "gifts", "present", "presents", "light", "lights", "decorations", "decor", "song", "songs", "carol", "carols",
+  "market", "markets", "break", "holiday", "holidays", "hols", "pudding", "cake", "cookies", "biscuits", "list", "lists",
+  "jumper", "jumpers", "sweater", "sweaters", "movie", "movies", "film", "films", "concert", "play", "bonus", "sale", "sales",
+  "stocking", "stockings", "wrapping", "menu", "food", "ham", "turkey", "crackers", "ornaments", "wreath", "mass", "service",
+  "plans", "prep", "budget", "stuff", "things", "photo", "photos", "drinks", "outfit", "outfits", "post", "treats", "games",
+]);
+/** A day after these is a date's ('by fri', 'next mon', 'trước thứ 6'), never the start of a list or range. */
+const LIST_NOT_AFTER = new Set(["by", "due", "until", "till", "before", "for", "next", "this", "trước", "truoc", "chót", "chot"]);
+/** The prefixes a list may own ('on mon & thu', 'vào t2 t4'): a day after one is still part of its list. */
+const LIST_PREFIXES = new Set(["on", "vào", "vao"]);
+/** Before a spoken duration, these make it a time or an interval: 'in an hour', 'every two hours'. */
+const SPOKEN_NOT_AFTER = new Set(["in", "within", "after", "every", "than", "per", "next", "last"]);
+/** After a spoken duration, these make it a time: 'ten minutes late', 'an hour ago'. */
+const SPOKEN_NOT_BEFORE = new Set(["late", "early", "ago", "before", "after", "from", "away", "left", "behind", "later", "past", "prior", "earlier", "sooner", "until", "till"]);
+/** 'for', 'about' or '~' before a number: it is an estimate, whatever surrounds it. */
+const ESTIMATE_LEAD = `(?:(?:for|about|approx\\.?|around)\\s+)?(?:~\\s?)?`;
+/** Spoken minutes (P3). */
+const SPOKEN_MINUTES: Record<string, number> = {
+  five: 5, ten: 10, fifteen: 15, twenty: 20, "twenty-five": 25, "twenty five": 25, thirty: 30,
+  forty: 40, "forty-five": 45, "forty five": 45, sixty: 60, ninety: 90,
+};
+/** Words before 'an hour' that make it a rate: '50 km an hour', '$20 an hour'. */
+const RATE_WORDS = new Set(["km", "kms", "k", "mi", "miles", "mile", "mph", "kmh", "dollars", "bucks", "euros", "pounds"]);
+/** A line that moves something from one day to another: 'move desk tue to fri' is not a Tue–Fri habit. */
+const MOVE_VERB = /(?:^|\s)(?:move|moved|moving|push|pushed|shift|shifted|reschedule|rescheduled|postpone|postponed|bump|bumped|swap|swapped|change|changed)(?=\s)/i;
+/** Units a number counts: 'dec 1 tiếng' is one hour, not 1 December. */
+const COUNTED_UNIT = `(?:(?:h|hrs?|hours?|m|mins?|minutes?|p|phút|phut|tiếng|tieng|giờ|gio|lần|lan|buổi|buoi|x|×|times|days?|weeks?|wks?|months?|km|kg)(?=$|[\\s,.;:!?)])|(?:lần|lan|buổi|buoi|x|×|times)\\/)`;
+/** An interval: 'every 2 weeks', 'every 3rd day', 'every other week', 'every fortnight', 'fortnightly'. */
+const INTERVAL = `(?:\\b${EVERY}\\s+(?:other\\s+week|fortnight|\\d{1,3}(?:st|nd|rd|th)?\\s*(?:days?|d|weeks?|wks?|w))|\\bfortnightly)`;
+/** R7: an interval just before a day makes the day its start, weak days included ('every 2 weeks sat'). */
+const INTERVAL_BEFORE = new RegExp(`${INTERVAL}\\s+$`, "i");
+/** An interval and nothing else, to tell an interval's chip from the chips around it. */
+const INTERVAL_EXACT = new RegExp(`^${INTERVAL}$`, "i");
+/** A clock time just before a part of the day: '3h chiều', '9h30 sáng', '3 giờ chiều'. */
+const CLOCK_BEFORE = /(?:^|\s)\d{1,2}(?:h\d{0,2}|\s*(?:giờ|gio)(?:\s*(?:rưỡi|ruoi))?)\s*$/i;
+/** …or just after one: 'tối nay 8h'. */
+const CLOCK_AFTER = /^\s+\d{1,2}(?:h\d{0,2}|\s*(?:giờ|gio))(?=$|[\s,.;:!?)])/i;
+
+/**
+ * What may follow the last word of a line without making it not the last:
+ * a trailing '!' or '?', '#tag', '^goal', a spoken tag or 'for later', and
+ * the punctuation the title tidies away.
+ */
+const TAIL_TOKEN = `(?:!+|\\?+|#\\S+|\\^(?:"[^"]*"|\\S+)|(?:hashtag|hash\\s+tag|tag)\\s+(?:body|duty|craft|care|short|mid|long|play)|for\\s+later|to\\s+(?:the\\s+|my\\s+)?inbox)`;
+const TAIL = new RegExp(`^[\\s,;:\\-–—·|/.]*(?:${TAIL_TOKEN}[\\s,;:\\-–—·|/.]*)*$`, "i");
 
 /**
  * Token edges. JS lookbehind would read more naturally, but a regex that
@@ -168,6 +401,32 @@ function rx(body: string): RegExp {
     compiled.set(source, re);
   }
   return re;
+}
+
+/** A word without the punctuation around it, lowercased. */
+function bareWord(w: string | undefined): string {
+  return (w ?? "").toLowerCase().replace(/^[^\p{L}\p{N}@]+|[^\p{L}\p{N}@]+$/gu, "");
+}
+/** The `n` nearest words before `pos`, nearest first, skipping bare punctuation ('anh ! mai' reads 'anh'). */
+function wordsBefore(s: string, pos: number, n: number): string[] {
+  const out: string[] = [];
+  const words = s.slice(0, pos).split(/\s+/);
+  for (let i = words.length - 1; i >= 0 && out.length < n; i--) {
+    const w = bareWord(words[i]);
+    if (w) out.push(w);
+  }
+  return out;
+}
+function wordBefore(s: string, pos: number): string {
+  return wordsBefore(s, pos, 1)[0] ?? "";
+}
+/** The nearest word after `pos`, skipping bare punctuation. */
+function wordAfter(s: string, pos: number): string {
+  for (const raw of s.slice(pos).split(/\s+/)) {
+    const w = bareWord(raw);
+    if (w) return w;
+  }
+  return "";
 }
 
 // ── Day arithmetic (keys only; the zone never enters into it) ─────────────
@@ -201,6 +460,26 @@ function upcomingDate(today: DayKey, m: number, d: number): DayKey | null {
     if (key >= today) return key;
   }
   return null;
+}
+/** How far back a yearless date may lie and still mean 'this, and it is late' (R9). */
+export const RECENT_PAST_DAYS = 60;
+/**
+ * A day of a month with no year, R9: one that fell 1–60 days ago is today
+ * (and late — 'Q3 report due 30/9' is due now, not next September); any
+ * other is the next occurrence.
+ */
+function yearlessDate(today: DayKey, m: number, d: number): { key: DayKey; note?: string } | null {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const [ty] = partsOf(today);
+  const past = [ty, ty - 1]
+    .filter((y) => d <= daysInMonth(y, m))
+    .map((y) => keyOf(y, m, d))
+    .filter((k) => k < today)
+    .sort()
+    .pop();
+  if (past && daysBetween(past, today) <= RECENT_PAST_DAYS) return { key: today, note: `${d} ${MONTH_SHORT[m]} passed` };
+  const key = upcomingDate(today, m, d);
+  return key ? { key } : null;
 }
 function explicitDate(y: number, m: number, d: number): DayKey | null {
   if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) return null;
@@ -242,7 +521,7 @@ function fullYear(y: number): number {
 }
 function numberOf(word: string): number {
   const lower = word.toLowerCase();
-  return lower in NUMBER_WORDS ? NUMBER_WORDS[lower] : Number(lower);
+  return Object.prototype.hasOwnProperty.call(NUMBER_WORDS, lower) ? NUMBER_WORDS[lower] : Number(lower);
 }
 
 // ── Labels ────────────────────────────────────────────────────────────────
@@ -319,6 +598,15 @@ export function describeCaptureRule(rule: string): string {
   }
 }
 
+/**
+ * The sheet's chip for a schedule. A named-day rule reads as a schedule
+ * ('Every Mon · Wed · Fri'), so a line of bare day names is never mistaken
+ * for three dates; the board keeps describeCaptureRule's shorter words.
+ */
+function ruleChipLabel(rule: string): string {
+  return rule.startsWith("DOW:") ? `Every ${describeCaptureRule(rule)}` : describeCaptureRule(rule);
+}
+
 const HORIZON_LABEL: Record<Horizon, string> = { SHORT: "Short", MID: "Mid", LONG: "Long" };
 const TRACK_LABEL: Record<Track, string> = { BODY: "Body", DUTY: "Duty", CRAFT: "Craft", CARE: "Care" };
 
@@ -337,16 +625,25 @@ interface Claim extends CaptureSpan {
   consume: boolean;
 }
 
+/** Characters a cut can strand at the end of a title. */
+const TRAILING_JUNK = /[\s,;:\-–—·|/]+$/;
+
 /**
  * Collapses the gaps a cut leaves behind: doubled spaces, a comma stranded
- * at either end, empty brackets. Idempotent, which the re-parse guarantee
- * depends on.
+ * at either end, empty brackets, a full stop left alone after its last word
+ * was read ('… by Mon.'). Idempotent, which the re-parse guarantee depends
+ * on.
  */
 export function tidyTitle(raw: string): string {
   let t = raw.replace(/\s+/g, " ");
   t = t.replace(/\(\s*\)/g, " ");
   t = t.replace(/\s+([,;:])/g, "$1");
-  t = t.replace(/^[\s,;:\-–—·|/]+/, "").replace(/[\s,;:\-–—·|/]+$/, "");
+  t = t.replace(/^[\s,;:\-–—·|/]+/, "");
+  // A stranded '.' (whitespace before it) goes with the junk around it, until neither is left.
+  for (let prev = ""; prev !== t; ) {
+    prev = t;
+    t = t.replace(TRAILING_JUNK, "").replace(/\s+\.+$/, "");
+  }
   t = t.replace(/\s{2,}/g, " ").trim();
   return capitalise(t);
 }
@@ -368,6 +665,30 @@ function titleFrom(text: string, claims: Claim[], mode: CaptureMode): string {
   out += text.slice(pos);
   // An idea is content: its punctuation is the user's, so only whitespace is tidied.
   return mode === "IDEA" ? capitalise(out.replace(/\s+/g, " ").trim()) : tidyTitle(out);
+}
+
+// ── Idea lines ────────────────────────────────────────────────────────────
+
+/** 'idea:' / 'i:' opening the line. One pattern, read by parseCapture and splitIdeaLine alike. */
+const IDEA_PREFIX = /^(\s*)(?:idea|i)\s*:/i;
+/** The answer chip shows this much of the answer. */
+const ANSWER_LABEL_CHARS = 24;
+
+/**
+ * The answer after the '::' at `at`: everything after it, trimmed, and the
+ * span from the '::' to the answer's last character. Null when nothing
+ * follows the '::' — a trailing '::' is still being typed, not an answer.
+ */
+function answerAt(text: string, at: number): { answer: string; span: CaptureSpan } | null {
+  const tail = text.slice(at + 2);
+  const answer = tail.trim();
+  if (!answer) return null;
+  return { answer, span: { start: at, end: text.length - (tail.length - tail.trimEnd().length) } };
+}
+
+function answerLabel(answer: string): string {
+  const chars = Array.from(answer);
+  return `Answer: ${chars.length > ANSWER_LABEL_CHARS ? `${chars.slice(0, ANSWER_LABEL_CHARS).join("").trimEnd()}…` : answer}`;
 }
 
 // ── The parse ─────────────────────────────────────────────────────────────
@@ -397,14 +718,20 @@ interface Found {
   monthlyNeedsDay: boolean;
   dueDay: DayKey | null;
   dueKind: DueKind | null;
+  /** Said after the date's label: '30 Sep passed' (R9). */
+  dueNote: string | null;
   estMinutes: number | null;
   compulsoryMarked: boolean;
   inbox: boolean;
+  answer: string | null;
 }
 
 function overlaps(a: CaptureSpan, b: CaptureSpan): boolean {
   return a.start < b.end && b.start < a.end;
 }
+
+/** A date's resolver may add a note to its label ('30 Sep passed'). */
+type Resolved = DayKey | { key: DayKey; note?: string } | null;
 
 export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   const today = opts.today;
@@ -426,9 +753,11 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     monthlyNeedsDay: false,
     dueDay: null,
     dueKind: null,
+    dueNote: null,
     estMinutes: null,
     compulsoryMarked: false,
     inbox: false,
+    answer: null,
   };
 
   /**
@@ -440,6 +769,20 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
    */
   const free = (span: CaptureSpan, ignoreReverts = false): boolean =>
     span.end > span.start && !claims.some((c) => overlaps(c, span)) && (ignoreReverts || !reverted.some((r) => overlaps(r, span)));
+
+  /**
+   * Matches a rule turned down only because its slot was already filled
+   * ('tmr … by fri': the second date). They stay title text, and a re-read
+   * of the title reads them, so words whose reading depends on their
+   * neighbours treat them as grammar, not as words (see `view`).
+   */
+  const leftovers: CaptureSpan[] = [];
+  let slotFull = false;
+  /** A rule's visitor says its slot is taken, then returns null. */
+  const full = (): null => {
+    slotFull = true;
+    return null;
+  };
 
   const take = (span: CaptureSpan, d: Draft): void => {
     claims.push({ start: span.start, end: span.end, consume: d.consume ?? true });
@@ -463,21 +806,76 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       const m = pattern.exec(text);
       if (!m) return;
       const span = { start: m.index + (m[1]?.length ?? 0), end: m.index + m[0].length };
+      slotFull = false;
       const draft = ok(span) ? visit(m, span) : null;
       if (draft && ok(draft.span ?? span)) {
         take(draft.span ?? span, draft);
         from = Math.max(span.end, m.index + 1);
       } else {
+        if (!draft && slotFull && !leftovers.some((l) => overlaps(l, span))) leftovers.push(span);
         from = m.index + 1;
       }
     }
   };
 
+  /**
+   * The line as its title will read: every consumed claim blanked out, at
+   * the same indices, and every leftover too (a re-read of the title claims
+   * it). Words whose reading depends on their neighbours look at this, so a
+   * word read here is read the same way in the stored title. (Neighbours
+   * that are never chips themselves — 'lúc', 'chiều', 'anh' before 'mai' —
+   * are read on the line as typed instead.)
+   */
+  const view = (): string => blanked([...claims.filter((x) => x.consume), ...leftovers]);
+  /**
+   * The same, with reverted spans blanked as well, for the words read last
+   * (a weak day ending the line, 'a day' after a count, spoken tags and
+   * durations): the user made a reverted chip's words text, and that must
+   * not move the chips around them ('call mum sun 30m' keeps its Sunday when
+   * '30m' goes back into the title). Rules read mid-parse use `view`: a chip
+   * reverted after them was still unread text when they ran.
+   */
+  const finalView = (): string => blanked([...claims.filter((x) => x.consume), ...leftovers, ...reverted]);
+  function blanked(spans: CaptureSpan[]): string {
+    const chars = text.split("");
+    for (const c of spans) for (let i = c.start; i < c.end; i++) chars[i] = " ";
+    return chars.join("");
+  }
+  /** Nothing but trailing '!', '?', tags, goals and tidy-able punctuation after `pos`, once claims are cut. */
+  const atEnd = (pos: number): boolean => TAIL.test(finalView().slice(pos));
+
+  const dueLabel = (): string => {
+    if (!f.dueDay) return "";
+    const day = dayLabel(f.dueDay, today);
+    const base = f.dueKind === "DEADLINE" ? `By ${day === "Today" || day === "Tomorrow" ? day.toLowerCase() : day}` : day;
+    return f.dueNote ? `${base} · ${f.dueNote}` : base;
+  };
+
+  /** The one estimate a line may carry, clamped to 1..480 minutes; the first rule to set it wins. */
+  const setMinutes = (total: number): Draft | null => {
+    if (!Number.isFinite(total) || total <= 0) return null;
+    if (f.estMinutes !== null) return full();
+    f.estMinutes = Math.max(MIN_EST_MINUTES, Math.min(MAX_EST_MINUTES, Math.round(total)));
+    return { field: "duration", label: `~${formatMinutes(f.estMinutes)}` };
+  };
+
+  /** The one schedule a line may carry; the first rule to set it wins. */
+  const setRule = (value: string): Draft | null => {
+    if (f.recurrence) return full();
+    f.recurrence = value;
+    return { field: "recurrence", label: ruleChipLabel(value) };
+  };
+
   // 1. Mode prefix: 'idea:' / 'i:', 'goal:' / 'goal mid:', 'x ' / 'did ' / 'done '.
   if (!opts.mode) {
-    const idea = /^(\s*)(?:idea|i)\s*:/i.exec(text);
+    const idea = IDEA_PREFIX.exec(text);
     const goal = idea ? null : /^(\s*)goal(?:\s+(short|mid|long))?\s*:/i.exec(text);
-    const done = idea || goal ? null : /^(\s*)(?:x|did|done)(?=\s+\S)/i.exec(text);
+    let done = idea || goal ? null : /^(\s*)(x|did|done)(?=\s+\S)/i.exec(text);
+    // R12: 'did i lock the door?' is a question and 'done with the essay, …'
+    // a task; only 'x' is always the done marker.
+    if (done && done[2].toLowerCase() !== "x") {
+      if (/\?+!*\s*$/.test(text) || DONE_NOT_BEFORE.has(wordAfter(text, done[0].length))) done = null;
+    }
     const m = idea ?? goal ?? done;
     const span = m ? { start: m[1].length, end: m[0].length } : null;
     if (m && span && free(span)) {
@@ -495,8 +893,11 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     }
   }
 
-  // An idea is knowledge, not a todo: '30m' or 'tomorrow' inside it is content.
-  if (f.mode !== "IDEA") {
+  // An idea is knowledge, not a todo: '30m' or 'tomorrow' inside it is
+  // content. Only its answer is read out of it.
+  if (f.mode === "IDEA") {
+    readAnswer();
+  } else {
     readTags();
     if (f.mode !== "GOAL") readMvv();
     readParent();
@@ -510,28 +911,61 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       readCompulsory();
     }
     readInbox();
+    // Then the words that depend on what is left around them.
+    if (f.mode !== "GOAL") {
+      readSpokenDuration();
+      readPerDay();
+    }
+    readWeakLastDay();
+    readSpokenTags();
+    readSpokenInbox();
+  }
+
+  // P2 one-box ideas: the first '::' splits an idea into its question (the
+  // title) and its answer, kept whole. Tapping the chip keeps '::' as text.
+  function readAnswer(): void {
+    const from = claims.reduce((end, c) => Math.max(end, c.end), 0);
+    for (let at = text.indexOf("::", from); at >= 0; at = text.indexOf("::", at + 2)) {
+      if (reverted.some((r) => overlaps(r, { start: at, end: at + 2 }))) continue;
+      const split = answerAt(text, at);
+      if (split && free(split.span)) {
+        f.answer = split.answer;
+        take(split.span, { field: "answer", label: answerLabel(split.answer) });
+      }
+      return;
+    }
+  }
+
+  /** A '#tag' or a spoken tag: one track, one horizon, one play mark per line. */
+  function applyTag(raw: string): Draft | null {
+    const tag = raw.toLowerCase();
+    if (tag in TRACK_TAGS) {
+      if (f.track) return full();
+      f.track = TRACK_TAGS[tag];
+      return { field: "tag", label: TRACK_LABEL[f.track] };
+    }
+    if (tag in HORIZON_TAGS) {
+      if (f.doneNow) return null;
+      if (f.tagHorizon) return full();
+      f.tagHorizon = HORIZON_TAGS[tag];
+      if (!opts.mode) f.mode = "GOAL";
+      return { field: "horizon", label: `${HORIZON_LABEL[f.tagHorizon]} goal` };
+    }
+    if (f.intrinsic) return full();
+    f.intrinsic = true;
+    return { field: "play", label: "Play · no XP" };
   }
 
   // 2. Tags. First, because a horizon tag makes the line a goal, and a goal
   // reads the rest of the line differently.
   function readTags(): void {
-    scan(rx(`#(body|duty|craft|care|short|mid|long|play)`), (m) => {
-      const tag = m[2].toLowerCase();
-      if (tag in TRACK_TAGS) {
-        if (f.track) return null;
-        f.track = TRACK_TAGS[tag];
-        return { field: "tag", label: TRACK_LABEL[f.track] };
-      }
-      if (tag in HORIZON_TAGS) {
-        if (f.tagHorizon || f.doneNow) return null;
-        f.tagHorizon = HORIZON_TAGS[tag];
-        if (!opts.mode) f.mode = "GOAL";
-        return { field: "horizon", label: `${HORIZON_LABEL[f.tagHorizon]} goal` };
-      }
-      if (f.intrinsic) return null;
-      f.intrinsic = true;
-      return { field: "play", label: "Play · no XP" };
-    });
+    scan(rx(`#(body|duty|craft|care|short|mid|long|play)`), (m) => applyTag(m[2]));
+    // Dictation: 'hashtag long' closing a fresh line. A spoken horizon changes
+    // how the whole line is read, so it is taken here, and only at the very
+    // end; spoken tracks wait for the end-of-line pass (readSpokenTags).
+    if (!opts.mode) {
+      scan(rx(`(?:hashtag|hash\\s+tag|tag)\\s+(short|mid|long)`), (m, span) => (TAIL.test(text.slice(span.end)) ? applyTag(m[2]) : null));
+    }
   }
 
   // 3. The minimum version: '(min: 10 pushups)', or a bare 'min: …' that runs
@@ -540,12 +974,13 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   function readMvv(): void {
     scan(/(^|[\s,;])\((?:min|mvv)\b\s*:?\s*([^()]*)\)/gi, (m) => {
       const body = m[2].trim();
-      if (!body || f.mvv) return null;
+      if (!body) return null;
+      if (f.mvv) return full();
       f.mvv = body;
       return { field: "mvv", label: `Min: ${body}` };
     });
     scan(/(^|\s)(?:min|mvv):/gi, (_m, span) => {
-      if (f.mvv) return null;
+      if (f.mvv) return full();
       const rest = text.slice(span.end);
       const stop = /\s+(?:!+(?=\s|$)|must(?=\s|$)|#[a-z]|\^\S)|\?+\s*$/i.exec(rest);
       const segment = stop ? rest.slice(0, stop.index) : rest;
@@ -560,7 +995,7 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   // goal on the server (matchParentGoal); here it is only the words.
   function readParent(): void {
     scan(/(^|\s)\^(?:"([^"]+)"|([^\s"^,;!?()]+))/g, (m) => {
-      if (f.parentHint) return null;
+      if (f.parentHint) return full();
       const hint = (m[2] ?? m[3] ?? "").replace(/\.+$/, "").trim();
       if (!hint) return null;
       f.parentHint = hint;
@@ -589,10 +1024,16 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     const queue = () => study("REVIEW_DUE", null, "Study · clear the queue");
     const ideas = (n: number) => study("IDEAS", n, `Study · ${n} idea${n === 1 ? "" : "s"}`);
     const S = { ignoreReverts: true };
-    /** 'review 20' is a count of cards only when nothing but grammar follows it. */
+    /**
+     * 'review 20' is a count of cards only when nothing but grammar follows
+     * it: a grammar word, a day ('t2', 'thứ 2'), or anything not opening with
+     * a letter ('30m', '#body', '15/10').
+     */
     const nextWordIsGrammar = (end: number): boolean => {
-      const next = /^\s+([a-z]+)/i.exec(text.slice(end));
-      return !next || GRAMMAR_WORDS.has(next[1].toLowerCase());
+      const next = /^\s+(\S+)/.exec(text.slice(end));
+      if (!next || !/^\p{L}/u.test(next[1])) return true;
+      const word = /^\p{L}+/u.exec(next[1])?.[0].toLowerCase() ?? "";
+      return GRAMMAR_WORDS.has(word) || dayNumOf(bareWord(next[1])) > 0 || /^(?:thứ|chủ)$/.test(word);
     };
     const wordBefore = (start: number): string | null => {
       const prev = /([a-z]+)\W*$/i.exec(text.slice(0, start));
@@ -664,30 +1105,29 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
   }
 
   // 6. Recurrence. Rules run most specific first (after-completion, targets,
-  // named days, intervals, monthly, then plain daily / weekly) and the first
-  // to match wins; a second schedule on the same line stays title text.
+  // ranges, named days, intervals, monthly, then plain daily / weekly) and
+  // the first to match wins; a second schedule on the same line stays title
+  // text.
   function readRecurrence(): void {
-    const rule = (value: string): Draft | null => {
-      if (f.recurrence) return null;
-      f.recurrence = value;
-      return { field: "recurrence", label: describeCaptureRule(value) };
-    };
+    // A misspelling typed with a capital is a name ('Firday'), never grammar.
+    const scanW = (pattern: RegExp, visit: (m: RegExpExecArray, span: CaptureSpan) => Draft | null): void =>
+      scan(pattern, (m, span) => (capitalTypo(m[0], m.index, text) ? null : visit(m, span)));
     const daysIn = (list: string): number[] => {
-      const found = (list.match(ANY_DAY_NAME) ?? []).map((w) => DAY_WORDS[w.toLowerCase()] ?? DAY_PLURALS[w.toLowerCase()]);
+      const found = (list.match(ANY_DAY_NAME) ?? []).map(dayNumOf);
       return [...new Set(found)].filter((d) => d >= 1 && d <= 7).sort((a, b) => a - b);
     };
     const dow = (list: number[]): Draft | null => {
       if (list.length === 0) return null;
-      if (list.length === 7) return rule("DAILY");
-      if (list.join(",") === "1,2,3,4,5") return rule("WEEKDAYS");
-      return rule(`DOW:${list.join(",")}`);
+      if (list.length === 7) return setRule("DAILY");
+      if (list.join(",") === "1,2,3,4,5") return setRule("WEEKDAYS");
+      return setRule(`DOW:${list.join(",")}`);
     };
     const unitDays = (unit: string): number => (/^w/i.test(unit) ? 7 : 1);
     const interval = (total: number, make: (n: number) => string): Draft | null =>
-      total >= 1 && total <= 365 ? rule(make(total)) : null;
+      total >= 1 && total <= 365 ? setRule(make(total)) : null;
 
     // After completion: 'every! 3 days', '3 days after (done)'. Never a duty.
-    scan(rx(`every!\\s*(\\d{1,3}|other)?\\s*(days?|weeks?|wks?)`), (m) => {
+    scanW(rx(`${EVERY}!\\s*(\\d{1,3}|other)?\\s*(days?|weeks?|wks?)`), (m) => {
       const n = m[2] === undefined ? 1 : m[2].toLowerCase() === "other" ? 2 : Number(m[2]);
       return interval(n * unitDays(m[3]), (t) => `AFTER:${t}`);
     });
@@ -696,113 +1136,238 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       (m) => interval(Number(m[2]) * unitDays(m[3]), (t) => `AFTER:${t}`)
     );
 
-    // Frequency targets: '3x/week', '3x a week', '3 times a week', '3/wk', 'twice a month'.
+    // Frequency targets: '3x/week', '3x a week', '3 times a week', '3/wk',
+    // 'twice a month', and R4: '3 times weekly', 'twice weekly', '4 days a
+    // week', and '3 lần/tuần'.
     const target = (n: number, unit: string): Draft | null => {
-      const per = /^m/i.test(unit) ? "M" : "W";
+      const per = /^(?:m|th)/i.test(unit) ? "M" : "W";
       const count = Math.min(per === "W" ? 7 : 31, n);
-      return count >= 1 ? rule(`TARGET:${count}/${per}`) : null;
+      return count >= 1 ? setRule(`TARGET:${count}/${per}`) : null;
     };
+    const COUNT = `(\\d{1,2}|one|two|three|four|five|six|seven)`;
     const PER_UNIT = `(weeks?|wks?|w|months?|mos?|mths?)`;
-    scan(rx(`(\\d{1,2})\\s*(?:x|×|times)\\s*(?:\\/|a|per|each|every)?\\s*${PER_UNIT}`), (m) => target(Number(m[2]), m[3]));
+    scanW(rx(`${COUNT}\\s*(?:x|×|times)\\s*(?:\\/|a|per|each|every)?\\s*${PER_UNIT}`), (m) => target(numberOf(m[2]), m[3]));
     scan(rx(`(\\d{1,2})\\s*\\/\\s*${PER_UNIT}`), (m) => target(Number(m[2]), m[3]));
     scan(rx(`(once|twice|thrice)\\s+(?:a|per|each|every)\\s+(week|month)`), (m) =>
       target({ once: 1, twice: 2, thrice: 3 }[m[2].toLowerCase() as "once" | "twice" | "thrice"], m[3])
     );
+    scanW(rx(`${COUNT}\\s*(?:x|×|times)\\s+(${WEEKLY}|monthly)`), (m) => target(numberOf(m[2]), m[3]));
+    scanW(rx(`(once|twice|thrice)\\s+(${WEEKLY}|monthly)`), (m) =>
+      target({ once: 1, twice: 2, thrice: 3 }[m[2].toLowerCase() as "once" | "twice" | "thrice"], m[3])
+    );
+    scan(rx(`${COUNT}\\s+days?\\s*(?:(?:a|per|each|every)\\s+|\\/\\s*)(weeks?|wks?|w|months?|mos?)`), (m) => target(numberOf(m[2]), m[3]));
+    scan(rx(`(\\d{1,2})\\s*(?:lần|lan|buổi|buoi)\\s*(?:\\/\\s*|(?:một|mot|mỗi|moi|1)\\s+)(tuần|tuan|tháng|thang)`), (m) =>
+      target(Number(m[2]), m[3])
+    );
 
     // Weekdays and weekends, before 'every week' can take the first half of them.
-    scan(rx(`(?:(?:on|every)\\s+)?weekdays|every\\s+weekday`), () => rule("WEEKDAYS"));
-    scan(rx(`(?:(?:on|every)\\s+)?weekends|every\\s+weekend`), () => rule("DOW:6,7"));
+    scanW(rx(`(?:(?:on|${EVERY})\\s+)?weekdays|${EVERY}\\s+weekday`), () => setRule("WEEKDAYS"));
+    scanW(rx(`(?:(?:on|${EVERY})\\s+)?weekends|${EVERY}\\s+weekend`), () => setRule("DOW:6,7"));
+
+    // R2 ranges: 'mon-fri', 'fri–mon', 'mon to fri', 't2-t6', inclusive and
+    // wrapping. 'move desk tue to fri' moves it; it is not a Tue–Fri habit.
+    const range = (m: RegExpExecArray, span: CaptureSpan): Draft | null => {
+      const days = rangeDays(m, span);
+      return days ? dow(days) : null;
+    };
+    scanW(RANGE_DASH, range);
+    scanW(RANGE_TO, range);
 
     // Named days: 'every mon,thu', 'weekly on sat', 'mondays and thursdays',
-    // 'on mon & thu' (two or more), and a bare 'mon/thu' when every name is a
-    // strong one — 'sat and sun' alone is as likely one weekend as a habit.
-    const SEP = `(?:${LIST_SEP}|\\s+)`;
-    scan(rx(`(?:every|each|(?:weekly|every\\s+week)\\s+on)\\s+(${DAY}(?:${SEP}${DAY})*)`), (m) => dow(daysIn(m[2])));
-    scan(rx(`(?:(?:on|every)\\s+)?(${DAY_PLURAL}(?:${SEP}${DAY_PLURAL})*)`), (m) => dow(daysIn(m[2])));
-    scan(rx(`(on\\s+)?(${DAY}(?:${LIST_SEP}${DAY})+)`), (m) => {
-      const words = (m[3].match(new RegExp(DAY, "gi")) ?? []).map((w) => w.toLowerCase());
-      if (!m[2] && words.some((w) => WEAK_WORDS.has(w))) return null;
-      const list = daysIn(m[3]);
+    // 'mỗi thứ 2', 'on mon & thu'; then R1, a bare list of two or more
+    // strong names ('gym mon wed fri', 'tập gym t2 t4 t6') — 'sat and sun'
+    // alone is as likely one weekend as a habit; R3, letters ('M/W/F').
+    scanW(NAMED_DAYS, (m) => dow(daysIn(m[2])));
+    scanW(rx(`(?:(?:on|${EVERY})\\s+)?(${DAY_PLURAL}(?:${SEP}${DAY_PLURAL})*)`), (m) => dow(daysIn(m[2])));
+    // A list another chip cuts into reads as its run before the cut.
+    let from = 0;
+    while (from <= text.length) {
+      DAY_LIST.lastIndex = from;
+      const m = DAY_LIST.exec(text);
+      if (!m) break;
+      const run = capitalTypo(m[0], m.index, text) ? null : listRun(m, (span) => free(span));
+      const qualifies = !!run && dayListQualifies(m[2], run.list, wordBefore(text, run.span.start));
+      slotFull = false;
+      const draft = run && qualifies ? dow(daysIn(run.list)) : null;
+      if (run && draft) {
+        take(run.span, draft);
+        from = run.span.end;
+      } else {
+        if (run && qualifies && slotFull && !leftovers.some((l) => overlaps(l, run.span))) leftovers.push(run.span);
+        from = m.index + 1;
+      }
+    }
+    scan(rx(`(${LETTER_DAY}(?:\\/${LETTER_DAY})+)|(MWF|TTh)`), (m) => {
+      if (m[3] !== undefined) return m[3] === "MWF" ? dow([1, 3, 5]) : m[3] === "TTh" ? dow([2, 4]) : null;
+      const list = [...new Set(m[2].toLowerCase().split("/").map((l) => LETTER_DAYS[l]))].sort((a, b) => a - b);
       return list.length >= 2 ? dow(list) : null;
     });
 
     // Fixed intervals, phased from the start day.
     // 'every other mon' is fortnightly, phased on the coming Monday (the
     // server starts the habit there). Not 'every second tue of the month'.
-    scan(rx(`every\\s+(?:other|second|alternate)\\s+(${DAY})(?![a-z])(?!\\s+of\\b)`), (m) => {
-      if (f.recurrence) return null;
-      const dow = DAY_WORDS[m[2].toLowerCase()];
-      const draft = rule("EVERY:14");
+    scanW(rx(`${EVERY}\\s+(?:other|second|2nd|alternate)\\s+(${DAY})(?![a-z])(?!\\s+of\\b)`), (m) => {
+      if (f.recurrence) return full();
+      const day = dayNumOf(m[2]);
+      const draft = setRule("EVERY:14");
       if (!draft) return null;
       if (!f.dueDay) {
-        f.dueDay = comingWeekday(today, dow);
+        f.dueDay = comingWeekday(today, day);
         f.dueKind = "PLANNED";
       }
-      return { ...draft, label: `Every 2 weeks · ${WD_SHORT[dow]}` };
+      return { ...draft, label: `Every 2 weeks · ${WD_SHORT[day]}` };
     });
-    scan(rx(`every\\s+other\\s+day|every\\s+second\\s+day|(?:on\\s+)?alternate\\s+days`), () => rule("EVERY:2"));
-    scan(rx(`every\\s+other\\s+week|every\\s+fortnight|fortnightly`), () => rule("EVERY:14"));
-    scan(rx(`every\\s+(\\d{1,3})\\s*(days?|d|weeks?|wks?|w)`), (m) =>
+    scanW(rx(`${EVERY}\\s+other\\s+day|${EVERY}\\s+second\\s+day|(?:on\\s+)?alternate\\s+days`), () => setRule("EVERY:2"));
+    // R6: 'every 2nd day', 'every 3rd week' — an interval, before the monthly
+    // 'every 15th'. R7: a day right after an interval is its start, read as
+    // the line's date ('every 2 weeks sat'; see INTERVAL_BEFORE).
+    scanW(rx(`${EVERY}\\s+(\\d{1,2})(?:st|nd|rd|th)\\s+(days?|weeks?|wks?)`), (m) =>
+      interval(Number(m[2]) * unitDays(m[3]), (t) => (t === 1 ? "DAILY" : `EVERY:${t}`))
+    );
+    scanW(rx(`${EVERY}\\s+other\\s+week|${EVERY}\\s+fortnight|fortnightly`), () => setRule("EVERY:14"));
+    scanW(rx(`${EVERY}\\s+(\\d{1,3})\\s*(days?|d|weeks?|wks?|w)`), (m) =>
       interval(Number(m[2]) * unitDays(m[3]), (t) => (t === 1 ? "DAILY" : `EVERY:${t}`))
     );
 
-    // Monthly: 'monthly on 15', 'on the 1st of every month', 'every 15th', 'monthly'.
-    const monthly = (d: number): Draft | null => (d >= 1 && d <= 31 ? rule(`MONTHLY:${d}`) : null);
-    scan(rx(`(?:monthly|every\\s+month)\\s+on\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?`), (m) => monthly(Number(m[2])));
-    scan(rx(`(?:on\\s+)?(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)\\s+(?:of\\s+)?(?:every|each)\\s+month`), (m) => monthly(Number(m[2])));
-    scan(rx(`every\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)(?:\\s+of\\s+(?:the|every|each)\\s+month)?`), (m) => monthly(Number(m[2])));
-    scan(rx(`monthly|every\\s+month|each\\s+month`), () => {
-      if (f.recurrence) return null;
+    // Monthly: 'monthly on 15', 'on the 1st of every month', 'every 15th', 'monthly', 'mỗi tháng'.
+    const monthly = (d: number): Draft | null => (d >= 1 && d <= 31 ? setRule(`MONTHLY:${d}`) : null);
+    scanW(rx(`(?:monthly|${EVERY}\\s+month)\\s+on\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?`), (m) => monthly(Number(m[2])));
+    scanW(rx(`(?:on\\s+)?(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)\\s+(?:of\\s+)?(?:${EVERY}|each)\\s+month`), (m) => monthly(Number(m[2])));
+    scanW(rx(`${EVERY}\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)(?:\\s+of\\s+(?:the|every|each)\\s+month)?`), (m) => monthly(Number(m[2])));
+    scanW(rx(`monthly|${EVERY}\\s+month|each\\s+month|(?:mỗi|moi|hằng|hang|hàng)\\s+(?:tháng|thang)`), () => {
+      if (f.recurrence) return full();
       // The day is settled once dates are read: 'monthly from 15 oct' phases on the 15th.
       f.monthlyNeedsDay = true;
-      return rule("MONTHLY:1");
+      return setRule("MONTHLY:1");
     });
 
-    // Daily and weekly.
-    scan(rx(`daily|every\\s*day|each\\s+day|every\\s+single\\s+day|nightly|every\\s+(?:morning|afternoon|evening|night)`), () =>
-      rule("DAILY")
+    // Daily and weekly, and R5's 'per day' / '/day' (a count before 'a day'
+    // is read last, by readPerDay).
+    scanW(
+      rx(
+        `${DAILY}|${EVERY}\\s*day|each\\s+day|${EVERY}\\s+single\\s+day|nightly|${EVERY}\\s+(?:morning|afternoon|evening|night)|per\\s+day|` +
+          `(?:mỗi|moi|hằng|hang|hàng)\\s+(?:ngày|ngay)|(?:mỗi|moi)\\s+(?:sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem)`
+      ),
+      () => setRule("DAILY")
     );
-    scan(rx(`weekly|every\\s+week|each\\s+week`), () => rule("EVERY:7"));
+    scan(/()\/\s*days?(?=$|[\s,.;:!?)])/gi, () => setRule("DAILY"));
+    scanW(rx(`${WEEKLY}|${EVERY}\\s+week|each\\s+week|(?:mỗi|moi|hằng|hang|hàng)\\s+(?:tuần|tuan)`), () => setRule("EVERY:7"));
   }
 
-  // 7. Dates. 'by' / 'due' / 'until' make a deadline; anything else is a
-  // planned day, which carries forward silently and is never late.
+  // R5: 'a day' / 'a night' after a count within three words: 'read 1
+  // chapter a day', 'stretch 2x a day', 'duolingo 15m a day', not 'call it
+  // a day'. Read last, and the count may sit in the line as typed or in the
+  // words the title keeps ('read 2 pages tmr a day' is 'Read 2 pages a day'
+  // once 'tmr' is cut), so a re-read of the title reads it the same way.
+  function readPerDay(): void {
+    // A day's or a date's own number ('thứ 2', '15 oct') is no count.
+    const counted = (s: string, pos: number): boolean =>
+      s
+        .slice(0, pos)
+        .replace(VN_DAY_ANYWHERE, "$1 ")
+        .replace(DATE_NUMBER, " ")
+        .trim()
+        .split(/\s+/)
+        .slice(-3)
+        .map(bareWord)
+        .some((w) => /^\d/.test(w) || COUNT_WORDS.has(w));
+    scan(rx(`a\\s+(?:day|night)`), (_m, span) =>
+      counted(text, span.start) || counted(blanked(claims.filter((x) => x.consume)), span.start) || counted(finalView(), span.start) ? setRule("DAILY") : null
+    );
+  }
+
+  // 7. Dates. 'by' / 'due' / 'until' / 'trước' make a deadline, 'before' a
+  // deadline the day before; anything else is a planned day, which carries
+  // forward silently and is never late.
   function readDates(): void {
-    const PREFIX = `(?:(due\\s+by|due\\s+on|by|due|until|till|on|for)\\s+)?`;
-    const date = (form: string, resolve: (g: string[], prefix: string | null, span: CaptureSpan) => DayKey | null): void => {
-      scan(rx(`${PREFIX}(?:${form})`), (m, span) => {
-        if (f.dueDay) return null;
-        const prefix = m[2] ? m[2].toLowerCase().replace(/\s+/g, " ") : null;
-        const key = resolve(m.slice(3), prefix, span);
-        if (!key) return null;
+    const PREFIX = `(?:(due\\s+by|due\\s+on|by|due|until|till|on|for|before|trước|truoc|hạn\\s+chót|han\\s+chot|vào|vao)\\s+)?`;
+    const PLANNED_PREFIX = new Set(["on", "for", "vào", "vao"]);
+    const date = (
+      form: string,
+      resolve: (g: string[], prefix: string | null, span: CaptureSpan) => Resolved,
+      o: { prefix?: boolean; kind?: DueKind; narrow?: (span: CaptureSpan) => CaptureSpan | undefined } = {}
+    ): void => {
+      const withPrefix = o.prefix !== false;
+      scan(rx(withPrefix ? `${PREFIX}(?:${form})` : form), (m, span) => {
+        if (capitalTypo(m[0], m.index, text)) return null;
+        const prefix = withPrefix && m[2] ? m[2].toLowerCase().replace(/\s+/g, " ") : null;
+        const r = resolve(m.slice(withPrefix ? 3 : 2), prefix, span);
+        if (!r) return null;
+        if (f.dueDay) {
+          const lost = (prefix ? undefined : o.narrow?.(span)) ?? span;
+          if (!leftovers.some((l) => overlaps(l, lost))) leftovers.push(lost);
+          return null;
+        }
+        let key = typeof r === "string" ? r : r.key;
+        if (prefix === "before") {
+          key = addDays(key, -1);
+          if (key < today) key = today;
+        }
         f.dueDay = key;
-        f.dueKind = prefix !== null && prefix !== "on" && prefix !== "for" ? "DEADLINE" : "PLANNED";
-        const label = dayLabel(key, today);
-        if (f.dueKind === "PLANNED") return { field: "date", label };
-        return { field: "deadline", label: `By ${label === "Today" || label === "Tomorrow" ? label.toLowerCase() : label}` };
+        f.dueNote = typeof r === "string" ? null : r.note ?? null;
+        f.dueKind = o.kind ?? (prefix !== null && !PLANNED_PREFIX.has(prefix) ? "DEADLINE" : "PLANNED");
+        return { field: f.dueKind === "PLANNED" ? "date" : "deadline", label: dueLabel(), span: prefix ? undefined : o.narrow?.(span) };
       });
     };
     /** Weak words need a prefix; everything else stands alone. */
     const allowed = (word: string, prefix: string | null): boolean => !WEAK_WORDS.has(word.toLowerCase()) || prefix !== null;
-    const dayOf = (word: string): number => DAY_WORDS[word.toLowerCase()];
     const monthOf = (word: string): number => MONTH_WORDS[word.toLowerCase()];
+    // '3h chiều nay' is 3 pm today, and so is 'chiều nay 3h': the part of the
+    // day stays with its clock time in the title, and only 'nay' / 'mai' is
+    // the date.
+    const keepPartOfDay = (span: CaptureSpan): CaptureSpan | undefined => {
+      const before = text.slice(0, span.start).replace(/(?:\s+[^\p{L}\p{N}\s]+)+\s*$/u, " ");
+      const after = text.slice(span.end).replace(/^(?:\s+[^\p{L}\p{N}\s]+)+(?=\s)/u, "");
+      if (!CLOCK_BEFORE.test(before) && !CLOCK_AFTER.test(after)) return undefined;
+      const last = /(\S+)$/.exec(text.slice(span.start, span.end));
+      return last ? { start: span.end - last[1].length, end: span.end } : undefined;
+    };
+    const PART = `(?:sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem)`;
 
-    date(`(?:the\\s+)?day\\s+after\\s+(?:tomorrow|tmrw?)`, () => addDays(today, 2));
-    date(`today|tonight|tdy|eod|this\\s+(?:morning|afternoon|arvo|evening)`, () => today);
-    date(`tomorrow|tomorow|tommorow|tommorrow|tmrw|tmr|tmw|tomoz`, () => addDays(today, 1));
-    date(`next\\s+week`, () => addDays(weekStartKeyOf(today), 7));
-    date(`next\\s+month`, () => {
+    /** 'mỗi ngày mai' is 'mỗi ngày' then 'mai': a schedule word owns its 'ngày' / 'tuần' / 'tháng'. */
+    const afterEvery = (span: CaptureSpan): boolean => /^(?:mỗi|moi|hằng|hang|hàng)$/.test(wordBefore(text, span.start));
+    date(`(?:the\\s+)?day\\s+after\\s+(?:tomorrow|tmrw?)|ngày\\s+mốt|ngày\\s+kia|ngay\\s+kia`, (_g, _p, span) => (afterEvery(span) ? null : addDays(today, 2)));
+    date(`today|tonight|tdy|eod|this\\s+(?:morning|afternoon|arvo|evening)|${alt(TYPO_TODAY)}|hôm\\s+nay|hom\\s+nay`, () => today);
+    date(`${PART}\\s+nay`, () => today, { narrow: keepPartOfDay });
+    date(`tomorrow|tomorow|tommorow|tommorrow|tmrw|tmr|tmw|tomoz|${alt(TYPO_TOMORROW)}`, () => addDays(today, 1));
+    date(`ngày\\s+mai|ngay\\s+mai`, (_g, _p, span) => (afterEvery(span) ? null : addDays(today, 1)));
+    date(`${PART}\\s+mai`, () => addDays(today, 1), { narrow: keepPartOfDay });
+    // 'mai' alone is tomorrow only typed lowercase, never a name ('gặp Mai',
+    // 'chị mai'), never a noun ('hoa mai', 'mai vàng', 'mai táng') and never
+    // 'mai mốt' (some day); 'mốt' alone is the day after. The word after is
+    // read with the chips already taken (and reverted) cut out: in 'hoc mai
+    // moi ngay', 'moi ngay' is the schedule, so 'mai' is tomorrow, and stays
+    // it when the schedule is turned back into text.
+    date(`(mai)`, (g, prefix, span) => {
+      if (g[0] !== "mai") return null;
+      if (!prefix && MAI_NOT_AFTER.has(wordBefore(text, span.start))) return null;
+      if (MAI_NOT_BEFORE.has(wordAfter(finalView(), span.end))) return null;
+      return addDays(today, 1);
+    });
+    date(`(mốt)`, (_g, prefix, span) => (!prefix && wordBefore(text, span.start) === "mai" ? null : addDays(today, 2)));
+    // A weekday of next week: 'fri next week', 'thứ 6 tuần sau'.
+    date(`(${DAY})\\s+(?:next\\s+week|tuần\\s+sau|tuần\\s+tới|tuan\\s+sau|tuan\\s+toi)`, (g) => nextWeeksWeekday(today, dayNumOf(g[0])));
+    date(`next\\s+week|tuần\\s+sau|tuần\\s+tới|tuan\\s+sau|tuan\\s+toi`, (_g, _p, span) => (afterEvery(span) ? null : addDays(weekStartKeyOf(today), 7)));
+    date(`next\\s+month|tháng\\s+sau|tháng\\s+tới|thang\\s+sau|thang\\s+toi`, (_g, _p, span) => {
+      if (afterEvery(span)) return null;
       const [y, m] = partsOf(today);
       return addMonths(keyOf(y, m, 1), 1);
     });
-    date(`next\\s+(${DAY})`, (g) => nextWeeksWeekday(today, dayOf(g[0])));
-    date(`this\\s+(${DAY})`, (g) => comingWeekday(today, dayOf(g[0])));
+    date(`next\\s+(${DAY})`, (g) => nextWeeksWeekday(today, dayNumOf(g[0])));
+    date(`this\\s+(${DAY})`, (g) => comingWeekday(today, dayNumOf(g[0])));
     date(`(this|the|at\\s+the)\\s+weekend`, (g, prefix) => {
       if (g[0].toLowerCase() === "the" && !prefix) return null;
       return weekdayOf(today) >= 6 ? today : comingWeekday(today, 6);
     });
     date(`eow|end\\s+of\\s+(?:the\\s+)?week`, () => comingWeekday(today, 7));
     date(`eom|end\\s+of\\s+(?:the\\s+)?month`, () => endOfMonth(today));
+    // R14: 'eoy' alone is planned, and a deadline after 'by'. After a planned
+    // prefix it is what the line is for, not when: 'plan for eoy' is words.
+    const afterPlannedPrefix = (prefix: string | null, span: CaptureSpan): boolean =>
+      PLANNED_PREFIX.has(prefix ?? wordBefore(text, span.start));
+    date(`eoy|end\\s+of\\s+(?:the\\s+)?year`, (_g, prefix, span) => (afterPlannedPrefix(prefix, span) ? null : keyOf(partsOf(today)[0], 12, 31)));
+    // A goal's 'this year' is its last day; a task's is just words.
+    date(`this\\s+year`, () => (f.mode === "GOAL" ? keyOf(partsOf(today)[0], 12, 31) : full()));
     date(`in\\s+(${NUM_WORD})\\s+(days?|weeks?|wks?|months?|mos?)`, (g) => {
       const n = numberOf(g[0]);
       if (!Number.isFinite(n) || n < 1) return null;
@@ -811,16 +1376,41 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       const total = unit.startsWith("w") ? n * 7 : n;
       return total <= 3650 ? addDays(today, total) : null;
     });
-    date(`(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH})(?:\\s+(\\d{4}))?`, (g) =>
-      g[2] ? explicitDate(Number(g[2]), monthOf(g[1]), Number(g[0])) : upcomingDate(today, monthOf(g[1]), Number(g[0]))
+    // R14: 'within 7 days' is a deadline; 'asap' is today and never one by itself.
+    date(
+      `within\\s+(${NUM_WORD})\\s+(days?|weeks?|wks?|months?|mos?)`,
+      (g) => {
+        const n = numberOf(g[0]);
+        if (!Number.isFinite(n) || n < 1) return null;
+        const unit = g[1].toLowerCase();
+        if (unit.startsWith("mo")) return n <= 120 ? addMonths(today, n) : null;
+        const total = unit.startsWith("w") ? n * 7 : n;
+        return total <= 3650 ? addDays(today, total) : null;
+      },
+      { prefix: false, kind: "DEADLINE" }
     );
-    date(`(${MONTH})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?`, (g, prefix) => {
-      if (!allowed(g[0], prefix)) return null;
-      return g[2] ? explicitDate(Number(g[2]), monthOf(g[0]), Number(g[1])) : upcomingDate(today, monthOf(g[0]), Number(g[1]));
-    });
+    date(`asap`, () => today, { prefix: false, kind: "PLANNED" });
+    // R14: a holiday is a date only after a deadline prefix, and then a
+    // deadline: 'by xmas', 'before christmas day'. 'xmas shopping', 'shopping
+    // for xmas' and 'gifts on xmas eve' are just words, and so is a holiday
+    // describing the noun after it ('due xmas cards').
+    const describesNoun = (end: number): boolean => {
+      const next = /^\s+(\p{L}\S*)/u.exec(text.slice(end));
+      return !!next && HOLIDAY_NOUNS.has(bareWord(next[1]));
+    };
+    date(`(?:christmas|xmas)(?:\\s+(eve)|\\s+day)?`, (g, prefix, span) =>
+      prefix && !PLANNED_PREFIX.has(prefix) && !describesNoun(span.end) ? upcomingDate(today, 12, g[0] ? 24 : 25) : null
+    );
+    date(`(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH})(?:\\s+(\\d{4}))?`, (g) =>
+      g[2] ? explicitDate(Number(g[2]), monthOf(g[1]), Number(g[0])) : yearlessDate(today, monthOf(g[1]), Number(g[0]))
+    );
+    // R15: a weak month followed by its day number needs no prefix ('march 5 dentist').
+    date(`(${MONTH})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?!\\s+${COUNTED_UNIT})(?:,?\\s+(\\d{4}))?`, (g) =>
+      g[2] ? explicitDate(Number(g[2]), monthOf(g[0]), Number(g[1])) : yearlessDate(today, monthOf(g[0]), Number(g[1]))
+    );
     // D/M, the Australian order: '15/10' is the fifteenth of October.
     date(`(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{4}|\\d{2}))?`, (g) =>
-      g[2] ? explicitDate(fullYear(Number(g[2])), Number(g[1]), Number(g[0])) : upcomingDate(today, Number(g[1]), Number(g[0]))
+      g[2] ? explicitDate(fullYear(Number(g[2])), Number(g[1]), Number(g[0])) : yearlessDate(today, Number(g[1]), Number(g[0]))
     );
     date(`(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)`, (g, prefix) => (prefix ? upcomingDayOfMonth(today, Number(g[0])) : null));
     date(`in\\s+(${MONTH})`, (g) => {
@@ -829,37 +1419,214 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
       return first >= today ? first : today;
     });
     date(`(${MONTH})`, (g, prefix) => {
-      // A bare month is a date only as a deadline: 'by dec' is its last day.
-      if (prefix === null || prefix === "on" || prefix === "for" || prefix === "due on") return null;
+      // A bare month is a date only as a deadline: 'by dec' is its last day, 'before dec' the day before it starts.
+      if (prefix === null || PLANNED_PREFIX.has(prefix) || prefix === "due on") return null;
       const [y, m] = upcomingMonth(today, monthOf(g[0]));
-      return keyOf(y, m, daysInMonth(y, m));
+      return prefix === "before" ? keyOf(y, m, 1) : keyOf(y, m, daysInMonth(y, m));
     });
     // A day name inside a schedule that lost to an earlier one ('daily every
-    // mon,thu') is still part of that schedule, and stays text with it.
+    // mon,thu', '3x/week mon thu') is still part of that schedule, and stays
+    // text with it. A weak day with no prefix is read last (readWeakLastDay),
+    // unless it opens the line ('sat: market') or starts an interval ('every
+    // 2 weeks sat', R7).
+    const schedules = scheduleSpans();
     date(`(${DAY})`, (g, prefix, span) => {
-      if (!allowed(g[0], prefix)) return null;
+      const word = g[0];
+      // Unaccented 'thu 2' is Vietnamese 'thứ 2' typed flat: neither Monday nor Thursday.
+      if (word.toLowerCase() === "thu" && /^\s+[2-7](?![\d])/.test(text.slice(span.end))) return null;
+      const cut = finalView();
+      const opensLine = /^\s*$/.test(cut.slice(0, span.start)) && /^\s*:/.test(cut.slice(span.end));
+      // Every other chip, leftover and revert cut out ('every 2nd day 3x/week sat'), the interval itself kept.
+      const isInterval = (c: CaptureSpan): boolean => INTERVAL_EXACT.test(text.slice(c.start, c.end));
+      const cutForInterval = blanked([...claims.filter((c) => c.consume), ...leftovers, ...reverted].filter((c) => !isInterval(c)));
+      const afterInterval = INTERVAL_BEFORE.test(cutForInterval.slice(0, span.start));
+      if (!allowed(word, prefix) && !opensLine && !afterInterval) return null;
       if (!prefix && SCHEDULE_BEFORE.test(text.slice(0, span.start))) return null;
       if (LIST_AFTER.test(text.slice(span.end))) return null;
-      return comingWeekday(today, dayOf(g[0]));
+      if ((!prefix || LIST_PREFIXES.has(prefix)) && schedules.some((l) => overlaps(l, span))) return null;
+      return comingWeekday(today, dayNumOf(word));
     });
   }
 
-  // 8. Duration: '~30m', '30m', '45 min', '1h', '1h30', '1h 30m', '1.5h', '90min'.
-  // A lone 'm' must touch its number, so '400 m' of swimming is not 400
-  // minutes, and '5km' never matches at all.
+  /**
+   * The run of a day-list match no claim (as `isFree` judges) cuts into: its
+   * days up to the first taken one, and its span from the list's start
+   * ('on' included). Null when fewer than two days are left.
+   */
+  function listRun(m: RegExpExecArray, isFree: (span: CaptureSpan) => boolean): { span: CaptureSpan; list: string } | null {
+    const start = m.index + m[1].length;
+    const listStart = m.index + m[0].length - m[3].length;
+    const days = new RegExp(ANY_DAY_NAME.source, "gi");
+    let end = -1;
+    let count = 0;
+    for (let d = days.exec(m[3]); d; d = days.exec(m[3])) {
+      const span = { start: listStart + d.index, end: listStart + d.index + d[0].length };
+      if (!isFree(span)) break;
+      end = span.end;
+      count++;
+    }
+    if (count < 2) return null;
+    const span = { start, end };
+    return isFree(span) ? { span, list: text.slice(listStart, end) } : null;
+  }
+
+  /** Where a pattern matches in `s`, keeping the matches `accept` takes. */
+  function matchSpans(s: string, pattern: RegExp, accept: (m: RegExpExecArray, span: CaptureSpan) => boolean): CaptureSpan[] {
+    const out: CaptureSpan[] = [];
+    let from = 0;
+    while (from <= s.length) {
+      pattern.lastIndex = from;
+      const m = pattern.exec(s);
+      if (!m) break;
+      const span = { start: m.index + m[1].length, end: m.index + m[0].length };
+      if (!capitalTypo(m[0], m.index, s) && accept(m, span)) out.push(span);
+      from = m.index + 1;
+    }
+    return out;
+  }
+
+  /**
+   * Every day list or range that would make a schedule, whether or not one
+   * was read: its days stay text with it when an earlier schedule won, and
+   * in a goal, which reads no schedule — so turning 'goal:' back into text
+   * lets the schedule read them without taking a date chip away. A list a
+   * claim, a revert or a lost schedule cuts into is no list ('fri mon to
+   * fri': the range took 'mon'); every schedule that lost (a leftover)
+   * counts in its own right.
+   */
+  function scheduleSpans(): CaptureSpan[] {
+    const uncut = (span: CaptureSpan): boolean =>
+      ![...claims.filter((c) => c.consume), ...reverted, ...leftovers].some((c) => overlaps(c, span));
+    const lists: CaptureSpan[] = [];
+    for (let from = 0; from <= text.length; ) {
+      DAY_LIST.lastIndex = from;
+      const m = DAY_LIST.exec(text);
+      if (!m) break;
+      const run = capitalTypo(m[0], m.index, text) ? null : listRun(m, uncut);
+      if (run && dayListQualifies(m[2], run.list, wordBefore(text, run.span.start))) lists.push(run.span);
+      from = m.index + 1;
+    }
+    return [
+      ...lists,
+      ...matchSpans(text, NAMED_DAYS, (_m, span) => uncut(span)),
+      ...matchSpans(text, RANGE_DASH, (m, span) => uncut(span) && rangeDays(m, span) !== null),
+      ...matchSpans(text, RANGE_TO, (m, span) => uncut(span) && rangeDays(m, span) !== null),
+      ...leftovers,
+    ];
+  }
+
+  /** R2: the days a range names, or null when it is not a range ('move desk tue to fri'). */
+  function rangeDays(m: RegExpExecArray, span: CaptureSpan): number[] | null {
+    if (LIST_NOT_AFTER.has(wordBefore(text, span.start))) return null;
+    if (m[0].slice(m[1].length).search(/\s(?:to|through|thru|đến|tới)\s/i) >= 0 && MOVE_VERB.test(text.slice(0, span.start))) return null;
+    const from = dayNumOf(m[2]);
+    const to = dayNumOf(m[3]);
+    if (!from || !to || from === to) return null;
+    const list: number[] = [];
+    for (let d = from; ; d = (d % 7) + 1) {
+      list.push(d);
+      if (d === to) break;
+    }
+    return list.sort((x, y) => x - y);
+  }
+
+  // R15: a weak day closing the line is a date ('call mum sun'), unless it is
+  // a noun ('enjoy the sun') or the end of a list ('brunch sat and sun').
+  function readWeakLastDay(): void {
+    const v = finalView();
+    const re = /(^|[\s(])(sat|sun)(?=$|[\s,.;:!?)])/gi;
+    for (let m = re.exec(v); m; m = re.exec(v)) {
+      const span = { start: m.index + m[1].length, end: m.index + m[0].length };
+      if (!free(span) || !atEnd(span.end)) continue;
+      const prev = wordBefore(text, span.start);
+      const prevEnd = text.slice(0, span.start).replace(/[\s\p{P}]+$/u, "").length;
+      const prevTaken = [...claims.filter((c) => c.consume), ...leftovers, ...reverted].some((c) => c.start < prevEnd && prevEnd <= c.end);
+      // A word a chip took ('walk every morning sun') is no neighbour in the title.
+      const notAfter = WEAK_DAY_NOT_AFTER[m[2].toLowerCase() === "sat" ? "sat" : "sun"];
+      if (((notAfter.has(prev) || dayNumOf(prev) > 0) && !prevTaken) || SCHEDULE_BEFORE.test(text.slice(0, span.start))) continue;
+      // Inside a schedule that was not read (a goal's 'weekly on sat'), it stays text with it.
+      if (scheduleSpans().some((l) => overlaps(l, span))) continue;
+      if (f.dueDay) {
+        leftovers.push(span);
+        return;
+      }
+      f.dueDay = comingWeekday(today, dayNumOf(m[2]));
+      f.dueKind = "PLANNED";
+      f.dueNote = null;
+      take(span, { field: "date", label: dueLabel() });
+      return;
+    }
+  }
+
+  // 8. Duration: '~30m', '30m', '45 min', '1h', '1h30', '1h 30m', '1.5h',
+  // '90min', '30p', '2 tiếng', '45 phút' (spoken 'an hour' is read last, by
+  // readSpokenDuration). A lone 'm' must touch its number, so '400 m' of
+  // swimming is not 400 minutes, and '5km' never matches at all.
   function readDuration(): void {
-    const minutes = (total: number): Draft | null => {
-      if (f.estMinutes !== null || !Number.isFinite(total) || total <= 0) return null;
-      f.estMinutes = Math.max(MIN_EST_MINUTES, Math.min(MAX_EST_MINUTES, Math.round(total)));
-      return { field: "duration", label: `~${formatMinutes(f.estMinutes)}` };
+    const minutes = setMinutes;
+    const LEAD = ESTIMATE_LEAD;
+    /** Whether 'for', 'about' or '~' marked the number as an estimate. */
+    const led = (m: RegExpExecArray): boolean => !/^\d/.test(m[0].slice(m[1].length));
+    /**
+     * A clock time, not an estimate: 'lúc 3h', 'at 3h', '3h chiều', '3 giờ
+     * chiều', 'tối 8h', 'tối nay 8h', and any hour from 9 up (an estimate
+     * stops at 8 h, so '15h' and '9h' can only be the time of day). Read on
+     * the line as typed: these words are never chips of their own.
+     */
+    const clock = (span: CaptureSpan, hour: number): boolean => {
+      const [before, beforeThat = ""] = wordsBefore(text, span.start, 2);
+      const partOfDayBefore = PART_OF_DAY_WORDS.has(before ?? "") || ((before === "nay" || before === "mai") && PART_OF_DAY_WORDS.has(beforeThat));
+      return hour >= 9 || CLOCK_BEFORE_WORDS.has(before ?? "") || partOfDayBefore || CLOCK_AFTER_WORDS.has(wordAfter(text, span.end));
     };
-    const LEAD = `(?:(?:for|about|approx\\.?|around)\\s+)?(?:~\\s?)?`;
+    /** R11: a bare 'Nm' is a length after a distance verb ('swim 200m') or before a length word ('2m rope'). */
+    const bareMinutes = (span: CaptureSpan, n: number): boolean => {
+      const v = view();
+      return n >= 1 && n <= MAX_BARE_MINUTES && !(n >= 100 && DISTANCE_VERBS.has(wordBefore(v, span.start))) && !LENGTH_WORDS.has(wordAfter(v, span.end));
+    };
+
     scan(
-      rx(`${LEAD}(\\d{1,2}(?:\\.\\d{1,2})?)(?:h|\\s?(?:hr|hrs|hour|hours))(?:(\\d{2})(?:m|mins?)?|\\s?(\\d{1,2})(?:m|\\s?(?:min|mins|minutes?)))?`),
-      (m) => minutes(Number(m[2]) * 60 + Number(m[3] ?? m[4] ?? 0))
+      rx(`${LEAD}(\\d{1,2}(?:\\.\\d{1,2})?)(h|\\s?(?:hr|hrs|hour|hours))(?:(\\d{2})(?:m|mins?)?|\\s?(\\d{1,2})(?:m|\\s?(?:min|mins|minutes?)))?`),
+      (m, span) => {
+        if (!led(m) && m[3].toLowerCase() === "h" && /^\d+$/.test(m[2]) && clock(span, Number(m[2]))) return null;
+        return minutes(Number(m[2]) * 60 + Number(m[4] ?? m[5] ?? 0));
+      }
     );
-    scan(rx(`${LEAD}(\\d{1,3})(?:m|\\s?(?:min|mins|minutes?))`), (m) => minutes(Number(m[2])));
+    scan(rx(`${LEAD}(\\d{1,3})(m|p|\\s?(?:min|mins|minutes?|phút|phut))`), (m, span) => {
+      const n = Number(m[2]);
+      const bare = /^[mp]$/i.test(m[3]);
+      return bare && !led(m) && !bareMinutes(span, n) ? null : minutes(n);
+    });
+    // 'N tiếng' is always a length of time; 'N giờ' is a clock time by the same rule as '3h'.
+    scan(rx(`${LEAD}(\\d{1,2})\\s*(?:tiếng|tieng)(?:\\s+(rưỡi|ruoi)|\\s*(\\d{1,2})\\s*(?:phút|phut|p))?`), (m) =>
+      minutes(Number(m[2]) * 60 + (m[3] ? 30 : Number(m[4] ?? 0)))
+    );
+    scan(rx(`${LEAD}(\\d{1,2})\\s*(?:giờ|gio)(?:\\s+(rưỡi|ruoi)|\\s*(\\d{1,2})\\s*(?:phút|phut|p))?`), (m, span) => {
+      if (!led(m) && clock(span, Number(m[2]))) return null;
+      return minutes(Number(m[2]) * 60 + (m[3] ? 30 : Number(m[4] ?? 0)));
+    });
     scan(rx(`${LEAD}half\\s+an?\\s+hour`), () => minutes(30));
+  }
+
+  // Speakable (P3): 'an hour', 'two hours', 'an hour and a half', 'one and a
+  // half hours', 'twenty minutes' — but not as a time: 'in an hour', 'ten
+  // minutes late', '50 km an hour'. Read after every other rule, so the words
+  // around it are the ones the title keeps ('swim twenty minutes before dec'
+  // is twenty minutes once 'before dec' is the deadline).
+  function readSpokenDuration(): void {
+    const spoken = (span: CaptureSpan, rate: boolean): boolean => {
+      const v = finalView();
+      const before = wordBefore(v, span.start);
+      if (before === "" && /\$\s*$/.test(v.slice(0, span.start))) return !rate;
+      if (SPOKEN_NOT_AFTER.has(before) || SPOKEN_NOT_BEFORE.has(wordAfter(v, span.end))) return false;
+      return !(rate && (/^\$?\d+(?:[.,]\d+)?\$?$/.test(before) || RATE_WORDS.has(before)));
+    };
+    const HOURS = `(an?|one|two|three|four|five|six|seven|eight|nine|ten)`;
+    scan(rx(`${ESTIMATE_LEAD}${HOURS}\\s+(?:(and\\s+a\\s+half)\\s+hours?|hours?(\\s+and\\s+a\\s+half)?)`), (m, span) =>
+      spoken(span, /^an?$/i.test(m[2])) ? setMinutes(numberOf(m[2]) * 60 + (m[3] || m[4] ? 30 : 0)) : null
+    );
+    scan(rx(`${ESTIMATE_LEAD}(${alt(SPOKEN_MINUTES)})\\s+min(?:ute)?s?`), (m, span) =>
+      spoken(span, false) ? setMinutes(SPOKEN_MINUTES[m[2].toLowerCase().replace(/\s+/g, " ")]) : null
+    );
   }
 
   // 9. Compulsory: 'must', a standalone '!', or a '!' closing the line.
@@ -882,11 +1649,41 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     });
   }
 
+  // Dictation (P3): 'hashtag body' or 'tag body' at the end of the line is
+  // '#body', for the eight tags only ('tag Sam in the photo' is words).
+  function readSpokenTags(): void {
+    scan(rx(`(?:hashtag|hash\\s+tag|tag)\\s+(body|duty|craft|care|play)`), (m, span) => (atEnd(span.end) ? applyTag(m[2]) : null));
+  }
+
+  // Dictation (P3): 'for later' / 'to inbox' at the end of the line is '?'.
+  // A line already ending in '?' is in the Inbox by that.
+  function readSpokenInbox(): void {
+    scan(rx(`for\\s+later|to\\s+(?:the\\s+|my\\s+)?inbox`), (_m, span) => {
+      if (!atEnd(span.end)) return null;
+      if (f.inbox) return full();
+      f.inbox = true;
+      return { field: "inbox", label: "Inbox" };
+    });
+  }
+
   // 'monthly' with no day of its own phases on the date given, or on today.
   if (f.monthlyNeedsDay && f.recurrence === "MONTHLY:1") {
     const rule = `MONTHLY:${partsOf(f.dueDay ?? today)[2]}`;
     f.recurrence = rule;
-    for (const t of tokens) if (t.field === "recurrence") t.label = describeCaptureRule(rule);
+    for (const t of tokens) if (t.field === "recurrence") t.label = ruleChipLabel(rule);
+  }
+
+  // R8: a Must on a one-off with a planned day makes that day its deadline
+  // ('pay rent fri !' is due by Friday). Turning the Must back into text
+  // makes the day planned again, because the Must is no longer read.
+  if (f.compulsoryMarked && f.mode === "TASK" && !f.recurrence && f.dueKind === "PLANNED" && f.dueDay) {
+    f.dueKind = "DEADLINE";
+    for (const t of tokens) {
+      if (t.field !== "date") continue;
+      t.field = "deadline";
+      t.id = `deadline@${t.start}`;
+      t.label = dueLabel();
+    }
   }
 
   // Study links are non-consuming, so the title is final here; one that is
@@ -898,8 +1695,8 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
 
   // A duty needs a day to be judged on: a fixed schedule or a deadline. A
   // frequency target or an after-completion rule has no such day, and a
-  // planned date carries forward forever, so neither can be owed. The chip
-  // stays, in amber, so the user sees why nothing was made compulsory.
+  // habit's planned start is not one either. The chip stays, in amber, so
+  // the user sees why nothing was made compulsory.
   const fixed = f.recurrence !== null && !/^(AFTER|TARGET):/.test(f.recurrence);
   const judgeable = fixed || f.dueKind === "DEADLINE";
   const compulsory = f.compulsoryMarked && judgeable;
@@ -932,8 +1729,65 @@ export function parseCapture(text: string, opts: ParseOptions): ParsedCapture {
     autoTarget: f.autoTarget,
     doneNow: f.doneNow,
     parentHint: f.parentHint,
+    answer: f.answer,
     tokens,
   };
+}
+
+// ── Day lists (R1, R3) ────────────────────────────────────────────────────
+
+/** A bare list of two or more days, optionally after 'on' / 'vào'. */
+const DAY_LIST = rx(`(on\\s+|vào\\s+|vao\\s+)?(${DAY}(?:${SEP}${DAY})+)`);
+
+/**
+ * R1: a list is a schedule when it names two or more strong days ('gym mon
+ * wed fri', 'mon, wed, sat'). With 'on' and explicit separators, weak days
+ * count too ('on sat & sun'); 'brunch sat and sun' alone is one weekend.
+ */
+function dayListQualifies(prefix: string | undefined, list: string, before: string): boolean {
+  if (LIST_NOT_AFTER.has(before)) return false;
+  const words = list.match(ANY_DAY_NAME) ?? [];
+  const days = new Set(words.map(dayNumOf));
+  const strong = new Set(words.filter((w) => !isWeakDay(w)).map(dayNumOf));
+  if (days.size < 2) return false;
+  return strong.size >= 2 || (!!prefix && EXPLICIT_LIST.test(list));
+}
+
+/** Named days: 'every mon,thu', 'each tue', 'mỗi thứ 2', 'weekly on sat', 'every week sat'. */
+const NAMED_DAYS = rx(`(?:${EVERY}|each|mỗi|moi|(?:${WEEKLY}|${EVERY}\\s+week)(?:\\s+on)?)\\s+(${DAY}(?:${SEP}${DAY})*)`);
+
+/** R2 ranges, with or without 'every' / 'from': 'mon-fri', 'fri–mon', 'mon to fri', 't2-t6'. */
+const RANGE_LEAD = `(?:(?:${EVERY}|each|on|from|mỗi|moi|từ)\\s+)?`;
+const RANGE_DASH = rx(`${RANGE_LEAD}(${DAY})\\s*[-–—]\\s*(${DAY})`);
+const RANGE_TO = rx(`${RANGE_LEAD}(${DAY})\\s+(?:to|through|thru|đến|tới)\\s+(${DAY})`);
+
+/** R3 letters, slash form only: 'M/W/F', 'tu/th', 'Sa/Su'. A bare 'S' names nothing. */
+const LETTER_DAYS: Record<string, number> = { m: 1, t: 2, w: 3, th: 4, r: 4, f: 5, sa: 6, su: 7 };
+const LETTER_DAY = `(?:th|sa|su|m|t|w|r|f)`;
+
+// ── Idea lines ────────────────────────────────────────────────────────────
+
+/** An idea line read as a SHORT card: the question, and the answer after the first '::' (null when there is none). */
+export interface IdeaLineSplit {
+  question: string;
+  answer: string | null;
+}
+
+/**
+ * Splits an idea line for the full form's handoff (capture.md 'Idea capture
+ * without the round trip'): strips a leading 'idea:' / 'i:' and splits on
+ * the first '::', so 'idea: Q :: A' carries over as question 'Q', answer 'A'.
+ * It reads the prefix and the '::' with parseCapture's own pattern and
+ * answer rule, so the answer here is ParsedCapture.answer for the same line
+ * (with no reverts). A trailing '::' with nothing after it is no answer.
+ */
+export function splitIdeaLine(text: string): IdeaLineSplit {
+  const line = typeof text === "string" ? text : "";
+  const prefix = IDEA_PREFIX.exec(line);
+  const from = prefix ? prefix[0].length : 0;
+  const at = line.indexOf("::", from);
+  if (at < 0) return { question: line.slice(from).trim(), answer: null };
+  return { question: line.slice(from, at).trim(), answer: answerAt(line, at)?.answer ?? null };
 }
 
 // ── Server input ──────────────────────────────────────────────────────────
@@ -1044,6 +1898,11 @@ export interface TargetLike {
   closest?: (selector: string) => unknown;
 }
 
+/** True when the event comes from inside the capture sheet, which handles its own keys. */
+function inCaptureSheet(target: TargetLike | null | undefined): boolean {
+  return !!target && typeof target.closest === "function" && !!target.closest("[data-capture-sheet]");
+}
+
 /**
  * True when a key event belongs to something the user is typing into —
  * an input, a textarea, a select, anything contenteditable — or to the
@@ -1054,19 +1913,25 @@ export function isTypingTarget(target: TargetLike | null | undefined): boolean {
   const tag = (target.tagName ?? "").toUpperCase();
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
   if (target.isContentEditable) return true;
-  return typeof target.closest === "function" && !!target.closest("[data-capture-sheet]");
+  return inCaptureSheet(target);
 }
 
 /**
  * Whether a keydown opens the capture sheet: 'c' alone, or Ctrl/Cmd+K.
- * Never while typing somewhere, never with any other modifier, never during
- * a review session (whose card treats any key as 'advance'), and never Tab.
+ *
+ * 'c' is a letter, so it never fires while typing somewhere or during a
+ * review session (whose card treats any key as 'advance'). Ctrl/Cmd+K is a
+ * chord nobody types, so it works from any field and mid-review — exactly
+ * when ideas come up; the review runner ignores Ctrl/Meta keys, and closing
+ * the sheet returns the caret to the field. Neither fires inside the sheet
+ * itself, with another modifier, on a held key, mid-composition, or when
+ * something else already handled the key, and Tab is never taken.
  */
 export function isCaptureHotkey(e: KeyLike, target: TargetLike | null | undefined, reviewSessionActive: boolean): boolean {
   if (e.defaultPrevented || e.isComposing || e.repeat) return false;
-  if (e.key === "Tab" || reviewSessionActive || isTypingTarget(target)) return false;
+  if (e.key === "Tab" || inCaptureSheet(target)) return false;
   const key = e.key.toLowerCase();
-  if (key === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
   if (key === "k") return e.ctrlKey !== e.metaKey && !e.altKey && !e.shiftKey;
+  if (key === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !reviewSessionActive && !isTypingTarget(target);
   return false;
 }

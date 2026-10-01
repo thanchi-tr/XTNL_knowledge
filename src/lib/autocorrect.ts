@@ -17,6 +17,11 @@
  * Everything it does is a plain text substitution applied through the
  * textarea's own edit history, so Ctrl+Z undoes a correction exactly like
  * any other typing.
+ *
+ * **The task line** (the capture sheet) passes `profile: 'task'`: the typo
+ * list only, no expansions and no symbols, and never a word with a capital
+ * or a digit. A task names people and things — 'email Val', 'temp job' —
+ * that study shorthand would silently rewrite into 'Value' and 'Temperature'.
  */
 
 /**
@@ -215,6 +220,18 @@ function matchCase(original: string, replacement: string): string {
   return replacement;
 }
 
+/**
+ * The task-line correction for a single word: misspellings only, never an
+ * expansion. A task names people and things ('email Val', 'text ex', 'temp
+ * job', 'Q3 info pack') that the study shorthand would rewrite, so a word
+ * with any capital or digit in it is never touched.
+ */
+function correctTaskWord(word: string): Correction | null {
+  if (!word || word !== word.toLowerCase() || /\d/.test(word)) return null;
+  const to = Object.prototype.hasOwnProperty.call(TYPOS, word) ? TYPOS[word] : undefined;
+  return to ? { from: word, to, kind: "typo" } : null;
+}
+
 export interface AutocorrectResult {
   text: string;
   /** Where the caret should sit afterwards. */
@@ -223,14 +240,26 @@ export interface AutocorrectResult {
 }
 
 /**
+ * What a field holds. 'prose' (the default) is study writing: typos,
+ * shorthand expansions and symbols. 'task' is the capture line: typos
+ * only, no expansions, no symbols ('->' stays '->').
+ */
+export type AutocorrectProfile = "prose" | "task";
+
+export interface AutocorrectOptions {
+  profile?: AutocorrectProfile;
+}
+
+/**
  * Applies corrections to the word just completed, plus any symbol
- * sequences, and reports what changed.
+ * sequences (prose only), and reports what changed.
  *
  * Only the token immediately before the caret is considered: rewriting text
  * elsewhere in the field while someone edits one sentence is the fastest
  * way to make a feature like this feel hostile.
  */
-export function autocorrectAtCaret(text: string, caret: number): AutocorrectResult {
+export function autocorrectAtCaret(text: string, caret: number, opts: AutocorrectOptions = {}): AutocorrectResult {
+  const task = opts.profile === "task";
   const corrections: Correction[] = [];
 
   // The boundary character that triggered this (space, newline, punctuation)
@@ -243,7 +272,7 @@ export function autocorrectAtCaret(text: string, caret: number): AutocorrectResu
 
   if (match) {
     const [, lead, token, trail] = match;
-    const correction = correctWord(token);
+    const correction = task ? correctTaskWord(token) : correctWord(token);
     if (correction) {
       corrections.push(correction);
       const start = caret - (lead.length + token.length + trail.length) + lead.length;
@@ -252,8 +281,9 @@ export function autocorrectAtCaret(text: string, caret: number): AutocorrectResu
     }
   }
 
-  // Symbols are position-independent — they are unambiguous and short.
-  for (const [pattern, replacement] of SYMBOLS) {
+  // Symbols are position-independent — they are unambiguous and short. Not
+  // on a task line, where '->' and '<=' are what the user typed.
+  for (const [pattern, replacement] of task ? [] : SYMBOLS) {
     if (pattern.test(next)) {
       const beforeLen = next.length;
       const head = next.slice(0, nextCaret).replace(pattern, replacement);

@@ -18,12 +18,17 @@ import { parseCapture } from "../src/lib/capture-parse";
 import { cached, invalidate, invalidateAll } from "../src/lib/cache";
 import { rungOf, strengthAfter, type Outcome } from "../src/lib/habit";
 import { countsForStreakOf, streakUnitsOf } from "../src/lib/streak-curve";
+import { upcomingOf } from "../src/components/today/board-ui";
+import { PLACE_LANES } from "../src/lib/life-types";
 import {
   BOARD_COLUMNS,
   BOARD_SECTIONS,
   applyOps,
   autoStateOf,
   buildBoard,
+  placeOf,
+  placementOf,
+  ruleOf,
   EpochSet,
   canUndo,
   cheapestMovable,
@@ -123,6 +128,9 @@ function inst(templateId: string, day: DayKey, status: BoardInstance["status"] =
   return { id: `i${++instSeq}`, templateId, day, slot, status, source: "manual", xpPaid: 0 };
 }
 
+/** Every fixture board built below: placeOf is checked against buildBoard on all of them at the end. */
+const fixtureBoards: BoardData[] = [];
+
 /** Board data as `readBoardCore` assembles it: stats from each recurring template's history, as the server computes them. */
 function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today?: DayLedger; yesterday?: DayLedger; capacityMin?: number; dueNow?: number | null; goalQty?: Record<string, number> } = {}): BoardData {
   const history = p.history ?? [];
@@ -131,7 +139,7 @@ function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today
     const rule = t.recurrence ? parseRule(t.recurrence) : null;
     if (rule) stats[t.id] = statsFor(t, rule, history.filter((i) => i.templateId === t.id), TODAY);
   }
-  return {
+  const d: BoardData = {
     today: TODAY,
     yesterday: YESTERDAY,
     capacityMin: p.capacityMin ?? 240,
@@ -143,6 +151,8 @@ function board(templates: BoardTemplate[], p: { history?: BoardInstance[]; today
     goalQty: p.goalQty ?? {},
     dueNow: p.dueNow === undefined ? 0 : p.dueNow,
   };
+  fixtureBoards.push(d);
+  return d;
 }
 
 const rowOf = (b: ReturnType<typeof buildBoard>, id: string): BoardRow | undefined =>
@@ -702,6 +712,153 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   const cleared = buildBoard(board([s], { dueNow: 0 })).counts;
   const unknown = buildBoard(board([s], { dueNow: null })).counts;
   check("a study task met by an empty queue is not an open must (the nav reads the due count too)", cleared.musts === 0 && unknown.musts === 1, `with count ${cleared.musts}, without ${unknown.musts}`);
+}
+
+// ── Where a capture went: placeOf names the lane buildBoard files it in ───
+{
+  const sat = addDays(TODAY, 2);
+  const t = (id: string, p: Partial<BoardTemplate>) => tpl({ id, title: `Task ${id}`, ...p });
+  const templates = [
+    t("undated", {}),
+    t("laterFri", { dueDay: addDays(TODAY, 1), dueKind: "PLANNED" }),
+    t("laterFar", { dueDay: "2026-10-15", dueKind: "PLANNED" }),
+    t("monHabit", { recurrence: "DOW:1", startDay: TODAY }),
+    t("dl10", { dueDay: addDays(TODAY, 10), dueKind: "DEADLINE" }),
+    t("dl4", { dueDay: addDays(TODAY, 4), dueKind: "DEADLINE" }),
+    t("putOff", { dueDay: sat, dueKind: "DEADLINE", planDay: addDays(TODAY, 1) }),
+    t("inbox", { inbox: true }),
+    t("draft", { kind: "IDEA_DRAFT", inbox: true }),
+    t("goal", { kind: "GOAL", horizon: "MID" }),
+    t("doneNow", { completedAt: "2026-09-30T23:00:00.000Z" }),
+    t("habitDone", { recurrence: "DAILY", startDay: TODAY }),
+    t("must", { dueDay: TODAY, dueKind: "DEADLINE", compulsory: true }),
+    t("mustSoon", { dueDay: sat, dueKind: "DEADLINE", compulsory: true }),
+    t("planned", { dueDay: TODAY, dueKind: "PLANNED" }),
+    t("habit", { recurrence: "DAILY", startDay: TODAY }),
+    t("phase", { recurrence: "EVERY:14", startDay: "2026-10-05" }),
+    t("targetLater", { recurrence: "TARGET:3/W", startDay: "2026-10-05" }),
+    t("targetMet", { recurrence: "TARGET:2/W", startDay: ago(30) }),
+    t("doneLong", { completedAt: "2026-09-20T02:00:00.000Z" }),
+  ];
+  const history = [inst("doneNow", TODAY), inst("habitDone", TODAY), inst("targetMet", ago(3)), inst("targetMet", ago(2))];
+  const d = board(templates, { history });
+  const b = buildBoard(d);
+  const where = (id: string) => {
+    const x = templates.find((y) => y.id === id)!;
+    return placeOf(x, TODAY, d.instances.filter((i) => i.templateId === id), d.stats[id]?.lastDone ?? null);
+  };
+  const expect: Record<string, string> = {
+    undated: "anytime|Anytime",
+    laterFri: "later|Planned later · Fri 2 Oct",
+    laterFar: "later|Planned later · Thu 15 Oct",
+    monHabit: "upcoming|Habits · next Mon",
+    dl10: "anytime|Anytime · by 11 Oct",
+    dl4: "anytime|Anytime · by Mon",
+    putOff: "later|Planned later · Fri 2 Oct",
+    inbox: "inbox|Inbox",
+    draft: "inbox|Inbox",
+    goal: "goals|Goals",
+    doneNow: "done|Done today",
+    habitDone: "done|Done today",
+    must: "must|Must",
+    mustSoon: "planned|Planned",
+    planned: "planned|Planned",
+    habit: "habits|Habits",
+    phase: "upcoming|Habits · from Mon",
+    targetLater: "upcoming|Habits · from Mon",
+    targetMet: "anytime|Anytime",
+    doneLong: "done|Done",
+  };
+  const wrong = Object.entries(expect)
+    .map(([id, want]) => [id, want, `${where(id).lane}|${where(id).label}`] as const)
+    .filter(([, want, got]) => want !== got);
+  check(
+    "where labels: undated, planned later, a habit not due today, a deadline in 10 days, a put-off deadline, inbox, goal, done-now",
+    wrong.length === 0,
+    wrong.map(([id, want, got]) => `${id}: want '${want}', got '${got}'`).join("; ")
+  );
+  check("…every label names a PLACE_LANES lane", templates.every((x) => PLACE_LANES.includes(where(x.id).lane)));
+
+  // Anytime's 'Planned later': by the day each returns, then title; a put-off deadline keeps its own day in view.
+  check(
+    "laterRows: sorted by day, then title, and counted by `later`",
+    b.laterRows.map((l) => l.templateId).join(",") === "laterFri,putOff,laterFar" && b.later === 3,
+    b.laterRows.map((l) => `${l.templateId}@${l.day}`).join(",")
+  );
+  const putOff = b.laterRows.find((l) => l.templateId === "putOff");
+  const far = b.laterRows.find((l) => l.templateId === "laterFar");
+  check("laterRows: labels read 'tomorrow · by Sat' (put-off deadline) and '15 Oct'", putOff?.label === "tomorrow · by Sat" && far?.label === "15 Oct", `${putOff?.label} / ${far?.label}`);
+  const ties = buildBoard(board([t("b", { title: "Beta", dueDay: "2026-10-03", dueKind: "PLANNED" }), t("a", { title: "Alpha", dueDay: "2026-10-03", dueKind: "PLANNED" }), t("c", { title: "Aardvark", dueDay: "2026-10-02", dueKind: "PLANNED" })]));
+  check("laterRows: same day sorts by title", ties.laterRows.map((l) => l.title).join(",") === "Aardvark,Alpha,Beta", ties.laterRows.map((l) => l.title).join(","));
+}
+{
+  // placeOf against buildBoard on every fixture board above: the lane it
+  // names is the lane the board actually put the template in.
+  type Board = ReturnType<typeof buildBoard>;
+  const disagree: string[] = [];
+  let templates = 0;
+  for (const d of fixtureBoards) {
+    let b: Board;
+    try {
+      b = buildBoard(d);
+    } catch (err) {
+      disagree.push(`buildBoard threw: ${String(err)}`);
+      continue;
+    }
+    const byTpl = new Map<string, BoardInstance[]>();
+    for (const i of d.instances) byTpl.set(i.templateId, [...(byTpl.get(i.templateId) ?? []), i]);
+    const onTodayIds = new Set([...b.must, ...b.todayRows].map((r) => r.template.id));
+    const upcomingIds = new Set(upcomingOf(d, onTodayIds).map((u) => u.templateId));
+    for (const t of d.templates) {
+      templates += 1;
+      const insts = byTpl.get(t.id) ?? [];
+      const lastDone = d.stats[t.id]?.lastDone ?? null;
+      const place = placeOf(t, d.today, insts, lastDone);
+      const full = placementOf(t, { today: d.today, yesterday: d.yesterday, instances: insts, lastDone }).place;
+      const on = (rows: BoardRow[]) => rows.some((r) => r.template.id === t.id && r.day === d.today);
+      const inMust = on(b.must);
+      const inToday = on(b.todayRows);
+      const inAnytime = b.anytime.some((r) => r.template.id === t.id);
+      const anyRow = [...b.must, ...b.todayRows, ...b.yesterdayRows, ...b.anytime].filter((r) => r.template.id === t.id);
+      const inLater = b.laterRows.some((l) => l.templateId === t.id);
+      let ok: boolean;
+      switch (place.lane) {
+        case "must":
+          ok = inMust && !inToday && !inAnytime;
+          break;
+        case "planned":
+          ok = inToday && !ruleOf(t) && !inMust;
+          break;
+        case "habits":
+          ok = inToday && !!ruleOf(t) && !inMust;
+          break;
+        case "done":
+          ok = anyRow.some((r) => r.state === "done") || (anyRow.length === 0 && !!t.completedAt);
+          break;
+        case "anytime":
+          ok = inAnytime && !inMust && !inToday;
+          break;
+        case "later":
+          ok = inLater && !inMust && !inToday && !inAnytime;
+          break;
+        case "upcoming":
+          ok = upcomingIds.has(t.id) && !inMust && !inToday && !inAnytime;
+          break;
+        case "inbox":
+          ok = b.inbox.some((x) => x.id === t.id);
+          break;
+        case "goals":
+          ok = Object.values(b.goals).some((cards) => cards.some((g) => g.template.id === t.id));
+          break;
+      }
+      if (!ok || full.lane !== place.lane || full.label !== place.label) disagree.push(`${t.id} → ${place.lane} '${place.label}'`);
+    }
+  }
+  check(
+    `placeOf agrees with buildBoard's lane for every fixture template (${templates} across ${fixtureBoards.length} boards)`,
+    disagree.length === 0 && templates > 50,
+    disagree.slice(0, 8).join("; ")
+  );
 }
 
 function finish(): void {

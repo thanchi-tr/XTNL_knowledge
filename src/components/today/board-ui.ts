@@ -13,13 +13,12 @@
  */
 import { selfRatingOpen, selfRatingOpensOn } from "../../lib/life-grade";
 import { LIFE_TZ, addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../../lib/life-day";
-import { nextDue } from "../../lib/recurrence";
 import { minutesFor } from "../../lib/review-facts";
 import {
   UNDO_WINDOW_MS,
   dayName,
-  expectedToday,
   moveBlockOf,
+  placementOf,
   ruleOf,
   type BoardData,
   type BoardRow,
@@ -215,19 +214,24 @@ export interface UpcomingItem {
  * Recurring tasks that are not on today's lanes, with the day each next
  * falls due. A habit captured on a day it does not run ('mon,thu' on a
  * Wednesday) would otherwise appear nowhere, and the capture would look
- * lost. TARGET habits are eligible every day and always have a row.
+ * lost. TARGET habits are eligible every day and always have a row, except
+ * one not started yet ('3x/week from mon'), which waits here for its first
+ * day. Read from today-board's placementOf ('upcoming'), the rule the
+ * capture toast's 'Habits · next Thu' names, so the two agree.
  */
 export function upcomingOf(d: BoardData, onToday: ReadonlySet<string>): UpcomingItem[] {
   const out: UpcomingItem[] = [];
-  const tomorrow = addDays(d.today, 1);
+  const byTpl = new Map<string, BoardData["instances"]>();
+  for (const i of d.instances) {
+    const list = byTpl.get(i.templateId);
+    if (list) list.push(i);
+    else byTpl.set(i.templateId, [i]);
+  }
   for (const t of d.templates) {
-    if (t.kind === "GOAL" || t.kind === "IDEA_DRAFT" || t.inbox || onToday.has(t.id)) continue;
-    const rule = ruleOf(t);
-    if (!rule || rule.kind === "TARGET") continue;
-    const lastDone = d.stats[t.id]?.lastDone ?? null;
-    if (expectedToday(t, rule, d.today, lastDone).due) continue;
-    const next = nextDue(rule, t.startDay, tomorrow, lastDone);
-    if (!next || next <= d.today) continue;
+    if (onToday.has(t.id) || !ruleOf(t)) continue;
+    const p = placementOf(t, { today: d.today, yesterday: d.yesterday, instances: byTpl.get(t.id) ?? [], lastDone: d.stats[t.id]?.lastDone ?? null });
+    const next = p.upcomingDay;
+    if (p.place.lane !== "upcoming" || !next || next <= d.today) continue;
     out.push({ templateId: t.id, title: t.title, next, label: dayName(next, d.today) });
   }
   return out.sort((a, b) => a.next.localeCompare(b.next) || a.title.localeCompare(b.title));

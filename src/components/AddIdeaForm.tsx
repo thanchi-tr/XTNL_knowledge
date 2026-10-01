@@ -16,8 +16,20 @@
  *
  * Capture keeps going: after a create the form stays, the content clears, and
  * the Field, Domain and format carry over to the next idea.
+ *
+ * Nothing typed is lost (capture.md 'Idea capture without the round trip'):
+ *   The content autosaves to localStorage; on load the form fills from the
+ *   quick-capture draft (?draft), else the capture sheet's handoff, else the
+ *   autosave (idea-handoff.ts). Creating from a draft archives it on the
+ *   server and drops ?draft; creating from a handoff clears the sheet's line.
+ *   A model hiccup comes back as {status:'error'}: shown, every field kept.
+ * Keys: Ctrl/Cmd+Enter creates from anywhere in the form; the question field
+ *   takes focus on load; Enter in a list row adds the next row and Backspace
+ *   in an empty one removes it; Ctrl+Shift+C (or the Blank it pill) wraps the
+ *   cloze selection in {{ }}.
+ * The sticky Create bar rides on the on-screen keyboard (--kb).
  */
-import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Attribute, CollectionLabel } from "@prisma/client";
@@ -42,11 +54,26 @@ import { EquationField } from "@/components/math/EquationField";
 import { AnswerExpressionField } from "@/components/math/AnswerExpressionField";
 import { VerdictCompare, VerdictDetail, relationTone } from "@/components/NoveltyVerdictView";
 import { Amount } from "@/components/ui/Amount";
-import { Button } from "@/components/ui/Button";
-import { Chip } from "@/components/ui/Chip";
+import { Button, buttonClass } from "@/components/ui/Button";
+import { Chip, ChipButton } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon } from "@/components/ui/Icon";
 import { SectionHeader, Segmented, Switch } from "@/components/ui/Tabs";
 import { approx, formatNumber } from "@/components/ui/format";
+import {
+  ADD_AUTOSAVE_DEBOUNCE_MS,
+  ADD_FORMATS,
+  EMPTY_ADD_CONTENT,
+  addContentKey,
+  clearAddAutosave,
+  clearSheetDraftIf,
+  remapRowIndex,
+  restoreAddForm,
+  rowKeyEdit,
+  wrapSelection,
+  writeAddAutosave,
+  type AddContentState,
+  type AddFormat,
+} from "@/lib/idea-handoff";
 import "@/components/library/study.css";
 
 /** What a stopped submission's buttons say, by what the verdict suggests. */
@@ -73,12 +100,14 @@ interface Props {
   /** A draft carried over from quick capture (/add?draft=<id>), into the default Short fields. */
   initialQuestion?: string;
   initialAnswer?: string;
+  /** That draft's id (validated by the page): created, merged, linked or enriched archives it. */
+  draftId?: string;
   /** Today's focus Field (daily-focus.ts): new ideas there pay this multiplier. */
   focus?: { fieldId: string; fieldName: string; multiplier: number } | null;
 }
 
 // DIAGRAM isn't offered: authoring hotspots over an image needs a real editor.
-type CreatableQuestionType = "SHORT" | "CLOZE" | "NUMERIC" | "MULTI" | "LIST" | "ORDER" | "FORMULA";
+type CreatableQuestionType = AddFormat;
 
 const TYPE_META: Record<CreatableQuestionType, { label: string; hint: string }> = {
   SHORT: { label: "Short", hint: "Free text, graded on similarity" },
@@ -89,7 +118,7 @@ const TYPE_META: Record<CreatableQuestionType, { label: string; hint: string }> 
   ORDER: { label: "Order", hint: "Arrange the steps in sequence" },
   FORMULA: { label: "Formula", hint: "Proved by algebraic equivalence" },
 };
-const TYPES = Object.keys(TYPE_META) as CreatableQuestionType[];
+const TYPES: readonly CreatableQuestionType[] = ADD_FORMATS;
 
 const COLLECTIONS: { value: CollectionLabel; label: string }[] = [
   { value: "BOOK", label: "Book" },
@@ -109,6 +138,30 @@ const BASIS_NOTE: Record<FieldBasis, string> = {
   WEAK: "Nothing fitted well; this is the least bad guess. A new field may suit it better.",
 };
 
+/** Which list a row input belongs to (data-add-list), for the row keys. */
+type RowList = "LIST" | "ORDER" | "MULTI";
+
+/**
+ * The on-screen keyboard's height, from visualViewport (as QuickCapture's
+ * useKeyboardInset): the sticky Create bar sits on it rather than under it.
+ */
+function useKeyboardInset(): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+  return inset;
+}
+
 interface CreatedInfo {
   ideaId: string;
   domainId: string;
@@ -123,7 +176,7 @@ interface CreatedInfo {
   basis: FieldBasis | null;
 }
 
-export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialAnswer = "", focus = null }: Props) {
+export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialAnswer = "", draftId, focus = null }: Props) {
   const ids = { q: useId(), a: useId(), field: useId(), domain: useId(), cloze: useId() };
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -168,6 +221,178 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   const bannerRef = useRef<HTMLDivElement | null>(null);
   const badgeRef = useRef<HTMLSpanElement | null>(null);
   const celebrated = useRef<string | null>(null);
+  const clozeRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Set by Create's click and Ctrl+Enter: a submit without it is the keyboard's Enter in a field. */
+  const explicitSubmit = useRef(false);
+
+  const inset = useKeyboardInset();
+
+  // ── Restore and autosave (idea-handoff.ts) ──────────────────────────────
+  /** Where the content came from on load, for the restore line. */
+  const [restoredFrom, setRestoredFrom] = useState<"handoff" | "autosave" | null>(null);
+  /** The sheet line a handoff came from: cleared once the idea is filed. */
+  const handoffLine = useRef<string | null>(null);
+  const restoreDone = useRef(false);
+  /** True from the render after the restore: the autosave never compares against pre-restore content. */
+  const [loaded, setLoaded] = useState(false);
+  /** A content key the autosave need not write (what was loaded, or just cleared). */
+  const skipSaveKey = useRef<string | null>(null);
+  const latestContent = useRef<AddContentState>(EMPTY_ADD_CONTENT);
+  const unsaved = useRef(false);
+
+  const content: AddContentState = useMemo(
+    () => ({
+      type: questionType,
+      shortQuestion,
+      shortAnswer,
+      formulaQuestion,
+      formulaAnswer,
+      clozeText,
+      listPrompt,
+      listItems,
+      orderPrompt,
+      orderItems,
+      numericPrompt,
+      numericValue,
+      numericTolerance,
+      numericUnit,
+      options,
+      correctIndex,
+    }),
+    [questionType, shortQuestion, shortAnswer, formulaQuestion, formulaAnswer, clozeText, listPrompt, listItems, orderPrompt, orderItems, numericPrompt, numericValue, numericTolerance, numericUnit, options, correctIndex]
+  );
+  const contentKey = useMemo(() => addContentKey(content), [content]);
+
+  /** Fills every content field (never Field, Domain or collection). */
+  const loadContent = useCallback((c: AddContentState) => {
+    setQuestionType(c.type);
+    setShortQuestion(c.shortQuestion);
+    setShortAnswer(c.shortAnswer);
+    setFormulaQuestion(c.formulaQuestion);
+    setFormulaAnswer(c.formulaAnswer);
+    setClozeText(c.clozeText);
+    setListPrompt(c.listPrompt);
+    setListItems(c.listItems);
+    setOrderPrompt(c.orderPrompt);
+    setOrderItems(c.orderItems);
+    setNumericPrompt(c.numericPrompt);
+    setNumericValue(c.numericValue);
+    setNumericTolerance(c.numericTolerance);
+    setNumericUnit(c.numericUnit);
+    setOptions(c.options);
+    setCorrectIndex(c.correctIndex);
+    setGeneratedIndices(new Set());
+  }, []);
+
+  /**
+   * Focus to the first content field, caret at its end: on load and after
+   * Discard. Two frames, so a restore that changed the format has rendered
+   * its own first field by then.
+   */
+  const focusFirstField = useCallback(() => {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = formRef.current?.querySelector<HTMLElement>("[data-first-field]");
+        if (!el) return;
+        el.focus();
+        if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.setSelectionRange(el.value.length, el.value.length);
+      })
+    );
+  }, []);
+
+  // On load: ?draft > the sheet's handoff > the autosave. Storage only exists
+  // after mount, so this cannot run during render (the server has no storage
+  // and the first client render must match it).
+  useEffect(() => {
+    if (restoreDone.current) return;
+    restoreDone.current = true;
+    const r = restoreAddForm(Boolean(draftId));
+    if (r.source === "handoff") {
+      handoffLine.current = r.handoff.sheetText;
+      // Not skipped by the autosave: the handoff is one use, so the carried
+      // text is saved straight away and survives a reload before Create.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadContent({ ...EMPTY_ADD_CONTENT, shortQuestion: r.handoff.question, shortAnswer: r.handoff.answer });
+      setRestoredFrom("handoff");
+    } else if (r.source === "autosave") {
+      skipSaveKey.current = addContentKey(r.state);
+      loadContent(r.state);
+      setRestoredFrom("autosave");
+    } else {
+      // A draft is safe in the Inbox and an empty form has nothing to keep:
+      // neither overwrites an earlier unsaved idea until something is typed.
+      skipSaveKey.current = addContentKey({ ...EMPTY_ADD_CONTENT, shortQuestion: initialQuestion, shortAnswer: initialAnswer });
+    }
+    setLoaded(true);
+    focusFirstField();
+  }, [draftId, initialQuestion, initialAnswer, loadContent, focusFirstField]);
+
+  /** Writes the latest content now, if it changed since the last write. */
+  const flushAutosave = useCallback(() => {
+    if (!unsaved.current) return;
+    unsaved.current = false;
+    writeAddAutosave(latestContent.current);
+  }, []);
+
+  // Debounced 400 ms; flushed when the page hides or the form unmounts, so the
+  // last words typed before Android kills the tab are kept too.
+  useEffect(() => {
+    latestContent.current = content;
+    if (!loaded || contentKey === skipSaveKey.current) return;
+    skipSaveKey.current = null;
+    unsaved.current = true;
+    const timer = setTimeout(flushAutosave, ADD_AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [loaded, content, contentKey, flushAutosave]);
+
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") flushAutosave();
+    };
+    window.addEventListener("pagehide", flushAutosave);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushAutosave);
+      document.removeEventListener("visibilitychange", onHidden);
+      flushAutosave();
+    };
+  }, [flushAutosave]);
+
+  /** Forgets the autosave: the idea is filed (or the user discarded it). */
+  const forgetAutosave = useCallback(() => {
+    unsaved.current = false;
+    skipSaveKey.current = addContentKey(latestContent.current);
+    clearAddAutosave();
+  }, []);
+
+  /**
+   * Once the idea exists (created, merged, linked or enriched): the autosave
+   * goes, the sheet's line goes when it is the one carried here, and a
+   * draft's ?draft is dropped (the server archived the draft, so a reload
+   * must not offer it again). Otherwise the page's data is refreshed.
+   */
+  function afterFiled(refresh: boolean) {
+    forgetAutosave();
+    setRestoredFrom(null);
+    if (handoffLine.current) {
+      clearSheetDraftIf(handoffLine.current);
+      handoffLine.current = null;
+    }
+    if (draftId) router.replace("/add", { scroll: false });
+    else if (refresh) router.refresh();
+  }
+
+  function discardRestored() {
+    clearContentFields();
+    setResult(null);
+    setPendingContent(null);
+    setPreview(null);
+    setFormError(null);
+    forgetAutosave();
+    handoffLine.current = null;
+    setRestoredFrom(null);
+    focusFirstField();
+  }
 
   const selectedField = fields.find((f) => f.id === fieldId) ?? null;
   const suggestedField = !selectedField && preview?.routedField ? (fields.find((f) => f.id === preview.routedField!.fieldId) ?? null) : null;
@@ -257,7 +482,9 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setFormError(null);
     startPreview(async () => {
       try {
-        setPreview(await previewIdea({ fieldId: fieldId || undefined, content }));
+        const res = await previewIdea({ fieldId: fieldId || undefined, content });
+        if ("status" in res) setFormError(res.message);
+        else setPreview(res);
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "The check didn't finish. Try again.");
       }
@@ -266,6 +493,12 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    // The keyboard's action key in a row input (Android sends no Enter
+    // keydown while composing, so the form submits implicitly): add the next
+    // row, as Enter does on desktop. Create and Ctrl+Enter mark their submit.
+    const explicit = explicitSubmit.current;
+    explicitSubmit.current = false;
+    if (!explicit && rowEnter(document.activeElement)) return;
     const content = buildContent();
     if (!content) return;
     setPendingContent(content);
@@ -279,9 +512,16 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
           collectionLabel,
           content,
           domainId: fieldId && domainId !== AUTO_DOMAIN ? domainId : undefined,
+          draftId,
         });
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "Couldn't file that. Try again.");
+        return;
+      }
+      if (res.status === "error") {
+        // Nothing was written: every field stays as typed (and autosaved).
+        setPendingContent(null);
+        setFormError(res.message);
         return;
       }
       if (res.status === "created") {
@@ -307,7 +547,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                 : `Filed beside its neighbours in ${res.domainName} (${res.fieldName}).`,
           basis: res.routedField?.basis ?? null,
         });
-        router.refresh();
+        afterFiled(true);
         // Focus returns to the first content field, so the next idea types straight in.
         requestAnimationFrame(() => {
           formRef.current?.querySelector<HTMLElement>('[data-first-field], textarea, input[type="text"]')?.focus();
@@ -315,8 +555,73 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       } else {
         // Merge and saturation need reading and a decision, so they take over the form.
         setResult(res);
+        // Merged: the idea exists (as the card it matched). Saturated waits for Link or Enrich.
+        if (res.status === "merged") afterFiled(false);
       }
     });
+  }
+
+  /** Ctrl/Cmd+Enter anywhere in the form: Create, when the content is ready. */
+  function onFormKeyDown(e: React.KeyboardEvent<HTMLFormElement>) {
+    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.defaultPrevented || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (!ready || isPending) return;
+    explicitSubmit.current = true;
+    formRef.current?.requestSubmit();
+    explicitSubmit.current = false;
+  }
+
+  /** A row input's list and index (data-add-list / data-add-row), or null. */
+  function rowOf(el: Element | null): { list: RowList; index: number } | null {
+    if (!(el instanceof HTMLInputElement)) return null;
+    const list = el.dataset.addList;
+    const index = Number(el.dataset.addRow);
+    if ((list !== "LIST" && list !== "ORDER" && list !== "MULTI") || !Number.isInteger(index)) return null;
+    return { list, index };
+  }
+
+  /** Applies a row key (rowKeyEdit) to its list; false when the key is not one for the rows. */
+  function applyRowKey(list: RowList, index: number, key: "Enter" | "Backspace"): boolean {
+    const items = list === "LIST" ? listItems : list === "ORDER" ? orderItems : options;
+    const edit = rowKeyEdit(items, index, key);
+    if (!edit) return false;
+    if (list === "LIST") setListItems(edit.items);
+    else if (list === "ORDER") setOrderItems(edit.items);
+    else {
+      setOptions(edit.items);
+      // The right answer and the dashed (suggested) rows follow their rows.
+      setCorrectIndex((c) => remapRowIndex(c, edit) ?? Math.max(0, (edit.removedAt ?? 0) - 1));
+      setGeneratedIndices((prev) => new Set([...prev].flatMap((i) => remapRowIndex(i, edit) ?? [])));
+    }
+    requestAnimationFrame(() => {
+      const el = formRef.current?.querySelector<HTMLInputElement>(`[data-add-list="${list}"][data-add-row="${edit.focus}"]`);
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    return true;
+  }
+
+  /** An implicit submit from a row input becomes that row's Enter. */
+  function rowEnter(el: Element | null): boolean {
+    const row = rowOf(el);
+    if (!row) return false;
+    applyRowKey(row.list, row.index, "Enter");
+    // Handled even at the row limit: the keyboard's Enter in a row never files the idea.
+    return true;
+  }
+
+  /** Enter adds the next row (never submits); Backspace in an empty row removes it. */
+  function onRowKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing || e.keyCode === 229 || e.altKey || e.ctrlKey || e.metaKey) return;
+    const row = rowOf(e.currentTarget);
+    if (!row) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!e.repeat) applyRowKey(row.list, row.index, "Enter");
+    } else if (e.key === "Backspace" && !e.shiftKey && e.currentTarget.value === "") {
+      if (applyRowKey(row.list, row.index, "Backspace")) e.preventDefault();
+    }
   }
 
   // The celebration, once per created idea: a T0 mark always; a new domain adds a T1 chime.
@@ -350,7 +655,12 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setFormError(null);
     startTransition(async () => {
       try {
-        const res = await linkIdea({ content: pendingContent, collectionLabel, existingIdeaId });
+        const res = await linkIdea({ content: pendingContent, collectionLabel, existingIdeaId, draftId });
+        if ("status" in res) {
+          // Nothing was written: the choice stays open and the text is kept.
+          setFormError(res.message);
+          return;
+        }
         setResult(null);
         setPendingContent(null);
         setPreview(null);
@@ -368,7 +678,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
           placement: `Filed beside the card it resembles, in ${res.domainName} (${res.fieldName}), with a link between them.`,
           basis: null,
         });
-        router.refresh();
+        afterFiled(true);
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "Couldn't link that. Try again.");
       }
@@ -380,14 +690,18 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setFormError(null);
     startTransition(async () => {
       try {
-        const res = await enrichIdea({ targetIdeaId, content: pendingContent, similarity });
+        const res = await enrichIdea({ targetIdeaId, content: pendingContent, similarity, draftId });
+        if (res.status === "error") {
+          setFormError(res.message);
+          return;
+        }
         // "no_new_information": the synthesis found nothing the node lacks. Said, not hidden.
         setEnrichOutcome(res.status);
         if (res.status === "enriched") {
           setResult(null);
           setPendingContent(null);
           clearContentFields();
-          router.refresh();
+          afterFiled(true);
         }
       } catch (err) {
         setFormError(err instanceof Error ? err.message : "Couldn't enrich that. Try again.");
@@ -430,6 +744,47 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       setOptions(filled);
       setGeneratedIndices(marked);
     });
+  }
+
+  // ── Blank it (CLOZE): a pill while the sentence has a selection ─────────
+  const [clozeSelected, setClozeSelected] = useState(false);
+  const [blankNote, setBlankNote] = useState("");
+
+  const readClozeSelection = useCallback(() => {
+    const el = clozeRef.current;
+    if (!el || document.activeElement !== el) return;
+    setClozeSelected(el.value.slice(el.selectionStart, el.selectionEnd).trim() !== "");
+  }, []);
+
+  useEffect(() => {
+    if (questionType !== "CLOZE") return;
+    document.addEventListener("selectionchange", readClozeSelection);
+    return () => document.removeEventListener("selectionchange", readClozeSelection);
+  }, [questionType, readClozeSelection]);
+
+  /** Wraps the selection in {{ }} through the browser's own editing, so Ctrl+Z undoes it like typing. */
+  function blankSelection() {
+    const el = clozeRef.current;
+    if (!el) return;
+    const wrapped = wrapSelection(el.value, el.selectionStart, el.selectionEnd);
+    if (!wrapped) {
+      setBlankNote(el.selectionStart === el.selectionEnd ? "Select the words to blank first." : "That part already holds a blank.");
+      return;
+    }
+    el.focus();
+    el.setSelectionRange(wrapped.from, wrapped.to);
+    let inserted = false;
+    try {
+      inserted = document.execCommand("insertText", false, `{{${wrapped.blank}}}`) && el.value === wrapped.text;
+    } catch {
+      inserted = false;
+    }
+    if (!inserted) {
+      setClozeText(wrapped.text);
+      requestAnimationFrame(() => el.setSelectionRange(wrapped.start, wrapped.end));
+    }
+    setClozeSelected(false);
+    setBlankNote(`Blanked “${wrapped.blank}”.`);
   }
 
   /** Content only: Field, Domain and format survive, since the next idea is usually a sibling. */
@@ -556,7 +911,15 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   const addRow = (setItems: (v: string[]) => void, items: string[]) => setItems([...items, ""]);
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="add-form" aria-describedby="add-intro">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      onKeyDown={onFormKeyDown}
+      className="add-form"
+      aria-describedby="add-intro"
+      data-kb={inset > 0 ? "" : undefined}
+      style={{ "--kb": `${inset}px` } as React.CSSProperties}
+    >
       <p className="t-meta add-intro" id="add-intro">
         Question first. Field and Domain are guessed from it unless you pick them.
         {focus && (
@@ -566,6 +929,18 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
           </>
         )}
       </p>
+
+      {restoredFrom && (
+        <div className="st-row" role="status">
+          <span className="t-meta">{restoredFrom === "handoff" ? "Carried over from quick capture" : "Restored your unsaved idea"}</span>
+          <span className="t-meta" aria-hidden="true">
+            ·
+          </span>
+          <Button variant="quiet" onClick={discardRestored}>
+            Discard
+          </Button>
+        </div>
+      )}
 
       <div className="card pad-l add-card">
         {/* ── Content first ── */}
@@ -610,14 +985,44 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
             <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
             <textarea
               id={ids.cloze}
+              ref={clozeRef}
               data-first-field
               className="st-input"
               rows={3}
               value={clozeText}
               onChange={(e) => setClozeText(e.target.value)}
               {...prose(setClozeText)}
+              onKeyDown={(e) => {
+                completeBind.onKeyDown(e);
+                if (e.defaultPrevented) return;
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.code === "KeyC") {
+                  e.preventDefault();
+                  blankSelection();
+                }
+              }}
+              onSelect={readClozeSelection}
+              onBlur={(e) => {
+                completeBind.onBlur();
+                // The pill keeps its selection: it never takes focus (mousedown is held).
+                if (!(e.relatedTarget instanceof HTMLElement && e.relatedTarget.dataset.blankIt !== undefined)) setClozeSelected(false);
+              }}
+              aria-keyshortcuts="Control+Shift+C"
               placeholder="The capital of France is {{Paris}}."
             />
+            <div className="st-row" style={{ marginTop: 8, minHeight: 40 }}>
+              {clozeSelected ? (
+                <ChipButton data-blank-it="" onMouseDown={(e) => e.preventDefault()} onClick={blankSelection} title="Blank the selected words (Ctrl+Shift+C)">
+                  Blank it
+                </ChipButton>
+              ) : (
+                <span className="st-hint" style={{ marginTop: 0 }}>
+                  Select words to blank them (Ctrl+Shift+C on a keyboard).
+                </span>
+              )}
+              <span className="sr-only" aria-live="polite">
+                {blankNote}
+              </span>
+            </div>
             {clozeText.trim() &&
               (countClozeBlanks(clozeText) === 0 ? (
                 <p className="st-hint">No blanks yet: wrap the part to recall in {"{{double braces}}"}.</p>
@@ -689,6 +1094,10 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                       aria-label={`${questionType === "LIST" ? "Item" : "Step"} ${i + 1}`}
                       value={item}
                       onChange={(e) => setItems(items.map((v, j) => (j === i ? e.target.value : v)))}
+                      onKeyDown={onRowKeyDown}
+                      data-add-list={questionType}
+                      data-add-row={i}
+                      enterKeyHint="enter"
                     />
                     {items.length > 2 && (
                       <Button variant="quiet" aria-label={`Remove ${questionType === "LIST" ? "item" : "step"} ${i + 1}`} onClick={() => setItems(items.filter((_, j) => j !== i))}>
@@ -703,6 +1112,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                   Add {questionType === "LIST" ? "item" : "step"}
                 </Button>
               </div>
+              <p className="st-hint">Enter adds the next {questionType === "LIST" ? "item" : "step"}; Backspace in an empty one removes it.</p>
               {questionType === "ORDER" && <p className="st-hint">Stored scrambled and re-shuffled for review: the reviewer never sees this order.</p>}
             </fieldset>
           </>
@@ -746,6 +1156,13 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                     });
                   }}
                   {...complete()}
+                  onKeyDown={(e) => {
+                    completeBind.onKeyDown(e);
+                    if (!e.defaultPrevented) onRowKeyDown(e);
+                  }}
+                  data-add-list="MULTI"
+                  data-add-row={i}
+                  enterKeyHint="enter"
                   data-generated={generatedIndices.has(i) ? "1" : undefined}
                 />
                 {options.length > 2 && (
@@ -997,9 +1414,26 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         <Button variant="secondary" size="lg" onClick={handlePreview} disabled={isPreviewing || isPending || !ready}>
           {isPreviewing ? "Checking…" : "Check first"}
         </Button>
-        <Button ref={createRef} type="submit" variant="primary" size="lg" className="add-grow" disabled={isPending || !ready}>
+        {/* A plain button with the kit's classes: Button sets aria-keyshortcuts from `kbd` alone, and Create answers both chords. */}
+        <button
+          ref={createRef}
+          type="submit"
+          className={buttonClass("primary", "lg", false, "add-grow")}
+          disabled={isPending || !ready}
+          aria-keyshortcuts="Control+Enter Meta+Enter"
+          onClick={() => {
+            // The submit fires inside this click; the reset covers a click that submits nothing.
+            explicitSubmit.current = true;
+            setTimeout(() => {
+              explicitSubmit.current = false;
+            }, 0);
+          }}
+        >
           {isPending ? "Filing…" : "Create"}
-        </Button>
+          <span className="kbd" aria-hidden="true">
+            Ctrl+Enter
+          </span>
+        </button>
       </div>
     </form>
   );

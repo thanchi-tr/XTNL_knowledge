@@ -8,6 +8,8 @@ import { BAND_META, TRACK_LABEL, priceTask } from "@/lib/life-grade";
 import { sizeLexically } from "@/lib/life-lexicon";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
 import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
+import type { CaptureActiveTitle } from "@/app/actions/capture";
+import { MUST_WARNING, MUST_WARNING_BEFORE, duplicateNote, ideaChipLabel, insertChipLabel, type Insert } from "./capture-ui";
 
 /**
  * What the line was understood as, one chip per token, plus the grade it
@@ -21,10 +23,15 @@ import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
  * clock glyph (due is ink plus a clock, never a hue).
  *
  * The grade chip is the lexical grade, priced by the same pure function
- * that pays (life-grade.ts), against today's knee as it stood when the
- * sheet opened — hence '≈'. The toast after saving carries the server's
- * exact figure. The AI's refinement lands after the save, so it is never
- * shown here.
+ * that pays (life-grade.ts), against today's knee as the sheet last read it
+ * — hence '≈'. Until the vocabulary for today's life day has loaded it
+ * says 'priced on save' rather than guess against an empty day: the toast
+ * after saving carries the server's exact figure. On a phone the chip opens
+ * the Feeds line (from 600 px it is always shown).
+ *
+ * Under the chips: the quiet duplicate note ('Already on your board'), and
+ * a Must with no day to be judged on — the warning and its four fix chips,
+ * which the first Enter stops on (QuickCapture's block-once gate).
  */
 
 const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
@@ -42,9 +49,20 @@ interface Props {
   parsed: ParsedCapture;
   /** Open goals for '^name', or null while they load. */
   goals: { id: string; title: string }[] | null;
-  /** Today's knee base, R_before. */
-  rawBefore: number;
+  /** Today's knee base, R_before; null until the vocabulary for today's life day has loaded (the chip then says 'priced on save'). */
+  rawBefore: number | null;
   onRevert: (token: CaptureToken) => void;
+  /** Under 600 px the Feeds line opens from the grade chip. */
+  compact: boolean;
+  feedsOpen: boolean;
+  onToggleFeeds: () => void;
+  /** An open template with the same title, for the quiet note. */
+  duplicate: CaptureActiveTitle | null;
+  /** The first Enter stopped on a Must with no day: the full warning, announced. */
+  mustBlocked: boolean;
+  /** The four ways to give the Must a day (by today · by tmr · by fri · every <weekday>). */
+  mustFixes: { id: string; label: string; insert: Insert }[];
+  onFix: (insert: Insert) => void;
 }
 
 interface Grade {
@@ -54,7 +72,7 @@ interface Grade {
 }
 
 /** The grade the server will write, and what one completion at the estimate would pay. */
-function gradeOf(parsed: ParsedCapture, rawBefore: number): Grade | null {
+function gradeOf(parsed: ParsedCapture, rawBefore: number | null): Grade | null {
   if (!parsed.title || parsed.kind === "IDEA_DRAFT" || parsed.kind === "GOAL") return null;
   let sizing: Sizing;
   try {
@@ -63,6 +81,7 @@ function gradeOf(parsed: ParsedCapture, rawBefore: number): Grade | null {
     return null;
   }
   const minutes = parsed.estMinutes ?? sizing.machineMinutes;
+  if (rawBefore === null) return { sizing, minutes, xp: null };
   const mode: PayMode = parsed.intrinsic ? "PLAY" : parsed.autoMetric ? "STUDY" : "FULL";
   let xp: number | null = null;
   try {
@@ -90,7 +109,28 @@ function gradeOf(parsed: ParsedCapture, rawBefore: number): Grade | null {
   return { sizing, minutes, xp };
 }
 
-export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props) {
+/** 'Standard · ~30m · ≈ 10', or '… · priced on save' before today's ledger is known. */
+function GradeText({ grade, parsed }: { grade: Grade; parsed: ParsedCapture }) {
+  return (
+    <>
+      {BAND_META[grade.sizing.band].label} · ~{formatMinutes(grade.minutes)} ·{" "}
+      {parsed.intrinsic ? (
+        "play, pays 0"
+      ) : parsed.autoMetric ? (
+        "paid by reviews"
+      ) : grade.xp === null ? (
+        "priced on save"
+      ) : (
+        <span className="cur">
+          <CurrencyGlyph kind="xp" />
+          <span className="num">≈ {formatXp(grade.xp)}</span>
+        </span>
+      )}
+    </>
+  );
+}
+
+export function CaptureChips({ text, parsed, goals, rawBefore, onRevert, compact, feedsOpen, onToggleFeeds, duplicate, mustBlocked, mustFixes, onFix }: Props) {
   const grade = useMemo(() => gradeOf(parsed, rawBefore), [parsed, rawBefore]);
   const parent = useMemo(
     () => (parsed.parentHint && goals ? matchParentGoal(parsed.parentHint, goals) : null),
@@ -108,6 +148,8 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
   if (!text.trim()) return null;
 
   const track = parsed.track ?? grade?.sizing.track ?? null;
+  const hasFeeds = !!grade && !!track && feeds.length > 0;
+  const showFeeds = hasFeeds && (!compact || feedsOpen);
 
   return (
     <div className="capture-chips">
@@ -161,24 +203,26 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
           })}
           {grade && (
             <li>
-              <span
-                className="chip capture-chip capture-grade"
-                title={`${BAND_META[grade.sizing.band].blurb}. lexical · ${Math.round(grade.sizing.confidence * 100)}% · ${grade.sizing.basis}`}
-              >
-                {BAND_META[grade.sizing.band].label} · ~{formatMinutes(grade.minutes)} ·{" "}
-                {parsed.intrinsic ? (
-                  "play, pays 0"
-                ) : parsed.autoMetric ? (
-                  "paid by reviews"
-                ) : grade.xp === null ? (
-                  "priced after saving"
-                ) : (
-                  <span className="cur">
-                    <CurrencyGlyph kind="xp" />
-                    <span className="num">≈ {formatXp(grade.xp)}</span>
-                  </span>
-                )}
-              </span>
+              {compact && hasFeeds ? (
+                <button
+                  type="button"
+                  className="chip btn-chip capture-chip capture-grade"
+                  aria-expanded={feedsOpen}
+                  aria-controls="capture-feeds"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={onToggleFeeds}
+                  title={`${BAND_META[grade.sizing.band].blurb}. Tap for what it feeds.`}
+                >
+                  <GradeText grade={grade} parsed={parsed} />
+                </button>
+              ) : (
+                <span
+                  className="chip capture-chip capture-grade"
+                  title={`${BAND_META[grade.sizing.band].blurb}. lexical · ${Math.round(grade.sizing.confidence * 100)}% · ${grade.sizing.basis}`}
+                >
+                  <GradeText grade={grade} parsed={parsed} />
+                </span>
+              )}
             </li>
           )}
           {parsed.kind === "GOAL" && (
@@ -188,20 +232,41 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert }: Props
           )}
           {parsed.kind === "IDEA_DRAFT" && (
             <li>
-              <span className="chip capture-chip capture-grade">Filed to Inbox · finish it in the full form</span>
+              <span className="chip capture-chip capture-grade">{ideaChipLabel(!!parsed.answer?.trim())}</span>
             </li>
           )}
         </ul>
       )}
 
-      {parsed.compulsoryWarning && (
-        <p className="capture-warning" role="note">
-          {parsed.compulsoryWarning}. <span className="ink-2">Add a schedule (every mon) or a deadline (by fri).</span>
+      {duplicate && (
+        <p className="capture-note" role="note">
+          {duplicateNote(duplicate)}
         </p>
       )}
 
-      {grade && track && feeds.length > 0 && (
-        <p className="capture-feeds">
+      {parsed.compulsoryWarning && (
+        <div className="capture-warning">
+          <p aria-live="polite">{mustBlocked ? MUST_WARNING : MUST_WARNING_BEFORE}</p>
+          <div className="capture-fixes" role="group" aria-label="Give the Must a day">
+            {mustFixes.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className="chip btn-chip capture-ins"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onFix(f.insert)}
+                title={insertChipLabel(f.insert)}
+                aria-label={`${f.label}: ${insertChipLabel(f.insert)}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showFeeds && grade && track && (
+        <p className="capture-feeds" id="capture-feeds">
           <span className="t-eyebrow">Feeds · {TRACK_LABEL[track]}</span>
           {feeds.map(([attribute, weight]) => (
             <span key={attribute} className="capture-feed">

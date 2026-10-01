@@ -2,36 +2,101 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
 import {
   createFromCapture,
+  createManyFromCapture,
   loadCaptureVocabulary,
+  recaptureFromCapture,
+  type CaptureErrorCode,
+  type CaptureManyResult,
   type CaptureResult,
   type CapturedItem,
-  type CaptureVocabulary,
 } from "@/app/actions/capture";
 import { undoCapture } from "@/app/actions/tasks";
-import {
-  MAX_CAPTURE_CHARS,
-  formatXp,
-  isCaptureHotkey,
-  parseCapture,
-  sanitizeCaptureInput,
-  shiftReverted,
-  type CaptureSpan,
-} from "@/lib/capture-parse";
-import { todayKey } from "@/lib/life-day";
+import { MAX_CAPTURE_CHARS, isCaptureHotkey, parseCapture, shiftReverted, splitIdeaLine, type CaptureSpan } from "@/lib/capture-parse";
+import { todayKey, type DayKey } from "@/lib/life-day";
 import type { CaptureToken } from "@/lib/life-types";
+import { normTitleOf } from "@/lib/life-lexicon";
 import { mark } from "@/lib/celebrate";
+import { SHEET_DRAFT_CLEARED_EVENT, writeIdeaHandoff, type SheetDraftCleared } from "@/lib/idea-handoff";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { useAutocorrect } from "@/components/useAutocorrect";
 import { IconButton } from "@/components/ui/Button";
-import { CurrencyGlyph } from "@/components/ui/Icon";
-import { dismissToast, getToasts, pushToast, subscribeToasts, type ToastInput } from "@/components/ui/toast-store";
+import { dismissToast, getToasts, pushToast, subscribeToasts } from "@/components/ui/toast-store";
 import { CaptureChips } from "./CaptureChips";
+import { StatusLine, TOAST_MS, TOAST_SHORT_MS, dockToastOf, toastSentence, type Toast } from "./CaptureToast";
 import { CAPTURE_EVENT, CAPTURED_EVENT, type CaptureRequest } from "./events";
-import { isUndoCaptureKey, nextOccurrenceNote, toInboxLine } from "./capture-ui";
+import { InsertRow, SuggestRow, type Suggestion } from "./InsertRow";
+import { JustAdded } from "./JustAdded";
+import { PastePreview } from "./PastePreview";
+import { useKeyboardInset, useMediaQuery, useStickToBottom } from "./capture-hooks";
+import { PENDING_STALE_MS, mayRetryNow, nextRetryDelay, queueDue, queueSettle, queueWake } from "./capture-queue";
+import { addPending, dropPending, readDraft, readPending, readVocabCache, writeDraft, writeVocabCache } from "./capture-store";
+import {
+  CAPTURE_OPEN_HASH,
+  EDIT_BUSY_NOTE,
+  EDIT_GONE,
+  EDIT_TOO_LATE,
+  FRAGMENT_BUSY_NOTE,
+  KEY_HINT,
+  LEGEND,
+  POCKET_PLACEHOLDER,
+  POCKET_WAIT_MS,
+  TOUCH_HINT,
+  addedAnnouncement,
+  addedReducer,
+  dockToastChoice,
+  applyInsert,
+  caretContext,
+  caretPrefix,
+  caretWord,
+  duplicateOf,
+  canEditEntry,
+  editFill,
+  editRefusalNote,
+  enterAction,
+  goalInsertText,
+  goalSuggestions,
+  historyOnClose,
+  historyOnOpen,
+  historyOnPop,
+  insertedNote,
+  isUndoCaptureKey,
+  menuNote,
+  mustFixInserts,
+  mustGate,
+  nextPruneAt,
+  pendingDayNote,
+  primaryAction,
+  readCaptureFragment,
+  recentChips,
+  replaceCaretWord,
+  replacingOf,
+  splitPastedLines,
+  stampLine,
+  submitAllowed,
+  tagSuggestions,
+  toInboxLine,
+  undoGoneCopy,
+  unsentLabel,
+  unsentSavedCopy,
+  vocabOnOpen,
+  vocabPriceable,
+  vocabRefreshDecision,
+  vocabStale,
+  VOCAB_IDLE_MS,
+  VOCAB_REFRESH_DELAY_MS,
+  type AddedEntry,
+  type CloseReason,
+  type EnterSource,
+  type Insert,
+  type InsertMenu,
+  type PendingLine,
+  type ReplacingState,
+  type VocabCache,
+} from "./capture-ui";
 import { pushEscapeLayer, trapTab } from "./layers";
 
 /**
@@ -39,184 +104,310 @@ import { pushEscapeLayer, trapTab } from "./layers";
  *
  * The whole point is friction: on a desktop a task is one key, the line,
  * and Enter; on the phone it is the tab bar's +, the home-screen shortcut
- * (/today?capture=task), the line, and the keyboard's own Enter. Nothing is
- * required but the words. The line is read as it is typed and shown back as
- * quiet chips, and any chip that guessed wrong is one tap from being plain
- * text again.
+ * (/today?capture=task), a '#capture=' link, the line, and the keyboard's
+ * own action key. Nothing is required but the words. The line is read as
+ * it is typed and shown back as quiet chips, and any chip that guessed
+ * wrong is one tap from being plain text again. The grammar can be tapped
+ * too: the row above the line adds a day, a schedule, a Must, an estimate,
+ * a goal, the Inbox mark or the idea prefix.
  *
- * Saving closes the sheet before the server answers — a round trip here
- * costs up to a second, and the answer is almost always yes. The line is
- * never at risk while it is in flight: it is written to local storage
- * first and only forgotten when the server confirms, so a dead network or a
- * closed tab costs a retry, never the words.
+ * On a phone the keyboard's action key saves and STAYS (burst capture):
+ * three lines cost one keyboard rise, and Add (or Done, on an empty line)
+ * closes. Each saved line joins 'Added here' with Edit and Undo for ten
+ * minutes; Edit refills the exact line that was sent and saves the change
+ * over it (recaptureFromCapture). The toast names where every capture went
+ * in the board's own words, and says so honestly when a tick did not go
+ * through or a Must had no day.
  *
- * The sheet and its scrim are portalled to <body> (never inside <main>,
- * whose @container would trap a fixed layer), under one [data-capture-ui]
- * marker so the review card can tell a tap meant for the sheet from one
- * meant for it. A bottom sheet on phones, lifted by the on-screen keyboard;
- * a centred 560 panel from 600. The save toast goes to the app's one
- * ToastDock while the sheet is closed, and is a status line inside it while
- * it is open.
+ * Saving never waits on the server. A line is written to local storage
+ * first and forgotten only when the server confirms it; a lost or offline
+ * send is queued and retries on its own (capture-queue.ts), with the
+ * line's nonce as the capture key, so a retry finds the row an earlier send
+ * wrote instead of writing a second. A line only retries on its own on the
+ * life day it was captured (the server reads 'tmr' and a done-now tick
+ * against the day it arrives); another day's waits for a manual Retry. A
+ * pasted list becomes one task per line after a preview. While an edit of a
+ * line is on its way, that line's Edit and Undo wait for it.
+ *
+ * The board's 'just added' flash plays behind the open sheet's scrim, so
+ * while the sheet is open the last capture is held and announced to the
+ * board (CAPTURED_EVENT) when it closes.
+ *
+ * On the Fold's cover screen the sheet is a column pinned to the top of
+ * the keyboard: everything that grows (the list, the status, the chips)
+ * sits in a scroll region above the line, so the line and its buttons never
+ * move while typing. Back closes the sheet on a phone (one hash-only
+ * history entry). The sheet and its scrim are portalled to <body> (never
+ * inside <main>, whose @container would trap a fixed layer), under one
+ * [data-capture-ui] marker so the review card can tell a tap meant for the
+ * sheet from one meant for it.
  */
 
-const DRAFT_KEY = "xtnl:capture:draft";
-const PENDING_KEY = "xtnl:capture:pending";
-/** A save with no answer after this long is treated as unconfirmed on the next page load. */
-const PENDING_STALE_MS = 15_000;
-/** The word list and the knee base are re-read at most this often. */
-const VOCAB_TTL_MS = 5 * 60_000;
-/** Long enough to read and reach Undo; the undo itself stays available for ten minutes. */
-const TOAST_MS = 10_000;
-const TOAST_SHORT_MS = 4_000;
-/** WordHintBar floats above the keyboard past this inset; the sheet makes room for it. */
-const FLOATING_KEYBOARD_PX = 120;
-const LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · idea: · goal: · #body · ^goal · (min: …) · ? inbox";
 const NO_WORDS: string[] = [];
 /** The dock key every capture toast shares: a new one replaces the last. */
 const DOCK_KEY = "capture";
+/** Auto-retried lines saved within this long are counted in one 'N unsent lines saved'. */
+const UNSENT_SUMMARY_MS = 10_000;
+const GAVE_UP = "Couldn't reach the server after several tries. Your line is kept — retry when you're back online.";
+const TITLE_MISSING = "Add a few words for the title — only dates and tags are left.";
+
+const noopSubscribe = () => () => {};
+
+type Origin = "user" | "manual" | "auto" | "batch";
 
 interface Line {
   text: string;
   reverted: CaptureSpan[];
 }
-interface PendingLine extends Line {
-  nonce: string;
-  at: number;
-}
-interface FailedLine extends PendingLine {
-  error: string;
+
+/** A line not confirmed yet: waiting to retry on its own, or failed for good (with the server's reason). */
+interface Unsent extends PendingLine {
+  state: "queued" | "failed";
+  attempts: number;
+  nextAt: number;
+  error?: string;
+  /** An edit refused as too late or gone: its row offers 'Save as new' instead of Retry. */
+  code?: CaptureErrorCode;
 }
 
-type Toast =
-  | { kind: "working"; key: number; message: string }
-  /** `next`: when a repeating capture first falls due, if not today ('Next: Thu'). */
-  | { kind: "added"; key: number; item: CapturedItem; next: string | null }
-  | { kind: "removed"; key: number; title: string }
-  | { kind: "error"; key: number; message: string };
+interface SheetVocab extends VocabCache {
+  /** The ≈ price may be shown: the server's answer for today's life day, or a fresh cache of one. */
+  priced: boolean;
+  /** WordComplete's words, loaded only for idea lines; null until then. */
+  words: string[] | null;
+}
 
-// Storage is a convenience that can be missing (private windows, blocked
-// site data), so every touch of it is guarded and a failure is silent.
-function readJson<T>(key: string): T | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
+interface Opening {
+  id: number;
+  openedAt: number;
+  /** Lines sent in this opening. */
+  sent: number;
+  /** Titles confirmed for this opening, in the order they were added. */
+  titles: string[];
+  /** The capture ids behind `titles`, index for index: an edit of one replaces its title in place. */
+  ids: string[];
+  /** Edits sent in this opening of a line this opening already added: they change a row, they add none. */
+  merged: number;
+  failed: number;
+  /** A save of this opening has settled. */
+  saved: boolean;
+  /** The background vocabulary refresh ran in this opening. */
+  refreshed: boolean;
+  /** The last capture this opening confirmed, for the dock's one-line toast on close. */
+  last?: { id: string; notMust: boolean; update: boolean };
 }
-function writeJson(key: string, value: unknown): void {
-  try {
-    if (value === null || (Array.isArray(value) && value.length === 0)) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* the in-memory state still holds the line */
-  }
+
+function randomSalt(): string {
+  return Math.random().toString(36).slice(2, 8);
 }
-function readPending(): PendingLine[] {
-  const list = readJson<unknown>(PENDING_KEY);
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((p) => {
-    if (!p || typeof p !== "object") return [];
-    const { text, reverted, nonce, at } = p as Record<string, unknown>;
-    if (typeof nonce !== "string" || typeof at !== "number") return [];
-    const clean = sanitizeCaptureInput(text, reverted);
-    return clean.text ? [{ ...clean, nonce, at }] : [];
-  });
+
+/** A line stamped now, under a fresh nonce (for a line sent again as new). */
+function stampNow(line: { text: string; reverted: CaptureSpan[] }, seq: number): PendingLine {
+  return stampLine(line, seq, Date.now(), randomSalt());
 }
-function addPending(line: PendingLine): void {
-  writeJson(PENDING_KEY, [...readPending().filter((p) => p.nonce !== line.nonce), line].slice(-20));
+
+/** The stored fields of a line, without the unsent row's own state. */
+function pendingOf(line: PendingLine): PendingLine {
+  return {
+    text: line.text,
+    reverted: line.reverted,
+    nonce: line.nonce,
+    at: line.at,
+    ...(line.replaces ? { replaces: line.replaces } : {}),
+    ...(line.day ? { day: line.day } : {}),
+  };
 }
-function dropPending(nonce: string): void {
-  writeJson(PENDING_KEY, readPending().filter((p) => p.nonce !== nonce));
-}
+
 /**
- * A line on its way to the server, stamped so a reload can tell a slow save
- * from a lost one. The nonce is also the capture key the server dedupes a
- * retry on, so it must never repeat — across tabs and devices too.
+ * A line a previous page load never heard back about. Today's waits until it
+ * is stale (it may still be in flight elsewhere), then retries on its own;
+ * another day's goes to the failed list with its note and is never sent
+ * automatically (capture-ui pendingDayNote).
  */
-function stamp(line: Line, n: number): PendingLine {
-  const now = Date.now();
-  return { ...line, nonce: `${now.toString(36)}-${n.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, at: now };
+function restoredUnsent(p: PendingLine, today: DayKey): Unsent {
+  const note = pendingDayNote(p, today);
+  if (note) return { ...pendingOf(p), state: "failed", attempts: 0, nextAt: 0, error: note };
+  return { ...pendingOf(p), state: "queued", attempts: 0, nextAt: p.at + PENDING_STALE_MS };
 }
 
-/**
- * How much of the layout viewport the on-screen keyboard covers.
- *
- * The keyboard resizes only the visual viewport on iOS and on current
- * Android Chrome, so a sheet at `bottom: 0` would sit underneath it. The
- * sheet is lifted by this much instead — the same measurement WordHintBar
- * uses for its strip.
- */
-function useKeyboardInset(active: boolean): number {
-  const [inset, setInset] = useState(0);
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!active || !vv) return;
-    const update = () => setInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, [active]);
-  return active ? inset : 0;
+/** What a send's outcome does to the unsent list (capture-queue's schedule, plus the line itself). */
+function settleUnsent(
+  list: readonly Unsent[],
+  line: PendingLine,
+  outcome: "saved" | "refused" | "network",
+  now: number,
+  automatic: boolean,
+  failure?: { error: string; code?: CaptureErrorCode }
+): Unsent[] {
+  const queued = list.filter((u) => u.state === "queued");
+  const { queue, giveUp } = queueSettle(queued, line.nonce, outcome, now, automatic);
+  const rest = list.filter((u) => u.nonce !== line.nonce);
+  const base = pendingOf(line);
+  const q = queue.find((i) => i.nonce === line.nonce);
+  if (q) return [...rest, { ...base, state: "queued", attempts: q.attempts, nextAt: q.nextAt }];
+  if (outcome === "saved") return rest;
+  const error = giveUp ? GAVE_UP : (failure?.error ?? GAVE_UP);
+  return [...rest, { ...base, state: "failed", attempts: 0, nextAt: 0, error, ...(failure?.code ? { code: failure.code } : {}) }];
 }
 
 export function QuickCapture() {
   const pathname = usePathname();
   const onToday = pathname === "/today";
+  const isClient = useSyncExternalStore(noopSubscribe, () => true, () => false);
 
   const [open, setOpen] = useState(false);
-  const [day, setDay] = useState("");
+  const [day, setDay] = useState<DayKey>("");
   const [text, setText] = useState("");
   const [reverted, setReverted] = useState<CaptureSpan[]>([]);
   /** Chips tapped away, newest last, with the line as it was — Ctrl+Z brings one back while the line is unchanged. */
   const [revertHistory, setRevertHistory] = useState<{ span: CaptureSpan; text: string }[]>([]);
-  const [vocab, setVocab] = useState<CaptureVocabulary | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [vocab, setVocab] = useState<SheetVocab | null>(null);
   const [captured, setCaptured] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [failed, setFailed] = useState<FailedLine[]>([]);
+  /** A quiet note: 'Finish or clear the line first.', a link's text not used. */
+  const [note, setNote] = useState<string | null>(null);
+  // Lines a previous page load never heard back about are queued from the
+  // first render (read once, on the client): a stale one goes at once, a
+  // fresh one may still be in flight elsewhere, so it waits until it is stale.
+  // A line from another life day is filed as failed instead (restoredUnsent).
+  // Nothing renders from this before hydration ends (the portal waits for
+  // the client), so the server's empty list never disagrees with it.
+  const [unsent, setUnsent] = useState<Unsent[]>(() => {
+    if (typeof window === "undefined") return [];
+    const today = todayKey();
+    return readPending().map((p) => restoredUnsent(p, today));
+  });
+  /** Edits in flight: nonce → the capture each replaces (with the unsent list, what locks Edit and Undo). */
+  const [sendingEdits, setSendingEdits] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [toast, setToast] = useState<Toast | null>(null);
   const [toastHeld, setToastHeld] = useState(false);
+  const [added, dispatchAdded] = useReducer(addedReducer, []);
+  const [undoBusy, setUndoBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const [showAll, setShowAll] = useState(false);
+  const [editing, setEditing] = useState<{ oldId: string; title: string; norm: string } | null>(null);
+  /** The text the Must gate last stopped on (block-once). */
+  const [blocked, setBlocked] = useState<string | null>(null);
+  const [menu, setMenu] = useState<InsertMenu | null>(null);
+  const [feedsOpen, setFeedsOpen] = useState(false);
+  const [paste, setPaste] = useState<{ lines: string[]; truncated: boolean } | null>(null);
+  const [coarse, setCoarse] = useState(false);
+  const [pocket, setPocket] = useState(false);
+  const [sentThisOpening, setSentThisOpening] = useState(0);
+  const [live, setLive] = useState<{ key: number; text: string } | null>(null);
   const [, startTransition] = useTransition();
+
+  const compact = useMediaQuery("(max-width: 599px)");
+  const inset = useKeyboardInset(open);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const restored = useRef(false);
-  const vocabAt = useRef(0);
   const seq = useRef(0);
+  /** The line as it is right now, written by every edit (the save path reads it, never a stale render). */
   const lineRef = useRef<Line>({ text: "", reverted: [] });
+  const openRef = useRef(false);
+  const coarseRef = useRef(false);
+  const onTodayRef = useRef(onToday);
+  const insetRef = useRef(0);
   /** The toast this sheet has in the dock, and the state key it shows. */
   const dockRef = useRef<{ id: number; key: number } | null>(null);
-
-  const inset = useKeyboardInset(open);
-
-  useEffect(() => {
-    lineRef.current = { text, reverted };
-  }, [text, reverted]);
+  /** Lines on their way to the server: never sent twice at once. */
+  const inFlight = useRef<Set<string>>(new Set());
+  const unsentRef = useRef<Unsent[]>([]);
+  const addedRef = useRef<AddedEntry[]>([]);
+  const toastRef = useRef<Toast | null>(null);
+  const vocabRef = useRef<SheetVocab | null>(null);
+  const vocabLoading = useRef(false);
+  const openingRef = useRef<Opening>({ id: 0, openedAt: 0, sent: 0, titles: [], ids: [], merged: 0, failed: 0, saved: false, refreshed: false });
+  /** Which opening sent each line. */
+  const openingOf = useRef<Map<string, number>>(new Map());
+  /** Lines saved past the Must gate's second press: their toast says 'not a Must'. */
+  const notMustRef = useRef<Set<string>>(new Set());
+  const lastSubmitAt = useRef(0);
+  const composingRef = useRef(false);
+  const lastComposingEnterAt = useRef(0);
+  const submitAfterComposition = useRef(false);
+  const pushedRef = useRef(false);
+  const pendingCaret = useRef<number | null>(null);
+  const autoSaved = useRef({ count: 0, at: 0 });
+  const pocketTimer = useRef<number | null>(null);
+  const idleTimer = useRef<number | null>(null);
+  const showListRequest = useRef(false);
+  const ideaModeRef = useRef(false);
+  const menuRef = useRef<InsertMenu | null>(null);
+  /** Captures an edit is on its way to replace (replacingOf), for handlers that run later. */
+  const replacingRef = useRef<ReadonlyMap<string, string>>(new Map());
+  /** The last capture confirmed while the sheet was open: the board flashes it once the sheet closes. */
+  const heldCaptured = useRef<CapturedItem | null>(null);
+  /** When the line last became empty (null while it has text): the refresh waits for a pause on a phone. */
+  const emptySince = useRef<number | null>(null);
+  // Handlers that callbacks, listeners, timers and the dock call later: always the latest (set after each render).
+  const flushRef = useRef<(all: boolean) => void>(() => {});
+  const considerRef = useRef<() => void>(() => {});
 
   const parsed = useMemo(() => (open && day ? parseCapture(text, { today: day, reverted }) : null), [open, day, text, reverted]);
+  const ideaMode = parsed?.mode === "IDEA";
+  // An edit queued, failed or in flight locks its capture's Edit and Undo (C1: never two rows).
+  const replacing = useMemo(() => {
+    const lines: { replaces?: string; state: ReplacingState }[] = unsent.map((u) => ({ replaces: u.replaces, state: u.state }));
+    for (const oldId of sendingEdits.values()) lines.push({ replaces: oldId, state: "sending" });
+    return replacingOf(lines);
+  }, [unsent, sendingEdits]);
+
+  useLayoutEffect(() => {
+    onTodayRef.current = onToday;
+    insetRef.current = inset;
+    unsentRef.current = unsent;
+    addedRef.current = added;
+    toastRef.current = toast;
+    vocabRef.current = vocab;
+    ideaModeRef.current = ideaMode;
+    menuRef.current = menu;
+    replacingRef.current = replacing;
+  });
 
   // ── The line ────────────────────────────────────────────────────────────
 
-  /** Every edit goes through here, so a reverted chip follows its words as the line changes around them. */
-  const onLineChange = (next: string) => {
-    setReverted(shiftReverted(text, next, reverted));
+  const setLine = useCallback((next: string, spans: CaptureSpan[]) => {
+    const wasEmpty = !lineRef.current.text.trim();
+    lineRef.current = { text: next, reverted: spans };
+    if (next.trim()) emptySince.current = null;
+    else if (!wasEmpty || emptySince.current === null) emptySince.current = Date.now();
     setText(next);
+    setReverted(spans);
+  }, []);
+
+  const announce = useCallback((message: string) => {
+    if (!message) return;
+    setLive((cur) => ({ key: (cur?.key ?? 0) + 1, text: message }));
+  }, []);
+
+  /**
+   * Every edit goes through here, so a reverted chip follows its words as the
+   * line changes around them. The line is kept in NFC (the parser's Vietnamese
+   * patterns are written in it), but never mid-composition: rewriting the
+   * value under an IME breaks the word being composed.
+   */
+  const onLineChange = (raw: string) => {
+    const prev = lineRef.current;
+    const next = composingRef.current ? raw : raw.normalize("NFC");
+    setLine(next, shiftReverted(prev.text, next, prev.reverted));
     setError(null);
+    setNote(null);
   };
 
-  const autocorrect = useAutocorrect(onLineChange);
+  const autocorrect = useAutocorrect(onLineChange, true, "task");
   const {
     registerField,
     suggestions: wordHints,
     accept: acceptWord,
     bind: completeBind,
     visible: hintsVisible,
-  } = useWordComplete(vocab?.words ?? NO_WORDS);
+  } = useWordComplete(ideaMode ? (vocab?.words ?? NO_WORDS) : NO_WORDS);
 
   const setInput = useCallback(
     (el: HTMLInputElement | null) => {
@@ -226,69 +417,535 @@ export function QuickCapture() {
     [registerField]
   );
 
+  /** Focus back on the line; `caretAt` places the caret now, or once the new value is in the DOM. */
+  const focusInput = useCallback((caretAt?: number) => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (caretAt === undefined) return;
+    if (el.value === lineRef.current.text) el.setSelectionRange(caretAt, caretAt);
+    else pendingCaret.current = caretAt;
+  }, []);
+
+  // The caret goes where an insert or a fill asked, once the value is in the DOM.
+  useLayoutEffect(() => {
+    const at = pendingCaret.current;
+    const el = inputRef.current;
+    if (at === null || !el) return;
+    pendingCaret.current = null;
+    const c = Math.min(at, el.value.length);
+    el.setSelectionRange(c, c);
+  }, [text, open]);
+
   // Kept in local storage until the server confirms, so nothing typed is
   // lost to a closed tab. Not before the stored draft has been read back,
   // or the first render's empty line would overwrite it.
   useEffect(() => {
     if (!restored.current) return;
-    writeJson(DRAFT_KEY, text.trim() ? { text, reverted } : null);
+    writeDraft({ text, reverted });
   }, [text, reverted]);
+
+  // ── Toasts ──────────────────────────────────────────────────────────────
+
+  /** A new toast starts its own clock, even if the pointer was resting on the old one. */
+  const showToast = useCallback(
+    (next: Toast, say?: string | false) => {
+      setToastHeld(false);
+      setToast(next);
+      // The open sheet speaks through its live region (the dock has its own role=status).
+      if (!openRef.current || say === false || next.kind === "working") return;
+      announce(say ?? toastSentence(next, !onTodayRef.current));
+    },
+    [announce]
+  );
+
+  // ── Vocabulary: cached, refreshed in the background, never ahead of a save ──
+
+  const loadVocab = useCallback((withWords: boolean) => {
+    if (vocabLoading.current) return;
+    vocabLoading.current = true;
+    loadCaptureVocabulary(withWords ? { words: true } : undefined)
+      .then((v) => {
+        const cache: VocabCache = { day: v.day, goals: v.goals, recent: v.recent, rawBefore: v.rawBefore, active: v.active, at: Date.now() };
+        writeVocabCache(cache);
+        setVocab((prev) => ({ ...cache, priced: true, words: withWords ? v.words : (prev?.words ?? null) }));
+      })
+      .catch(() => {
+        /* the sheet still captures; the chips say 'priced on save' */
+      })
+      .finally(() => {
+        vocabLoading.current = false;
+      });
+  }, []);
+
+  /**
+   * Starts the background refresh when the scheduler allows (capture-ui
+   * vocabRefreshDecision) — never while a save is in flight, because Next
+   * runs a client's actions one at a time and the save would queue behind
+   * it, and on an open phone sheet only once the line has been empty for a
+   * pause (or on close). An idea line also wants the player's words
+   * (WordComplete), loaded only for idea lines.
+   */
+  const considerVocab = useCallback(() => {
+    if (inFlight.current.size > 0) return;
+    const o = openingRef.current;
+    const now = Date.now();
+    const v = vocabRef.current;
+    if (openRef.current && ideaModeRef.current && !v?.words) {
+      o.refreshed = true;
+      loadVocab(true);
+      return;
+    }
+    const since = emptySince.current;
+    const decision = vocabRefreshDecision({
+      now,
+      openedAt: o.openedAt,
+      savesInFlight: inFlight.current.size,
+      savedThisOpening: o.saved,
+      refreshedThisOpening: o.refreshed,
+      stale: vocabStale(v, todayKey(), now),
+      coarseOpen: openRef.current && coarseRef.current,
+      lineEmpty: !lineRef.current.text.trim(),
+      emptyForMs: since === null ? 0 : now - since,
+    });
+    if (decision === "start") {
+      o.refreshed = true;
+      loadVocab(false);
+    } else if (decision === "wait" && openRef.current && coarseRef.current && since !== null) {
+      // An empty line on a phone: ask again once the pause is long enough.
+      if (idleTimer.current !== null) window.clearTimeout(idleTimer.current);
+      idleTimer.current = window.setTimeout(
+        () => {
+          idleTimer.current = null;
+          considerRef.current();
+        },
+        Math.max(0, since + VOCAB_IDLE_MS - now) + 50
+      );
+    }
+  }, [loadVocab]);
+
+  // An idea line asks for the words as soon as it is one (and again once a refresh in the way has landed).
+  useEffect(() => {
+    if (open && ideaMode && !vocab?.words) considerVocab();
+  }, [open, ideaMode, vocab, considerVocab]);
+
+  // An open phone sheet whose line has just emptied (or opened empty): the refresh may go once it stays empty.
+  const lineEmpty = !text.trim();
+  useEffect(() => {
+    if (!open || !coarse || !lineEmpty) return;
+    const since = emptySince.current ?? Date.now();
+    const t = window.setTimeout(() => considerRef.current(), Math.max(0, since + VOCAB_IDLE_MS - Date.now()) + 50);
+    return () => window.clearTimeout(t);
+  }, [open, coarse, lineEmpty]);
+
+  // ── Saving ──────────────────────────────────────────────────────────────
+
+  /** What a send's answer does: the list, the queue, the toast, the board. */
+  const settle = (line: PendingLine, origin: Origin, res: CaptureResult<CapturedItem> | null) => {
+    const now = Date.now();
+    const automatic = origin === "auto";
+    const o = openingRef.current;
+    const ofOpening = openingOf.current.get(line.nonce);
+    const mine = ofOpening === o.id;
+    if (mine) o.saved = true;
+    const notMust = notMustRef.current.delete(line.nonce);
+
+    if (res && res.ok) {
+      const item = res.value;
+      dropPending(line.nonce);
+      openingOf.current.delete(line.nonce);
+      setUnsent((list) => settleUnsent(list, line, "saved", now, automatic));
+      const update = !!line.replaces;
+      const entry: AddedEntry = { key: line.nonce, item, line: { text: line.text, reverted: line.reverted }, at: line.at };
+      if (update && item.replacedId && !item.oldKept) dispatchAdded({ type: "replace", oldId: item.replacedId, entry });
+      else if (!(automatic && item.duplicate)) dispatchAdded({ type: "add", entry });
+      if (!item.duplicate && !update) setCaptured((n) => n + 1);
+      if (mine) {
+        // An edit of a line this opening added changes that line: 'N added' counts rows, not sends.
+        const at = update && item.replacedId ? o.ids.indexOf(item.replacedId) : -1;
+        if (at >= 0) {
+          o.titles[at] = item.title;
+          o.ids[at] = item.id;
+        } else {
+          o.titles.push(item.title);
+          o.ids.push(item.id);
+        }
+        o.last = { id: item.id, notMust, update };
+      }
+      if (automatic) {
+        if (!item.duplicate) {
+          const a = autoSaved.current;
+          a.count = now - a.at > UNSENT_SUMMARY_MS ? 1 : a.count + 1;
+          a.at = now;
+          const copy = unsentSavedCopy(a.count);
+          if (copy) showToast({ kind: "unsent-saved", key: ++seq.current, text: copy });
+        }
+      } else if (origin === "batch") {
+        // The batch says 'N added' once, when every line has answered.
+      } else if (!openRef.current && mine && o.sent - o.merged >= 2) {
+        showToast({ kind: "summary", key: ++seq.current, titles: [...o.titles], failed: o.failed });
+      } else {
+        // The live region says 'Added <title> → <where>. N added.' for a line of this opening.
+        const say = mine && !update && !item.duplicate ? addedAnnouncement(item.title, item.where.label, o.titles.length) : undefined;
+        showToast({ kind: "added", key: ++seq.current, item, notMust, update }, say);
+      }
+      // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
+      void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
+      // The board flashes where it went. Behind the open sheet's scrim the flash would be spent
+      // unseen (and the page scrolled under the modal), so it waits for the sheet to close.
+      if (openRef.current) heldCaptured.current = item;
+      else window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
+    } else if (res === null) {
+      // The network, not the server: queued, and it retries on its own.
+      const current = unsentRef.current.find((u) => u.nonce === line.nonce);
+      const attempts = (current?.state === "queued" ? current.attempts : 0) + (automatic ? 1 : 0);
+      const giveUp = nextRetryDelay(attempts) === null;
+      setUnsent((list) => settleUnsent(list, line, "network", now, automatic));
+      if (giveUp) {
+        if (mine) o.failed += 1;
+        showToast({ kind: "error", key: ++seq.current, head: "Not saved yet", message: GAVE_UP });
+      } else if (!automatic) {
+        showToast({ kind: "queued", key: ++seq.current, offline: typeof navigator !== "undefined" && navigator.onLine === false });
+      }
+    } else {
+      // The server said no: the line waits in the failed list with its reason.
+      const tooLate = !!line.replaces && (res.code === "too-late" || res.code === "gone");
+      if (mine) o.failed += 1;
+      setUnsent((list) => settleUnsent(list, line, "refused", now, automatic, { error: res.error, code: tooLate ? res.code : undefined }));
+      if (!automatic && origin !== "batch") {
+        if (tooLate) showToast({ kind: "too-late", key: ++seq.current, nonce: line.nonce, message: res.code === "gone" ? EDIT_GONE : EDIT_TOO_LATE });
+        else showToast({ kind: "error", key: ++seq.current, head: "Didn't save", message: res.error });
+      }
+    }
+    considerVocab();
+  };
+
+  const sendLine = (line: PendingLine, origin: Origin) => {
+    if (!mayRetryNow(line.nonce, inFlight.current)) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      // Offline: queued for the 'online' event. Never 'Didn't save' for the network.
+      setUnsent((list) => settleUnsent(list, line, "network", Date.now(), false));
+      if (origin !== "auto") showToast({ kind: "queued", key: ++seq.current, offline: true });
+      return;
+    }
+    inFlight.current.add(line.nonce);
+    const oldId = line.replaces;
+    // An edit on its way locks the capture it replaces (Edit and Undo) until it settles.
+    if (oldId) setSendingEdits((m) => new Map(m).set(line.nonce, oldId));
+    if (origin === "user") showToast({ kind: "working", key: ++seq.current, message: line.replaces ? "Saving the change…" : "Saving…" });
+    startTransition(async () => {
+      let res: CaptureResult<CapturedItem> | null;
+      try {
+        // The line's nonce is its capture key: a retry of a save whose answer
+        // was lost finds the row it already wrote instead of writing a second.
+        res = line.replaces
+          ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: onTodayRef.current, captureKey: line.nonce })
+          : await createFromCapture(line.text, line.reverted, { refresh: onTodayRef.current, captureKey: line.nonce });
+      } catch {
+        res = null;
+      }
+      inFlight.current.delete(line.nonce);
+      if (oldId) {
+        setSendingEdits((m) => {
+          if (!m.has(line.nonce)) return m;
+          const next = new Map(m);
+          next.delete(line.nonce);
+          return next;
+        });
+      }
+      settle(line, origin, res);
+    });
+  };
+
+  /** A pasted list: one call, each line under its own nonce, answered line by line. */
+  const sendBatch = (lines: PendingLine[]) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      const now = Date.now();
+      setUnsent((list) => lines.reduce((acc, l) => settleUnsent(acc, l, "network", now, false), list));
+      showToast({ kind: "queued", key: ++seq.current, offline: true });
+      return;
+    }
+    for (const l of lines) inFlight.current.add(l.nonce);
+    showToast({ kind: "working", key: ++seq.current, message: `Saving ${lines.length} lines…` });
+    startTransition(async () => {
+      let res: CaptureManyResult | null;
+      try {
+        res = await createManyFromCapture(
+          lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce })),
+          { refresh: onTodayRef.current }
+        );
+      } catch {
+        res = null;
+      }
+      for (const l of lines) inFlight.current.delete(l.nonce);
+      if (!res) {
+        for (const l of lines) settle(l, "batch", null);
+        showToast({ kind: "queued", key: ++seq.current, offline: typeof navigator !== "undefined" && navigator.onLine === false });
+        return;
+      }
+      const titles: string[] = [];
+      const results = res.results;
+      let failed = 0;
+      lines.forEach((l, i) => {
+        const r = results[i];
+        if (r && r.ok) {
+          titles.push(r.item.title);
+          settle(l, "batch", { ok: true, value: r.item });
+        } else {
+          failed += 1;
+          settle(l, "batch", { ok: false, error: r ? r.error : "No answer for this line. It's kept — retry it." });
+        }
+      });
+      if (titles.length > 0) showToast({ kind: "summary", key: ++seq.current, titles, failed });
+      else showToast({ kind: "error", key: ++seq.current, head: "Didn't save", message: `None of the ${lines.length} lines saved. They're kept in Capture.` });
+    });
+  };
 
   // ── Open and close ──────────────────────────────────────────────────────
 
-  const openSheet = useCallback((request?: CaptureRequest) => {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && !active.closest("[data-capture-sheet]")) returnFocus.current = active;
-    setDay(todayKey());
-    setOpen(true);
-    setError(null);
+  /**
+   * The board's flash for the capture held while the sheet was open (not
+   * for one undone meanwhile). After a phone's history.back(), which is
+   * asynchronous and may restore the page's scroll, it waits for the
+   * popstate so the board's own scroll to the row comes last.
+   */
+  const flashHeld = useCallback((item: CapturedItem, afterBack: boolean) => {
+    if (addedRef.current.some((e) => e.item.id === item.id && e.removedAt !== undefined)) return;
+    const fire = () => window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
+    if (!afterBack) {
+      fire();
+      return;
+    }
+    let fallback = 0;
+    let fired = false;
+    const go = () => {
+      if (fired) return;
+      fired = true;
+      window.removeEventListener("popstate", go);
+      window.clearTimeout(fallback);
+      window.setTimeout(fire, 0);
+    };
+    window.addEventListener("popstate", go);
+    fallback = window.setTimeout(go, 400);
+  }, []);
 
-    let next = lineRef.current;
-    if (!restored.current) {
-      // First open on this page load: bring back an unsent draft, and any
-      // line whose save never came back before the page closed.
-      restored.current = true;
-      const draft = readJson<Line>(DRAFT_KEY);
-      const clean = draft ? sanitizeCaptureInput(draft.text, draft.reverted) : null;
-      if (clean?.text && !next.text) next = clean;
-      const now = Date.now();
-      const stale = readPending().filter((p) => now - p.at > PENDING_STALE_MS);
-      if (stale.length > 0) {
-        setFailed((f) => [
-          ...f,
-          ...stale
-            .filter((p) => !f.some((x) => x.nonce === p.nonce))
-            .map((p) => ({ ...p, error: "Not confirmed before the page closed. Check Today, then retry or dismiss." })),
-        ]);
+  const closeSheet = useCallback(
+    (reason: CloseReason) => {
+      if (!openRef.current) return;
+      openRef.current = false;
+      setOpen(false);
+      setMenu(null);
+      setPaste(null);
+      setBlocked(null);
+      setFeedsOpen(false);
+      setPocket(false);
+      setShowAll(false);
+      setNote(null);
+      if (pocketTimer.current !== null) {
+        window.clearTimeout(pocketTimer.current);
+        pocketTimer.current = null;
       }
-    }
-    // A caller's text starts an empty line; it never replaces one in progress.
-    const start = request?.text ?? (request?.mode === "idea" ? "idea: " : null);
-    if (start && !next.text.trim()) next = { text: start.slice(0, MAX_CAPTURE_CHARS), reverted: [] };
-    if (next !== lineRef.current) {
-      setText(next.text);
-      setReverted(next.reverted);
-      setRevertHistory([]);
-    }
+      const o = openingRef.current;
+      const choice = dockToastChoice(o.sent - o.merged);
+      if (choice === "summary" && o.titles.length > 0) {
+        // Two or more lines in this opening: the dock says 'N added' (Show reopens the list).
+        showToast({ kind: "summary", key: ++seq.current, titles: [...o.titles], failed: o.failed });
+      } else if (choice === "single" && o.last && !toastRef.current) {
+        // One line: today's toast with Undo, even when the sheet's own status line has already timed out.
+        const last = o.last;
+        const live = addedRef.current.find((e) => e.item.id === last.id && e.removedAt === undefined);
+        if (live) showToast({ kind: "added", key: ++seq.current, item: live.item, notMust: last.notMust, update: last.update });
+      }
+      const decision = historyOnClose({ reason, hash: window.location.hash, coarse: coarseRef.current, pushed: pushedRef.current });
+      if (decision === "back" || reason === "back" || reason === "navigate") pushedRef.current = false;
+      if (decision === "back") window.history.back();
+      const held = heldCaptured.current;
+      heldCaptured.current = null;
+      if (held) flashHeld(held, decision === "back");
+      const back = returnFocus.current;
+      returnFocus.current = null;
+      if (back && document.contains(back) && reason !== "navigate") back.focus({ preventScroll: true });
+      // The refresh a phone held back while lines were going in may go now —
+      // on the next task, so a save that closed the sheet (submit and
+      // addPasted close first, then send) is in flight before it decides,
+      // and the save never waits behind the refresh.
+      window.setTimeout(() => considerRef.current(), 0);
+    },
+    [showToast, flashHeld]
+  );
 
-    if (Date.now() - vocabAt.current > VOCAB_TTL_MS) {
-      vocabAt.current = Date.now();
-      loadCaptureVocabulary()
-        .then(setVocab)
-        .catch(() => {
-          vocabAt.current = 0;
-        });
+  const openSheet = useCallback(
+    (request?: CaptureRequest & { source?: "link" | "shortcut"; edit?: AddedEntry }) => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && !active.closest("[data-capture-sheet]")) returnFocus.current = active;
+      const wasOpen = openRef.current;
+      const today = todayKey();
+      setDay(today);
+      setOpen(true);
+      openRef.current = true;
+      setError(null);
+
+      if (!wasOpen) {
+        const c = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+        coarseRef.current = c;
+        setCoarse(c);
+        const o = openingRef.current;
+        openingRef.current = { id: o.id + 1, openedAt: Date.now(), sent: 0, titles: [], ids: [], merged: 0, failed: 0, saved: false, refreshed: false };
+        setSentThisOpening(0);
+        // Whether the ≈ may be shown is decided again: a vocabulary priced an hour ago reads 'priced on save' until the refresh.
+        setVocab((v) => vocabOnOpen(v, today, Date.now()));
+        // A fresh opening starts with an empty status line: what an earlier
+        // opening said has had its turn in the dock, and closing with nothing
+        // added must not put it there again (dockToastChoice 0 → none).
+        setToast(null);
+        setToastHeld(false);
+        lastSubmitAt.current = 0;
+        // A phone's Back gesture closes the sheet: one hash-only entry, no Next navigation.
+        if (historyOnOpen({ coarse: c, hash: window.location.hash, pushed: pushedRef.current }) === "push") {
+          window.history.pushState(null, "", CAPTURE_OPEN_HASH);
+          pushedRef.current = true;
+        }
+      }
+
+      let next: Line = lineRef.current;
+      if (!restored.current) {
+        // First open on this page load: bring back an unsent draft, and the cached vocabulary.
+        restored.current = true;
+        const draft = readDraft();
+        if (draft && !next.text) next = draft;
+        if (!vocabRef.current) {
+          const cache = readVocabCache();
+          if (cache) {
+            const v: SheetVocab = { ...cache, priced: vocabPriceable(cache, today, Date.now()), words: null };
+            vocabRef.current = v;
+            setVocab(v);
+          }
+        }
+      }
+      // A caller's text starts an empty line; it never replaces one in progress.
+      const start = request?.text ?? (request?.mode === "idea" ? "idea: " : null);
+      if (start && !next.text.trim()) next = { text: start.normalize("NFC").slice(0, MAX_CAPTURE_CHARS), reverted: [] };
+      else if (start && request?.source === "link") setNote(FRAGMENT_BUSY_NOTE);
+      if (next !== lineRef.current) {
+        setLine(next.text, next.reverted);
+        setRevertHistory([]);
+      }
+      pendingCaret.current = next.text.length;
+
+      if (request?.edit) {
+        const fill = editFill(next.text, request.edit, Date.now(), replacingRef.current);
+        if (fill.ok) {
+          setLine(fill.text, fill.reverted);
+          setRevertHistory([]);
+          setEditing({ oldId: request.edit.item.id, title: request.edit.item.title, norm: normTitleOf(request.edit.item.title) });
+          pendingCaret.current = fill.caret;
+        } else {
+          setNote(editRefusalNote(fill.reason, replacingRef.current.get(request.edit.item.id)));
+        }
+      }
+      // The phone's refresh waits for the line to stay empty: this opening's pause starts now.
+      if (!wasOpen) emptySince.current = lineRef.current.text.trim() ? null : Date.now();
+
+      // The home-screen shortcut on a phone whose keyboard did not rise: say where to tap.
+      if (request?.source === "shortcut" && coarseRef.current && !wasOpen) {
+        if (pocketTimer.current !== null) window.clearTimeout(pocketTimer.current);
+        pocketTimer.current = window.setTimeout(() => {
+          pocketTimer.current = null;
+          if (openRef.current && insetRef.current === 0) setPocket(true);
+        }, POCKET_WAIT_MS);
+      }
+
+      // Unsent lines get another go whenever the sheet opens.
+      flushRef.current(true);
+      // The vocabulary: after the first save of this opening, or VOCAB_REFRESH_DELAY_MS from now.
+      if (!wasOpen) window.setTimeout(() => considerRef.current(), VOCAB_REFRESH_DELAY_MS);
+    },
+    [setLine]
+  );
+
+  // ── Retrying unsent lines ───────────────────────────────────────────────
+
+  /**
+   * Sends what is due (or every queued line, on a trigger). Silent; offline
+   * does nothing until 'online'. A queued line from another life day is
+   * never sent on its own: it moves to the failed list with its note.
+   */
+  const flush = (all: boolean) => {
+    const today = todayKey();
+    const otherDay = (u: Unsent) => u.state === "queued" && !inFlight.current.has(u.nonce) && pendingDayNote(u, today) !== null;
+    if (unsentRef.current.some(otherDay)) {
+      setUnsent((list) =>
+        list.map((u): Unsent => {
+          const note = otherDay(u) ? pendingDayNote(u, today) : null;
+          return note ? { ...u, state: "failed", attempts: 0, nextAt: 0, error: note } : u;
+        })
+      );
     }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const list = unsentRef.current.filter((u) => !otherDay(u));
+    const due = queueDue(
+      list.filter((u) => u.state === "queued"),
+      Date.now(),
+      inFlight.current,
+      all
+    );
+    for (const nonce of due) {
+      const line = list.find((u) => u.nonce === nonce);
+      if (line) sendLine(line, "auto");
+    }
+  };
+
+  useLayoutEffect(() => {
+    flushRef.current = flush;
+    considerRef.current = considerVocab;
+  });
+
+  // 'online' and the tab becoming visible send every queued line again.
+  useEffect(() => {
+    const onOnline = () => flushRef.current(true);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") flushRef.current(true);
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
-  const closeSheet = useCallback(() => {
-    setOpen(false);
-    const back = returnFocus.current;
-    returnFocus.current = null;
-    if (back && document.contains(back)) back.focus({ preventScroll: true });
-  }, []);
+  // One timer, for the earliest queued line.
+  useEffect(() => {
+    const wake = queueWake(
+      unsent.filter((u) => u.state === "queued"),
+      inFlight.current
+    );
+    if (wake === null) return;
+    const t = window.setTimeout(() => flushRef.current(false), Math.max(0, wake - Date.now()));
+    return () => window.clearTimeout(t);
+  }, [unsent]);
 
-  // The hotkey: 'c' or Ctrl/Cmd+K, never while typing, never mid-review, never Tab.
+  // The + button's dot and its sr text: lines waiting to save (queued or failed).
+  const unsentCount = unsent.length;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (unsentCount > 0) root.dataset.captureUnsent = String(unsentCount);
+    else delete root.dataset.captureUnsent;
+  }, [unsentCount]);
+
+  // 'Added here' rows leave at ten minutes (and an undone row after a few seconds).
+  useEffect(() => {
+    const at = nextPruneAt(added);
+    if (at === null) return;
+    const t = window.setTimeout(() => dispatchAdded({ type: "prune", now: Date.now() }), Math.max(0, at - Date.now()) + 50);
+    return () => window.clearTimeout(t);
+  }, [added]);
+
+  // ── Opening paths ───────────────────────────────────────────────────────
+
+  // The hotkey: 'c' (never while typing or mid-review) or Ctrl/Cmd+K (from
+  // any field and mid-review; never inside the sheet). capture-parse
+  // isCaptureHotkey holds the rule.
   useEffect(() => {
     if (open) return;
     function onKey(e: KeyboardEvent) {
@@ -328,142 +985,387 @@ export function QuickCapture() {
       // `null` state, as the Next docs show: the router patches replaceState
       // and keeps its own history entry and search params in step.
       window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
-      openSheet({ mode: want });
+      openSheet({ mode: want, source: "shortcut" });
     }, 0);
     return () => window.clearTimeout(t);
   }, [pathname, openSheet]);
 
-  // Focus the line on open, caret at the end.
+  // '#capture=<text>' on any route (a browser keyword or a launcher bookmark):
+  // fills an empty line and opens the sheet — it never saves. The fragment
+  // never reaches a server log, and is dropped from the address at once. A
+  // leftover '#capture-open' (a reload with the sheet open) is dropped too.
+  useEffect(() => {
+    const check = () => {
+      const hash = window.location.hash;
+      const strip = () => window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      if (hash === CAPTURE_OPEN_HASH && !openRef.current) {
+        strip();
+        return;
+      }
+      const linked = readCaptureFragment(hash);
+      if (linked === null) return;
+      strip();
+      openSheet({ text: linked, source: "link" });
+    };
+    const t = window.setTimeout(check, 0);
+    window.addEventListener("hashchange", check);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("hashchange", check);
+    };
+  }, [pathname, openSheet]);
+
+  // Focus the line on open, caret at the end (or where a fill asked).
   useEffect(() => {
     if (!open) return;
     const el = inputRef.current;
     if (!el) return;
     el.focus({ preventScroll: true });
-    el.setSelectionRange(el.value.length, el.value.length);
+    const at = pendingCaret.current ?? el.value.length;
+    pendingCaret.current = null;
+    el.setSelectionRange(at, at);
+    if (showListRequest.current) {
+      showListRequest.current = false;
+      listRef.current?.scrollIntoView({ block: "start" });
+    }
   }, [open]);
 
   // Escape closes from anywhere in the sheet, not only the input — and only
   // the sheet: it is the top layer of the app's Escape stack, so a receipt
   // or the inbox open underneath stays open.
+  // A ▾ menu open in the row is the sheet's own top layer: Escape closes it first.
   useEffect(() => {
     if (!open) return;
-    return pushEscapeLayer(closeSheet);
+    return pushEscapeLayer(() => {
+      if (menuRef.current) {
+        setMenu(null);
+        announce(menuNote(null));
+        return;
+      }
+      closeSheet("escape");
+    });
+  }, [open, closeSheet, announce]);
+
+  // Back (the phone's gesture) closes the sheet and stays on the page.
+  useEffect(() => {
+    if (!open) return;
+    const onPop = () => {
+      if (!openRef.current) return;
+      if (historyOnPop({ open: true, hash: window.location.hash }) === "close") closeSheet("back");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, [open, closeSheet]);
 
-  // ── Saving ──────────────────────────────────────────────────────────────
+  // /add created the idea this line was carried over for: the line goes.
+  useEffect(() => {
+    const onCleared = (e: Event) => {
+      const detail = (e as CustomEvent<SheetDraftCleared | undefined>).detail;
+      if (!detail || typeof detail.text !== "string") return;
+      if (lineRef.current.text !== detail.text) return;
+      setLine("", []);
+      setRevertHistory([]);
+      setEditing(null);
+    };
+    window.addEventListener(SHEET_DRAFT_CLEARED_EVENT, onCleared);
+    return () => window.removeEventListener(SHEET_DRAFT_CLEARED_EVENT, onCleared);
+  }, [setLine]);
 
-  /** A new toast starts its own clock, even if the pointer was resting on the old one. */
-  const showToast = (next: Toast) => {
-    setToastHeld(false);
-    setToast(next);
+  // ── Submitting ──────────────────────────────────────────────────────────
+
+  /** A previewed paste: every line stamped and stored before one call sends them all. */
+  const addPasted = () => {
+    if (!paste || paste.lines.length === 0) return;
+    const now = Date.now();
+    const lines = paste.lines.map((t) => stampLine({ text: t, reverted: [] }, ++seq.current, now, randomSalt()));
+    addPending(...lines);
+    const o = openingRef.current;
+    o.sent += lines.length;
+    for (const l of lines) openingOf.current.set(l.nonce, o.id);
+    setSentThisOpening(o.sent);
+    setPaste(null);
+    closeSheet("save");
+    sendBatch(lines);
   };
 
-  const send = (line: PendingLine, refreshBoard: boolean) => {
-    showToast({ kind: "working", key: ++seq.current, message: "Saving…" });
-    startTransition(async () => {
-      let res: CaptureResult<CapturedItem>;
-      try {
-        // The line's nonce is its capture key: a retry of a save whose answer
-        // was lost finds the row it already wrote instead of writing a second.
-        res = await createFromCapture(line.text, line.reverted, { refresh: refreshBoard, captureKey: line.nonce });
-      } catch {
-        res = { ok: false, error: "Couldn't reach the server. Your line is kept — try again." };
-      }
-      if (res.ok) {
-        const item = res.value;
-        dropPending(line.nonce);
-        setFailed((f) => f.filter((x) => x.nonce !== line.nonce));
-        setCaptured((n) => n + 1);
-        // A habit captured on a day it does not run is on no lane of today's
-        // board; the toast says when it will be, so the line never looks lost.
-        const today = todayKey();
-        let next: string | null = null;
-        try {
-          next = nextOccurrenceNote(parseCapture(line.text, { today, reverted: line.reverted }), today);
-        } catch {
-          next = null;
-        }
-        showToast({ kind: "added", key: ++seq.current, item, next });
-        // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
-        void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
-        window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
-      } else {
-        const message = res.error;
-        setFailed((f) => [...f.filter((x) => x.nonce !== line.nonce), { ...line, error: message }]);
-        showToast({ kind: "error", key: ++seq.current, message });
-      }
-    });
-  };
-
-  /** Enter saves and closes; Shift+Enter saves and stays for the next line. `inbox` sends it to the Inbox. */
-  const save = (stay: boolean, opts: { inbox?: boolean } = {}) => {
-    if (!parsed || !text.trim()) return;
-    if (!parsed.title) {
-      setError("Add a few words for the title — only dates and tags are left.");
+  /** Saves the line: closes, or stays for the next one. `inbox` sends it to the Inbox. */
+  const submit = (source: EnterSource, stay: boolean, opts: { inbox?: boolean } = {}) => {
+    const now = Date.now();
+    if (!submitAllowed(lastSubmitAt.current, now)) return;
+    if (paste) {
+      lastSubmitAt.current = now;
+      addPasted();
       return;
     }
-    const lineText = opts.inbox && !parsed.inbox ? toInboxLine(text) : text;
-    const line = stamp({ text: lineText, reverted }, ++seq.current);
-    addPending(line);
-    writeJson(DRAFT_KEY, null);
-    setText("");
-    setReverted([]);
+    const line = lineRef.current;
+    if (!line.text.trim() || !day) return;
+    lastSubmitAt.current = now;
+    const read = parseCapture(line.text, { today: day, reverted: line.reverted });
+    if (!read.title) {
+      setError(TITLE_MISSING);
+      return;
+    }
+    // Block-once: a Must with no day stops the first press and offers the fix.
+    let notMust = false;
+    if (!opts.inbox) {
+      const gate = mustGate(blocked, line.text, !!read.compulsoryWarning);
+      if (gate.action === "block") {
+        setBlocked(gate.blocked);
+        focusInput();
+        return;
+      }
+      notMust = gate.action === "save-not-must";
+    }
+    const lineText = opts.inbox && !read.inbox ? toInboxLine(line.text) : line.text;
+    const pending = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null);
+    addPending(pending);
+    writeDraft(null);
+    if (notMust) notMustRef.current.add(pending.nonce);
+    const o = openingRef.current;
+    o.sent += 1;
+    if (editing && o.ids.includes(editing.oldId)) o.merged += 1;
+    openingOf.current.set(pending.nonce, o.id);
+    setSentThisOpening(o.sent);
+    setLine("", []);
     setRevertHistory([]);
     setError(null);
+    setNote(null);
+    setBlocked(null);
+    setMenu(null);
+    setEditing(null);
     autocorrect.clearRecent();
-    if (stay) inputRef.current?.focus();
-    else closeSheet();
-    send(line, onToday);
+    if (stay) focusInput();
+    else closeSheet("save");
+    sendLine(pending, "user");
   };
 
-  const retry = (line: FailedLine) => {
-    setFailed((f) => f.filter((x) => x.nonce !== line.nonce));
-    send(line, onToday);
+  /** The primary button reads Done (an empty line after a burst, on a phone): the action key closes too. Never over a paste preview (its key adds the lines). */
+  const primaryIsDone = () => !paste && primaryAction({ editing: !!editing, coarse, empty: !lineRef.current.text.trim(), sentThisOpening, parsed }).done;
+
+  /** The action key on a Done line: closes, unless it is the same press that just saved the last line. */
+  const closeFromKey = () => {
+    const now = Date.now();
+    if (!submitAllowed(lastSubmitAt.current, now)) return;
+    lastSubmitAt.current = now;
+    closeSheet("done");
   };
-  const dismiss = (line: FailedLine) => {
-    dropPending(line.nonce);
-    setFailed((f) => f.filter((x) => x.nonce !== line.nonce));
+
+  const onFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // A Telex commit on a desktop is not a submit.
+    if (!coarse && Date.now() - lastComposingEnterAt.current < 150) return;
+    const action = enterAction({ coarse, shift: false, composing: composingRef.current, source: "submit", done: primaryIsDone() });
+    if (action === "wait-composition") {
+      submitAfterComposition.current = true;
+      return;
+    }
+    if (action === "ignore") return;
+    if (action === "close") {
+      closeFromKey();
+      return;
+    }
+    submit("submit", action === "save-stay");
   };
-  /** Moves a failed line back into an empty input, to fix before resending. */
-  const edit = (line: FailedLine) => {
-    if (text.trim()) return;
-    dismiss(line);
-    setText(line.text);
-    setReverted(line.reverted);
+
+  /** Escape with a ▾ menu open closes the menu, not the sheet. */
+  const closeMenu = () => {
+    setMenu(null);
+    announce(menuNote(null));
+  };
+
+  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      const composing = e.nativeEvent.isComposing || composingRef.current;
+      const action = enterAction({ coarse, shift: e.shiftKey, composing, source: "key", done: primaryIsDone() });
+      if (action === "ignore") {
+        lastComposingEnterAt.current = Date.now();
+        return;
+      }
+      if (action === "wait-composition") {
+        submitAfterComposition.current = true;
+        return;
+      }
+      e.preventDefault();
+      if (action === "close") {
+        closeFromKey();
+        return;
+      }
+      submit("key", action === "save-stay");
+      return;
+    }
+    if (e.key === "Escape" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (menu) closeMenu();
+      else closeSheet("escape");
+      return;
+    }
+    // Tab accepts a word completion when there is one, and otherwise moves focus as it always does.
+    completeBind.onKeyDown(e);
+  };
+
+  const onPrimary = () => {
+    const p = primaryAction({ editing: !!editing, coarse, empty: !lineRef.current.text.trim(), sentThisOpening, parsed });
+    if (p.done) {
+      closeSheet("done");
+      return;
+    }
+    submit("button", false);
+  };
+
+  // ── Edit, Undo, Retry ───────────────────────────────────────────────────
+
+  /**
+   * A row's action settled while the sheet is open on a phone: the line
+   * takes focus back, so the next line of a burst needs no tap on it (the
+   * sheet's mousedown rule already keeps it there for a tap).
+   */
+  const refocusLine = () => {
+    if (openRef.current && coarseRef.current) focusInput();
+  };
+
+  const startEdit = (entry: AddedEntry) => {
+    const fill = editFill(lineRef.current.text, entry, Date.now(), replacingRef.current);
+    if (!fill.ok) {
+      const msg = editRefusalNote(fill.reason, replacingRef.current.get(entry.item.id));
+      setNote(msg);
+      announce(msg);
+      return;
+    }
+    setLine(fill.text, fill.reverted);
     setRevertHistory([]);
-    inputRef.current?.focus();
+    setEditing({ oldId: entry.item.id, title: entry.item.title, norm: normTitleOf(entry.item.title) });
+    setBlocked(null);
+    setMenu(null);
+    setPaste(null);
+    setError(null);
+    setNote(null);
+    focusInput(fill.caret);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setLine("", []);
+    setRevertHistory([]);
+    setBlocked(null);
+    focusInput(0);
+  };
+
+  /** Edit from the dock: open the sheet on that capture's line. */
+  const editFromDock = (item: CapturedItem) => {
+    const entry = addedRef.current.find((e) => e.item.id === item.id && e.removedAt === undefined);
+    if (!entry) {
+      openSheet();
+      setNote(editRefusalNote("expired"));
+      return;
+    }
+    openSheet({ edit: entry });
   };
 
   const undo = (item: CapturedItem) => {
+    if (undoBusy.has(item.id)) return;
+    // An edit of this line is on its way: an Undo now would leave its new row standing.
+    const lock = replacingRef.current.get(item.id);
+    if (lock) {
+      if (openRef.current) {
+        setNote(lock);
+        announce(lock);
+      } else showToast({ kind: "error", key: ++seq.current, head: "Not undone yet", message: lock });
+      return;
+    }
+    setUndoBusy((s) => new Set(s).add(item.id));
     showToast({ kind: "working", key: ++seq.current, message: "Undoing…" });
     startTransition(async () => {
-      let res: { ok: true } | { ok: false; error: string };
+      let res: { ok: true } | { ok: false; error: string; gone: boolean };
       try {
-        res = await undoCapture(item.id, { refresh: onToday });
+        const r = await undoCapture(item.id, { refresh: onTodayRef.current });
+        // 'gone': an edit had already replaced this row, so it is no longer the one on the board.
+        res = r.ok ? { ok: true } : { ok: false, error: r.error, gone: r.code === "gone" };
       } catch {
-        res = { ok: false, error: "Couldn't reach the server to undo." };
+        res = { ok: false, error: "Couldn't reach the server to undo.", gone: false };
       }
+      setUndoBusy((s) => {
+        const n = new Set(s);
+        n.delete(item.id);
+        return n;
+      });
+      // Taken back (or no longer on the board): the close must not flash it.
+      if ((res.ok || res.gone) && heldCaptured.current?.id === item.id) heldCaptured.current = null;
       if (res.ok) {
         setCaptured((n) => Math.max(0, n - 1));
+        dispatchAdded({ type: "removed", id: item.id, now: Date.now() });
         showToast({ kind: "removed", key: ++seq.current, title: item.title });
+      } else if (res.gone) {
+        dispatchAdded({ type: "drop", id: item.id });
+        const copy = undoGoneCopy(item.title, res.error);
+        showToast({ kind: "error", key: ++seq.current, head: copy.head, message: copy.message });
       } else {
-        showToast({ kind: "error", key: ++seq.current, message: res.error });
+        showToast({ kind: "error", key: ++seq.current, head: "Didn't undo", message: res.error });
       }
+      refocusLine();
     });
+  };
+
+  /** A manual Retry sends the line as it stands, today: another day's line is re-stamped for today first. */
+  const retry = (u: Unsent) => {
+    if (!mayRetryNow(u.nonce, inFlight.current)) return;
+    const today = todayKey();
+    const line: PendingLine = pendingDayNote(u, today) ? { ...pendingOf(u), day: today } : pendingOf(u);
+    if (line.day !== u.day) addPending(line);
+    sendLine(line, "manual");
+    refocusLine();
+  };
+  const dropUnsent = (u: Unsent) => {
+    dropPending(u.nonce);
+    setUnsent((list) => list.filter((x) => x.nonce !== u.nonce));
+  };
+  const dismiss = (u: Unsent) => {
+    dropUnsent(u);
+    refocusLine();
+  };
+  /**
+   * Moves an unsent line back into an empty input, to fix before resending:
+   * the chips redraw for today. An edit whose capture can still be edited
+   * stays an edit of it; anything else goes as a new line.
+   */
+  const editUnsent = (u: Unsent) => {
+    if (lineRef.current.text.trim()) {
+      setNote(EDIT_BUSY_NOTE);
+      return;
+    }
+    dropUnsent(u);
+    const old = u.replaces ? addedRef.current.find((e) => e.item.id === u.replaces && canEditEntry(e, Date.now())) : undefined;
+    setLine(u.text, u.reverted);
+    setRevertHistory([]);
+    setEditing(old ? { oldId: old.item.id, title: old.item.title, norm: normTitleOf(old.item.title) } : null);
+    focusInput(u.text.length);
+  };
+  /** An edit that came too late: the same words, saved as a new line with a fresh nonce. */
+  const saveAsNew = (nonce: string) => {
+    const u = unsentRef.current.find((x) => x.nonce === nonce);
+    if (!u) return;
+    dropUnsent(u);
+    const fresh = stampNow({ text: u.text, reverted: u.reverted }, ++seq.current);
+    addPending(fresh);
+    sendLine(fresh, "manual");
+    refocusLine();
   };
 
   // Handlers the dock's toast calls later, always the latest.
   const undoRef = useRef(undo);
-  const openRef = useRef(openSheet);
-  useEffect(() => {
+  const openRefFn = useRef(openSheet);
+  const editDockRef = useRef(editFromDock);
+  const saveAsNewRef = useRef(saveAsNew);
+  useLayoutEffect(() => {
     undoRef.current = undo;
-    openRef.current = openSheet;
+    openRefFn.current = openSheet;
+    editDockRef.current = editFromDock;
+    saveAsNewRef.current = saveAsNew;
   });
 
   // Inside the open sheet the status line clears itself unless the pointer
   // or focus is on it. (In the dock, the dock keeps the time.)
   useEffect(() => {
-    if (!open || !toast || toast.kind === "working" || toastHeld) return;
+    if (!open || !toast || toast.kind === "working" || toast.kind === "too-late" || toastHeld) return;
     const key = toast.key;
     const t = window.setTimeout(
       () => setToast((cur) => (cur && cur.key === key ? null : cur)),
@@ -474,7 +1376,10 @@ export function QuickCapture() {
 
   // The sheet is closed: the toast lives in the app's one dock (above the
   // tab bar on phones, bottom-right from 600). Pushed under one key, so a
-  // new toast replaces the last; when the dock lets it go, so do we.
+  // new toast replaces the last; when the dock lets it go, so do we. While
+  // an edit of the capture it names is on its way, it offers neither Edit
+  // nor Undo and says why (pushed again when that changes).
+  const dockLock = toast?.kind === "added" ? (replacing.get(toast.item.id) ?? null) : null;
   useEffect(() => {
     if (open || !toast) {
       const d = dockRef.current;
@@ -484,10 +1389,28 @@ export function QuickCapture() {
       }
       return;
     }
-    const input = dockToastOf(toast, { onUndo: (item) => undoRef.current(item), onOpen: () => openRef.current() });
+    const input = dockToastOf(
+      toast,
+      { offToday: !onTodayRef.current, lock: dockLock },
+      {
+        onUndo: (item) => undoRef.current(item),
+        onEdit: (item) => editDockRef.current(item),
+        onOpen: () => openRefFn.current(),
+        onShow: () => {
+          showListRequest.current = true;
+          setShowAll(true);
+          openRefFn.current();
+        },
+        onSaveAsNew: (nonce) => saveAsNewRef.current(nonce),
+        onLink: () => {
+          const d = dockRef.current;
+          if (d) dismissToast(d.id);
+        },
+      }
+    );
     const id = pushToast({ ...input, key: DOCK_KEY });
     dockRef.current = { id, key: toast.key };
-  }, [open, toast]);
+  }, [open, toast, dockLock]);
 
   useEffect(
     () =>
@@ -503,7 +1426,7 @@ export function QuickCapture() {
   // The keyboard path to Undo: Ctrl/Cmd+Z while an 'added' toast is showing
   // and the sheet is closed, from anywhere but a text field or a review
   // card. A capture made with 'c' and Enter can be taken back the same way.
-  const undoTarget = !open && toast?.kind === "added" ? toast.item : null;
+  const undoTarget = !open && toast?.kind === "added" && !toast.update ? toast.item : null;
   useEffect(() => {
     if (!undoTarget) return;
     const item = undoTarget;
@@ -518,13 +1441,72 @@ export function QuickCapture() {
     return () => window.removeEventListener("keydown", onKey);
   }, [undoTarget]);
 
-  // ── Chips ───────────────────────────────────────────────────────────────
+  // ── Chips and the insert row ────────────────────────────────────────────
 
   const revert = (token: CaptureToken) => {
     const span = { start: token.start, end: token.end };
-    setReverted((r) => [...r, span]);
-    setRevertHistory((h) => [...h, { span, text }].slice(-20));
-    inputRef.current?.focus();
+    const line = lineRef.current;
+    setLine(line.text, [...line.reverted, span]);
+    setRevertHistory((h) => [...h, { span, text: line.text }].slice(-20));
+    focusInput();
+  };
+
+  /**
+   * A chip's words land in the line (capture-ui applyInsert) and the top row
+   * comes back; the caret goes to the end, or to the title's place on a line
+   * with no title yet.
+   */
+  const insertIntoLine = (insert: Insert) => {
+    if (!day) return;
+    setMenu(null);
+    const line = lineRef.current;
+    const read = parseCapture(line.text, { today: day, reverted: line.reverted });
+    const res = applyInsert(line.text, line.reverted, insert, read, { today: day });
+    if (!res) {
+      setNote("The line is full.");
+      return;
+    }
+    setLine(res.text, res.reverted);
+    setError(null);
+    setNote(null);
+    focusInput(res.caret);
+    announce(insertedNote(insert));
+  };
+
+  /** A ▾ chip opened its menu, or the back chip closed it: said in the live region. */
+  const onMenu = (next: InsertMenu | null) => {
+    setMenu(next);
+    announce(menuNote(next));
+  };
+
+  const pickReplacement = (replacement: string) => {
+    const line = lineRef.current;
+    const res = replaceCaretWord(line.text, line.reverted, caret, replacement);
+    if (!res) return;
+    setLine(res.text, res.reverted);
+    focusInput(res.caret);
+    announce(`Added “${replacement}” to the line`);
+  };
+
+  /**
+   * A tap anywhere in the sheet but a text field keeps the line's focus (and
+   * so the phone keyboard, which the pinned sheet sits on): buttons and links
+   * still click, touch scrolling and keyboard use are untouched.
+   */
+  const onSheetMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const input = inputRef.current;
+    if (!input || document.activeElement !== input) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+    // A press on a scroll region's own scrollbar (a desktop pointer) is left to scroll.
+    if (target instanceof HTMLElement && target.scrollHeight > target.clientHeight && e.nativeEvent.offsetX >= target.clientWidth) return;
+    e.preventDefault();
+  };
+
+  const pickRecent = (recent: string) => {
+    setLine(recent, []);
+    setRevertHistory([]);
+    focusInput(recent.length);
   };
 
   const onSheetKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -538,73 +1520,113 @@ export function QuickCapture() {
     // as it was, so it never fights the input's own undo of typing.
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {
       const last = revertHistory[revertHistory.length - 1];
-      if (!last || last.text !== text) return;
+      const line = lineRef.current;
+      if (!last || last.text !== line.text) return;
       e.preventDefault();
-      setReverted((r) => r.filter((s) => s.start !== last.span.start || s.end !== last.span.end));
+      setLine(
+        line.text,
+        line.reverted.filter((s) => s.start !== last.span.start || s.end !== last.span.end)
+      );
       setRevertHistory((h) => h.slice(0, -1));
     }
   };
 
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      save(e.shiftKey);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closeSheet();
-      return;
-    }
-    // Tab accepts a word completion when there is one, and otherwise moves focus as it always does.
-    completeBind.onKeyDown(e);
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    if (editing) return;
+    const raw = e.clipboardData?.getData("text/plain") ?? "";
+    const split = splitPastedLines(raw);
+    // 0 or 1 lines: an ordinary paste at the caret.
+    if (split.lines.length < 2) return;
+    e.preventDefault();
+    setPaste(split);
+    setMenu(null);
   };
+
+  const onIdeaLink = () => {
+    const t = lineRef.current.text;
+    if (t.trim()) {
+      // Carried to /add in sessionStorage (never the URL); the sheet keeps its
+      // own line until /add has created the idea (SHEET_DRAFT_CLEARED_EVENT).
+      const s = splitIdeaLine(t);
+      writeIdeaHandoff({ question: s.question, answer: s.answer ?? "", sheetText: t });
+    }
+    closeSheet("navigate");
+  };
+
+  // ── Scroll region ───────────────────────────────────────────────────────
+
+  const onScrollRegion = useStickToBottom(scrollRef, [reverted, paste, unsent.length, error, note, blocked, toast, open], text);
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  if (!open || !parsed || typeof document === "undefined") return null;
+  const unsentText = unsentLabel(unsentCount);
+  if (!isClient) return null;
 
-  const hintsFloating = hintsVisible && inset > FLOATING_KEYBOARD_PX;
-  const canSave = !!text.trim() && !!parsed.title;
-  const canInbox = canSave && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
-  const saveLabel = parsed.inbox || parsed.kind === "IDEA_DRAFT" ? "Add to Inbox" : parsed.kind === "GOAL" ? "Add goal" : parsed.doneNow ? "Add as done" : "Add";
+  let sheet: React.ReactNode = null;
+  if (open && parsed && day) {
+    const pinned = coarse || compact;
+    const empty = !text.trim();
+    const canSave = !empty && !!parsed.title;
+    const canInbox = canSave && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
+    const primary = primaryAction({ editing: !!editing, coarse, empty, sentThisOpening, parsed });
+    const priced = vocab && vocab.day === day && vocab.priced ? vocab.rawBefore : null;
+    const duplicate = vocab && parsed.title && !ideaMode ? duplicateOf(parsed.title, vocab.active, editing?.norm ?? null) : null;
+    const mustBlocked = blocked !== null && blocked === text;
+    const offToday = !onToday;
+    const hint = coarse ? TOUCH_HINT : KEY_HINT;
 
-  return createPortal(
-    // One marker over everything the capture UI puts on screen, so the review
-    // card can tell a tap on the sheet or its scrim from a tap meant for it.
-    <div data-capture-ui="" className="capture-root">
-      <div className="scrim show capture-backdrop" onMouseDown={closeSheet} aria-hidden="true" />
-      <div
-        ref={sheetRef}
-        className="capture-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="capture-title"
-        aria-describedby="capture-sub"
-        data-capture-sheet=""
-        data-hints={hintsFloating ? "1" : undefined}
-        data-kb={inset > 0 ? "1" : undefined}
-        style={{ "--kb": `${inset}px` } as React.CSSProperties}
-        onKeyDown={onSheetKeyDown}
-      >
-        <div className="grabber" aria-hidden="true" />
-        <div className="sheet-h">
-          <div className="t">
-            <h2 id="capture-title">Capture</h2>
-            <p className="sub" id="capture-sub">
-              One line. Everything else is guessed and shown as chips you can tap to undo.
-            </p>
+    // The slot above the line: word hints for an idea, suggestions after '^' or '#', Recent on an empty line, else the insert row.
+    let slot: React.ReactNode = null;
+    if (!paste) {
+      if (ideaMode) {
+        slot = (
+          <div className="capture-hints">
+            <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
           </div>
-          {captured > 0 && (
-            <span className="t-meta num capture-count" aria-live="polite">
-              {captured} captured
-            </span>
-          )}
-          <IconButton icon="x" label="Close capture" aria-keyshortcuts="Escape" onClick={closeSheet} />
-        </div>
+        );
+      } else {
+        const ctx = caretContext(text, caret);
+        const goals = vocab?.goals ?? null;
+        if (ctx === "goal") {
+          const prefix = caretPrefix(caretWord(text, caret).word);
+          const items: Suggestion[] =
+            goals === null
+              ? [{ id: "loading", label: "Loading goals…", name: "Loading goals", value: "", disabled: true }]
+              : goalSuggestions(goals, prefix).map((g) => ({ id: g.id, label: g.title, name: `Link to the goal “${g.title}”`, value: goalInsertText(g.title) }));
+          const none = goals && goals.length > 0 ? "No goal matches" : "No open goals";
+          slot = (
+            <SuggestRow
+              label="Goals"
+              items={items.length > 0 ? items : [{ id: "none", label: none, name: none, value: "", disabled: true }]}
+              onPick={pickReplacement}
+            />
+          );
+        } else if (ctx === "tag") {
+          const prefix = caretPrefix(caretWord(text, caret).word);
+          const items: Suggestion[] = tagSuggestions(prefix).map((t) => ({ id: t, label: `#${t}`, name: `Tag #${t}`, value: `#${t}` }));
+          slot = items.length > 0 ? <SuggestRow label="Tags" items={items} onPick={pickReplacement} /> : null;
+        } else if (ctx === "empty" && sentThisOpening === 0 && !editing && (vocab?.recent.length ?? 0) > 0) {
+          const items: Suggestion[] = recentChips(vocab?.recent ?? []).map((r, i) => ({ id: `recent-${i}`, label: r, name: `Fill the line with “${r}”`, value: r }));
+          slot = <SuggestRow label="Recent" items={items} onPick={pickRecent} />;
+        }
+        if (!slot) {
+          slot = <InsertRow parsed={parsed} text={text} today={day} goals={goals} menu={menu} onMenu={onMenu} onInsert={insertIntoLine} />;
+        }
+      }
+    }
 
-        <WordHintBar suggestions={wordHints} onPick={acceptWord} visible={hintsVisible} />
+    const editingPill = editing && (
+      <p className="capture-editing">
+        <span className="capture-editing-what">Editing “{editing.title}”</span>
+        <span aria-hidden="true"> · </span>
+        <button type="button" className="link capture-toast-act" onClick={cancelEdit}>
+          Cancel
+        </button>
+      </p>
+    );
+
+    const form = (
+      <form className="capture-form" noValidate onSubmit={onFormSubmit}>
         <input
           ref={setInput}
           type="text"
@@ -616,173 +1638,268 @@ export function QuickCapture() {
             autocorrect.onKeyUp(e);
             completeBind.onKeyUp();
           }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
           onInput={completeBind.onInput}
           onClick={completeBind.onClick}
           onFocus={completeBind.onFocus}
           onBlur={completeBind.onBlur}
-          placeholder="gym legs 60m every mon,thu !"
+          onPaste={onPaste}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            composingRef.current = false;
+            onLineChange(e.currentTarget.value);
+            // The phone's action key arrived mid-composition: save once, now the word is in.
+            if (submitAfterComposition.current) {
+              submitAfterComposition.current = false;
+              submit("submit", true);
+            }
+          }}
+          placeholder={pocket && empty ? POCKET_PLACEHOLDER : "gym legs 60m every mon,thu !"}
           className="capture-input"
-          aria-label="Capture a line"
+          aria-label={editing ? `Edit the line “${editing.title}”` : "Capture a line"}
           aria-describedby="capture-help"
           autoComplete="off"
-          enterKeyHint="done"
+          autoCapitalize="none"
+          enterKeyHint={coarse ? "send" : "done"}
         />
+      </form>
+    );
 
-        <CaptureChips text={text} parsed={parsed} goals={vocab ? vocab.goals : null} rawBefore={vocab && vocab.day === day ? vocab.rawBefore : 0} onRevert={revert} />
+    const chips = paste ? (
+      <PastePreview
+        lines={paste.lines}
+        truncated={paste.truncated}
+        today={day}
+        onRemove={(i) =>
+          setPaste((p) => {
+            if (!p) return p;
+            const lines = p.lines.filter((_, j) => j !== i);
+            return lines.length > 0 ? { ...p, lines } : null;
+          })
+        }
+      />
+    ) : (
+      <CaptureChips
+        text={text}
+        parsed={parsed}
+        goals={vocab ? vocab.goals : null}
+        rawBefore={priced}
+        onRevert={revert}
+        compact={compact}
+        feedsOpen={feedsOpen}
+        onToggleFeeds={() => setFeedsOpen((f) => !f)}
+        duplicate={duplicate}
+        mustBlocked={mustBlocked}
+        mustFixes={mustFixInserts(day)}
+        onFix={insertIntoLine}
+      />
+    );
 
-        {autocorrect.recent.length > 0 && (
+    const notes = (
+      <>
+        {!paste && autocorrect.recent.length > 0 && (
           <p className="capture-note">Corrected {autocorrect.recent.map((c) => `${c.from} → ${c.to}`).join(", ")} · Ctrl+Z undoes it</p>
         )}
+        {note && <p className="capture-note">{note}</p>}
         {error && (
-          <p className="capture-error" role="alert">
+          <p className="capture-error t-error" role="alert">
             {error}
           </p>
         )}
+      </>
+    );
 
-        <div className="capture-acts">
-          <button type="button" className="btn btn-primary lg capture-save" onClick={() => save(false)} disabled={!canSave}>
-            {saveLabel}
-          </button>
-          {canInbox && (
-            <button type="button" className="btn btn-secondary lg" onClick={() => save(false, { inbox: true })}>
-              To Inbox
+    const acts = (
+      <div className="capture-acts">
+        {paste ? (
+          <>
+            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={() => submit("button", false)} disabled={paste.lines.length === 0}>
+              Add {paste.lines.length}
             </button>
-          )}
-        </div>
-
-        {failed.length > 0 && (
-          <ul className="capture-failed" aria-label="Lines that did not save">
-            {failed.map((f) => (
-              <li key={f.nonce}>
-                <span className="capture-failed-text">{f.text}</span>
-                <span className="capture-failed-error">{f.error}</span>
-                <span className="capture-failed-actions">
-                  <button type="button" className="btn btn-secondary" onClick={() => retry(f)}>
-                    Retry
-                  </button>
-                  {!text.trim() && (
-                    <button type="button" className="btn btn-quiet" onClick={() => edit(f)}>
-                      Edit
-                    </button>
-                  )}
-                  <button type="button" className="btn btn-quiet" onClick={() => dismiss(f)}>
-                    Dismiss
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
+            <button
+              type="button"
+              className={`btn btn-secondary${pinned ? "" : " lg"}`}
+              onClick={() => {
+                setPaste(null);
+                focusInput();
+              }}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={onPrimary} disabled={!primary.done && !canSave}>
+              {primary.label}
+            </button>
+            {canInbox && (
+              <button type="button" className={`btn btn-secondary${pinned ? "" : " lg"}`} onClick={() => submit("button", false, { inbox: true })}>
+                To Inbox
+              </button>
+            )}
+          </>
         )}
+      </div>
+    );
 
-        {toast && (
-          <div
-            className="capture-status"
-            role="status"
-            aria-live="polite"
-            onMouseEnter={() => setToastHeld(true)}
-            onMouseLeave={() => setToastHeld(false)}
-            onFocus={() => setToastHeld(true)}
-            onBlur={() => setToastHeld(false)}
-          >
-            <StatusLine toast={toast} onUndo={undo} onClose={() => setToast(null)} />
+    const status = toast && (
+      <div className="capture-status" onMouseEnter={() => setToastHeld(true)} onMouseLeave={() => setToastHeld(false)} onFocus={() => setToastHeld(true)} onBlur={() => setToastHeld(false)}>
+        <StatusLine
+          toast={toast}
+          offToday={offToday}
+          onClose={() => {
+            setToast(null);
+            refocusLine();
+          }}
+          onSaveAsNew={(nonce) => saveAsNew(nonce)}
+          onLink={() => closeSheet("navigate")}
+        />
+      </div>
+    );
+
+    const list = (
+      <JustAdded
+        entries={added}
+        wide={!compact}
+        showAll={showAll}
+        onShowAll={() => setShowAll(true)}
+        onEdit={startEdit}
+        onUndo={(e) => undo(e.item)}
+        busy={undoBusy}
+        locked={replacing}
+        listRef={listRef}
+      />
+    );
+
+    const unsentList = unsent.length > 0 && (
+      <ul className="capture-failed" aria-label="Lines not saved yet">
+        {unsent.map((u) => (
+          <li key={u.nonce}>
+            <span className="capture-failed-text">{u.text}</span>
+            <span className="capture-failed-error">
+              {/* A refused line from another life day says so before Retry re-stamps it for today. */}
+              {u.state === "queued" ? "Waiting to save · it retries on its own" : ((day && pendingDayNote(u, day)) ?? u.error)}
+            </span>
+            <span className="capture-failed-actions">
+              {u.code ? (
+                <button type="button" className="btn btn-secondary capture-row-btn" onClick={() => saveAsNew(u.nonce)}>
+                  Save as new
+                </button>
+              ) : (
+                <button type="button" className="btn btn-secondary capture-row-btn" onClick={() => retry(u)}>
+                  {u.state === "queued" ? "Retry now" : "Retry"}
+                </button>
+              )}
+              {empty && (
+                <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => editUnsent(u)}>
+                  Edit
+                </button>
+              )}
+              <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => dismiss(u)}>
+                Dismiss
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+
+    const ideaLink =
+      pathname !== "/add" ? (
+        <Link href="/add" className="link capture-idea-link" onClick={onIdeaLink}>
+          Idea (full form)
+        </Link>
+      ) : null;
+
+    sheet = (
+      // One marker over everything the capture UI puts on screen, so the review
+      // card can tell a tap on the sheet or its scrim from a tap meant for it.
+      <div data-capture-ui="" className="capture-root">
+        <div className="scrim show capture-backdrop" onMouseDown={() => closeSheet("scrim")} aria-hidden="true" />
+        <div
+          ref={sheetRef}
+          className="capture-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="capture-title"
+          aria-describedby="capture-sub"
+          data-capture-sheet=""
+          data-layout={pinned ? "pinned" : "panel"}
+          data-kb={inset > 0 ? "1" : undefined}
+          style={{ "--kb": `${inset}px` } as React.CSSProperties}
+          onKeyDown={onSheetKeyDown}
+          onMouseDown={onSheetMouseDown}
+        >
+          <div className="grabber" aria-hidden="true" />
+          <div className="sheet-h">
+            <div className="t">
+              <h2 id="capture-title">Capture</h2>
+              <p className="sub" id="capture-sub">
+                One line. Everything else is guessed and shown as chips you can tap to undo.
+              </p>
+            </div>
+            {captured > 0 && <span className="t-meta num capture-count">{captured} captured</span>}
+            <IconButton icon="x" label="Close capture" aria-keyshortcuts="Escape" onClick={() => closeSheet("button")} />
           </div>
-        )}
 
-        <div className="capture-foot" id="capture-help">
-          {!text.trim() && <p className="capture-legend">{LEGEND}</p>}
-          <div className="capture-foot-row">
-            <span className="capture-keys">Enter saves · Shift+Enter saves and stays · Esc closes</span>
-            <Link href="/add" className="link capture-idea-link" onClick={closeSheet}>
-              Idea (full form)
-            </Link>
+          {pinned ? (
+            <>
+              <div className="capture-scroll" ref={scrollRef} onScroll={onScrollRegion}>
+                {!paste && list}
+                {!paste && status}
+                {!paste && unsentList}
+                {chips}
+                {notes}
+              </div>
+              <div className="capture-fixed">
+                {editingPill}
+                {slot}
+                {form}
+                {acts}
+                <div className="capture-foot-row" id="capture-help">
+                  <span className="capture-keys">{hint}</span>
+                  {ideaLink}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {editingPill}
+              {slot}
+              {form}
+              {chips}
+              {notes}
+              {acts}
+              {status}
+              {list}
+              {unsentList}
+              <div className="capture-foot" id="capture-help">
+                {empty && !paste && <p className="capture-legend">{LEGEND}</p>}
+                <div className="capture-foot-row">
+                  <span className="capture-keys">{hint}</span>
+                  {ideaLink}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="sr-only" role="status" aria-live="polite">
+            {live && <span key={live.key}>{live.text}</span>}
           </div>
         </div>
       </div>
-    </div>,
+    );
+  }
+
+  return createPortal(
+    <>
+      <span id="capture-unsent" className="sr-only">
+        {unsentText}
+      </span>
+      {sheet}
+    </>,
     document.body
-  );
-}
-
-/** What the capture puts in the dock, by toast kind. The figure is the server's projection, not the sheet's guess. */
-function dockToastOf(toast: Toast, on: { onUndo: (item: CapturedItem) => void; onOpen: () => void }): ToastInput {
-  if (toast.kind === "working") return { body: toast.message, holdMs: TOAST_MS };
-  if (toast.kind === "removed") return { title: "Removed", body: toast.title, holdMs: TOAST_SHORT_MS };
-  if (toast.kind === "error") return { title: "Didn't save", body: toast.message, action: { label: "Open", onAction: on.onOpen }, holdMs: TOAST_MS };
-  const { item, next } = toast;
-  return {
-    title: addedHead(item),
-    body: <AddedBody item={item} next={next} dock />,
-    action: { label: "Undo", onAction: () => on.onUndo(item) },
-    holdMs: TOAST_MS,
-  };
-}
-
-function addedHead(item: CapturedItem): string {
-  if (item.kind === "IDEA_DRAFT") return "Idea in Inbox";
-  if (item.doneNow) return "Done";
-  if (item.kind === "GOAL") return "Goal added";
-  return "Added";
-}
-
-/** "Gym legs · Mon · Thu · compulsory · Next: Thu · ≈ 21". */
-function AddedBody({ item, next, dock }: { item: CapturedItem; next: string | null; dock?: boolean }) {
-  const parts: ReactNode[] = [
-    <span key="t" className="capture-toast-title">
-      {item.title}
-    </span>,
-  ];
-  if (item.describe) parts.push(<span key="d">{item.describe}</span>);
-  if (next) parts.push(<span key="n">{next}</span>);
-  if (item.projectedXp > 0)
-    parts.push(
-      <span key="x" className="cur">
-        <CurrencyGlyph kind="xp" />
-        <span className="num">≈ {formatXp(item.projectedXp)}</span>
-      </span>
-    );
-  return (
-    <span className="capture-toast-line">
-      {parts}
-      {item.kind === "IDEA_DRAFT" && item.href && (
-        <Link href={item.href} className="link">
-          Open form
-        </Link>
-      )}
-      {dock && <span className="sr-only">Press Control+Z to undo.</span>}
-    </span>
-  );
-}
-
-/** The status line inside the open sheet. */
-function StatusLine({ toast, onUndo, onClose }: { toast: Toast; onUndo: (item: CapturedItem) => void; onClose: () => void }) {
-  if (toast.kind === "working") return <span className="t-meta">{toast.message}</span>;
-  if (toast.kind === "removed") {
-    return (
-      <span>
-        <span className="t-meta">Removed</span> · {toast.title}
-      </span>
-    );
-  }
-  if (toast.kind === "error") {
-    return (
-      <span className="capture-status-row">
-        <span>
-          <b className="capture-status-head">Didn&apos;t save.</b> {toast.message}
-        </span>
-        <button type="button" className="btn btn-quiet" onClick={onClose}>
-          OK
-        </button>
-      </span>
-    );
-  }
-  return (
-    <span className="capture-status-row">
-      <span>
-        <b className="capture-status-head">{addedHead(toast.item)}</b> <AddedBody item={toast.item} next={toast.next} />
-      </span>
-      <button type="button" className="btn btn-quiet" onClick={() => onUndo(toast.item)}>
-        Undo
-      </button>
-    </span>
   );
 }

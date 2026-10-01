@@ -161,12 +161,20 @@
   .add-badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--kept); color: var(--on-kept); }
   .add-badge svg.i { width: 22px; height: 22px; stroke-width: 2.4; }
   .add-created .t-meta { margin-top: 2px; }
+  /* Check first · Create. On the tab bar below 600 px; on the on-screen
+     keyboard while it is up: AddIdeaForm sets --kb from visualViewport and
+     marks the form data-kb, and the bar rides on the keys rather than under
+     them. The Ctrl+Enter keycap is for fine pointers only. */
   .add-sticky {
     position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); z-index: 1;
     display: flex; gap: 8px; padding: 12px 0; margin-top: 2px;
     background: linear-gradient(transparent, var(--page) 30%);
   }
   .add-sticky .add-grow { flex: 1; }
+  .add-form[data-kb] .add-sticky { bottom: var(--kb, 0px); padding-bottom: 12px; }
+  @media (pointer: coarse) {
+    .add-sticky .kbd { display: none; }
+  }
   .add-decide { display: flex; flex-direction: column; gap: 12px; }
   .add-decide dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 13px; color: var(--ink-2); }
   .add-decide dt { color: var(--ink-1); font-weight: 600; }
@@ -208,7 +216,8 @@
     .page.add-page { padding: 8px 24px 40px; }
     .add-two { grid-template-columns: 1fr 1fr; }
     .add-verdict { grid-template-columns: 1fr 1fr; }
-    .add-sticky { bottom: 0; }
+    /* No tab bar: the safe area is padding, and only while no keyboard is up (data-kb wins above). */
+    .add-sticky { bottom: 0; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
   }
   @container main (max-width: 420px) {
     .st-table th, .st-table td { padding-left: 10px; padding-right: 10px; }
