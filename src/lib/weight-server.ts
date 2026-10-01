@@ -7,12 +7,14 @@
  *
  *   loadWeightView(userId, now?)                 → WeightView
  *   logWeightCore(userId, kg, opts?)             → { ok, value: { day, kg, replaced } } | { ok: false, error }
- *        opts: { day?: DayKey; source?: 'manual' | 'capture' | 'import'; note?: string; now?: Date }
- *        one reading per life day: an existing one is replaced (replaced: true)
+ *        opts: { day?: DayKey; source?: 'manual' | 'capture' | 'import'; note?: string | null; now?: Date }
+ *        one reading per life day: an existing one is replaced (replaced: true);
+ *        a replace keeps the day's note unless opts.note is given (null clears it)
  *   deleteWeightCore(userId, day)                → { ok } | { ok: false, error }
  *   setWeightGoalCore(userId, input, now?)       → { ok, value: WeightGoalView } | { ok: false, error }
  *        input: { unit?: WeightUnit; targetKg?: number | null; targetDay?: DayKey | null }
  *        setting or changing targetKg records startKg = today's trend (or the latest reading) and startDay = today;
+ *        a target within SAME_TARGET_KG of the stored one is unchanged (its start stays);
  *        targetKg null clears the target (and its start)
  *   loadWeightGoal(userId)                       → WeightGoalView (unit 'kg', nulls when none)
  *
@@ -35,6 +37,7 @@ import {
   isDayKey,
   isWeightUnit,
   logDayError,
+  planGoalChange,
   roundKg,
   SERIES_DAYS,
   targetDayError,
@@ -167,15 +170,30 @@ function writeError(label: string, err: unknown): { ok: false; error: string } {
   return { ok: false, error: SAVE_FAILED };
 }
 
+type LogData = { kg: Prisma.Decimal; measuredAt: Date; source: WeightSource; note?: string | null };
+
+/**
+ * What a weigh-in writes: `create` for a new day (its note, or null), and
+ * `update` for a day that has a reading. The update carries `note` only when
+ * one was given (`note !== undefined`; null clears it), so a capture line or
+ * the Train form replacing a reading keeps the note it had.
+ */
+export function logWriteData(kg: number, now: Date, source: WeightSource, note: string | null | undefined): { create: LogData; update: LogData } {
+  const base = { kg: toDecimal(kg), measuredAt: now, source };
+  const cleaned = note === undefined ? undefined : cleanNote(note);
+  return { create: { ...base, note: cleaned ?? null }, update: cleaned === undefined ? base : { ...base, note: cleaned } };
+}
+
 /**
  * Logs a weigh-in in kg for a life day (today by default). One reading per
- * day: logging again replaces it (replaced: true). The weight is clamped to
- * [MIN_KG, MAX_KG] and the day must be today or up to a year back.
+ * day: logging again replaces it (replaced: true) and keeps its note unless
+ * `opts.note` is given. The weight is clamped to [MIN_KG, MAX_KG] and the
+ * day must be today or up to a year back.
  */
 export async function logWeightCore(
   userId: string,
   kg: number,
-  opts: { day?: DayKey; source?: "manual" | "capture" | "import"; note?: string; now?: Date } = {}
+  opts: { day?: DayKey; source?: "manual" | "capture" | "import"; note?: string | null; now?: Date } = {}
 ): Promise<WeightResult<{ day: DayKey; kg: number; replaced: boolean }>> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
@@ -185,16 +203,15 @@ export async function logWeightCore(
   const dayError = logDayError(day, today);
   if (dayError) return { ok: false, error: dayError };
   const source: WeightSource = (SOURCES as readonly unknown[]).includes(opts.source) ? (opts.source as WeightSource) : "manual";
-  const note = cleanNote(opts.note);
+  const data = logWriteData(value, now, source, opts.note);
 
   try {
     const where = { userId_day: { userId, day: dateColumn(day) } };
     const existing = await prisma.bodyWeight.findUnique({ where, select: { id: true } });
-    const data = { kg: toDecimal(value), measuredAt: now, source, note };
     await prisma.bodyWeight.upsert({
       where,
-      create: { userId, day: dateColumn(day), ...data },
-      update: data,
+      create: { userId, day: dateColumn(day), ...data.create },
+      update: data.update,
     });
     invalidate("weight");
     return { ok: true, value: { day, kg: value, replaced: existing !== null } };
@@ -204,7 +221,7 @@ export async function logWeightCore(
       try {
         await prisma.bodyWeight.update({
           where: { userId_day: { userId, day: dateColumn(day) } },
-          data: { kg: toDecimal(value), measuredAt: now, source, note },
+          data: data.update,
         });
         invalidate("weight");
         return { ok: true, value: { day, kg: value, replaced: true } };
@@ -230,10 +247,11 @@ export async function deleteWeightCore(userId: string, day: DayKey): Promise<Wei
 }
 
 /**
- * Sets the display unit, the target and its day. Setting or changing the
- * target records today's trend (or the latest reading) as its start; null
- * clears the target, its day and its start. A target day needs a target and
- * must be after today.
+ * Sets the display unit, the target and its day (planGoalChange). Setting
+ * or changing the target records today's trend (or the latest reading) as
+ * its start, and a target within SAME_TARGET_KG of the stored one is not a
+ * change (its start stays); null clears the target, its day and its start.
+ * A target day needs a target and must be after today.
  */
 export async function setWeightGoalCore(
   userId: string,
@@ -256,25 +274,9 @@ export async function setWeightGoalCore(
 
   try {
     const [current, readings] = await Promise.all([readGoal(userId), readReadings(userId, today)]);
-    const next: WeightGoalView = { ...current };
-    if (input.unit !== undefined) next.unit = input.unit;
-
-    if (target === null) {
-      next.targetKg = null;
-      next.targetDay = null;
-      next.startKg = null;
-      next.startDay = null;
-    } else if (target !== undefined && target !== current.targetKg) {
-      const view = weightView(readings, current, today);
-      next.targetKg = target;
-      next.startKg = view.trendKg ?? view.latest?.kg ?? null;
-      next.startDay = today;
-    }
-
-    if (input.targetDay !== undefined) {
-      if (input.targetDay !== null && next.targetKg === null) return { ok: false, error: "Set a target weight first." };
-      next.targetDay = input.targetDay;
-    }
+    const plan = planGoalChange(current, { unit: input.unit, targetKg: target, targetDay: input.targetDay }, readings, today);
+    if (!plan.ok) return plan;
+    const next = plan.value;
 
     const data = {
       unit: next.unit,

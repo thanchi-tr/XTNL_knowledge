@@ -21,8 +21,13 @@
  *     it, so the line stays a task on both sides (parity), and the sheet
  *     says so before the first Enter and stops on it once, like a Must
  *     with no day (weighInOutOfRange, WEIGHT_RANGE_*);
- *   - the write (weighInCore): the reading the day had is read first, so
- *     Undo can put it back; the same value already logged writes nothing
+ *   - a unit the sheet had stale: the sheet sends the unit it read a bare
+ *     number in. When the server's unit puts the number out of range but
+ *     the sheet's did not ('w 30': 30 kg on the sheet, 30 lb here), the
+ *     sheet showed a weigh-in and never warned, so the server answers with
+ *     the range note instead of saving a task (weightUnitRefusal);
+ *   - the write (weighInCore): the reading the day had (and its note) is
+ *     read first, so Undo can put it back; the same value already logged writes nothing
  *     (a resent line whose first answer was lost lands here: never a
  *     second write, `duplicate`);
  *   - Undo (planWeightUndo, undoWeighInCore): a fresh reading is deleted,
@@ -34,7 +39,7 @@
  * for it (its Undo and a new line do the job), and the server refuses a
  * weigh-in line sent as an edit of a task (WEIGH_IN_NOT_AN_EDIT).
  */
-import { MAX_KG, MIN_KG, clampKg, formatWeight, fromKg, parseWeightLine, type ParsedWeightLine, type WeightUnit } from "../../lib/weight";
+import { MAX_KG, MAX_NOTE_CHARS, MIN_KG, clampKg, formatWeight, fromKg, parseWeightLine, type ParsedWeightLine, type WeightUnit } from "../../lib/weight";
 import type { CaptureSpan } from "../../lib/capture-parse";
 import type { DayKey } from "../../lib/life-day";
 import type { CaptureResult, CapturedItem, CapturedWeight, WeightSource } from "../../app/actions/capture";
@@ -129,6 +134,39 @@ export function weightRangeNote(r: { value: number; unit: WeightUnit }): string 
   return `${r.value} ${r.unit} is outside ${weightRangeText(r.unit)}, so this isn't logged as a weight. It would be added as a task.`;
 }
 
+/**
+ * The server's answer to a line the sheet read as a weigh-in in another
+ * unit, which the user's unit puts out of range ('w 30' read as 30 kg on a
+ * sheet whose unit was stale, 30 lb here): nothing is saved.
+ */
+export function weightUnitRangeError(r: { value: number; unit: WeightUnit }): string {
+  const other: WeightUnit = r.unit === "kg" ? "lb" : "kg";
+  return `${r.value} ${r.unit} is outside ${weightRangeText(r.unit)}, so nothing was saved. Weights read in ${r.unit} now: fix the number, or add its unit (${r.value} ${other}).`;
+}
+
+/**
+ * The refusal for a line that is a weigh-in to the sheet but out of range in
+ * the server's unit, or null (then a non-weigh-in line is a task, as
+ * before). `sheetUnit` is the unit the sheet read a bare number in; when it
+ * is the server's, the sheet already said 'outside the range' and stopped
+ * once, so the line is the task the user chose. Unknown (another caller),
+ * any unit that reads it as a weigh-in counts.
+ */
+export function weightUnitRefusal(
+  text: string,
+  reverted: readonly CaptureSpan[],
+  today: DayKey,
+  serverUnit: WeightUnit,
+  sheetUnit: WeightUnit | undefined
+): string | null {
+  if (sheetUnit === serverUnit) return null;
+  if (weighInOf(text, reverted, today, serverUnit) !== null) return null;
+  const sheetRead = sheetUnit ? weighInOf(text, reverted, today, sheetUnit) !== null : mayBeWeighIn(text, reverted, today);
+  if (!sheetRead) return null;
+  const out = weighInOutOfRange(text, reverted, today, serverUnit);
+  return out ? weightUnitRangeError(out) : null;
+}
+
 /** After the first Enter stopped on it. */
 export function weightRangeBlocked(r: { value: number; unit: WeightUnit }): string {
   return `${r.value} ${r.unit} is outside ${weightRangeText(r.unit)}. Fix the number, or press Enter again to add it as a task.`;
@@ -148,10 +186,10 @@ export type WeightWrite = { ok: true; value: WeightWriteResult } | { ok: false; 
 export interface WeighInDeps {
   /** The user's unit (lib/weight-server loadWeightGoal). Called only when a bare number needs it. */
   loadUnit: () => Promise<WeightUnit>;
-  /** The reading a life day holds now, or null. May throw: the write still goes, without an Undo for a replaced reading. */
-  readDay: (day: DayKey) => Promise<{ kg: number; source: WeightSource } | null>;
-  /** lib/weight-server logWeightCore, bound to the user. */
-  log: (kg: number, opts: { day: DayKey; source: WeightSource }) => Promise<WeightWrite>;
+  /** The reading a life day holds now (with its note), or null. May throw: the write still goes, without an Undo for a replaced reading. */
+  readDay: (day: DayKey) => Promise<{ kg: number; source: WeightSource; note?: string | null } | null>;
+  /** lib/weight-server logWeightCore, bound to the user. A replace keeps the day's note unless `note` is given (null clears it). */
+  log: (kg: number, opts: { day: DayKey; source: WeightSource; note?: string | null }) => Promise<WeightWrite>;
 }
 
 export interface UndoWeighInDeps {
@@ -212,15 +250,33 @@ export function weightItemOf(weight: CapturedWeight, duplicate: boolean): Captur
  * A capture line that is a weigh-in, logged; or null when the line is not
  * one (the caller saves it as a task). Never creates a task or a ledger
  * event: the only write is `deps.log`, and none at all when the day already
- * holds this value (a resend, or the same number again).
+ * holds this value (a resend, or the same number again). A line the sheet
+ * read as a weigh-in in `sheetUnit` that the user's unit puts out of range
+ * is refused (weightUnitRefusal), never quietly saved as a task.
  */
-export async function weighInCore(deps: WeighInDeps, text: string, reverted: readonly CaptureSpan[], today: DayKey): Promise<CaptureResult<CapturedItem> | null> {
+export async function weighInCore(
+  deps: WeighInDeps,
+  text: string,
+  reverted: readonly CaptureSpan[],
+  today: DayKey,
+  sheetUnit?: WeightUnit
+): Promise<CaptureResult<CapturedItem> | null> {
   const routed = await routeWeighIn(text, reverted, today, deps.loadUnit);
-  if (!routed) return null;
+  if (!routed) {
+    if (!mayBeWeighIn(text, reverted, today)) return null;
+    let serverUnit: WeightUnit;
+    try {
+      serverUnit = await deps.loadUnit();
+    } catch {
+      serverUnit = "kg";
+    }
+    const refusal = weightUnitRefusal(text, reverted, today, serverUnit, sheetUnit);
+    return refusal ? { ok: false, error: refusal } : null;
+  }
   const { w, unit } = routed;
   const when = weighInWhen(w, today);
 
-  let before: { kg: number; source: WeightSource } | null | undefined;
+  let before: { kg: number; source: WeightSource; note?: string | null } | null | undefined;
   try {
     before = await deps.readDay(w.day);
   } catch {
@@ -229,7 +285,7 @@ export async function weighInCore(deps: WeighInDeps, text: string, reverted: rea
 
   if (before && Math.abs(before.kg - w.kg) < SAME_KG) {
     // Already this value: nothing to write, and nothing for Undo to take back.
-    return { ok: true, value: weightItemOf({ day: w.day, kg: before.kg, unit, when, previousKg: null, previousSource: null, undoable: false }, true) };
+    return { ok: true, value: weightItemOf({ day: w.day, kg: before.kg, unit, when, previousKg: null, previousSource: null, previousNote: null, undoable: false }, true) };
   }
 
   const res = await deps.log(w.kg, { day: w.day, source: "capture" });
@@ -242,7 +298,17 @@ export async function weighInCore(deps: WeighInDeps, text: string, reverted: rea
   return {
     ok: true,
     value: weightItemOf(
-      { day: v.day, kg: v.kg, unit, when, previousKg: undoable ? previousKg : null, previousSource: undoable && before ? before.source : null, undoable },
+      {
+        day: v.day,
+        kg: v.kg,
+        unit,
+        when,
+        previousKg: undoable ? previousKg : null,
+        previousSource: undoable && before ? before.source : null,
+        // The replaced reading's note, so Undo puts it back as it was (undefined: not known, and Undo leaves the note alone).
+        previousNote: undoable && before ? before.note : null,
+        undoable,
+      },
       false
     ),
   };
@@ -281,6 +347,8 @@ export function cleanWeightUndo(raw: unknown): CapturedWeight | null {
   const previousKg = r.previousKg === null ? null : typeof r.previousKg === "number" ? (clampKg(r.previousKg) ?? undefined) : undefined;
   if (previousKg === undefined) return null;
   const previousSource = typeof r.previousSource === "string" && (SOURCES as readonly string[]).includes(r.previousSource) ? (r.previousSource as WeightSource) : null;
+  // A copy without the field (written before notes were carried) leaves the day's note alone on a restore.
+  const previousNote = r.previousNote === null ? null : typeof r.previousNote === "string" ? r.previousNote.trim().slice(0, MAX_NOTE_CHARS).trim() || null : undefined;
   return {
     day: r.day,
     kg: r.kg,
@@ -288,6 +356,7 @@ export function cleanWeightUndo(raw: unknown): CapturedWeight | null {
     when: r.when === "yesterday" ? "yesterday" : "today",
     previousKg,
     previousSource,
+    ...(previousNote !== undefined ? { previousNote } : {}),
     undoable: r.undoable === true,
   };
 }
@@ -307,7 +376,8 @@ export async function undoWeighInCore(
     const r = await deps.remove(undo.day);
     return r.ok ? { ok: true, value: { restoredKg: null } } : { ok: false, error: r.error };
   }
-  const r = await deps.log(plan.kg, { day: undo.day, source: undo.previousSource ?? "manual" });
+  // The old reading comes back as it was: its value, its source and its note.
+  const r = await deps.log(plan.kg, { day: undo.day, source: undo.previousSource ?? "manual", ...(undo.previousNote !== undefined ? { note: undo.previousNote } : {}) });
   return r.ok ? { ok: true, value: { restoredKg: r.value.kg } } : { ok: false, error: r.error };
 }
 

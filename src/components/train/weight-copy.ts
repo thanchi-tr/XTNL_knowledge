@@ -77,11 +77,15 @@ export function calibratingSentence(rate: WeightRate): string | null {
   return `Calibrating — ${rate.readings} of ${rate.need} weigh-ins in ${span}`;
 }
 
+/** A projection past MAX_PROJECTION_WEEKS (104 weeks): the trend moves toward the target, too slowly for an honest date. */
+export const FAR_COPY = "More than two years away at this pace";
+
 /**
  * The projection, said plainly; null without a target.
  *   date        'At this pace: about 12 Dec (on track for 31 Dec)' / '(later than 31 Dec)'
  *   calibrating 'Calibrating — 3 of 5 weigh-ins in the last 4 weeks'
  *   flat        'The trend is flat'
+ *   far         'More than two years away at this pace'
  *   away        'The trend is moving away from the target'
  *   reached     'Target reached'
  */
@@ -98,6 +102,8 @@ export function projectionSentence(projection: WeightProjection, rate: WeightRat
       return calibratingSentence(rate) ?? "Calibrating";
     case "flat":
       return "The trend is flat";
+    case "far":
+      return FAR_COPY;
     case "away":
       return "The trend is moving away from the target";
     case "reached":
@@ -105,9 +111,14 @@ export function projectionSentence(projection: WeightProjection, rate: WeightRat
   }
 }
 
-/** The header's second line: 'Today 72.6 · trend 72.4'. */
+/**
+ * The header's line about the latest weigh-in: 'Today 72.6 · trend 72.4'.
+ * Stale (no weigh-in for STALE_AFTER_DAYS) it leads instead, and names no
+ * trend: 'Last weigh-in 2 Aug · 80.0 kg' (the trend since is only carried).
+ */
 export function latestLine(view: WeightView, today: DayKey): string | null {
   if (!view.latest) return null;
+  if (view.stale) return `Last weigh-in ${shortDay(view.latest.day, today)} · ${figure(view.latest.kg, view.unit)} ${view.unit}`;
   const head = `${dayLabel(view.latest.day, today)} ${figure(view.latest.kg, view.unit)}`;
   return view.trendKg == null ? head : `${head} · trend ${figure(view.trendKg, view.unit)}`;
 }
@@ -135,6 +146,50 @@ export function startSentence(view: WeightView, changingTarget: boolean): string
   const from = view.trendKg ?? view.latest?.kg ?? null;
   if (from == null) return "Progress is measured from your first weigh-in.";
   return `Progress is measured from today's ${view.trendKg != null ? "trend" : "weigh-in"}, ${figure(from, view.unit)} ${view.unit}.`;
+}
+
+/** The goal sheet's note when the stored by-date is today or earlier (it is then not prefilled), else null. */
+export function byDatePassedNote(targetDay: DayKey | null, today: DayKey): string | null {
+  if (!targetDay || targetDay > today) return null;
+  return `The by-date ${shortDay(targetDay, today)} has passed. Pick a new one, or save to keep it.`;
+}
+
+/** The by-date the goal sheet prefills: the stored one while it is still after today, else empty. */
+export function byDatePrefill(targetDay: DayKey | null, today: DayKey): string {
+  return targetDay && targetDay > today ? targetDay : "";
+}
+
+/** Whether the typed target is the prefilled figure (compared in the user's unit, so '70' is '70.0'). */
+export function sameTargetText(text: string, view: WeightView): boolean {
+  const target = view.goal.targetKg;
+  if (target == null) return false;
+  const p = parseFigure(text, view.unit);
+  return p.ok && Math.abs(p.value - Number(figure(target, view.unit))) < 1e-9;
+}
+
+export type GoalSaveInput = { unit: WeightUnit; targetKg?: number; targetDay?: DayKey | null };
+
+/**
+ * What the goal sheet's Save sends. The target only when its text is not
+ * the prefilled figure (a stored 70 kg shown as '154.3 lb' re-reads as
+ * 69.99 kg, which is not a new target and must not reset its start). The
+ * by-date as typed, except a passed one that was never touched: then it is
+ * left out and stays as stored.
+ */
+export function goalSaveInput(f: { text: string; date: string; dateEdited: boolean; view: WeightView; today: DayKey }):
+  | { ok: true; input: GoalSaveInput; value: number }
+  | { ok: false; error: string } {
+  const { view, today } = f;
+  const p = parseFigure(f.text, view.unit);
+  if (!p.ok) return p;
+  const date = f.date.trim();
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "Pick a date, or leave it empty." };
+  if (date && date <= today) return { ok: false, error: "Pick a date after today, or leave it empty." };
+  const input: GoalSaveInput = { unit: view.unit };
+  if (!sameTargetText(f.text, view)) input.targetKg = p.kg;
+  const passedUntouched = byDatePassedNote(view.goal.targetDay, today) !== null && !f.dateEdited;
+  if (!passedUntouched) input.targetDay = date ? (date as DayKey) : null;
+  return { ok: true, input, value: p.value };
 }
 
 /** The last `n` weigh-ins, newest first (the history list and the hidden table). */

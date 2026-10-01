@@ -5,7 +5,9 @@
  * celebration; nothing in the economy reads it).
  *
  *   header   the smoothed trend (large), 'Today 72.6 · trend 72.4', the
- *            change over 7 days in neutral words
+ *            change over 7 days in neutral words; with no weigh-in for a
+ *            week it leads with 'Last weigh-in 2 Aug · 80.0 kg' instead and
+ *            shows no trend figure (a carried trend is not today's)
  *   target   target and by-date, progress from start to target
  *            (role=progressbar), the projection sentence, the weekly rate,
  *            the gentle fast-loss note; without a target a quiet 'Set a target'
@@ -60,14 +62,15 @@ export function WeightCard({ view, today, actions }: { view: WeightView; today: 
         <p className="t-body wt-empty">{EMPTY_COPY}</p>
       ) : (
         <div className="wt-head">
-          {view.trendKg != null && (
+          {view.stale && latest && <p className="t-body t-num ink-1">{latest}</p>}
+          {!view.stale && view.trendKg != null && (
             <p className="wt-trend">
               <span className="t-numeral-l t-num">{figure(view.trendKg, unit)}</span>
               <span className="wt-trend-unit">{unit}</span>
               <span className="t-meta">trend</span>
             </p>
           )}
-          {latest && <p className="t-meta t-num ink-1">{latest}</p>}
+          {!view.stale && latest && <p className="t-meta t-num ink-1">{latest}</p>}
           {change && <p className="t-meta t-num">{change}</p>}
           {!hasTarget && (rate || view.rate.kind === "calibrating") && (
             <p className="t-meta t-num">{rate ? `Weekly rate: ${rate}` : calibratingSentence(view.rate)}</p>

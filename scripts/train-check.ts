@@ -2,9 +2,10 @@
  * Pure checks for Train › Body weight (src/components/train): the copy
  * (neutral words, the trend first, 'calibrating', no invented dates, no
  * praise and no shame), the card rendered for fixture views (empty,
- * calibrating, on track, away, reached, pounds) with fake actions, the
+ * calibrating, on track, away, reached, pounds, stale) with fake actions, the
  * progress bar's attributes, the chart's name and its hidden table, the goal
- * sheet's start sentence, the 12 px floor, 40/44 px targets and 16 px inputs
+ * sheet's start sentence and what its Save sends (a re-read figure is not a
+ * new target, a passed by-date is not prefilled), the 12 px floor, 40/44 px targets and 16 px inputs
  * in train.css, no motion, nothing paid, and no class named like a Tailwind
  * utility. No DB, no browser, no server.
  *
@@ -17,11 +18,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { compile } from "tailwindcss";
 import { KG_PER_LB, MIN_READINGS_FOR_RATE, type WeightView } from "../src/lib/weight";
 import {
+  FAR_COPY,
   MINUS,
+  byDatePassedNote,
+  byDatePrefill,
   calibratingSentence,
   changeSentence,
   dayLabel,
   figure,
+  goalSaveInput,
   latestLine,
   logLabel,
   parseFigure,
@@ -53,6 +58,7 @@ function check(name: string, ok: boolean, detail = "") {
 const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
 const T = FIXTURE_TODAY;
+let goalPassedHtml = "";
 const calib = { kind: "calibrating", readings: 3, need: MIN_READINGS_FOR_RATE } as const;
 
 // ── copy: neutral words, in the user's unit ─────────────────────────────────
@@ -77,6 +83,8 @@ eq("projection: a date later than the by-date, said plainly", proj({ kind: "date
 eq("projection: a date without a by-date", proj({ kind: "date", day: "2026-12-12", weeks: 10, onTrackForTargetDay: null }, null), "At this pace: about 12 Dec");
 eq("projection: calibrating", proj({ kind: "none", why: "calibrating" }, null, calib), "Calibrating — 3 of 5 weigh-ins in the last 4 weeks");
 eq("projection: flat", proj({ kind: "none", why: "flat" }), "The trend is flat");
+eq("projection: more than 104 weeks out says so, not 'flat'", proj({ kind: "none", why: "far" }), "More than two years away at this pace");
+check("projection: the far copy is the exported one", FAR_COPY === "More than two years away at this pace");
 eq("projection: away", proj({ kind: "none", why: "away" }), "The trend is moving away from the target");
 eq("projection: reached", proj({ kind: "none", why: "reached" }), "Target reached");
 eq("projection: no target, no sentence", proj({ kind: "none", why: "no-target" }), null);
@@ -113,6 +121,41 @@ eq("progress: spoken from start to target", progressText(WEIGHT_FIXTURES.onTrack
   eq("goal: an unchanged target keeps its start", startSentence(base, false), "Progress stays measured from 75.2 kg (20 Aug).");
   eq("goal: no weigh-ins yet", startSentence(WEIGHT_FIXTURES.empty.view, true), "Progress is measured from your first weigh-in.");
   eq("goal: the start in lb", startSentence({ ...noGoal, unit: "lb", goal: { ...noGoal.goal, unit: "lb" } }, true), `Progress is measured from today's trend, ${(72.4 / KG_PER_LB).toFixed(1)} lb.`);
+}
+
+// ── the goal sheet's Save: what it sends ───────────────────────────────────
+{
+  const base = WEIGHT_FIXTURES.onTrack.view;
+  const lbGoal: WeightView = { ...base, unit: "lb", goal: { ...base.goal, unit: "lb", targetKg: 70 } };
+  const save = (view: WeightView, text: string, date: string, dateEdited = false) => goalSaveInput({ text, date, dateEdited, view, today: T });
+  eq("goal save: 70 kg prefilled as '154.3' lb, only the by-date edited: no targetKg, the start stays", save(lbGoal, figure(70, "lb"), "2027-01-31", true), {
+    ok: true,
+    input: { unit: "lb", targetDay: "2027-01-31" },
+    value: 154.3,
+  });
+  const kg25: WeightView = { ...base, goal: { ...base.goal, targetKg: 70.25 } };
+  eq("goal save: 70.25 kg prefilled as '70.3', saved untouched: no targetKg", save(kg25, figure(70.25, "kg"), "2026-12-31"), { ok: true, input: { unit: "kg", targetDay: "2026-12-31" }, value: 70.3 });
+  eq("goal save: '70' is the prefilled '70.0' (compared in the unit)", save(base, "70", "2026-12-31"), { ok: true, input: { unit: "kg", targetDay: "2026-12-31" }, value: 70 });
+  eq("goal save: a changed figure sends the target in kg", save(base, "68,5", "2026-12-31"), { ok: true, input: { unit: "kg", targetKg: 68.5, targetDay: "2026-12-31" }, value: 68.5 });
+  const lbNew = save(lbGoal, "150", "");
+  check("goal save: a changed lb figure converts (150 lb → 68.04 kg)", lbNew.ok && lbNew.input.targetKg === 68.04, JSON.stringify(lbNew));
+  const none: WeightView = { ...base, goal: { unit: "kg", targetKg: null, targetDay: null, startKg: null, startDay: null } };
+  eq("goal save: a first target is always sent", save(none, "72", ""), { ok: true, input: { unit: "kg", targetKg: 72, targetDay: null }, value: 72 });
+  check("goal save: a by-date today or earlier is refused", !save(base, "70", T, true).ok && !save(base, "70", "2026-09-01", true).ok);
+
+  const passed: WeightView = { ...base, goal: { ...base.goal, targetDay: "2026-08-31" } };
+  eq("by-date: a passed one is not prefilled; a future one is", [byDatePrefill("2026-08-31", T), byDatePrefill(T, T), byDatePrefill("2026-12-31", T)], ["", "", "2026-12-31"]);
+  eq("by-date: the passed note names the day", byDatePassedNote("2026-08-31", T), "The by-date 31 Aug has passed. Pick a new one, or save to keep it.");
+  eq("by-date: no note for a future by-date or none", [byDatePassedNote("2026-12-31", T), byDatePassedNote(null, T)], [null, null]);
+  eq("goal save: a passed by-date left alone is not sent (no 'Pick a date after today' wall)", save(passed, "68", ""), { ok: true, input: { unit: "kg", targetKg: 68 }, value: 68 });
+  eq("goal save: a passed by-date replaced by a new one is sent", save(passed, "70", "2026-11-30", true), { ok: true, input: { unit: "kg", targetDay: "2026-11-30" }, value: 70 });
+  eq("goal save: a passed by-date cleared on purpose is sent as null", save(passed, "70", "", true), { ok: true, input: { unit: "kg", targetDay: null }, value: 70 });
+  const g = renderToStaticMarkup(createElement(GoalFields, { view: passed, today: T, actions: { logWeight: async () => ({ ok: true as const }), deleteWeight: async () => ({ ok: true as const }), setWeightGoal: async () => ({ ok: true as const }) }, onDone: () => {} }));
+  check("goal sheet: a passed by-date shows empty, with the note tied to the field", /type="date" min="2026-10-02" aria-describedby="([^"]+)-p" value=""\/><p id="\1-p"/.test(g) && g.includes(">The by-date 31 Aug has passed. "), g);
+  const src = read("src/components/train/GoalForm.tsx");
+  check("goal sheet: Save sends goalSaveInput's input, never a bare targetKg", /goalSaveInput\(\{ text, date, dateEdited, view, today \}\)/.test(src) && /setWeightGoal\(s\.input, REFRESH\)/.test(src) && !/targetKg: p\.kg/.test(src));
+  check("goal sheet: the by-date is prefilled only while it is after today", /useState<string>\(byDatePrefill\(view\.goal\.targetDay, today\)\)/.test(src));
+  goalPassedHtml = g;
 }
 
 // ── chart geometry ──────────────────────────────────────────────────────────
@@ -214,6 +257,23 @@ const attrs = (h: string, re: RegExp) => [...h.matchAll(re)].map((m) => m[1]);
   check("lb: latest line in pounds", text(k).includes(latestLine(v, T)!));
 }
 {
+  const k = "stale";
+  const v = WEIGHT_FIXTURES.stale.view;
+  check("stale: the view is stale with no 7-day change", v.stale && v.change7Kg === null);
+  eq("stale: the latest line leads with the last weigh-in and names no trend", latestLine(v, T), "Last weigh-in 2 Aug · 79.5 kg");
+  check("stale: the card leads with 'Last weigh-in 2 Aug'", text(k).trimStart().startsWith("Body weight Last weigh-in 2 Aug · 79.5 kg"), text(k).slice(0, 80));
+  check("stale: no trend figure is shown as today's", !/t-numeral-l/.test(html[k]) && !/· trend /.test(text(k)));
+  check("stale: no 'steady over 7 days' or 'in 7 days'", !/over 7 days|in 7 days/.test(text(k)), text(k));
+  check("stale: calibrating, no date (no weigh-ins in the last 4 weeks)", text(k).includes("Calibrating — 0 of 5 weigh-ins") && !text(k).includes("At this pace"));
+  eq("stale: a fresh view's line is unchanged", latestLine({ ...v, stale: false }, T), `2 Aug ${figure(v.latest!.kg, "kg")} · trend ${figure(v.trendKg!, "kg")}`);
+}
+{
+  // Short history: three weigh-ins over four days are not a week's change.
+  const k = "calibrating";
+  check("short history: no 7-day change on the card", WEIGHT_FIXTURES.calibrating.view.change7Kg === null && !/over 7 days|in 7 days/.test(text(k)), text(k));
+  check("short history: still leads with the trend (a weigh-in yesterday is recent)", /t-numeral-l/.test(html[k]) && !WEIGHT_FIXTURES.calibrating.view.stale);
+}
+{
   // The log form, on every state.
   for (const k of Object.keys(html) as WeightFixtureName[]) {
     const input = /<input id="[^"]+" class="wt-input t-num"([^>]*)>/.exec(html[k])?.[1] ?? "";
@@ -234,7 +294,7 @@ const attrs = (h: string, re: RegExp) => [...h.matchAll(re)].map((m) => m[1]);
   check("goal: Save and Clear target", /type="submit" class="btn btn-primary">Save</.test(g) && gt.includes("Clear target"));
   const fresh = renderToStaticMarkup(createElement(GoalFields, { view: WEIGHT_FIXTURES.lb.view, today: T, actions: FAKE, onDone: () => {} }));
   check("goal: a new target names today's trend, and offers no Clear", textOf(fresh).includes(`Progress is measured from today's trend, ${figure(WEIGHT_FIXTURES.lb.view.trendKg!, "lb")} lb.`) && !textOf(fresh).includes("Clear target"));
-  html.empty += g + fresh; // the goal sheet's words go through the honesty sweep below too
+  html.empty += g + fresh + goalPassedHtml; // the goal sheet's words go through the honesty sweep below too
 }
 
 // ── honesty: no praise, no shame, nothing paid ─────────────────────────────

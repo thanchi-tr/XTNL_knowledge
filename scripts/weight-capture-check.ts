@@ -12,11 +12,16 @@
  *     a chip turned back into text makes the line a task on both sides;
  *   - an out-of-range reading ('w 724') stays a task on both sides and the
  *     sheet says why, in the user's words and range;
+ *   - a stale unit on the sheet: a line it showed as a weigh-in that the
+ *     server's unit puts out of range is refused with the range note, never
+ *     saved as a task; Train's unit switch rewrites the sheet's cached unit
+ *     and tells a mounted sheet (WEIGHT_UNIT_EVENT);
+ *   - a pasted weigh-in on /train refreshes the weight card;
  *   - the write: a fresh reading, a replacing one (what Undo needs), an
  *     idempotent resend (never a second write), a failed read, a failed
  *     write;
  *   - Undo: a fresh weigh-in is deleted, a replacing one restores the old
- *     value and its source, a reading changed or deleted since is left
+ *     value, its source and its note (a replace itself keeps the note), a reading changed or deleted since is left
  *     alone ('gone'), a weigh-in that wrote nothing has no Undo, a forged
  *     copy is refused;
  *   - never a task and never a reward: the only write is the reading (no
@@ -60,11 +65,13 @@ import {
   weightRangeText,
   weightToastCopy,
   weightUndoneCopy,
+  weightUnitRangeError,
+  weightUnitRefusal,
   type UndoWeighInDeps,
   type WeighInDeps,
   type WeightWrite,
 } from "../src/components/capture/weight-capture";
-import { toastCopy, type AddedEntry } from "../src/components/capture/capture-ui";
+import { parseVocabCache, toastCopy, withWeightUnit, WEIGHT_UNIT_EVENT, type AddedEntry, type VocabCache } from "../src/components/capture/capture-ui";
 import { dockToastOf, type ToastHandlers } from "../src/components/capture/CaptureToast";
 import { JustAdded } from "../src/components/capture/JustAdded";
 import { CaptureChips } from "../src/components/capture/CaptureChips";
@@ -325,13 +332,13 @@ check("range: the block-once line says how to go on", weightRangeBlocked({ value
 // ── The write, the resend and Undo, against a fake store ──────────────────
 
 interface FakeStore {
-  rows: Map<DayKey, { kg: number; source: WeightSource }>;
+  rows: Map<DayKey, { kg: number; source: WeightSource; note: string | null }>;
   /** Every write the weigh-in made: the only ones it can make are the reading's (no TaskTemplate, no ActivityEvent). */
-  writes: { op: "log" | "remove"; day: DayKey; kg?: number; source?: WeightSource }[];
+  writes: { op: "log" | "remove"; day: DayKey; kg?: number; source?: WeightSource; note?: string | null }[];
 }
 
-function fakeStore(seed: [DayKey, number, WeightSource][] = []): FakeStore {
-  return { rows: new Map(seed.map(([d, kg, source]) => [d, { kg, source }])), writes: [] };
+function fakeStore(seed: [DayKey, number, WeightSource, (string | null)?][] = []): FakeStore {
+  return { rows: new Map(seed.map(([d, kg, source, note]) => [d, { kg, source, note: note ?? null }])), writes: [] };
 }
 
 function depsOf(s: FakeStore, o: { unit?: WeightUnit; readThrows?: boolean; logFails?: string } = {}): WeighInDeps & UndoWeighInDeps {
@@ -344,9 +351,11 @@ function depsOf(s: FakeStore, o: { unit?: WeightUnit; readThrows?: boolean; logF
     },
     log: async (kg, opts): Promise<WeightWrite> => {
       if (o.logFails) return { ok: false, error: o.logFails };
-      s.writes.push({ op: "log", day: opts.day, kg, source: opts.source });
-      const replaced = s.rows.has(opts.day);
-      s.rows.set(opts.day, { kg, source: opts.source });
+      s.writes.push({ op: "log", day: opts.day, kg, source: opts.source, ...(opts.note !== undefined ? { note: opts.note } : {}) });
+      const had = s.rows.get(opts.day);
+      const replaced = had !== undefined;
+      // As logWeightCore (logWriteData): a replace keeps the day's note unless one is given.
+      s.rows.set(opts.day, { kg, source: opts.source, note: opts.note !== undefined ? opts.note : (had?.note ?? null) });
       return { ok: true, value: { day: opts.day, kg, replaced } };
     },
     remove: async (day) => {
@@ -418,7 +427,7 @@ async function writeChecks(): Promise<void> {
     const d = depsOf(r);
     const res = await weighInCore(d, "weight 72.4", [], TODAY);
     const it = res && res.ok ? res.value : null;
-    r.rows.set(TODAY, { kg: 71.8, source: "manual" }); // the Train form, after
+    r.rows.set(TODAY, { kg: 71.8, source: "manual", note: null }); // the Train form, after
     const before = r.writes.length;
     const u = await undoWeighInCore(d, it!.weight);
     check("undo: a day changed since is left alone ('gone', nothing written)", !u.ok && u.code === "gone" && u.error === WEIGHT_UNDO_CHANGED && r.writes.length === before && r.rows.get(TODAY)?.kg === 71.8, u);
@@ -454,7 +463,49 @@ async function writeChecks(): Promise<void> {
   // Out of range: not a weigh-in on the server either.
   {
     const r = fakeStore();
-    check("range: 'w 724' is not logged (the caller saves it as a task)", (await weighInCore(depsOf(r), "w 724", [], TODAY)) === null && r.writes.length === 0);
+    check("range: 'w 724' from a kg sheet is not logged (the caller saves it as a task)", (await weighInCore(depsOf(r), "w 724", [], TODAY, "kg")) === null && r.writes.length === 0);
+  }
+
+  // A stale unit on the sheet: 'w 30' was a weigh-in there (30 kg), 13.6 kg here (30 lb). Refused, never a task.
+  {
+    const r = fakeStore();
+    const res = await weighInCore(depsOf(r, { unit: "lb" }), "w 30", [], TODAY, "kg");
+    check(
+      "unit: a line the sheet read as a weigh-in in kg, out of range in the user's lb, is refused with the range note",
+      !!res && !res.ok && res.error === weightUnitRangeError({ value: 30, unit: "lb" }) && r.writes.length === 0,
+      res
+    );
+    check("unit: the refusal says the range in the server's unit and how to log it", weightUnitRangeError({ value: 30, unit: "lb" }) === "30 lb is outside 45–881 lb, so nothing was saved. Weights read in lb now: fix the number, or add its unit (30 kg).");
+    check("unit: the same line from a sheet already in lb is the task the user chose after the warning", (await weighInCore(depsOf(fakeStore(), { unit: "lb" }), "w 30", [], TODAY, "lb")) === null);
+    const unknown = await weighInCore(depsOf(fakeStore(), { unit: "lb" }), "w 30", [], TODAY);
+    check("unit: a caller that does not say its unit is refused too (never a silent task)", !!unknown && !unknown.ok);
+    const w724 = await weighInCore(depsOf(fakeStore(), { unit: "kg" }), "w 724", [], TODAY, "lb");
+    check("unit: 'w 724' read as 724 lb on a stale sheet, out of range in kg here: refused", !!w724 && !w724.ok && w724.error === weightUnitRangeError({ value: 724, unit: "kg" }), w724);
+    check("unit: 'w 724' from a kg sheet to a kg server stays a task (the sheet warned once)", (await weighInCore(depsOf(fakeStore(), { unit: "kg" }), "w 724", [], TODAY, "kg")) === null);
+    check("unit: a typed unit out of range ('weight 30 lb') is a task whatever the sheet's unit", weightUnitRefusal("weight 30 lb", [], TODAY, "kg", "lb") === null && weightUnitRefusal("weight 30 lb", [], TODAY, "lb", "kg") === null);
+    check("unit: a task line is never refused", weightUnitRefusal("buy 2kg rice", [], TODAY, "lb", "kg") === null && weightUnitRefusal("weight training 60m", [], TODAY, "lb", undefined) === null);
+    check("unit: a reverted line is a task on both sides", weightUnitRefusal("w 30", [{ start: 0, end: 4 }], TODAY, "lb", "kg") === null);
+    const ok = await weighInCore(depsOf(fakeStore(), { unit: "lb" }), "w 160", [], TODAY, "kg");
+    check("unit: a line in range in the server's unit logs in that unit, whatever the sheet said", !!ok && ok.ok && ok.value.weight?.unit === "lb" && ok.value.weight.kg === lbKg(160), ok);
+  }
+
+  // A replace keeps the day's note, and Undo restores the note with the value.
+  {
+    const r = fakeStore([[TODAY, 73, "manual", "after run"]]);
+    const d = depsOf(r);
+    const res = await weighInCore(d, "weight 72.4", [], TODAY);
+    const it = res && res.ok ? res.value : null;
+    check("note: a capture replacing a noted reading sends no note (the day keeps 'after run')", r.writes.length === 1 && !("note" in r.writes[0]) && r.rows.get(TODAY)?.note === "after run", r.writes);
+    check("note: the undo data carries the replaced reading's note", it?.weight?.previousNote === "after run", it?.weight);
+    r.rows.set(TODAY, { kg: 72.4, source: "capture", note: null }); // the note was cleared since, the value not
+    const u = await undoWeighInCore(d, it!.weight);
+    check("note: Undo restores 73 kg with its note", u.ok && r.rows.get(TODAY)?.kg === 73 && r.rows.get(TODAY)?.note === "after run" && r.writes.at(-1)?.note === "after run", [...r.rows]);
+    const clean = cleanWeightUndo({ day: TODAY, kg: 72.4, undoable: true, previousKg: 73, previousSource: "manual" });
+    check("note: an undo copy without the field leaves the note alone on restore", !!clean && !("previousNote" in clean));
+    check("note: a copy's note is trimmed and capped", cleanWeightUndo({ day: TODAY, kg: 72.4, undoable: true, previousKg: 73, previousNote: `  ${"x".repeat(300)}` })?.previousNote?.length === 200);
+    const r2 = fakeStore([[TODAY, 73, "manual", "kept"]]);
+    await undoWeighInCore(depsOf(r2), { day: TODAY, kg: 73, unit: "kg", when: "today", previousKg: 74, previousSource: "manual", undoable: true });
+    check("note: a restore without a known note leaves the day's note", r2.rows.get(TODAY)?.kg === 74 && r2.rows.get(TODAY)?.note === "kept", [...r2.rows]);
   }
 
   // Undo guards.
@@ -484,7 +535,7 @@ async function writeChecks(): Promise<void> {
     const t = toastCopy(it);
     check("toast: 'Weight logged · 72.4 kg → Train', View to /train, no figure", t.head === "Weight logged" && t.body === "72.4 kg → Train" && t.figure === null && t.link?.href === "/train" && t.link.label === "View", t);
     check("toast: capture-ui's toastCopy hands a weigh-in to its own copy", JSON.stringify(t) === JSON.stringify(weightToastCopy({ ...it, weight })));
-    const words = [t.head, t.body, weightRangeNote({ value: 724, unit: "kg" }), weightRangeBlocked({ value: 2, unit: "kg" }), WEIGHT_UNDO_UNAVAILABLE, WEIGHT_UNDO_GONE, WEIGHT_UNDO_CHANGED, toastCopy(weightItemOf({ ...weight, previousKg: 73 }, false)).body, toastCopy(weightItemOf(weight, true)).head];
+    const words = [t.head, t.body, weightRangeNote({ value: 724, unit: "kg" }), weightUnitRangeError({ value: 30, unit: "lb" }), weightRangeBlocked({ value: 2, unit: "kg" }), WEIGHT_UNDO_UNAVAILABLE, WEIGHT_UNDO_GONE, WEIGHT_UNDO_CHANGED, toastCopy(weightItemOf({ ...weight, previousKg: 73 }, false)).body, toastCopy(weightItemOf(weight, true)).head];
     check("toast: neutral words — no praise, no shame, no points, no exclamation", words.every((w) => !SHAMING.test(w)), words.filter((w) => SHAMING.test(w)));
 
     const dock = dockToastOf({ kind: "added", key: 1, item: it, notMust: false, update: false }, { offToday: true }, handlers);
@@ -547,6 +598,32 @@ function bodyOf(src: string, name: string): string {
   check("guard: weight-capture takes only types from the server actions (it runs in the browser too)", imports.filter((l) => l.includes("app/actions")).every((l) => l.startsWith("import type")), imports);
   const qc = read("src/components/capture/QuickCapture.tsx");
   check("guard: the sheet gives a weigh-in no mark, no flight and no board flash", /if \(!item\.weight\) \{[\s\S]{0,400}void mark\([\s\S]{0,600}CAPTURED_EVENT/.test(qc));
+
+  // The unit: the sheet says which it read in, the server refuses a mismatch, Train's switch updates the sheet.
+  check("server: createFromCapture and createManyFromCapture hand the sheet's unit to the weigh-in route", /weighInFromCapture\(text, reverted, today, undefined, opts\?\.weightUnit\)/.test(create) && /weighInFromCapture\(line\.text, line\.reverted, today, loadUnit, opts\?\.weightUnit\)/.test(many));
+  check("server: readWeightDay reads the note (Undo puts it back)", /select: \{ kg: true, source: true, note: true \}/.test(actions));
+  check("sheet: a single line and a pasted list send the unit they were read in", /createFromCapture\(line\.text, line\.reverted, \{[^}]*weightUnit \}\)/.test(qc) && /\{ refresh: refreshPage, weightUnit \}/.test(qc));
+  check("sheet: it listens for the unit switched on Train and reads bare numbers in it", new RegExp(`addEventListener\\(WEIGHT_UNIT_EVENT`).test(qc) && /weightUnit: unit/.test(qc) && WEIGHT_UNIT_EVENT === "xtnl:weight-unit");
+  const form = read("src/components/train/WeightForm.tsx");
+  const okAt = form.indexOf("if (!res.ok)", form.indexOf("setWeightGoal({ unit: next }"));
+  check("train: a saved unit switch rewrites the sheet's cached unit (after the server said ok)", okAt > 0 && form.indexOf("saveWeightUnit(next)") > okAt);
+  const store = read("src/components/capture/capture-store.ts");
+  check("store: saveWeightUnit rewrites the cache and fires WEIGHT_UNIT_EVENT", /withWeightUnit\(readVocabCache\(\), unit\)/.test(store) && /dispatchEvent\(new CustomEvent<WeightUnit>\(WEIGHT_UNIT_EVENT/.test(store));
+  const batch = qc.slice(qc.indexOf("const sendBatch ="), qc.indexOf("// ── Open and close"));
+  check(
+    "sheet: a pasted weigh-in on /train refreshes the weight card (as a single line does)",
+    /onTodayRef\.current \|\| \(onTrainRef\.current && lines\.some\(\(l\) => mayBeWeighIn\(l\.text, l\.reverted, today\)\)\)/.test(batch) && /refresh: refreshPage/.test(batch) && !/refresh: onTodayRef\.current \}/.test(batch)
+  );
+}
+
+// ── The cached unit ───────────────────────────────────────────────────────
+{
+  const cache: VocabCache = { day: TODAY, goals: [], recent: [], rawBefore: 0, active: [], weightUnit: "kg", at: 1 };
+  const next = withWeightUnit(cache, "lb");
+  check("cache: the new unit replaces the cached one, nothing else changes", !!next && next.weightUnit === "lb" && next.at === 1 && cache.weightUnit === "kg");
+  check("cache: it survives the round trip through storage", parseVocabCache(JSON.parse(JSON.stringify(next)))?.weightUnit === "lb");
+  check("cache: no cache stays none (the next load brings the unit)", withWeightUnit(null, "lb") === null);
+  check("cache: after the switch the sheet reads 'w 30' as the server does (a task-shaped refusal, not 30 kg)", weighInOf("w 30", [], TODAY, next!.weightUnit!) === null && weighInOutOfRange("w 30", [], TODAY, next!.weightUnit!) !== null);
 }
 
 parityChecks()

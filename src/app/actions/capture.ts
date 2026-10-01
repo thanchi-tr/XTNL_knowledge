@@ -128,6 +128,8 @@ export interface CapturedWeight {
   /** The reading this one replaced (Undo puts it back), or null: Undo deletes the day's reading. */
   previousKg: number | null;
   previousSource: WeightSource | null;
+  /** The replaced reading's note (null: it had none); Undo puts it back. Absent when unknown: Undo then leaves the day's note alone. */
+  previousNote?: string | null;
   /** Whether Undo is on offer: false for a value already logged (nothing was written) or a replaced reading the server could not see. */
   undoable: boolean;
 }
@@ -163,10 +165,10 @@ function keyOf(key: unknown): string | null {
 
 const asSource = (s: string): WeightSource => (s === "capture" || s === "import" ? s : "manual");
 
-/** The reading a life day holds now, read fresh (Undo compares against it). Throws when the table is missing; callers fail soft. */
-async function readWeightDay(userId: string, day: DayKey): Promise<{ kg: number; source: WeightSource } | null> {
-  const row = await prisma.bodyWeight.findUnique({ where: { userId_day: { userId, day: dateColumn(day) } }, select: { kg: true, source: true } });
-  return row ? { kg: Number(row.kg), source: asSource(row.source) } : null;
+/** The reading a life day holds now, with its note, read fresh (Undo compares against it and puts the note back). Throws when the table is missing; callers fail soft. */
+async function readWeightDay(userId: string, day: DayKey): Promise<{ kg: number; source: WeightSource; note: string | null } | null> {
+  const row = await prisma.bodyWeight.findUnique({ where: { userId_day: { userId, day: dateColumn(day) } }, select: { kg: true, source: true, note: true } });
+  return row ? { kg: Number(row.kg), source: asSource(row.source), note: row.note } : null;
 }
 
 /** The user's unit for a bare number; loadWeightGoal fails soft to 'kg'. Read at most once per loader. */
@@ -197,19 +199,24 @@ function undoWeighInDeps(userId: string): UndoWeighInDeps {
 /**
  * A line that is a weigh-in, logged (weighInCore), or null: then it is a
  * task. A line that cannot be one in either unit costs nothing here (no
- * read); only a bare number reads the user's unit.
+ * read); only a bare number reads the user's unit. `sheetUnit` is the unit
+ * the sheet read a bare number in: a line it showed as a weigh-in that the
+ * user's unit puts out of range is refused with the range note, not saved
+ * as a task.
  */
 async function weighInFromCapture(
   text: unknown,
   reverted: unknown,
   today: DayKey,
-  loadUnit?: () => Promise<WeightUnit>
+  loadUnit?: () => Promise<WeightUnit>,
+  sheetUnit?: unknown
 ): Promise<CaptureResult<CapturedItem> | null> {
   const input = sanitizeCaptureInput(text, reverted);
   if (!mayBeWeighIn(input.text, input.reverted, today)) return null;
+  const unit: WeightUnit | undefined = sheetUnit === "kg" || sheetUnit === "lb" ? sheetUnit : undefined;
   try {
     const userId = getCurrentUserId();
-    return await weighInCore(weighInDeps(userId, loadUnit ?? unitLoader(userId)), input.text, input.reverted, today);
+    return await weighInCore(weighInDeps(userId, loadUnit ?? unitLoader(userId)), input.text, input.reverted, today, unit);
   } catch (err) {
     console.error("Capture weigh-in failed:", err);
     return { ok: false, error: SAVE_FAILED };
@@ -284,17 +291,18 @@ function afterSave(userId: string, saved: readonly SavedLine[]): void {
 /**
  * Saves one line. `opts.captureKey` is the sheet's per-line nonce: send the
  * same one on every retry of a line, and a save whose response was lost is
- * found again rather than written twice.
+ * found again rather than written twice. `opts.weightUnit` is the unit the
+ * sheet read a bare weigh-in number in (weight-capture weightUnitRefusal).
  */
 export async function createFromCapture(
   text: string,
   reverted?: CaptureSpan[],
-  opts?: { refresh?: boolean; captureKey?: string }
+  opts?: { refresh?: boolean; captureKey?: string; weightUnit?: WeightUnit }
 ): Promise<CaptureResult<CapturedItem>> {
   const today = todayKey();
   // A weigh-in ('weight 72.4') is logged, never saved as a task. A resend is
   // safe by nature: one reading per life day, and the same value again writes nothing.
-  const weighed = await weighInFromCapture(text, reverted, today);
+  const weighed = await weighInFromCapture(text, reverted, today, undefined, opts?.weightUnit);
   if (weighed) {
     if (weighed.ok && opts?.refresh === true) refresh();
     return weighed;
@@ -416,7 +424,7 @@ export interface CaptureManyResult {
  */
 export async function createManyFromCapture(
   lines: CaptureLineInput[],
-  opts?: { refresh?: boolean }
+  opts?: { refresh?: boolean; weightUnit?: WeightUnit }
 ): Promise<CaptureManyResult> {
   let userId: string | null = null;
   try {
@@ -434,7 +442,7 @@ export async function createManyFromCapture(
   const results = await runCaptureBatch<CapturedItem>(lines, async (line) => {
     if (!userId) return { ok: false, error: SAVE_FAILED };
     // A pasted weigh-in is logged like a typed one, as that line's own result.
-    const weighIn = await weighInFromCapture(line.text, line.reverted, today, loadUnit);
+    const weighIn = await weighInFromCapture(line.text, line.reverted, today, loadUnit, opts?.weightUnit);
     if (weighIn) {
       if (weighIn.ok) weighed += 1;
       return weighIn;

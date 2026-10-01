@@ -5,8 +5,8 @@
  * The trend here is a plain daily exponential average (α 0.1), enough to
  * draw a believable line.
  */
-import { addDays, type DayKey } from "@/lib/life-day";
-import { MIN_READINGS_FOR_RATE, TREND_ALPHA, type WeightGoalView, type WeightTrendPoint, type WeightView } from "@/lib/weight";
+import { addDays, daysBetween, type DayKey } from "@/lib/life-day";
+import { MIN_READINGS_FOR_RATE, STALE_AFTER_DAYS, TREND_ALPHA, type WeightGoalView, type WeightTrendPoint, type WeightView } from "@/lib/weight";
 
 export const FIXTURE_TODAY: DayKey = "2026-10-01";
 
@@ -45,7 +45,12 @@ function viewOf(series: WeightTrendPoint[], over: Partial<WeightView>): WeightVi
     unit: goal.unit,
     latest: lastP ? { day: lastP.day, kg: lastP.kg as number, source: "manual" } : null,
     trendKg: series.length ? series[series.length - 1].trendKg : null,
-    change7Kg: series.length > 7 ? Math.round((series[series.length - 1].trendKg - series[series.length - 8].trendKg) * 100) / 100 : null,
+    // As weightView: a week's change needs a reading in the last 7 days and a first reading at least a week back.
+    change7Kg:
+      lastP && withReading[0].day <= addDays(FIXTURE_TODAY, -7) && lastP.day > addDays(FIXTURE_TODAY, -7) && series.length > 7
+        ? Math.round((series[series.length - 1].trendKg - series[series.length - 8].trendKg) * 100) / 100
+        : null,
+    stale: !lastP || daysBetween(lastP.day, FIXTURE_TODAY) >= STALE_AFTER_DAYS,
     rate: { kind: "calibrating", readings: withReading.length, need: MIN_READINGS_FOR_RATE },
     goal,
     progress: null,
@@ -57,7 +62,7 @@ function viewOf(series: WeightTrendPoint[], over: Partial<WeightView>): WeightVi
   };
 }
 
-export type WeightFixtureName = "empty" | "calibrating" | "onTrack" | "away" | "reached" | "lb";
+export type WeightFixtureName = "empty" | "calibrating" | "onTrack" | "away" | "reached" | "lb" | "stale";
 
 export const WEIGHT_FIXTURES: Record<WeightFixtureName, { label: string; view: WeightView }> = {
   empty: {
@@ -106,6 +111,16 @@ export const WEIGHT_FIXTURES: Record<WeightFixtureName, { label: string; view: W
       goal: { unit: "lb", targetKg: null, targetDay: null, startKg: null, startDay: null },
       rate: { kind: "rate", kgPerWeek: -1.3 },
       fastLossNote: "This is faster than about 1 kg a week. A slower pace is easier to keep.",
+    }),
+  },
+  stale: {
+    label: "No weigh-in for two months",
+    // Weighed most days from 90 to 60 days ago, then nothing: the trend since is only carried.
+    view: viewOf(seriesOf(Object.fromEntries(Object.entries(slide(80.5, -0.02, 30)).map(([a, kg]) => [Number(a) + 60, kg]))), {
+      goal: { unit: "kg", targetKg: 75, targetDay: null, startKg: 80.4, startDay: "2026-07-03" },
+      rate: { kind: "calibrating", readings: 0, need: MIN_READINGS_FOR_RATE },
+      progress: 0.1,
+      projection: { kind: "none", why: "calibrating" },
     }),
   },
 };

@@ -6,12 +6,19 @@
  *     1 − (1 − α)^n (the same as n daily readings of the new weight), days
  *     without a reading carry it, the window slices the tail;
  *   - the weekly rate: 'calibrating' under MIN_READINGS_FOR_RATE in the
- *     window, the slope of a long ramp, a carried tail that does not pull
- *     it toward zero;
+ *     window, then the slope of the raw readings (not the lagging trend):
+ *     a fresh 7-day ramp and five spaced readings read their true pace, a
+ *     carried tail does not pull it toward zero;
  *   - the projection: every 'why' (no-target, calibrating, reached, flat,
- *     away) and the date, with onTrackForTargetDay;
+ *     far, away) and the date, with onTrackForTargetDay;
  *   - progress from start to target, clamped;
- *   - the whole view, the fast-loss note's neutral words;
+ *   - the whole view: the 7-day change only over a real week with a recent
+ *     reading, 'stale' after a week without one, the fast-loss note's
+ *     neutral words;
+ *   - the goal change (planGoalChange): a re-read figure within 0.05 kg is
+ *     not a new target, a by-date edit keeps the start;
+ *   - the write (logWriteData): a replace keeps the day's note unless one
+ *     is given;
  *   - units, rounding, the clamp, the day rules, the life-day boundary
  *     (03:59 belongs to the day before);
  *   - source guards: the actions clamp every client value, and nothing in
@@ -37,6 +44,7 @@ import {
   logDayError,
   MAX_NOTE_CHARS,
   MIN_READINGS_FOR_RATE,
+  planGoalChange,
   progressToTarget,
   projectTarget,
   roundKg,
@@ -49,7 +57,7 @@ import {
   type WeightRate,
   type WeightReading,
 } from "../src/lib/weight";
-import { EMPTY_GOAL, isMissingTable } from "../src/lib/weight-server";
+import { EMPTY_GOAL, isMissingTable, logWriteData } from "../src/lib/weight-server";
 
 const ROOT = resolve(__dirname, "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
@@ -136,7 +144,28 @@ check(
 check("5 flat readings: rate 0", same(weeklyRate(ramp(5, 80, 0), T), { kind: "rate", kgPerWeek: 0 }));
 check("a long −0.1 kg/day ramp: −0.7 kg a week", same(weeklyRate(ramp(120, 100, -0.1), T), { kind: "rate", kgPerWeek: -0.7 }));
 check("a long +0.05 kg/day ramp: +0.35 kg a week", same(weeklyRate(ramp(120, 60, 0.05), T), { kind: "rate", kgPerWeek: 0.35 }));
-check("a fresh 28-day ramp: the trend is still catching up (−0.5, not −0.7)", same(weeklyRate(ramp(28, 90, -0.1), T), { kind: "rate", kgPerWeek: -0.5 }));
+check("a fresh 28-day ramp reads its true pace, −0.7 (the trend's slope would still read −0.5)", same(weeklyRate(ramp(28, 90, -0.1), T), { kind: "rate", kgPerWeek: -0.7 }));
+check("a fresh 7-day ramp (−0.1 kg/day): −0.7 kg a week from the first week", same(weeklyRate(ramp(7, 80, -0.1), T), { kind: "rate", kgPerWeek: -0.7 }));
+{
+  // Five readings three days apart, a steady −0.1 kg a day: gaps are wider steps in x, not flat days.
+  const spaced = [0, 3, 6, 9, 12].map((d) => r(addDays(T, d - 12), 80 - 0.1 * d));
+  check("five readings 3 days apart, −0.1 kg/day: −0.7 kg a week", same(weeklyRate(spaced, T), { kind: "rate", kgPerWeek: -0.7 }), JSON.stringify(weeklyRate(spaced, T)));
+}
+{
+  // A 10-day loss of 0.2 kg a day (1.4 kg a week) is fast from the start, and the note says so.
+  const v = weightView(ramp(10, 90, -0.2), EMPTY_GOAL, T);
+  check("a fresh 1.4 kg/week loss reads −1.4 and gets the fast-loss note", same(v.rate, rate(-1.4)) && v.fastLossNote !== null, JSON.stringify(v.rate));
+  check("the headline trend is still the smoothed one (it lags the readings)", v.trendKg !== null && v.latest !== null && v.trendKg > v.latest.kg + 0.5, `${v.trendKg} vs ${v.latest?.kg}`);
+}
+{
+  // After one week of a −0.7 kg/week loss toward 70 from 80, the projection is about 14 weeks out, not 47.
+  const v = weightView(ramp(7, 80, -0.1), goal({ targetKg: 70, startKg: 80, startDay: addDays(T, -6) }), T);
+  check(
+    "a week of −0.7 kg/week toward a 10 kg loss projects about 14 weeks out",
+    v.projection.kind === "date" && v.projection.weeks > 13 && v.projection.weeks < 15,
+    JSON.stringify(v.projection)
+  );
+}
 check(
   "no weigh-ins for the last 10 days: the carried tail doesn't flatten the rate",
   same(weeklyRate(ramp(110, 100, -0.1, addDays(T, -10)), T), { kind: "rate", kgPerWeek: -0.7 })
@@ -158,7 +187,9 @@ check("past a gain target: reached", same(P(66, rate(0.3), gain), { kind: "none"
 check("0.3 kg off: not reached", P(80.3, rate(-0.5), lose).kind === "date");
 check(`slower than ${FLAT_KG_PER_WEEK} kg a week: flat`, same(P(85, rate(-0.04), lose), { kind: "none", why: "flat" }));
 check("exactly 0.05 kg a week is not flat (100 weeks)", same(P(85, rate(-0.05), lose), { kind: "date", day: addDays(T, 700), weeks: 100, onTrackForTargetDay: null }));
-check("more than 104 weeks out: flat (no invented date)", same(P(100, rate(-0.1), lose), { kind: "none", why: "flat" }));
+check("more than 104 weeks out: far (no invented date, and not called flat)", same(P(100, rate(-0.1), lose), { kind: "none", why: "far" }));
+check("−0.06 kg a week, 20 kg to go (333 weeks): far, not flat", same(P(90, rate(-0.06), goal({ targetKg: 70, startKg: 90 })), { kind: "none", why: "far" }));
+check("flat only under FLAT_KG_PER_WEEK, however far the target", same(P(90, rate(-0.049), goal({ targetKg: 70, startKg: 90 })), { kind: "none", why: "flat" }));
 check("gaining toward a loss target: away", same(P(85, rate(0.3), lose), { kind: "none", why: "away" }));
 check("losing toward a gain target: away", same(P(62, rate(-0.3), gain), { kind: "none", why: "away" }));
 check(
@@ -214,6 +245,21 @@ console.log("— view");
   const v = weightView([r("2026-09-24", 80), r(T, 79)], EMPTY_GOAL, T);
   check("7-day change on the trend: 80 → 79.48 (gap of 7: 1 − 0.9⁷ = 0.522) is −0.52", v.change7Kg === -0.52 && v.trendKg === 79.48, `${v.change7Kg} ${v.trendKg}`);
   check("logged a week ago, not today", weightView([r("2026-09-24", 80), r("2026-09-25", 79)], EMPTY_GOAL, T).loggedToday === false);
+  check("a reading 6 days ago is recent: not stale", weightView([r("2026-09-24", 80), r("2026-09-25", 79)], EMPTY_GOAL, T).stale === false);
+}
+{
+  // Short history: two readings two days apart are not a week's change.
+  const v = weightView([r("2026-09-29", 75), r(T, 74)], EMPTY_GOAL, T);
+  check("short history (first reading 2 days ago): no 7-day change", v.change7Kg === null && !v.stale, `${v.change7Kg}`);
+  check("short history: a first reading exactly 7 days back is a week", weightView([r("2026-09-24", 75), r(T, 74)], EMPTY_GOAL, T).change7Kg !== null);
+}
+{
+  // Stale: seven readings that ended 60 days ago. The trend since is only carried.
+  const v = weightView(ramp(7, 80, -0.1, addDays(T, -60)), EMPTY_GOAL, T);
+  check("stale (last weigh-in 60 days ago): no 7-day change, stale, latest is that day", v.change7Kg === null && v.stale && v.latest?.day === addDays(T, -60), `${v.change7Kg} ${v.stale}`);
+  const edge = weightView([r(addDays(T, -20), 80), r(addDays(T, -7), 79)], EMPTY_GOAL, T);
+  check("a last weigh-in exactly 7 days ago: stale, no 7-day change (none in the last 7 days)", edge.stale && edge.change7Kg === null);
+  check("no readings: stale (nothing measured)", weightView([], EMPTY_GOAL, T).stale);
 }
 {
   const v = weightView(ramp(120, 120, -0.2), goal({ targetKg: 80, startKg: 110, startDay: "2026-08-01" }), T);
@@ -233,6 +279,48 @@ check("gaining fast: no loss note", weightView(ramp(120, 60, 0.3), EMPTY_GOAL, T
 {
   const v = weightView([r("2026-09-20", 90), r("2026-09-25", 88)], goal({ targetKg: 80, startKg: null, startDay: "2026-09-21" }), T);
   check("a target set before any weigh-in starts from the first reading on or after its day", v.goal.startKg === 88 && v.progress !== null);
+}
+
+// ── The goal change ───────────────────────────────────────────────────────
+console.log("— goal change");
+{
+  const readings = ramp(30, 85, -0.05);
+  const stored = goal({ unit: "lb", targetKg: 70, targetDay: "2026-12-31", startKg: 84, startDay: "2026-09-01" });
+  const G = (input: Parameters<typeof planGoalChange>[1], cur: WeightGoalView = stored) => planGoalChange(cur, input, readings, T);
+  const drift = G({ unit: "lb", targetKg: roundKg(toKg(154.3, "lb")) });
+  check(
+    "70 kg shown as '154.3 lb' reads back as 69.99 kg: the same target, its start kept",
+    roundKg(toKg(154.3, "lb")) === 69.99 && drift.ok && drift.value.targetKg === 70 && drift.value.startKg === 84 && drift.value.startDay === "2026-09-01",
+    JSON.stringify(drift)
+  );
+  const kgRound = G({ targetKg: 70.3 }, goal({ targetKg: 70.25, startKg: 84, startDay: "2026-09-01" }));
+  check("70.25 kg prefilled as '70.3': the same target, its start kept", kgRound.ok && kgRound.value.targetKg === 70.25 && kgRound.value.startKg === 84, JSON.stringify(kgRound));
+  const dateOnly = G({ unit: "lb", targetDay: "2027-01-31" });
+  check(
+    "editing only the by-date keeps the target, startKg and startDay",
+    dateOnly.ok && dateOnly.value.targetKg === 70 && dateOnly.value.startKg === 84 && dateOnly.value.startDay === "2026-09-01" && dateOnly.value.targetDay === "2027-01-31",
+    JSON.stringify(dateOnly)
+  );
+  const real = G({ targetKg: 68 });
+  const trendNow = weightView(readings, stored, T).trendKg;
+  check("a real change (70 → 68) records today's trend as the new start", real.ok && real.value.targetKg === 68 && real.value.startKg === trendNow && real.value.startDay === T, JSON.stringify(real));
+  const cleared = G({ targetKg: null });
+  check("null clears the target, its day and its start", cleared.ok && same(cleared.value, { ...stored, targetKg: null, targetDay: null, startKg: null, startDay: null }));
+  check("a by-date without a target is refused", !G({ targetDay: "2027-01-31" }, EMPTY_GOAL).ok);
+  const fresh = G({ targetKg: 75 }, EMPTY_GOAL);
+  check("a first target starts from today's trend", fresh.ok && fresh.value.startKg === trendNow && fresh.value.startDay === T);
+}
+
+// ── The write ─────────────────────────────────────────────────────────────
+console.log("— write");
+{
+  const now = new Date("2026-10-01T00:00:00Z");
+  const keep = logWriteData(72.4, now, "capture", undefined);
+  check("a replace with no note given leaves the day's note alone (no 'note' in the update)", !("note" in keep.update) && keep.create.note === null && Number(keep.update.kg) === 72.4);
+  const clear = logWriteData(72.4, now, "manual", null);
+  check("note null clears it on a replace", "note" in clear.update && clear.update.note === null);
+  const given = logWriteData(72.4, now, "manual", "  after run  ");
+  check("a given note is cleaned and written on create and replace", given.update.note === "after run" && given.create.note === "after run");
 }
 
 // ── Units, rounding, the clamp, the days ──────────────────────────────────
@@ -322,6 +410,8 @@ check(
   "the cores clamp again: logWeightCore clamps kg and checks the day, setWeightGoalCore clamps the target and checks its day",
   /clampKg\(kg\)/.test(server) && /logDayError\(day, today\)/.test(server) && /clampKg\(input\.targetKg\)/.test(server) && /targetDayError\(input\.targetDay, today\)/.test(server)
 );
+check("logWeightCore writes logWriteData (a replace keeps the note unless one is given)", /logWriteData\(value, now, source, opts\.note\)/.test(server) && /update: data\.update/.test(server) && !/note = cleanNote\(opts\.note\)/.test(server));
+check("setWeightGoalCore decides with planGoalChange (a target within 0.05 kg is not a change)", /planGoalChange\(current, /.test(fnBody(server, "setWeightGoalCore")) && !/target !== current\.targetKg/.test(server));
 check(
   "reads are cached under 'weight' and every write invalidates it",
   (server.match(/cached\(`weight\w+:\$\{userId\}[^`]*`, \["weight"\]/g) ?? []).length === 2 &&

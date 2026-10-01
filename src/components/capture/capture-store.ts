@@ -11,7 +11,8 @@
  */
 import { SHEET_DRAFT_KEY } from "@/lib/idea-handoff";
 import { sanitizeCaptureInput, type CaptureSpan } from "@/lib/capture-parse";
-import { parsePendingList, parseVocabCache, VOCAB_CACHE_KEY, type PendingLine, type VocabCache } from "./capture-ui";
+import type { WeightUnit } from "@/lib/weight";
+import { parsePendingList, parseVocabCache, VOCAB_CACHE_KEY, WEIGHT_UNIT_EVENT, withWeightUnit, type PendingLine, type VocabCache } from "./capture-ui";
 
 export const DRAFT_KEY = SHEET_DRAFT_KEY;
 export const PENDING_KEY = "xtnl:capture:pending";
@@ -70,4 +71,19 @@ export function readVocabCache(): VocabCache | null {
 
 export function writeVocabCache(v: VocabCache): void {
   writeJson(VOCAB_CACHE_KEY, v);
+}
+
+/**
+ * The weight unit changed (Train's unit switch, once the server said ok):
+ * the cached vocabulary takes it, and the sheet, if mounted, hears
+ * WEIGHT_UNIT_EVENT, so its chip and the server read a bare number alike.
+ */
+export function saveWeightUnit(unit: WeightUnit): void {
+  const next = withWeightUnit(readVocabCache(), unit);
+  if (next) writeVocabCache(next);
+  try {
+    window.dispatchEvent(new CustomEvent<WeightUnit>(WEIGHT_UNIT_EVENT, { detail: unit }));
+  } catch {
+    /* no window: nothing listens */
+  }
 }

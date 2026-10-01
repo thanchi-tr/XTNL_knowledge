@@ -1158,6 +1158,14 @@ export function parseVocabCache(raw: unknown): VocabCache | null {
   return { day: r.day, goals, recent, rawBefore, active, ...(weightUnit ? { weightUnit } : {}), at: r.at };
 }
 
+/** Fired on window after the weight unit changes on Train (detail: the unit): the sheet reads bare weigh-in numbers in it at once. */
+export const WEIGHT_UNIT_EVENT = "xtnl:weight-unit";
+
+/** The cache with the user's new weight unit (null stays null: the next load brings the unit). */
+export function withWeightUnit(v: VocabCache | null, unit: WeightUnit): VocabCache | null {
+  return v ? { ...v, weightUnit: unit } : null;
+}
+
 /**
  * Whether a cached vocabulary may price the grade chip: only for today's
  * life day (a different day is stale — its knee base was another day's),

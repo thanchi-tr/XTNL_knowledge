@@ -9,10 +9,11 @@
  * a kilo of water): an exponentially smoothed average of the daily readings
  * (TREND_ALPHA per day; a gap of n days decays by (1-α)^n, so missing days
  * neither stall nor jump it). The weekly rate is the slope of a least-squares
- * line through the trend over the last RATE_WINDOW_DAYS. The projection to a
- * target is honest: it needs MIN_READINGS_FOR_RATE readings in that window
- * and a rate heading toward the target faster than FLAT_KG_PER_WEEK; otherwise
- * it says why there is no date.
+ * line through the raw readings of the last RATE_WINDOW_DAYS (the trend lags
+ * a real change by weeks, so its slope would read a fresh loss as far too
+ * slow). The projection to a target is honest: it needs MIN_READINGS_FOR_RATE
+ * readings in that window and a rate heading toward the target faster than
+ * FLAT_KG_PER_WEEK; otherwise it says why there is no date.
  *
  * Contract (frozen; lanes implement the STUBs):
  *   constants  KG_PER_LB, MIN_KG, MAX_KG, TREND_ALPHA, RATE_WINDOW_DAYS,
@@ -33,7 +34,7 @@ export const MIN_KG = 20;
 export const MAX_KG = 400;
 /** Daily smoothing weight of the trend (≈ a 10-day average). */
 export const TREND_ALPHA = 0.1;
-/** The weekly rate is fitted over this many days of trend. */
+/** The weekly rate is fitted over the readings of this many days. */
 export const RATE_WINDOW_DAYS = 28;
 /** Fewer readings than this in the window: no rate and no projection ('calibrating'). */
 export const MIN_READINGS_FOR_RATE = 5;
@@ -70,7 +71,7 @@ export type WeightRate =
   | { kind: "rate"; kgPerWeek: number };
 
 export type WeightProjection =
-  | { kind: "none"; why: "no-target" | "calibrating" | "flat" | "away" | "reached" }
+  | { kind: "none"; why: "no-target" | "calibrating" | "flat" | "far" | "away" | "reached" }
   | { kind: "date"; day: DayKey; weeks: number; onTrackForTargetDay: boolean | null };
 
 /** Everything the card and Today need, from readings + goal + today. */
@@ -79,8 +80,14 @@ export interface WeightView {
   latest: WeightReading | null;
   /** Today's trend (null with no readings). */
   trendKg: number | null;
-  /** Trend change over the last 7 days (null with under 2 readings). */
+  /**
+   * Trend change over the last 7 days: null unless there is a reading in
+   * (today − 7, today] and the first reading is on or before today − 7 (a
+   * two-day history is not a week's change, and a carried trend is no news).
+   */
   change7Kg: number | null;
+  /** No reading in (today − STALE_AFTER_DAYS, today]: the card leads with the last weigh-in, not a carried trend. */
+  stale: boolean;
   rate: WeightRate;
   goal: WeightGoalView;
   /** 0..1 from startKg toward targetKg along the trend; null without a target or a start. */
@@ -134,8 +141,16 @@ export const SERIES_DAYS = 90;
 export const MAX_BACKDATE_DAYS = 365;
 /** A target day may be at most this many days ahead. */
 export const MAX_TARGET_DAYS_AHEAD = 1825;
-/** A projection further out than this is not a projection: it reads as 'flat'. */
+/** A projection further out than this is not a date: it reads 'far' (more than two years away). */
 export const MAX_PROJECTION_WEEKS = 104;
+/** A last reading this many days old or older is stale: the trend is carried, not measured. */
+export const STALE_AFTER_DAYS = 7;
+/**
+ * A new target within this many kg of the stored one is the same target: a
+ * one-decimal figure re-read is off by up to 0.05 in its unit (70.25 kg
+ * shows as '70.3'; 70 kg as '154.3 lb' reads back as 69.99 kg).
+ */
+export const SAME_TARGET_KG = 0.05;
 /** A reading's note is cut to this many characters. */
 export const MAX_NOTE_CHARS = 200;
 
@@ -232,10 +247,11 @@ export function trendSeries(readings: readonly WeightReading[], today: DayKey, d
 }
 
 /**
- * The trend's slope in kg per week: a least-squares line through the daily
- * trend over the last RATE_WINDOW_DAYS, up to the last reading in it (a
- * carried tail after the last weigh-in holds no news, so it does not pull
- * the slope toward zero). Under MIN_READINGS_FOR_RATE readings in the window
+ * The weight's slope in kg per week: a least-squares line through the raw
+ * readings of the last RATE_WINDOW_DAYS (x = the reading's day, y = kg; a
+ * gap is just a wider step in x). Not the trend's slope: the trend starts at
+ * the first reading and lags a real change by weeks, so a fresh −0.7 kg a
+ * week would read −0.2. Under MIN_READINGS_FOR_RATE readings in the window
  * it is 'calibrating'.
  */
 export function weeklyRate(readings: readonly WeightReading[], today: DayKey): WeightRate {
@@ -245,15 +261,14 @@ export function weeklyRate(readings: readonly WeightReading[], today: DayKey): W
   if (inWindow.length < MIN_READINGS_FOR_RATE) {
     return { kind: "calibrating", readings: inWindow.length, need: MIN_READINGS_FOR_RATE };
   }
-  const pts = trendDays(sorted, inWindow[inWindow.length - 1].day).filter((p) => p.day >= windowStart);
-  const xs = pts.map((_, i) => i);
-  const meanX = xs.reduce((s, x) => s + x, 0) / pts.length;
-  const meanY = pts.reduce((s, p) => s + p.trend, 0) / pts.length;
+  const xs = inWindow.map((r) => daysBetween(windowStart, r.day));
+  const meanX = xs.reduce((sum, x) => sum + x, 0) / xs.length;
+  const meanY = inWindow.reduce((sum, r) => sum + r.kg, 0) / inWindow.length;
   let num = 0;
   let den = 0;
-  pts.forEach((p, i) => {
-    num += (i - meanX) * (p.trend - meanY);
-    den += (i - meanX) * (i - meanX);
+  inWindow.forEach((r, i) => {
+    num += (xs[i] - meanX) * (r.kg - meanY);
+    den += (xs[i] - meanX) * (xs[i] - meanX);
   });
   const perDay = den > 0 ? num / den : 0;
   return { kind: "rate", kgPerWeek: round2(perDay * 7) };
@@ -263,8 +278,9 @@ export function weeklyRate(readings: readonly WeightReading[], today: DayKey): W
  * When the trend reaches the target at the current rate — or why there is
  * no date: no target, too few readings ('calibrating'), already there
  * ('reached': within REACHED_WITHIN_KG, or past it in the goal's direction),
- * slower than FLAT_KG_PER_WEEK or further out than MAX_PROJECTION_WEEKS
- * ('flat'), or moving the other way ('away').
+ * slower than FLAT_KG_PER_WEEK ('flat'), moving the other way ('away'), or
+ * further out than MAX_PROJECTION_WEEKS ('far': the trend is moving, just
+ * not fast enough for an honest date).
  */
 export function projectTarget(trendKg: number | null, rate: WeightRate, goal: WeightGoalView, today: DayKey): WeightProjection {
   const target = goal.targetKg;
@@ -286,7 +302,7 @@ export function projectTarget(trendKg: number | null, rate: WeightRate, goal: We
   if (Math.sign(rate.kgPerWeek) !== Math.sign(needed)) return { kind: "none", why: "away" };
 
   const weeks = needed / rate.kgPerWeek;
-  if (weeks > MAX_PROJECTION_WEEKS) return { kind: "none", why: "flat" };
+  if (weeks > MAX_PROJECTION_WEEKS) return { kind: "none", why: "far" };
   const day = addDays(today, Math.ceil(weeks * 7));
   return {
     kind: "date",
@@ -317,11 +333,12 @@ export function weightView(readings: readonly WeightReading[], goal: WeightGoalV
   const latest = sorted.length > 0 ? sorted[sorted.length - 1] : null;
   const trendKg = all.length > 0 ? roundKg(all[all.length - 1].trend) : null;
 
+  const weekAgo = addDays(today, -7);
+  const stale = latest === null || daysBetween(latest.day, today) >= STALE_AFTER_DAYS;
   let change7Kg: number | null = null;
-  if (sorted.length >= 2 && all.length > 0) {
-    const weekAgo = addDays(today, -7);
-    const base = all.find((p) => p.day === weekAgo) ?? all[0];
-    change7Kg = round2(all[all.length - 1].trend - base.trend);
+  if (latest !== null && latest.day > weekAgo && sorted[0].day <= weekAgo) {
+    const base = all.find((p) => p.day === weekAgo);
+    if (base) change7Kg = round2(all[all.length - 1].trend - base.trend);
   }
 
   let effective = goal;
@@ -341,6 +358,7 @@ export function weightView(readings: readonly WeightReading[], goal: WeightGoalV
     latest,
     trendKg,
     change7Kg,
+    stale,
     rate,
     goal: effective,
     progress: progressToTarget(trendKg, effective),
@@ -351,6 +369,51 @@ export function weightView(readings: readonly WeightReading[], goal: WeightGoalV
     loggedToday: latest?.day === today,
     fastLossNote,
   };
+}
+
+/** What setWeightGoalCore may be asked to change (the actions have checked the types). */
+export interface WeightGoalInput {
+  unit?: WeightUnit;
+  /** In kg; null clears the target, its day and its start. */
+  targetKg?: number | null;
+  targetDay?: DayKey | null;
+}
+
+/**
+ * The goal after a change (pure; setWeightGoalCore writes it). A new target
+ * records today's trend (or the latest reading) as its start, from
+ * `readings`. A target within SAME_TARGET_KG (inclusive) of the stored one
+ * is the same target: it and its start stay as they are (a figure re-read
+ * in another unit, 70 kg → '154.3 lb' → 69.99 kg, is not a new goal).
+ * Omitted fields stay as they are.
+ */
+export function planGoalChange(
+  current: WeightGoalView,
+  input: WeightGoalInput,
+  readings: readonly WeightReading[],
+  today: DayKey
+): { ok: true; value: WeightGoalView } | { ok: false; error: string } {
+  const next: WeightGoalView = { ...current };
+  if (input.unit !== undefined) next.unit = input.unit;
+  if (input.targetKg === null) {
+    next.targetKg = null;
+    next.targetDay = null;
+    next.startKg = null;
+    next.startDay = null;
+  } else if (input.targetKg !== undefined) {
+    const same = current.targetKg !== null && Math.abs(input.targetKg - current.targetKg) <= SAME_TARGET_KG + 1e-9;
+    if (!same) {
+      const view = weightView(readings, current, today);
+      next.targetKg = input.targetKg;
+      next.startKg = view.trendKg ?? view.latest?.kg ?? null;
+      next.startDay = today;
+    }
+  }
+  if (input.targetDay !== undefined) {
+    if (input.targetDay !== null && next.targetKg === null) return { ok: false, error: "Set a target weight first." };
+    next.targetDay = input.targetDay;
+  }
+  return { ok: true, value: next };
 }
 
 /**

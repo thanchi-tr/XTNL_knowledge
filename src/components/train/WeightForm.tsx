@@ -5,13 +5,16 @@
  * kg/lb and saves the unit), a 'Yesterday' toggle, and one 44 px button that
  * reads 'Update today' once today has a reading (one per life day: a second
  * one replaces it). Errors are said inline; a save is announced politely and
- * the action re-renders the page in its own response (refresh: true). Nothing is paid for a weigh-in.
+ * the action re-renders the page in its own response (refresh: true). A
+ * saved unit is handed to the capture sheet as well (saveWeightUnit). Nothing
+ * is paid for a weigh-in.
  */
 import { useId, useState, useTransition, type FormEvent } from "react";
 import type { DayKey } from "@/lib/life-day";
 import type { WeightUnit, WeightView } from "@/lib/weight";
 import { announce } from "@/lib/celebrate";
 import { Button } from "@/components/ui/Button";
+import { saveWeightUnit } from "@/components/capture/capture-store";
 import { ChipButton } from "@/components/ui/Chip";
 import { logLabel, parseFigure, yesterdayOf } from "./weight-copy";
 import { REFRESH, wasReplaced, type WeightActions } from "./types";
@@ -73,6 +76,8 @@ export function WeightForm({ view, today, actions }: { view: WeightView; today: 
         setError(res.error);
         return;
       }
+      // The capture sheet reads a bare 'w 72.4' in the unit too: tell it now, not at its next vocabulary load.
+      saveWeightUnit(next);
       announce(`Weights now show in ${next === "kg" ? "kilograms" : "pounds"}.`);
     });
   }

@@ -3,8 +3,11 @@
 /**
  * The target, in a kit Sheet: a figure in the user's unit and an optional
  * by-date. It says where progress is measured from (the server records
- * today's trend as the start when the target is set or changed). Clear
- * target asks once more ('Clear the target?') before it goes.
+ * today's trend as the start when the target is set or changed). Save sends
+ * the target only when its figure was changed, so editing just the by-date
+ * keeps the start (goalSaveInput). A by-date that has passed is not
+ * prefilled: the sheet says so and keeps it unless a new one is picked.
+ * Clear target asks once more ('Clear the target?') before it goes.
  *
  * <GoalFields/> is the sheet's body, exported so scripts/train-check.ts can
  * render it (the Sheet itself renders nothing until it opens in a browser).
@@ -15,7 +18,7 @@ import type { WeightView } from "@/lib/weight";
 import { announce } from "@/lib/celebrate";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
-import { figure, parseFigure, shortDay, startSentence } from "./weight-copy";
+import { byDatePassedNote, byDatePrefill, figure, goalSaveInput, sameTargetText, shortDay, startSentence } from "./weight-copy";
 import { REFRESH, type WeightActions } from "./types";
 
 export function GoalForm({
@@ -43,38 +46,33 @@ export function GoalFields({ view, today, actions, onDone }: { view: WeightView;
   const unit = view.unit;
   const has = view.goal.targetKg != null;
   const [text, setText] = useState(has ? figure(view.goal.targetKg as number, unit) : "");
-  const [date, setDate] = useState<string>(view.goal.targetDay ?? "");
+  const [date, setDate] = useState<string>(byDatePrefill(view.goal.targetDay, today));
+  const [dateEdited, setDateEdited] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [armClear, setArmClear] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  const parsed = text.trim() ? parseFigure(text, unit) : null;
-  const changing = !has || (parsed?.ok === true && Math.abs(parsed.kg - (view.goal.targetKg as number)) >= 0.005);
+  // Changing: the typed figure is not the prefilled one (compared in the unit, not in kg).
+  const changing = !has || (text.trim() !== "" && !sameTargetText(text, view));
   const minDay = addDays(today, 1);
+  const passedNote = dateEdited ? null : byDatePassedNote(view.goal.targetDay, today);
 
   function save(e: FormEvent) {
     e.preventDefault();
-    const p = parseFigure(text, unit);
-    if (!p.ok) {
-      setError(p.error);
-      return;
-    }
-    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      setError("Pick a date, or leave it empty.");
-      return;
-    }
-    if (date && date < minDay) {
-      setError("Pick a date after today, or leave it empty.");
+    const s = goalSaveInput({ text, date, dateEdited, view, today });
+    if (!s.ok) {
+      setError(s.error);
       return;
     }
     setError(null);
+    const by = s.input.targetDay === undefined ? view.goal.targetDay : s.input.targetDay;
     startTransition(async () => {
-      const res = await actions.setWeightGoal({ unit, targetKg: p.kg, targetDay: date ? (date as DayKey) : null }, REFRESH);
+      const res = await actions.setWeightGoal(s.input, REFRESH);
       if (!res.ok) {
         setError(res.error);
         return;
       }
-      announce(`Target set: ${p.value.toFixed(1)} ${unit}${date ? ` by ${shortDay(date, today)}` : ""}.`);
+      announce(`Target set: ${s.value.toFixed(1)} ${unit}${by ? ` by ${shortDay(by as DayKey, today)}` : ""}.`);
       onDone();
     });
   }
@@ -138,10 +136,17 @@ export function GoalFields({ view, today, actions, onDone }: { view: WeightView;
         value={date}
         onChange={(e) => {
           setDate(e.target.value);
+          setDateEdited(true);
           if (error) setError(null);
         }}
+        aria-describedby={passedNote ? `${id}-p` : undefined}
         disabled={pending}
       />
+      {passedNote && (
+        <p id={`${id}-p`} className="t-meta wt-hint">
+          {passedNote}
+        </p>
+      )}
       {error && (
         <p id={`${id}-e`} role="alert" className="t-error wt-msg">
           {error}

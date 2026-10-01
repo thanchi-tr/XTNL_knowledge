@@ -90,6 +90,7 @@ import {
   vocabStale,
   VOCAB_IDLE_MS,
   VOCAB_REFRESH_DELAY_MS,
+  WEIGHT_UNIT_EVENT,
   type AddedEntry,
   type CloseReason,
   type EnterSource,
@@ -555,6 +556,18 @@ export function QuickCapture() {
     }
   }, [loadVocab]);
 
+  // The unit was switched on Train (capture-store saveWeightUnit): bare weigh-in numbers read in it from now on, as the server reads them.
+  useEffect(() => {
+    const onUnit = (e: Event) => {
+      const unit = (e as CustomEvent<unknown>).detail;
+      if (unit !== "kg" && unit !== "lb") return;
+      if (vocabRef.current) vocabRef.current = { ...vocabRef.current, weightUnit: unit };
+      setVocab((v) => (v && v.weightUnit !== unit ? { ...v, weightUnit: unit } : v));
+    };
+    window.addEventListener(WEIGHT_UNIT_EVENT, onUnit);
+    return () => window.removeEventListener(WEIGHT_UNIT_EVENT, onUnit);
+  }, []);
+
   // An idea line asks for the words as soon as it is one (and again once a refresh in the way has landed).
   useEffect(() => {
     if (open && ideaMode && !vocab?.words) considerVocab();
@@ -669,6 +682,8 @@ export function QuickCapture() {
     if (origin === "user") showToast({ kind: "working", key: ++seq.current, message: line.replaces ? "Saving the change…" : "Saving…" });
     // Today refreshes for every line; Train only for a weigh-in (its weight card).
     const refreshPage = onTodayRef.current || (onTrainRef.current && mayBeWeighIn(line.text, line.reverted, todayKey()));
+    // The unit this sheet reads a bare weigh-in number in: the server refuses a line it showed as a weigh-in that the user's unit puts out of range.
+    const weightUnit: WeightUnit = vocabRef.current?.weightUnit ?? "kg";
     startTransition(async () => {
       let res: CaptureResult<CapturedItem> | null;
       try {
@@ -676,7 +691,7 @@ export function QuickCapture() {
         // was lost finds the row it already wrote instead of writing a second.
         res = line.replaces
           ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce })
-          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce });
+          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce, weightUnit });
       } catch {
         res = null;
       }
@@ -703,12 +718,16 @@ export function QuickCapture() {
     }
     for (const l of lines) inFlight.current.add(l.nonce);
     showToast({ kind: "working", key: ++seq.current, message: `Saving ${lines.length} lines…` });
+    // As sendLine: Today refreshes for every list; Train when a line is a weigh-in (its weight card).
+    const today = todayKey();
+    const refreshPage = onTodayRef.current || (onTrainRef.current && lines.some((l) => mayBeWeighIn(l.text, l.reverted, today)));
+    const weightUnit: WeightUnit = vocabRef.current?.weightUnit ?? "kg";
     startTransition(async () => {
       let res: CaptureManyResult | null;
       try {
         res = await createManyFromCapture(
           lines.map((l) => ({ text: l.text, reverted: l.reverted, captureKey: l.nonce })),
-          { refresh: onTodayRef.current }
+          { refresh: refreshPage, weightUnit }
         );
       } catch {
         res = null;
