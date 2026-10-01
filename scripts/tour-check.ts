@@ -18,8 +18,8 @@ import { TOUR_SEEN_KEY, TOUR_START_EVENT, startTour } from "../src/lib/tour-cont
 import manifest from "../src/app/manifest";
 import {
   CAPTURE_TARGETS,
+  PHONE_SHORTCUTS_COPY,
   SETTLE_MS,
-  appIconShortcuts,
   copyText,
   hasNoTour,
   readSeen,
@@ -98,13 +98,17 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   }
   check("keys: tour-steps reads SHORTCUTS (shortcutOf)", /from "@\/lib\/shortcuts"/.test(STEPS_TS) && /shortcutOf\(id\)/.test(STEPS_TS));
 
-  // The phone's long-press names are the manifest's own shortcuts.
-  const names = appIconShortcuts();
-  const wanted = (manifest().shortcuts ?? []).filter((s) => s.url !== "/today").map((s) => s.name);
-  eq("phone: the long-press names are the manifest's (all but Today)", names, wanted);
+  // The phone's long-press step says what the icon offers, never a menu entry's name
+  // (the PWA manifest and the Android shell label them differently).
   const phone = copyText(shortcutsStep(PHONE).body);
-  check("phone: the step names each of them", names.length > 0 && names.every((n) => phone.includes(n)), phone);
+  eq("phone: the step says what the icon offers, with no menu names", phone, "On a phone with the app installed, long-press its icon for a quick task, a review or a new idea.");
+  check("phone: the copy is PHONE_SHORTCUTS_COPY", phone === PHONE_SHORTCUTS_COPY);
+  const iconNames = (manifest().shortcuts ?? []).flatMap((s) => [s.name, s.short_name ?? ""]).filter((n) => n && n !== "Today");
+  check("phone: no manifest shortcut name is quoted in the step", iconNames.every((n) => !phone.includes(n)), iconNames.filter((n) => phone.includes(n)).join(", "));
+  const urls = (manifest().shortcuts ?? []).map((s) => s.url);
+  check("phone: the manifest still offers what the step says (a quick task, a review, a new idea)", urls.includes("/today?capture=task") && urls.includes("/review") && urls.includes("/add"), urls.join(", "));
   check("phone: the step names no keyboard key", !/Alt\+|then/.test(phone), phone);
+  check("client: tour-steps and Tour.tsx import no metadata route (@/app/manifest)", !/@\/app\/manifest|from "\.\.?\/.*manifest"/.test(STEPS_TS) && !/@\/app\/manifest/.test(TOUR_TSX));
 }
 
 // ── every target the steps name exists in the source ───────────────────────
@@ -182,6 +186,26 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   check("seen: blocked storage never throws", !threw);
   check("seen: no storage reads as seen", readSeen(null) === true);
 
+  // The query is the one the page view arrived with: QuickCapture strips ?capture= a tick
+  // later and the sheet then closes, and no later attempt may start the tour.
+  const arrived = "?capture=task";
+  const attemptLater: AutoStartInput = { seen: false, pathname: "/today", search: arrived, dialogOpen: false, automated: false, optedOut: false };
+  check("first run: a visit that arrived with ?capture= never starts it, even once the param is stripped and the sheet closed", shouldAutoStart(attemptLater) === false && shouldAutoStart({ ...attemptLater, search: "" }) === true);
+  const effect = /\/\/ First run:[\s\S]*?\}, \[pathname, start\]\);/.exec(TOUR_TSX)?.[0] ?? "";
+  check(
+    "first run: Tour.tsx snapshots location.search when the effect runs, before any timer, and every attempt reads the snapshot",
+    /const initialSearch = window\.location\.search;/.test(effect) &&
+      effect.indexOf("const initialSearch") < effect.indexOf("const attempt") &&
+      /hasNoTour\(initialSearch\)/.test(effect) &&
+      /search: initialSearch,/.test(effect) &&
+      !/window\.location\.search/.test(effect.slice(effect.indexOf("const attempt"))),
+    effect.slice(0, 200)
+  );
+  check(
+    "first run: an auto-start writes TOUR_SEEN_KEY as it opens (a reload or a killed app mid-tour does not bring it back)",
+    /if \(shouldAutoStart\(input\)\) \{\s*(?:\/\/[^\n]*\n\s*)*writeSeen\(store\("localStorage"\)\);\s*start\(\);\s*\}/.test(effect)
+  );
+  check("first run: a replay (TOUR_START_EVENT) ignores the seen flag", /addEventListener\(TOUR_START_EVENT, start\)/.test(TOUR_TSX) && !/readSeen/.test(/const start = useCallback\([\s\S]*?\}, \[\]\);/.exec(TOUR_TSX)?.[0] ?? "readSeen"));
   check("first run: Tour.tsx runs the guard after SETTLE_MS, with webdriver and the dialog query", /setTimeout\(attempt, SETTLE_MS\)/.test(TOUR_TSX) && /navigator\.webdriver/.test(TOUR_TSX) && /DIALOG_OPEN_SELECTOR/.test(TOUR_TSX) && /\[data-capture-sheet\]/.test(TOUR_TSX));
   check("first run: localStorage is only reached inside try/catch helpers", !/localStorage\.(get|set)Item/.test(TOUR_TSX) && /window\[kind\]/.test(TOUR_TSX));
 }
@@ -197,6 +221,8 @@ const TOUR_CSS = read("src/components/tour/tour.css");
     ok = false;
   }
   check("contract: startTour is safe on the server", ok);
+  const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+  check("package.json: ui:check ends with tour-check, and tour:check runs it alone", / && tsx scripts\/tour-check\.ts$/.test(pkg.scripts["ui:check"]) && pkg.scripts["tour:check"] === "tsx scripts/tour-check.ts", pkg.scripts["ui:check"]);
   check("contract: Tour is exported for the root layout", /export function Tour\(\)/.test(TOUR_TSX));
 }
 

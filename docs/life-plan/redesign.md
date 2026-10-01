@@ -535,7 +535,7 @@ TODAY SHEETS
 - Receipt (diverging bars).
 - Record yesterday: Did/Didn't per open item, "Use a freeze for Wed" switch, "Settle Wednesday now" / "it settles on its own at Fri 04:00".
 - Close the day: Tomorrow/Anytime/Drop per open todo, "Do the minimum" for open musts, Roll all, a one-line note and a mood of 1–5 (never graded), a Rest tomorrow switch.
-- Capture: centred 560 panel from 600. 52 px input, parse chips (clock date, Must, track, #tag, ≈ price; all quiet), [Add to Today] [To Inbox]. Also c, Ctrl+K, the share target and the manifest shortcut.
+- Capture: centred 560 panel from 600. 52 px input, parse chips (clock date, Must, track, #tag, ≈ price; all quiet), [Add to Today] [To Inbox]. Also c, Alt+N, the share target and the manifest shortcut.
 - Plan time off: rest tomorrow, sick today (1 per 14 days), vacation from tomorrow (≤ 30 days, never backdated).
 - Inbox.
 - Asks.

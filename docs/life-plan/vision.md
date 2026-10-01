@@ -5,7 +5,7 @@ XTNL becomes one character sheet for a whole life. One clock turns the day over 
 The app opens on /today. The review queue is the first quest ('Clear the queue · 12 of 17 · paid by reviews'). Below it come the day's musts, todos and habits, the week's movement ring, the goals strip, and at the bottom anything still owed. Every row shows exactly what it will pay ('≈ 12 XP'). Tapping it pays exactly that amount and leaves a receipt that explains why.
 
 Capture is one line from anywhere:
-- 'c' or Ctrl/Cmd+K in the app, the header '+ Capture' button, or a bottom-left button on the phone.
+- 'c' or Alt+N in the app, the header '+ Capture' button, or a bottom-left button on the phone.
 - A home-screen shortcut, Android's share sheet, or Win+Shift+Q system-wide on the desktop.
 - 'gym legs 60m every mon,thu !' is parsed on the device into visible chips. Tapping a chip turns that part back into plain words. The line is saved in one INSERT and can be undone.
 

@@ -7,6 +7,8 @@ import { ShellDataSlot } from "@/components/shell/ShellDataSlot";
 import { PREPAINT_SCRIPT } from "@/components/shell/prepaint";
 import { IconSprite } from "@/components/ui/Icon";
 import { QuickCapture } from "@/components/capture/QuickCapture";
+import { Shortcuts } from "@/components/shell/Shortcuts";
+import { Tour } from "@/components/tour/Tour";
 import { StreakProvider } from "@/components/StreakProvider";
 import { PowerSaver } from "@/components/PowerSaver";
 import "./globals.css";
@@ -88,8 +90,11 @@ export default function RootLayout({
         </AppShell>
         {/* The one capture sheet (L1). Outside <main>: its fixed layers must
             not sit under the @container. The tab bar's +, the rail and
-            sidebar Capture, 'c' and Ctrl+K all open this instance. */}
+            sidebar Capture, 'c' and Alt+N all open this instance. */}
         <QuickCapture />
+        {/* The global keys (src/lib/shortcuts.ts) and the '?' sheet; the first-run tour. */}
+        <Shortcuts />
+        <Tour />
         {/* L3's host for T2 Seals and T3 Ascensions (a stub until L3 lands). */}
         <CelebrationHost />
       </body>

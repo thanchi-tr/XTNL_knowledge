@@ -645,7 +645,8 @@ token, no third-party account). Replace `<host>` with where the app runs:
 Press `?` anywhere in the app for this list; Settings › Keyboard shortcuts
 shows it too, with **Replay the tour**. Page-wide keys are single keys with
 no modifier, or `g` then a letter within 1.5 s; the one chord that works
-while typing is `Alt+N`. Chrome and Edge bind none of them (the old
+while typing is `Alt+N` (on a Mac, Option+N in a text field types ˜, so
+Tab or click out of the field first). Chrome and Edge bind none of them (the old
 `Ctrl+K`, `Ctrl+Enter` and `Ctrl+Shift+C` were the browsers' own), and
 `npm run shortcut:check` holds the list against both browsers' shortcuts.
 The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
@@ -673,7 +674,7 @@ The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
 | Study | `Enter` or `→` | Next card | During a review |
 | Help | `Shift+?` | Show these shortcuts | Any page, not while typing |
 
-Standard keys keep their usual meaning: `Esc` closes a sheet or dialog; `Tab` moves between controls; `Ctrl+Z` undoes typing (in the capture line, it also brings a chip back). On a Mac, Alt is the Option key. None of these are Chrome or Edge shortcuts.
+Standard keys keep their usual meaning: `Esc` closes a sheet or dialog; `Tab` moves between controls; `Enter` presses the focused button (on Study, with nothing focused and cards due, it starts a review); `Ctrl+Z` undoes typing (in the capture line it also brings a chip back) and, outside a text field with the Added toast showing, takes that capture back. On a Mac, Alt is the Option key. Option+N opens capture outside text fields; inside a field, Tab or click out of it first (Option+N there types ˜). None of these are Chrome or Edge shortcuts.
 <!-- shortcuts:end -->
 
 ## Environment variables

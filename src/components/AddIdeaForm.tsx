@@ -79,11 +79,11 @@ import {
 } from "@/lib/idea-handoff";
 import "@/components/library/study.css";
 
-/** What a stopped submission's buttons say, by what the verdict suggests. */
 /** Create and Blank it, as shortcuts.ts lists them ('Alt+Enter', 'Alt+B'). */
 const CREATE_KEY = shortcutOf("idea-create").keys[0];
 const BLANK_KEY = shortcutOf("idea-blank").keys[0];
 
+/** What a stopped submission's buttons say, by what the verdict suggests. */
 const SUGGESTION_NOTE = {
   discard: "Nothing here the existing card lacks: keeping it is usually right.",
   enrich: "Enrich folds the new detail into the existing card.",

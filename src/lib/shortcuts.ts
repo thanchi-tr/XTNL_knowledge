@@ -16,7 +16,7 @@
  * '1-9' (a range).
  */
 
-import { isTypingTarget, type TargetLike } from "./capture-parse";
+import { chordLetter, isAltDeadKeyInField, isTypingTarget, type TargetLike } from "./capture-parse";
 
 export type ShortcutScope =
   /** Anywhere, except while typing in a field or with a dialog open. */
@@ -92,11 +92,19 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "help", keys: ["Shift+?"], label: "Show these shortcuts", scope: "global", group: "Help" },
 ];
 
-/** Keys that keep their ordinary meaning everywhere; shown in the help sheet's footnote, never bound as shortcuts. */
+/**
+ * Keys that keep their ordinary meaning everywhere; shown in the help sheet's
+ * footnote, never bound as page-wide shortcuts. Two of them also do one app
+ * thing where nothing else would take the key: Enter on Study's hub
+ * (WorkspaceView: nothing focused, cards due) and Ctrl/Cmd+Z outside a text
+ * field while the capture's Added toast shows (QuickCapture, capture-ui
+ * isUndoCaptureKey).
+ */
 export const STANDARD_KEYS: readonly { keys: string; label: string }[] = [
   { keys: "Esc", label: "closes a sheet or dialog" },
   { keys: "Tab", label: "moves between controls" },
-  { keys: "Ctrl+Z", label: "undoes typing (in the capture line, it also brings a chip back)" },
+  { keys: "Enter", label: "presses the focused button (on Study, with nothing focused and cards due, it starts a review)" },
+  { keys: "Ctrl+Z", label: "undoes typing (in the capture line it also brings a chip back) and, outside a text field with the Added toast showing, takes that capture back" },
 ];
 
 /**
@@ -159,7 +167,7 @@ export function shortcutOf(id: ShortcutId): Shortcut {
 /** Enough of a KeyboardEvent to read a shortcut from (a DOM KeyboardEvent is one). */
 export interface KeyEventLike {
   key: string;
-  /** The physical key ('KeyN'): read for chords, so Mac Option+N (which types a dead tilde) is still Alt+N. */
+  /** The physical key ('KeyN'): a chord's fallback when the key typed no Latin letter, so Mac Option+N (a dead tilde) is still Alt+N. */
   code?: string;
   ctrlKey: boolean;
   metaKey: boolean;
@@ -195,12 +203,15 @@ export function isComposingKey(e: KeyEventLike): boolean {
   return (e.keyCode === 229 || e.key === "Process") && !e.altKey;
 }
 
-/** The base key of a chord, by physical position for letters and digits. */
+/**
+ * The base key of a chord: the Latin letter the layout produced (Dvorak's N
+ * is N, wherever it sits), else the physical key for letters and digits (Mac
+ * Option's 'Dead', '˜' or '∫', a Cyrillic letter: capture-parse chordLetter).
+ */
 function chordBase(e: KeyEventLike): string | null {
-  const code = e.code ?? "";
-  const letter = /^Key([A-Z])$/.exec(code);
-  if (letter) return letter[1];
-  const digit = /^Digit([0-9])$/.exec(code);
+  const letter = chordLetter(e);
+  if (letter) return letter.toUpperCase();
+  const digit = /^Digit([0-9])$/.exec(e.code ?? "");
   if (digit) return digit[1];
   if (NAMED_KEYS[e.key]) return NAMED_KEYS[e.key];
   if (!e.key || e.key === "Dead" || e.key === "Unidentified") return null;
@@ -210,20 +221,25 @@ function chordBase(e: KeyEventLike): string | null {
 /**
  * A keydown in the app's notation ('c', 'Shift+?', 'Alt+N', 'Enter', '→',
  * 'Ctrl+K'), or null when it is no key at all (a bare modifier, an IME
- * composition, a dead key, AltGr).
+ * composition, a dead key, AltGr, or, given the keydown's `target`, an Alt
+ * chord's dead key typed into a field: Mac Option+N there starts 'ñ').
  *
  *   - A printable character with no Ctrl/Cmd/Alt is itself: letters lower
  *     case ('C' with Shift is 'Shift+C'); any other character ignores Shift,
  *     since the layout decides whether it needs it ('/' is Shift+7 on a German
  *     keyboard), and '?' is always written 'Shift+?'. A non-Latin letter is
  *     read by its physical key (Cyrillic 'с' on the C key is 'c').
- *   - A chord (Ctrl, Cmd or Alt held) is read by the physical key, so Mac
- *     Option+N, which types a dead tilde, is 'Alt+N'. Ctrl+Alt is AltGr on
+ *   - A chord (Ctrl, Cmd or Alt held) is read by the Latin letter it
+ *     produced, else by the physical key (chordBase), so Dvorak's Alt+N is
+ *     'Alt+N' and Mac Option+N, which types a dead tilde, is 'Alt+N' too,
+ *     except in a field (isAltDeadKeyInField: there it types ñ, so null).
+ *     Ctrl+Alt is AltGr on
  *     Windows and Linux keyboards (it types '@', '€' and friends): never a chord.
  *   - Modifiers are written in the order Ctrl, Cmd, Alt, Shift.
  */
-export function normalizeKey(e: KeyEventLike): string | null {
+export function normalizeKey(e: KeyEventLike, target?: TargetLike | null): string | null {
   if (isComposingKey(e)) return null;
+  if (isAltDeadKeyInField(e, target)) return null;
   if (MODIFIER_KEYS.has(e.key)) return null;
   if (e.ctrlKey && e.altKey && !e.metaKey) return null;
   if (e.ctrlKey || e.metaKey || e.altKey) {
@@ -245,9 +261,9 @@ export function normalizeKey(e: KeyEventLike): string | null {
 }
 
 /** Whether a keydown is exactly this key or chord ('Alt+Enter', 'Alt+B', '→'); a held key or one already handled never is. */
-export function isKey(e: KeyEventLike, key: string): boolean {
+export function isKey(e: KeyEventLike, key: string, target?: TargetLike | null): boolean {
   if (e.repeat || e.defaultPrevented) return false;
-  return normalizeKey(e) === key;
+  return normalizeKey(e, target) === key;
 }
 
 // ── The global handler's rule (src/components/shell/Shortcuts.tsx) ─────────
@@ -280,10 +296,17 @@ export function sequenceWaiting(seq: SequenceState, now: number): boolean {
   return seq.prefix !== null && now - seq.at <= SEQUENCE_MS;
 }
 
+/**
+ * What a dialog or sheet looks like while open: the global shortcuts and the
+ * capture sheet's bare 'c' wait (Alt+N does not). <Shortcuts/> and
+ * QuickCapture both query it.
+ */
+export const MODAL_OPEN_SELECTOR = '[aria-modal="true"], .sheet.show, [data-capture-sheet]';
+
 export interface ShortcutEnv {
   /** The keydown's target. */
   target: TargetLike | null | undefined;
-  /** A dialog or sheet is open ([aria-modal="true"], .sheet.show, [data-capture-sheet]). */
+  /** A dialog or sheet is open (MODAL_OPEN_SELECTOR matches). */
   modalOpen: boolean;
   /** A review session is running ([data-review-session]): its runner owns the keys. */
   reviewSession: boolean;
@@ -318,7 +341,7 @@ export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: Shortcu
   if (e.defaultPrevented || isComposingKey(e)) return none();
   if (MODIFIER_KEYS.has(e.key) || e.repeat) return none(seq);
   if (isTypingTarget(env.target) || env.modalOpen) return none();
-  const key = normalizeKey(e);
+  const key = normalizeKey(e, env.target);
   if (key === null) return none();
   const allowed = (s: Shortcut) => !env.reviewSession || s.id === "help";
 
@@ -350,7 +373,7 @@ export function openShortcutHelp(): void {
 }
 
 /** The help sheet's and Settings' note for Mac keyboards. */
-export const MAC_NOTE = "On a Mac, Alt is the Option key.";
+export const MAC_NOTE = "On a Mac, Alt is the Option key. Option+N opens capture outside text fields; inside a field, Tab or click out of it first (Option+N there types ˜).";
 /** The help sheet's and Settings' promise, checked by scripts/shortcut-check.ts. */
 export const BROWSER_NOTE = "None of these are Chrome or Edge shortcuts.";
 

@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">XTNL</string>
     <string name="sc_task_short">Quick task</string>
-    <string name="sc_task_long">Capture a task</string>
-    <string name="sc_review_short">Review</string>
-    <string name="sc_review_long">Start a review</string>
+    <string name="sc_task_long">Quick task</string>
+    <string name="sc_review_short">Review due</string>
+    <string name="sc_review_long">Review due</string>
     <string name="sc_idea_short">New idea</string>
     <string name="sc_idea_long">New idea</string>
     <string name="sc_address_short">Address</string>

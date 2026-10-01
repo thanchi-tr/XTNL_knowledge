@@ -100,7 +100,7 @@ C calls it from createFromCapture as `after(() => fileIdeaDraftCore(userId, id))
 
 ## 8. Lane-internal (not frozen: owned and used inside one lane)
 
-- A: the parser rules R1–R15, the Vietnamese rules, `isCaptureHotkey` (Ctrl/Cmd+K), speakable grammar, and the autocorrect profile: `autocorrectAtCaret(text, caret, opts?: { profile?: 'prose' \| 'task' })` and `useAutocorrect(onChange, enabled = true, profile = 'prose')`. **A must land this signature before B** (B passes `'task'`). It was not stubbed in STEP 0.
+- A: the parser rules R1–R15, the Vietnamese rules, `isCaptureHotkey` (Alt+N; it was Ctrl/Cmd+K until the 2026-10-01 shortcut change), speakable grammar, and the autocorrect profile: `autocorrectAtCaret(text, caret, opts?: { profile?: 'prose' \| 'task' })` and `useAutocorrect(onChange, enabled = true, profile = 'prose')`. **A must land this signature before B** (B passes `'task'`). It was not stubbed in STEP 0.
 - B: `enterAction`, `applyInsert`, `splitPastedLines`, `caretContext`, `readCaptureFragment`, `toastCopy`, the history-decision helper, and `capture-queue.ts` (`nextRetryDelay`, `isNetworkFailure`, the queue state), all in its own files.
 - C: `placeOf(template, today, instances)` and `BoardData.laterRows: { templateId, title, label }[]` (today-board.ts); `recaptureCore(userId, oldId, parsed, { rawText, captureKey })`, the pure `planRecapture({ oldCreatedAt, oldArchived, now })`, the `CreatedTask.where` computation, and the recent and active queries (tasks.ts).
 - D: `submitIdeaCore`, `fallbackDomainName(fieldName, tags, contentText)`, the `withModelTimeout` call sites (`gemini.ts` already exports `withModelTimeout(promise, ms) → ModelResult<T>`), the autosave, the list-row reducer, and `wrapSelection`.

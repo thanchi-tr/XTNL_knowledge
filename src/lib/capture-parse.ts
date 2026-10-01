@@ -1917,28 +1917,58 @@ export function isTypingTarget(target: TargetLike | null | undefined): boolean {
 }
 
 /**
+ * An Alt chord's dead key typed into a field: Mac Option+N (and Option+E,
+ * U, I, `) starts an accent there (Option+N then n types ñ). Mac Chrome hands
+ * it to the input method before the page sees it (key 'Dead', keyCode 229),
+ * so preventDefault cannot cancel the marked '˜': moving focus would commit
+ * it into the text. Such a key is the field's, never a shortcut.
+ */
+export function isAltDeadKeyInField(e: { key: string; altKey: boolean; keyCode?: number }, target: TargetLike | null | undefined): boolean {
+  return e.altKey && (e.key === "Dead" || e.keyCode === 229) && isTypingTarget(target);
+}
+
+/**
+ * The letter a chord is pressed on, lower case: the letter the layout
+ * produced when it is a Latin one (so Dvorak's N is N), else the physical
+ * key (`code` 'KeyN') for a key that typed no Latin letter: Mac Option's
+ * 'Dead', '˜' or '∫', or a Cyrillic letter. Null when neither says.
+ */
+export function chordLetter(e: { key: string; code?: string }): string | null {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
+  const physical = /^Key([A-Z])$/.exec(e.code ?? "");
+  return physical ? physical[1].toLowerCase() : null;
+}
+
+/**
  * Whether a keydown opens the capture sheet: 'c' alone, or Alt+N
  * (src/lib/shortcuts.ts 'capture' and 'capture-anywhere'; neither is a Chrome
  * or Edge shortcut, where the old Ctrl/Cmd+K is the browsers' search key).
  *
- * 'c' is a letter, so it never fires while typing somewhere or during a
- * review session (whose runner owns its keys). Alt+N is a chord nobody
- * types, so it works from any field and mid-review — exactly when ideas come
- * up; the review runner ignores Alt keys, and closing the sheet returns the
- * caret to the field. Alt+N is read by the physical key (`code` 'KeyN', the
- * letter when a synthetic event has no code), so Mac Option+N, which types a
- * dead tilde, still opens it; Ctrl+Alt+N is AltGr on Windows keyboards and
- * never counts. Neither fires inside the sheet itself, with another
- * modifier, on a held key, mid-composition, or when something else already
- * handled the key, and Tab is never taken. shortcut-check holds this to
- * shortcuts.ts normalizeKey over a truth table.
+ * 'c' is a letter, so like every global letter it never fires while typing
+ * somewhere, with a dialog or sheet open (`modalOpen`: shortcuts.ts
+ * MODAL_OPEN_SELECTOR), or during a review session (whose runner owns its
+ * keys). Alt+N is a chord nobody types, so it works from any field, over a
+ * dialog and mid-review — exactly when ideas come up; the review runner
+ * ignores Alt keys, and closing the sheet returns the caret to the field.
+ * Its letter is chordLetter's: the produced Latin letter, else the physical
+ * key, so Mac Option+N (a dead tilde) still opens it outside a field. Inside
+ * a field that dead key is left to type ñ (isAltDeadKeyInField). Ctrl+Alt+N
+ * is AltGr on Windows keyboards and never counts. Neither fires inside the
+ * sheet itself, with another modifier, on a held key, mid-composition, or
+ * when something else already handled the key, and Tab is never taken.
+ * shortcut-check holds this to shortcuts.ts normalizeKey over a truth table.
  */
-export function isCaptureHotkey(e: KeyLike & { code?: string; keyCode?: number }, target: TargetLike | null | undefined, reviewSessionActive: boolean): boolean {
+export function isCaptureHotkey(
+  e: KeyLike & { code?: string; keyCode?: number },
+  target: TargetLike | null | undefined,
+  reviewSessionActive: boolean,
+  modalOpen = false
+): boolean {
   if (e.defaultPrevented || e.repeat || e.isComposing) return false;
   if (e.key === "Tab" || inCaptureSheet(target)) return false;
   // Mac Chrome sends Option+N's dead key with keyCode 229, so 229 is only a composition without Alt.
-  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) return e.code ? e.code === "KeyN" : e.key.toLowerCase() === "n";
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) return !isAltDeadKeyInField(e, target) && chordLetter(e) === "n";
   if (e.keyCode === 229) return false;
-  if (e.key.toLowerCase() === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !reviewSessionActive && !isTypingTarget(target);
+  if (e.key.toLowerCase() === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !reviewSessionActive && !modalOpen && !isTypingTarget(target);
   return false;
 }

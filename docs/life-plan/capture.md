@@ -657,6 +657,8 @@ capture-server-check.ts: the recent-lines distinct/limit rule on fixture rows.
 
 ## P2 · Ctrl/Cmd+K from anywhere on the desktop (S)
 
+> **Changed 2026-10-01:** every app shortcut must differ from Chrome's and Edge's, and Ctrl+K is their address-bar search. The chord is now **Alt+N** (Ctrl+Enter → **Alt+Enter**, Ctrl+Shift+C → **Alt+B**, Space in review → **Enter / →**). The full list is `src/lib/shortcuts.ts`; the text below keeps the original wording.
+
 **Why.** Today both c and Ctrl+K are refused inside any text field: you first press Esc or click out (+1–2). During a review, capture is impossible, and that is exactly when ideas come up. After: Ctrl+K works in every field and mid-review (0 extra). The bare 'c' keeps its guard.
 
 **Spec.** - capture-parse.ts isCaptureHotkey: Ctrl/Cmd+K returns true even when the target is a text field or a review session is active.
@@ -874,9 +876,9 @@ Never write test rows to production. Subagents run no DB commands.
 3. INNER SCREEN. With the keyboard up, the 560 panel sits above the keyboard.
 
 4. DESKTOP.
-- c or Ctrl+K, a line, Enter saves and closes.
+- c or Alt+N, a line, Enter saves and closes.
 - Shift+Enter saves and stays.
-- Ctrl+K works inside a text field and during a review (P2).
+- Alt+N works inside a text field and during a review (P2).
 
 5. PARSER. Each line saves exactly as stated, matching its chips:
 - 'gym mon wed fri' → Mon/Wed/Fri habit;
@@ -901,7 +903,7 @@ Never write test rows to production. Subagents run no DB commands.
 10. IDEAS.
 - The sheet's 'Idea (full form)' carries the question and answer.
 - Create removes the Inbox draft and clears the sheet's line.
-- Ctrl+Enter creates.
+- Alt+Enter creates.
 - Create sits above the phone keyboard.
 - With GEMINI_API_KEY blank on the rehearsal server, a submit either files with the fallbacks or shows the honest error with every field intact. It never shows a generic error with the text gone.
 - (P2) 'idea: Q :: A' files itself and leaves the Inbox empty. A saturated one stays as a draft with Finish.

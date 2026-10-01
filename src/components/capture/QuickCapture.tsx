@@ -20,6 +20,7 @@ import { todayKey, type DayKey } from "@/lib/life-day";
 import type { CaptureToken } from "@/lib/life-types";
 import { normTitleOf } from "@/lib/life-lexicon";
 import { mark } from "@/lib/celebrate";
+import { MODAL_OPEN_SELECTOR } from "@/lib/shortcuts";
 import { SHEET_DRAFT_CLEARED_EVENT, writeIdeaHandoff, type SheetDraftCleared } from "@/lib/idea-handoff";
 import { useWordComplete, WordHintBar } from "@/components/WordComplete";
 import { useAutocorrect } from "@/components/useAutocorrect";
@@ -943,8 +944,9 @@ export function QuickCapture() {
 
   // ── Opening paths ───────────────────────────────────────────────────────
 
-  // The hotkey: 'c' (never while typing or mid-review) or Alt+N (Mac
-  // Option+N; from any field and mid-review; never inside the sheet).
+  // The hotkey: 'c' (never while typing, with a dialog open or mid-review)
+  // or Alt+N (Mac Option+N, though not inside a field, where it types ˜; from
+  // any field, over a dialog and mid-review; never inside the sheet).
   // capture-parse isCaptureHotkey holds the rule; src/lib/shortcuts.ts lists
   // both, and the global <Shortcuts/> handler leaves them to this one.
   useEffect(() => {
@@ -952,7 +954,8 @@ export function QuickCapture() {
     function onKey(e: KeyboardEvent) {
       const target = e.target instanceof Element ? e.target : null;
       const reviewing = document.querySelector("[data-review-session]") !== null;
-      if (!isCaptureHotkey(e, target, reviewing)) return;
+      const modalOpen = document.querySelector(MODAL_OPEN_SELECTOR) !== null;
+      if (!isCaptureHotkey(e, target, reviewing, modalOpen)) return;
       e.preventDefault();
       openSheet();
     }

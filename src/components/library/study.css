@@ -164,7 +164,7 @@
   /* Check first · Create. On the tab bar below 600 px; on the on-screen
      keyboard while it is up: AddIdeaForm sets --kb from visualViewport and
      marks the form data-kb, and the bar rides on the keys rather than under
-     them. The Ctrl+Enter keycap is for fine pointers only. */
+     them. The Alt+Enter keycap is for fine pointers only. */
   .add-sticky {
     position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); z-index: 1;
     display: flex; gap: 8px; padding: 12px 0; margin-top: 2px;

@@ -11,7 +11,8 @@
  *       its own.
  *   (c) Every shortcut has its handler (source guards), and no old binding
  *       (Ctrl/Cmd+K, Ctrl/Cmd+Enter, Ctrl+Shift+C, Space as 'next') is left
- *       anywhere in src, in code, aria-keyshortcuts or visible text.
+ *       anywhere in src, in code, aria-keyshortcuts or visible text, nor in
+ *       a comment in any .css file under src.
  *   (d) The pure rules: normalizeKey, decideShortcut (typing targets,
  *       composition, held keys, dialogs, review sessions, sequences and their
  *       timeout) and isCaptureHotkey agree, over truth tables.
@@ -22,7 +23,8 @@
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { isCaptureHotkey, isTypingTarget, type TargetLike } from "../src/lib/capture-parse";
+import { isAltDeadKeyInField, isCaptureHotkey, isTypingTarget, type TargetLike } from "../src/lib/capture-parse";
+import { isUndoCaptureKey } from "../src/components/capture/capture-ui";
 import {
   BROWSER_NOTE,
   BROWSER_RESERVED,
@@ -30,6 +32,7 @@ import {
   CAPTURE_OWNED,
   GLOBAL_HANDLED,
   MAC_NOTE,
+  MODAL_OPEN_SELECTOR,
   SCOPE_NOTE,
   SEQUENCE_IDLE,
   SEQUENCE_MS,
@@ -123,7 +126,8 @@ console.log("── (a) No Chrome or Edge shortcut");
   check("Alt chords: Alt+N, Alt+Enter, Alt+B and nothing else", JSON.stringify([...altChords].sort()) === JSON.stringify(["Alt+B", "Alt+Enter", "Alt+N"]), altChords.join(", "));
   check("Alt+Shift+N (Chrome's and Edge's) is reserved, and not ours", RESERVED.has("Alt+Shift+N") && !SHORTCUTS.some((s) => s.keys.some((k) => canon(k) === "Alt+Shift+N")));
   const std = STANDARD_KEYS.map((s) => s.keys);
-  check("STANDARD_KEYS (Esc, Tab, Ctrl+Z) are never bound as shortcuts", !SHORTCUTS.some((s) => s.keys.some((k) => std.includes(k))));
+  check("STANDARD_KEYS (Esc, Tab, Enter, Ctrl+Z) are never bound as page-wide shortcuts", !SHORTCUTS.some((s) => (s.scope === "global" || s.scope === "anywhere") && s.keys.some((k) => std.includes(k))));
+  check("STANDARD_KEYS: Esc, Tab and Ctrl+Z are bound nowhere (Enter only inside the capture sheet and a review)", !SHORTCUTS.some((s) => s.keys.some((k) => k === "Esc" || k === "Ctrl+Z" || k === "Tab")) && SHORTCUTS.filter((s) => s.keys.includes("Enter")).every((s) => s.scope === "capture" || s.scope === "review"));
 }
 
 // ── (b) Unique ──────────────────────────────────────────────────────────────
@@ -151,9 +155,10 @@ console.log("\n── (c) Every shortcut handled; no old binding left");
 {
   const shell = code(read("src/components/shell/Shortcuts.tsx"));
   check("Shortcuts.tsx: one window keydown listener running decideShortcut", (shell.match(/addEventListener\("keydown"/g) ?? []).length === 1 && /decideShortcut\(e, seq\.current/.test(shell));
-  check("Shortcuts.tsx: reads dialogs and review sessions from the DOM", shell.includes(`'[aria-modal="true"], .sheet.show, [data-capture-sheet]'`) && shell.includes('"[data-review-session]"'));
+  check("Shortcuts.tsx: reads dialogs (shortcuts.ts MODAL_OPEN_SELECTOR) and review sessions from the DOM", MODAL_OPEN_SELECTOR === '[aria-modal="true"], .sheet.show, [data-capture-sheet]' && /modalOpen: document\.querySelector\(MODAL_OPEN_SELECTOR\) !== null/.test(shell) && !/MODAL_OPEN_SELECTOR =/.test(shell) && shell.includes('"[data-review-session]"'));
   check("Shortcuts.tsx: '?' opens the help sheet; '/' focuses the library search; hrefs navigate with router.push", /s\.id === "help"\)\s*\{\s*setHelpOpen\(true\)/.test(shell) && /s\.id === "search"/.test(shell) && /LIBRARY_SEARCH_EVENT/.test(shell) && /router\.push\(LIBRARY_SEARCH_HREF\)/.test(shell) && /if \(s\.href\) router\.push\(s\.href\)/.test(shell));
-  check("Shortcuts.tsx: the help sheet is the kit Sheet, with the tour button and the browsers' promise", /<Sheet\b/.test(shell) && /startTour\(\);\s*onClose\(\);/.test(shell) && /Take the tour/.test(shell) && /description=\{BROWSER_NOTE\}/.test(shell) && /STANDARD_KEYS\.map/.test(shell) && /keyParts\(k\)/.test(shell));
+  check("Shortcuts.tsx: the help sheet is the kit Sheet, with the tour button and the browsers' promise", /<Sheet\b/.test(shell) && /Take the tour/.test(shell) && /description=\{BROWSER_NOTE\}/.test(shell) && /STANDARD_KEYS\.map/.test(shell) && /keyParts\(k\)/.test(shell));
+  check("Shortcuts.tsx: 'Take the tour' closes the sheet first and starts the tour a tick later (its focus returns to what had it before '?')", /onClose\(\);\s*window\.setTimeout\(startTour, 0\);/.test(shell) && !/startTour\(\);\s*onClose\(\)/.test(shell));
   check("Shortcuts.tsx: openShortcutHelp's event opens the sheet", /addEventListener\(SHORTCUT_HELP_EVENT, onHelp\)/.test(shell));
   check("Shortcuts.tsx: the 'g…' hint is portalled and announced politely", /createPortal\(<SequenceHint/.test(shell) && /announce\(`Go to: /.test(shell));
   check("Shortcuts.tsx: imports its own css", /import "\.\/shortcuts\.css";/.test(read("src/components/shell/Shortcuts.tsx")));
@@ -168,11 +173,40 @@ console.log("\n── (c) Every shortcut handled; no old binding left");
   const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
   check("capture-parse isCaptureHotkey answers 'c' and Alt+N (the capture sheet's two)", isCaptureHotkey(ev("c"), body, false) && isCaptureHotkey(ev("n", { altKey: true, code: "KeyN" }), body, false));
   const quick = code(read("src/components/capture/QuickCapture.tsx"));
-  check("QuickCapture: its window keydown opens on isCaptureHotkey", /if \(!isCaptureHotkey\(e, target, reviewing\)\) return;\s*e\.preventDefault\(\);\s*openSheet\(\);/.test(quick));
+  check("QuickCapture: its window keydown opens on isCaptureHotkey, told whether a dialog is open (MODAL_OPEN_SELECTOR)", /const modalOpen = document\.querySelector\(MODAL_OPEN_SELECTOR\) !== null;\s*if \(!isCaptureHotkey\(e, target, reviewing, modalOpen\)\) return;\s*e\.preventDefault\(\);\s*openSheet\(\);/.test(quick) && /import \{ MODAL_OPEN_SELECTOR \} from "@\/lib\/shortcuts";/.test(quick));
+  // The two app meanings STANDARD_KEYS owns up to: Enter on Study's hub, Ctrl/Cmd+Z on the Added toast.
+  const workspace = read("src/components/workspace/WorkspaceView.tsx");
+  const enter = STANDARD_KEYS.find((k) => k.keys === "Enter");
+  check(
+    "STANDARD_KEYS: Enter says it starts a review on Study when nothing is focused (WorkspaceView's hub listener)",
+    !!enter && /on Study, with nothing focused and cards due, it starts a review/.test(enter.label) && /if \(mode !== "hub" \|\| totalDue === 0\) return;/.test(workspace) && /if \(e\.key !== "Enter"/.test(workspace) && /a !== document\.body && a\.id !== "main"/.test(workspace),
+    enter?.label ?? "no Enter"
+  );
+  const undo = STANDARD_KEYS.find((k) => k.keys === "Ctrl+Z");
+  const zBody: TargetLike = { tagName: "BODY", closest: () => null };
+  const zInput: TargetLike = { tagName: "INPUT", closest: () => null };
+  const z = (mods: Partial<KeyEventLike>) => ({ key: "z", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  check(
+    "STANDARD_KEYS: Ctrl+Z says it takes the capture back outside a field with the Added toast showing (QuickCapture, isUndoCaptureKey)",
+    !!undo &&
+      /outside a text field with the Added toast showing, takes that capture back/.test(undo.label) &&
+      isUndoCaptureKey(z({ ctrlKey: true }), zBody, false) &&
+      isUndoCaptureKey(z({ metaKey: true }), zBody, false) &&
+      !isUndoCaptureKey(z({ ctrlKey: true }), zInput, false) &&
+      /toast\?\.kind === "added"/.test(quick) &&
+      /isUndoCaptureKey\(e, target, reviewing\)/.test(quick),
+    undo?.label ?? "no Ctrl+Z"
+  );
+  check("STANDARD_KEYS: no label holds a ';' (the help sheet and README join them with '; ')", STANDARD_KEYS.every((k) => !k.label.includes(";")));
   check("QuickCapture: Enter and Shift+Enter in the line go through enterAction (shortcuts 'capture-add', 'capture-add-next')", /enterAction\(/.test(quick));
 
   const form = code(read("src/components/AddIdeaForm.tsx"));
   check("AddIdeaForm: Alt+Enter creates, Alt+B blanks (isKey on shortcuts.ts' own keys)", /const CREATE_KEY = shortcutOf\("idea-create"\)\.keys\[0\];/.test(form) && /const BLANK_KEY = shortcutOf\("idea-blank"\)\.keys\[0\];/.test(form) && /isKey\(e\.nativeEvent, CREATE_KEY\)/.test(form) && /isKey\(e\.nativeEvent, BLANK_KEY\)/.test(form));
+  const formSrc = read("src/components/AddIdeaForm.tsx");
+  check(
+    "AddIdeaForm: CREATE_KEY/BLANK_KEY keep their own JSDoc, and 'What a stopped submission's buttons say' sits over SUGGESTION_NOTE again",
+    /\/\*\* Create and Blank it, as shortcuts\.ts lists them[^\n]*\*\/\r?\nconst CREATE_KEY = [^\n]*\r?\nconst BLANK_KEY = [^\n]*\r?\n\r?\n\/\*\* What a stopped submission's buttons say, by what the verdict suggests\. \*\/\r?\nconst SUGGESTION_NOTE = \{/.test(formSrc)
+  );
   check("AddIdeaForm: Create and the cloze field announce their keys", /aria-keyshortcuts=\{ariaKeysOf\("idea-create"\)\}/.test(form) && /aria-keyshortcuts=\{ariaKeysOf\("idea-blank"\)\}/.test(form) && ariaKeysOf("idea-create") === "Alt+Enter" && ariaKeysOf("idea-blank") === "Alt+B");
 
   const runner = code(read("src/components/workspace/ReviewRunner.tsx"));
@@ -199,7 +233,24 @@ console.log("\n── (c) Every shortcut handled; no old binding left");
     }
   };
   walk(join(ROOT, "src"));
-  const hits: Record<string, string[]> = { chord: [], keyC: [], aria: [], text: [], space: [] };
+  const hits: Record<string, string[]> = { chord: [], keyC: [], aria: [], text: [], space: [], css: [] };
+  const cssFiles: string[] = [];
+  const walkCss = (d: string) => {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walkCss(p);
+      else if (/\.css$/.test(f)) cssFiles.push(p);
+    }
+  };
+  walkCss(join(ROOT, "src"));
+  // A css comment that names an old binding (study.css once said 'The Ctrl+Enter keycap').
+  for (const p of cssFiles) {
+    const rel = relative(ROOT, p).replace(/\\/g, "/");
+    const src = readFileSync(p, "utf8");
+    for (const m of src.matchAll(/\/\*[\s\S]*?\*\//g)) {
+      if (/\b(Ctrl|Cmd|Control|Meta)\+(K|Enter|Shift\+C)\b|Ctrl\/Cmd\+(K|Enter)\b/.test(m[0])) hits.css.push(`${rel}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
   for (const p of files) {
     const rel = relative(ROOT, p).replace(/\\/g, "/");
     const lines = code(readFileSync(p, "utf8")).split("\n");
@@ -222,6 +273,8 @@ console.log("\n── (c) Every shortcut handled; no old binding left");
   check("src: no aria-keyshortcuts with Control+K, Control/Meta+Enter or Control+Shift+C", hits.aria.length === 0, hits.aria.join("; "));
   check("src: no visible 'Ctrl+K', 'Ctrl+Enter' or 'Ctrl+Shift+C' (outside shortcuts.ts' BROWSER_RESERVED)", hits.text.length === 0, hits.text.join("; "));
   check("src: Space is no review key", hits.space.length === 0, hits.space.join("; "));
+  check("src/**/*.css: no comment names Ctrl/Cmd+K, Ctrl/Cmd+Enter or Ctrl+Shift+C", hits.css.length === 0, hits.css.join("; "));
+  check("src/**/*.css: the scan read the stylesheets (more than 10 files)", cssFiles.length > 10, String(cssFiles.length));
   check("src: the scan read the app (more than 100 files)", files.length > 100, String(files.length));
 }
 
@@ -267,6 +320,24 @@ console.log("\n── (d) The pure rules");
   n("an IME composition", ev("c", { isComposing: true }), null);
   n("keyCode 229 without Alt (an IME)", ev("c", { keyCode: 229 }), null);
   n("a dead key without Alt", ev("Dead", { code: "BracketLeft" }), null);
+  n("Dvorak Alt+N (key 'n' on the physical L)", ev("n", { altKey: true, code: "KeyL" }), "Alt+N");
+  n("Dvorak Alt+B (key 'b' on the physical N)", ev("b", { altKey: true, code: "KeyN" }), "Alt+B");
+  n("Colemak Alt+Shift+N (key 'N' on the physical J)", ev("N", { altKey: true, shiftKey: true, code: "KeyJ" }), "Alt+Shift+N");
+  n("Cyrillic Alt+'т' on the physical N", ev("т", { altKey: true, code: "KeyN" }), "Alt+N");
+  check(
+    "normalize: Mac Option+N's dead key in a field → null (key 'Dead', or keyCode 229); outside a field → Alt+N",
+    normalizeKey(ev("Dead", { altKey: true, code: "KeyN" }), area) === null &&
+      normalizeKey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), input) === null &&
+      normalizeKey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), editable) === null &&
+      normalizeKey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), body) === "Alt+N" &&
+      normalizeKey(ev("Dead", { altKey: true, code: "KeyN" }), button) === "Alt+N"
+  );
+  check("normalize: a plain Alt+N in a field stays Alt+N (only the dead key is the field's)", normalizeKey(ev("n", { altKey: true, code: "KeyN" }), area) === "Alt+N" && normalizeKey(ev("˜", { altKey: true, code: "KeyN" }), area) === "Alt+N");
+  check(
+    "isAltDeadKeyInField: only Alt + a dead key (Dead or 229) + a typing target",
+    isAltDeadKeyInField(ev("Dead", { altKey: true }), area) && isAltDeadKeyInField(ev("n", { altKey: true, keyCode: 229 }), input) && !isAltDeadKeyInField(ev("Dead", { altKey: true }), body) && !isAltDeadKeyInField(ev("Dead"), area) && !isAltDeadKeyInField(ev("n", { altKey: true }), area)
+  );
+  check("isKey: Dvorak's Alt+B blanks, and the physical N under it is not Alt+N", isKey(ev("b", { altKey: true, code: "KeyN" }), "Alt+B") && !isKey(ev("b", { altKey: true, code: "KeyN" }), "Alt+N") && !isKey(ev("x", { altKey: true, code: "KeyB" }), "Alt+B"));
 
   // Every key of every shortcut reads back from a matching event (the notation and the reader agree).
   const toEvent = (k: string): KeyEventLike => {
@@ -313,6 +384,8 @@ console.log("\n── (d) The pure rules");
   d("',' during a review session", runs(ev(",", { code: "Comma" }), { reviewSession: true }), null);
   d("'?' during a review session still helps", runs(ev("?", { shiftKey: true }), { reviewSession: true }), "help");
   d("'1' is no global key (the runner's)", runs(ev("1", { code: "Digit1" })), null);
+  const deadInField = decideShortcut(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), { prefix: "g", at: 9_900 }, env({ target: area }));
+  check("decide: a dead-key Option chord in a field ends a waiting sequence and runs nothing", deadInField.run === null && deadInField.seq.prefix === null && !deadInField.consume);
 
   // Sequences
   const g = decideShortcut(ev("g", { code: "KeyG" }), SEQUENCE_IDLE, env({ now: 1000 }));
@@ -344,15 +417,41 @@ console.log("\n── (d) The pure rules");
 
   // isCaptureHotkey agrees with normalizeKey on Alt+N, and guards 'c' like the global handler guards its letters.
   const matrix: KeyEventLike[] = [];
-  for (const key of ["n", "N", "Dead", "˜", "c", "k"]) {
-    for (const code of ["KeyN", "KeyC", "KeyK", undefined]) {
+  for (const key of ["n", "N", "b", "Dead", "˜", "т", "c", "k"]) {
+    for (const code of ["KeyN", "KeyC", "KeyK", "KeyL", undefined]) {
       for (const [ctrlKey, metaKey, altKey, shiftKey] of [[false, false, false, false], [false, false, true, false], [true, false, true, false], [false, true, true, false], [false, false, true, true], [true, false, false, false], [false, true, false, false]] as const) {
         matrix.push(ev(key, { code, ctrlKey, metaKey, altKey, shiftKey }));
       }
     }
   }
-  const disagree = matrix.filter((e) => e.altKey && (e.code || e.key.length === 1)).filter((e) => isCaptureHotkey(e, area, false) !== (normalizeKey(e) === "Alt+N")).map((e) => JSON.stringify(e));
-  check(`capture hotkey: Alt+N agrees with normalizeKey over ${matrix.length} chords`, disagree.length === 0, disagree.slice(0, 3).join("; "));
+  const withDead = [...matrix, ...matrix.filter((e) => e.altKey).map((e) => ({ ...e, keyCode: 229 }))];
+  const disagree = [area, input, editable, body, button].flatMap((t) =>
+    withDead
+      .filter((e) => e.altKey && (e.code || e.key.length === 1))
+      .filter((e) => isCaptureHotkey(e, t, false) !== (normalizeKey(e, t) === "Alt+N"))
+      .map((e) => `${t.tagName} ${JSON.stringify(e)}`)
+  );
+  check(`capture hotkey: Alt+N agrees with normalizeKey over ${withDead.length} chords × 5 targets`, disagree.length === 0, disagree.slice(0, 3).join("; "));
+  check(
+    "capture hotkey: Mac Option+N (dead tilde) opens outside a field, and is left to type ñ inside one",
+    isCaptureHotkey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), body, false) &&
+      isCaptureHotkey(ev("Dead", { altKey: true, code: "KeyN" }), button, true) &&
+      !isCaptureHotkey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), area, false) &&
+      !isCaptureHotkey(ev("Dead", { altKey: true, code: "KeyN" }), input, true) &&
+      !isCaptureHotkey(ev("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), editable, false)
+  );
+  check("capture hotkey: Alt+N that types a real character still opens from a field", isCaptureHotkey(ev("n", { altKey: true, code: "KeyN" }), area, false) && isCaptureHotkey(ev("˜", { altKey: true, code: "KeyN" }), input, false));
+  check("capture hotkey: Dvorak — key 'n' on the physical L opens; key 'b' on the physical N (Alt+B, Blank it) does not", isCaptureHotkey(ev("n", { altKey: true, code: "KeyL" }), area, false) && !isCaptureHotkey(ev("b", { altKey: true, code: "KeyN" }), area, false));
+  check("capture hotkey: a non-Latin letter falls back to the physical key (Cyrillic 'т' on N opens)", isCaptureHotkey(ev("т", { altKey: true, code: "KeyN" }), body, false) && !isCaptureHotkey(ev("т", { altKey: true }), body, false));
+  check(
+    "capture hotkey: 'c' waits while a dialog or sheet is open; Alt+N does not",
+    !isCaptureHotkey(ev("c", { code: "KeyC" }), body, false, true) &&
+      !isCaptureHotkey(ev("c", { code: "KeyC" }), button, false, true) &&
+      isCaptureHotkey(ev("c", { code: "KeyC" }), button, false, false) &&
+      isCaptureHotkey(ev("n", { altKey: true, code: "KeyN" }), body, false, true) &&
+      isCaptureHotkey(ev("n", { altKey: true, code: "KeyN" }), area, false, true)
+  );
+  check("capture hotkey: 'c' and the global letters agree on a dialog (both wait)", isCaptureHotkey(ev("c", { code: "KeyC" }), body, false, true) === (runs(ev("r", { code: "KeyR" }), { modalOpen: true }) !== null));
   const cDisagree = [body, button, input, area, select, editable].filter((t) => isCaptureHotkey(ev("c", { code: "KeyC" }), t, false) !== !isTypingTarget(t));
   check("capture hotkey: 'c' opens exactly where a global letter would (not while typing)", cDisagree.length === 0);
   check("capture hotkey: Ctrl+K and Cmd+K no longer open it", !isCaptureHotkey(ev("k", { ctrlKey: true, code: "KeyK" }), body, false) && !isCaptureHotkey(ev("k", { metaKey: true, code: "KeyK" }), area, false));
@@ -363,6 +462,8 @@ console.log("\n── (d) The pure rules");
 console.log("\n── (e) aria-keyshortcuts");
 {
   const want = `${ariaKeysOf("capture")} ${ariaKeysOf("capture-anywhere")}`;
+  check("MAC_NOTE: Option+N opens capture outside text fields; inside one it types ˜ (step out first)", /^On a Mac, Alt is the Option key\. Option\+N opens capture outside text fields; inside a field, .+ first \(Option\+N there types ˜\)\.$/.test(MAC_NOTE), MAC_NOTE);
+  check("MAC_NOTE: no second chord is offered (no Ctrl or Cmd chord anywhere)", !/Ctrl\+|Cmd\+|Control\+/.test(MAC_NOTE) && !SHORTCUTS.some((s) => s.keys.some((k) => /^(Ctrl|Cmd)\+/.test(k))));
   check("ariaKeysOf: capture 'c', capture-anywhere 'Alt+N', help 'Shift+?'", ariaKeysOf("capture") === "c" && ariaKeysOf("capture-anywhere") === "Alt+N" && ariaKeysOf("help") === "Shift+?");
   check("CAPTURE_ARIA_KEYS is ariaKeysOf('capture') + ' ' + ariaKeysOf('capture-anywhere')", CAPTURE_ARIA_KEYS === want && want === "c Alt+N", CAPTURE_ARIA_KEYS);
   const chrome = code(read("src/components/shell/Chrome.tsx"));

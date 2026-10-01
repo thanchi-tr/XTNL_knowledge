@@ -15,7 +15,11 @@
  * section links are in the shell on every page, so those steps spotlight
  * them anywhere; a page-specific target (Today's lanes, the You hero) is used
  * where it exists, and a step whose target is absent centres its card.
- * Finishing or skipping sets TOUR_SEEN_KEY.
+ * TOUR_SEEN_KEY is set the moment the first run opens (a reload or a killed
+ * app mid-tour does not bring it back), and again on finishing or skipping.
+ * The query is read once, as the page view arrives: a visit that came with
+ * ?capture= or ?notour never starts it, even after the capture sheet strips
+ * its parameter and closes.
  *
  * A veil takes every click; the spotlight is a box-shadow cutout (aria-hidden).
  * The card is role=dialog aria-modal, takes focus, traps Tab, and answers
@@ -211,7 +215,10 @@ export function Tour() {
   // First run: once per device, on /today, after hydration and a settle.
   useEffect(() => {
     const session = store("sessionStorage");
-    if (hasNoTour(window.location.search)) {
+    // The query as this page view arrived: QuickCapture strips ?capture= a
+    // tick later, and every attempt must still see it.
+    const initialSearch = window.location.search;
+    if (hasNoTour(initialSearch)) {
       try {
         session?.setItem(TOUR_OFF_SESSION_KEY, "1");
       } catch {
@@ -231,13 +238,16 @@ export function Tour() {
       const input = {
         seen: readSeen(store("localStorage")),
         pathname: window.location.pathname,
-        search: window.location.search,
+        search: initialSearch,
         dialogOpen: document.querySelector(DIALOG_OPEN_SELECTOR) != null,
         automated: automated(),
         optedOut,
       };
-      if (shouldAutoStart(input)) start();
-      else if (input.dialogOpen && shouldAutoStart({ ...input, dialogOpen: false }) && tries++ < RETRY_MAX) timer = window.setTimeout(attempt, RETRY_MS);
+      if (shouldAutoStart(input)) {
+        // Shown is seen: an interrupted first run never comes back.
+        writeSeen(store("localStorage"));
+        start();
+      } else if (input.dialogOpen && shouldAutoStart({ ...input, dialogOpen: false }) && tries++ < RETRY_MAX) timer = window.setTimeout(attempt, RETRY_MS);
     };
     timer = window.setTimeout(attempt, SETTLE_MS);
     return () => window.clearTimeout(timer);
@@ -255,8 +265,7 @@ export function Tour() {
     };
     window.addEventListener(SHELL_CAPTURE_EVENT, onCapture);
     document.addEventListener("focusin", onFocusIn);
-    // A sheet that started the tour (the '?' sheet's "Take the tour") hands
-    // focus back to its own opener as it closes, in this same commit: take it back.
+    // A sheet still handing focus back as the tour opens: take it back.
     const settle = window.setTimeout(() => {
       const card = cardRef.current;
       if (card && !card.contains(document.activeElement)) card.focus({ preventScroll: true });

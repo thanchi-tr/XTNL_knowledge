@@ -26,6 +26,7 @@ import {
   LIBRARY_SEARCH_EVENT,
   LIBRARY_SEARCH_HREF,
   MAC_NOTE,
+  MODAL_OPEN_SELECTOR,
   SCOPE_NOTE,
   SEQUENCE_IDLE,
   SEQUENCE_MS,
@@ -43,8 +44,6 @@ import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import "./shortcuts.css";
 
-/** What a dialog or sheet looks like while open: the global shortcuts wait. */
-export const MODAL_OPEN_SELECTOR = '[aria-modal="true"], .sheet.show, [data-capture-sheet]';
 /** A running review session: its runner owns the keys. */
 export const REVIEW_SESSION_SELECTOR = "[data-review-session]";
 
@@ -161,8 +160,11 @@ export function ShortcutHelpSheet({ open, onClose }: { open: boolean; onClose: (
           variant="secondary"
           icon="replay"
           onClick={() => {
-            startTour();
+            // Close first: the Sheet hands focus back to what had it before
+            // '?', and the tour, started a tick later, records that as the
+            // place to return focus to when it ends.
             onClose();
+            window.setTimeout(startTour, 0);
           }}
         >
           Take the tour

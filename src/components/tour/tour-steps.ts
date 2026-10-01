@@ -9,9 +9,10 @@
  *   readSeen / writeSeen              TOUR_SEEN_KEY in a Storage, every access in try/catch
  *
  * Every key the copy names is read from SHORTCUTS (src/lib/shortcuts.ts):
- * the copy holds shortcut ids, never key text. The phone's long-press names
- * come from the web manifest's own shortcuts (src/app/manifest.ts), which is
- * what Android shows on the installed app's icon.
+ * the copy holds shortcut ids, never key text. The phone step names no menu
+ * entry: the installed app's icon shortcuts are labelled by whoever installed
+ * it (the web manifest for a PWA, the Android shell's own strings), so the
+ * copy says what they do, not what they are called.
  *
  * Targets are CSS selectors, best first; the tour spotlights the first one
  * that is on screen (the tab bar < 600, the rail 600–1279 and the sidebar
@@ -20,7 +21,6 @@
  * /you) wins where it exists; elsewhere the step falls back to the shell's
  * own link, which is on every page. A step with no visible target is centred.
  */
-import manifest from "@/app/manifest";
 import { SECTIONS } from "@/components/shell/nav";
 import { keyParts, shortcutOf, type ShortcutId } from "@/lib/shortcuts";
 import { TOUR_SEEN_KEY } from "@/lib/tour-contract";
@@ -77,22 +77,14 @@ export function copyText(body: readonly Seg[]): string {
   return body.map((s) => (typeof s === "string" ? s : s.keys.join(s.sep))).join("");
 }
 
-/** The long-press names Android shows on the installed app's icon (every manifest shortcut but the plain Today one). */
-export function appIconShortcuts(): string[] {
-  const today = hrefOf("today");
-  return (manifest().shortcuts ?? []).filter((s) => s.url !== today).map((s) => s.name);
-}
-
-function listOf(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
-}
+/** The phone's Shortcuts step: what the installed app's icon offers on a long-press, by what it does (no menu names). */
+export const PHONE_SHORTCUTS_COPY = "On a phone with the app installed, long-press its icon for a quick task, a review or a new idea.";
 
 export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0] }: StepContext): TourStep[] {
   const k = (id: ShortcutId): Seg => sayKey(keyOf(id));
   const shortcuts: Seg[] = keyboard
     ? [k("capture-anywhere"), " captures from anywhere; ", k("capture"), " does too when you are not typing. ", k("go-today"), " opens Today, ", k("go-study"), " Study. Press ", k("help"), " for the full list."]
-    : [`On a phone with the app installed, long-press its icon for ${listOf(appIconShortcuts())}.`];
+    : [PHONE_SHORTCUTS_COPY];
   return [
     {
       id: "welcome",
