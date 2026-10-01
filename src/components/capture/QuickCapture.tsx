@@ -943,9 +943,10 @@ export function QuickCapture() {
 
   // ── Opening paths ───────────────────────────────────────────────────────
 
-  // The hotkey: 'c' (never while typing or mid-review) or Ctrl/Cmd+K (from
-  // any field and mid-review; never inside the sheet). capture-parse
-  // isCaptureHotkey holds the rule.
+  // The hotkey: 'c' (never while typing or mid-review) or Alt+N (Mac
+  // Option+N; from any field and mid-review; never inside the sheet).
+  // capture-parse isCaptureHotkey holds the rule; src/lib/shortcuts.ts lists
+  // both, and the global <Shortcuts/> handler leaves them to this one.
   useEffect(() => {
     if (open) return;
     function onKey(e: KeyboardEvent) {

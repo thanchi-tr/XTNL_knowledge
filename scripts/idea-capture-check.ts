@@ -478,7 +478,15 @@ async function main() {
     check("AddIdeaForm: an error status is shown as the form error, the fields untouched", /if \(res\.status === "error"\) \{\n\s+\/\/[^\n]*\n\s+setPendingContent\(null\);\n\s+setFormError\(res\.message\);\n\s+return;/.test(form));
     check("AddIdeaForm: submit, link and enrich all carry the draftId", (form.match(/draftId,?\s*\}\)/g) ?? []).length >= 2 && /linkIdea\(\{[^}]*draftId \}\)/.test(form) && /enrichIdea\(\{[^}]*draftId \}\)/.test(form));
     check("AddIdeaForm: after a create from a draft, ?draft is dropped", /router\.replace\("\/add"/.test(form));
-    check("AddIdeaForm: Create answers Ctrl+Enter and Cmd+Enter, with a keycap", /aria-keyshortcuts="Control\+Enter Meta\+Enter"/.test(form) && /className="kbd"[^>]*>\s*Ctrl\+Enter/.test(form) && /requestSubmit\(\)/.test(form));
+    const formCode = form.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+    check(
+      "AddIdeaForm: Create answers Alt+Enter (shortcuts.ts 'idea-create', never a browser key), with a keycap",
+      /aria-keyshortcuts=\{ariaKeysOf\("idea-create"\)\}/.test(form) && /className="kbd"[^>]*>\s*\{CREATE_KEY\}/.test(form) && /isKey\(e\.nativeEvent, CREATE_KEY\)/.test(form) && /requestSubmit\(\)/.test(form) && !/Control\+Enter|Ctrl\+Enter/.test(formCode)
+    );
+    check(
+      "AddIdeaForm: Blank it answers Alt+B (shortcuts.ts 'idea-blank'), never Ctrl+Shift+C (DevTools' inspect)",
+      /isKey\(e\.nativeEvent, BLANK_KEY\)/.test(form) && /aria-keyshortcuts=\{ariaKeysOf\("idea-blank"\)\}/.test(form) && !/Control\+Shift\+C|Ctrl\+Shift\+C|"KeyC"/.test(formCode)
+    );
     check("AddIdeaForm: the form root carries --kb from visualViewport", /"--kb": `\$\{inset\}px`/.test(form) && /window\.visualViewport/.test(form));
     const css = read("src/components/library/study.css");
     check("study.css: the sticky bar rides on the keyboard (bottom: var(--kb))", /\.add-form\[data-kb\] \.add-sticky \{ bottom: var\(--kb, 0px\);/.test(css));

@@ -42,7 +42,7 @@ export function TopBar() {
 
   return (
     <header className={cx("topbar", scrolled && "scrolled")} data-chrome="">
-      <Link className="crest-btn" href="/you" aria-label={crestLabel(character)}>
+      <Link className="crest-btn" href="/you" aria-label={crestLabel(character)} data-tour="you-crest">
         <Crest level={character?.level ?? null} material={character?.material} size={38} />
       </Link>
       <div className="tb-title">

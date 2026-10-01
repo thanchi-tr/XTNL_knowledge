@@ -1917,21 +1917,28 @@ export function isTypingTarget(target: TargetLike | null | undefined): boolean {
 }
 
 /**
- * Whether a keydown opens the capture sheet: 'c' alone, or Ctrl/Cmd+K.
+ * Whether a keydown opens the capture sheet: 'c' alone, or Alt+N
+ * (src/lib/shortcuts.ts 'capture' and 'capture-anywhere'; neither is a Chrome
+ * or Edge shortcut, where the old Ctrl/Cmd+K is the browsers' search key).
  *
  * 'c' is a letter, so it never fires while typing somewhere or during a
- * review session (whose card treats any key as 'advance'). Ctrl/Cmd+K is a
- * chord nobody types, so it works from any field and mid-review — exactly
- * when ideas come up; the review runner ignores Ctrl/Meta keys, and closing
- * the sheet returns the caret to the field. Neither fires inside the sheet
- * itself, with another modifier, on a held key, mid-composition, or when
- * something else already handled the key, and Tab is never taken.
+ * review session (whose runner owns its keys). Alt+N is a chord nobody
+ * types, so it works from any field and mid-review — exactly when ideas come
+ * up; the review runner ignores Alt keys, and closing the sheet returns the
+ * caret to the field. Alt+N is read by the physical key (`code` 'KeyN', the
+ * letter when a synthetic event has no code), so Mac Option+N, which types a
+ * dead tilde, still opens it; Ctrl+Alt+N is AltGr on Windows keyboards and
+ * never counts. Neither fires inside the sheet itself, with another
+ * modifier, on a held key, mid-composition, or when something else already
+ * handled the key, and Tab is never taken. shortcut-check holds this to
+ * shortcuts.ts normalizeKey over a truth table.
  */
-export function isCaptureHotkey(e: KeyLike, target: TargetLike | null | undefined, reviewSessionActive: boolean): boolean {
-  if (e.defaultPrevented || e.isComposing || e.repeat) return false;
+export function isCaptureHotkey(e: KeyLike & { code?: string; keyCode?: number }, target: TargetLike | null | undefined, reviewSessionActive: boolean): boolean {
+  if (e.defaultPrevented || e.repeat || e.isComposing) return false;
   if (e.key === "Tab" || inCaptureSheet(target)) return false;
-  const key = e.key.toLowerCase();
-  if (key === "k") return e.ctrlKey !== e.metaKey && !e.altKey && !e.shiftKey;
-  if (key === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !reviewSessionActive && !isTypingTarget(target);
+  // Mac Chrome sends Option+N's dead key with keyCode 229, so 229 is only a composition without Alt.
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) return e.code ? e.code === "KeyN" : e.key.toLowerCase() === "n";
+  if (e.keyCode === 229) return false;
+  if (e.key.toLowerCase() === "c") return !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !reviewSessionActive && !isTypingTarget(target);
   return false;
 }

@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewAnswer } from "@/lib/verification";
 import type { DayKey } from "@/lib/life-day";
 import { isTypingTarget } from "@/lib/capture-parse";
+import { normalizeKey, shortcutOf } from "@/lib/shortcuts";
 import { announce, chime, mark } from "@/lib/celebrate";
 import { bump, countTo, DUR, EASE, motionLevel, play } from "@/lib/motion";
 import { pushEscapeLayer } from "@/components/capture/layers";
@@ -197,7 +198,9 @@ export function ReviewRunner({
     if (card?.questionType === "MULTI" && index > 0) questionRef.current?.querySelector<HTMLElement>(".rv-q")?.focus({ preventScroll: true });
   }, [index, card?.questionType]);
 
-  // Keys: 1–9 answer a multiple choice; Enter (or Space) moves on once armed.
+  // Keys (src/lib/shortcuts.ts 'review-answer', 'review-next'): 1–9 answer a
+  // multiple choice; Enter or → moves on once armed. Never Space: it is the
+  // browsers' page-down.
   const options = useMemo(() => (card ? multiOptionsOf(card) : []), [card]);
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -213,9 +216,10 @@ export function ReviewRunner({
         }
         return;
       }
-      if (phase.kind === "answered" && armed && (e.key === "Enter" || e.key === " ")) {
-        // A focused button already turns Enter/Space into its own click.
-        if (e.target instanceof HTMLButtonElement) return;
+      const key = normalizeKey(e);
+      if (phase.kind === "answered" && armed && key !== null && shortcutOf("review-next").keys.includes(key)) {
+        // A focused button already turns Enter into its own click.
+        if (key === "Enter" && e.target instanceof HTMLButtonElement) return;
         e.preventDefault();
         onNext();
       }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web app's own night colours (manifest background_color / theme_color),
+         so there is no white flash before the first paint. -->
+    <color name="xtnl_bg">#0A0D13</color>
+    <color name="xtnl_bar">#0C0F15</color>
+    <color name="xtnl_text">#E8ECF3</color>
+    <color name="xtnl_muted">#9AA3B2</color>
+
+    <style name="Theme.Xtnl" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/xtnl_bg</item>
+        <item name="android:statusBarColor">@color/xtnl_bar</item>
+        <item name="android:navigationBarColor">@color/xtnl_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

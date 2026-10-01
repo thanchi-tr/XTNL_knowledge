@@ -640,6 +640,42 @@ token, no third-party account). Replace `<host>` with where the app runs:
   `https://<host>/today#capture=%s`. Then Ctrl+L in any tab, `t`, Space or
   Tab, the line, Enter (opens the sheet), Enter (saves).
 
+## Keyboard shortcuts
+
+Press `?` anywhere in the app for this list; Settings › Keyboard shortcuts
+shows it too, with **Replay the tour**. Page-wide keys are single keys with
+no modifier, or `g` then a letter within 1.5 s; the one chord that works
+while typing is `Alt+N`. Chrome and Edge bind none of them (the old
+`Ctrl+K`, `Ctrl+Enter` and `Ctrl+Shift+C` were the browsers' own), and
+`npm run shortcut:check` holds the list against both browsers' shortcuts.
+The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
+
+<!-- shortcuts:start (generated from src/lib/shortcuts.ts: npx tsx scripts/shortcut-check.ts --write) -->
+| Group | Keys | What it does | Where |
+|---|---|---|---|
+| Capture | `c` | Capture a task | Any page, not while typing |
+| Capture | `Alt+N` | Capture from anywhere, even while typing | Any page, even while typing |
+| Capture | `i` | New idea (full form) | Any page, not while typing |
+| Capture | `Enter` | Add the line (on a phone: add and stay for the next one) | In the capture sheet |
+| Capture | `Shift+Enter` | Add the line and type the next one | In the capture sheet |
+| Capture | `Alt+Enter` | Create the idea | On New idea |
+| Capture | `Alt+B` | Blank the selected words (cloze) | On New idea |
+| Go to | `g` then `t` | Today | Any page, not while typing |
+| Go to | `g` then `s` | Study (review) | Any page, not while typing |
+| Go to | `g` then `l` | Library | Any page, not while typing |
+| Go to | `g` then `w` | Train | Any page, not while typing |
+| Go to | `g` then `y` | You | Any page, not while typing |
+| Go to | `g` then `k` | This week | Any page, not while typing |
+| Go to | `,` | Settings | Any page, not while typing |
+| Go to | `/` | Search the library | Any page, not while typing |
+| Study | `r` | Start a review | Any page, not while typing |
+| Study | `1`–`9` | Pick an answer (multiple choice) | During a review |
+| Study | `Enter` or `→` | Next card | During a review |
+| Help | `Shift+?` | Show these shortcuts | Any page, not while typing |
+
+Standard keys keep their usual meaning: `Esc` closes a sheet or dialog; `Tab` moves between controls; `Ctrl+Z` undoes typing (in the capture line, it also brings a chip back). On a Mac, Alt is the Option key. None of these are Chrome or Edge shortcuts.
+<!-- shortcuts:end -->
+
 ## Environment variables
 
 See `.env.example`:

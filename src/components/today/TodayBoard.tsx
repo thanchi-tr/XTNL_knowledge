@@ -20,7 +20,6 @@ import {
 } from "@/lib/today-board";
 import type { DailyStreak } from "@/lib/streak-curve";
 import { fullDayInputOf, fullDayOf, type FullDayRingKind } from "@/lib/full-day";
-import { isTypingTarget } from "@/lib/capture-parse";
 import { announce, chime, mark } from "@/lib/celebrate";
 import type { T1Kind } from "@/lib/celebration-types";
 import type { PlaceLane } from "@/lib/life-types";
@@ -803,7 +802,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownKey]);
 
-  // ── R starts the review quest (the Next up card's key hint) ─────────────
+  // ── Next up (its 'R' key hint is the global 'r' of src/lib/shortcuts.ts,
+  // answered by <Shortcuts/> on every page, not only while the quest is next) ──
 
   const next = nextUpOf({
     quest: {
@@ -815,19 +815,6 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     },
     must: board.must,
   });
-  const questNext = next.kind === "quest";
-  useEffect(() => {
-    if (!questNext) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key.toLowerCase() !== "r" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat || e.defaultPrevented) return;
-      const target = e.target instanceof Element ? e.target : null;
-      if (isTypingTarget(target) || document.querySelector('[aria-modal="true"]')) return;
-      e.preventDefault();
-      router.push("/review");
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [questNext, router]);
 
   // ── Rows ────────────────────────────────────────────────────────────────
 
@@ -1061,7 +1048,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           ))}
         </div>
 
-        <div className="c2">
+        <div className="c2" data-tour="today-lanes">
           {board.must.length > 0 && (
             <Lane
               id="must"

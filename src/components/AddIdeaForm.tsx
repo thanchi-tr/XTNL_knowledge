@@ -23,15 +23,18 @@
  *   autosave (idea-handoff.ts). Creating from a draft archives it on the
  *   server and drops ?draft; creating from a handoff clears the sheet's line.
  *   A model hiccup comes back as {status:'error'}: shown, every field kept.
- * Keys: Ctrl/Cmd+Enter creates from anywhere in the form; the question field
- *   takes focus on load; Enter in a list row adds the next row and Backspace
- *   in an empty one removes it; Ctrl+Shift+C (or the Blank it pill) wraps the
- *   cloze selection in {{ }}.
+ * Keys (src/lib/shortcuts.ts 'idea-create', 'idea-blank'; neither is a Chrome
+ *   or Edge shortcut, where the old Ctrl+Enter and Ctrl+Shift+C are taken):
+ *   Alt+Enter creates from anywhere in the form; the question field takes
+ *   focus on load; Enter in a list row adds the next row and Backspace in an
+ *   empty one removes it; Alt+B (or the Blank it pill) wraps the cloze
+ *   selection in {{ }}. On a Mac, Alt is Option (read by the physical key).
  * The sticky Create bar rides on the on-screen keyboard (--kb).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ariaKeysOf, isKey, shortcutOf } from "@/lib/shortcuts";
 import type { Attribute, CollectionLabel } from "@prisma/client";
 import {
   submitIdea,
@@ -77,6 +80,10 @@ import {
 import "@/components/library/study.css";
 
 /** What a stopped submission's buttons say, by what the verdict suggests. */
+/** Create and Blank it, as shortcuts.ts lists them ('Alt+Enter', 'Alt+B'). */
+const CREATE_KEY = shortcutOf("idea-create").keys[0];
+const BLANK_KEY = shortcutOf("idea-blank").keys[0];
+
 const SUGGESTION_NOTE = {
   discard: "Nothing here the existing card lacks: keeping it is usually right.",
   enrich: "Enrich folds the new detail into the existing card.",
@@ -222,7 +229,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   const badgeRef = useRef<HTMLSpanElement | null>(null);
   const celebrated = useRef<string | null>(null);
   const clozeRef = useRef<HTMLTextAreaElement | null>(null);
-  /** Set by Create's click and Ctrl+Enter: a submit without it is the keyboard's Enter in a field. */
+  /** Set by Create's click and Alt+Enter: a submit without it is the keyboard's Enter in a field. */
   const explicitSubmit = useRef(false);
 
   const inset = useKeyboardInset();
@@ -495,7 +502,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     e.preventDefault();
     // The keyboard's action key in a row input (Android sends no Enter
     // keydown while composing, so the form submits implicitly): add the next
-    // row, as Enter does on desktop. Create and Ctrl+Enter mark their submit.
+    // row, as Enter does on desktop. Create and Alt+Enter mark their submit.
     const explicit = explicitSubmit.current;
     explicitSubmit.current = false;
     if (!explicit && rowEnter(document.activeElement)) return;
@@ -561,9 +568,9 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     });
   }
 
-  /** Ctrl/Cmd+Enter anywhere in the form: Create, when the content is ready. */
+  /** Alt+Enter (Mac Option+Enter) anywhere in the form: Create, when the content is ready. */
   function onFormKeyDown(e: React.KeyboardEvent<HTMLFormElement>) {
-    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.defaultPrevented || e.nativeEvent.isComposing) return;
+    if (!isKey(e.nativeEvent, CREATE_KEY)) return;
     e.preventDefault();
     if (!ready || isPending) return;
     explicitSubmit.current = true;
@@ -995,7 +1002,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
               onKeyDown={(e) => {
                 completeBind.onKeyDown(e);
                 if (e.defaultPrevented) return;
-                if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.code === "KeyC") {
+                if (isKey(e.nativeEvent, BLANK_KEY)) {
                   e.preventDefault();
                   blankSelection();
                 }
@@ -1006,17 +1013,17 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                 // The pill keeps its selection: it never takes focus (mousedown is held).
                 if (!(e.relatedTarget instanceof HTMLElement && e.relatedTarget.dataset.blankIt !== undefined)) setClozeSelected(false);
               }}
-              aria-keyshortcuts="Control+Shift+C"
+              aria-keyshortcuts={ariaKeysOf("idea-blank")}
               placeholder="The capital of France is {{Paris}}."
             />
             <div className="st-row" style={{ marginTop: 8, minHeight: 40 }}>
               {clozeSelected ? (
-                <ChipButton data-blank-it="" onMouseDown={(e) => e.preventDefault()} onClick={blankSelection} title="Blank the selected words (Ctrl+Shift+C)">
+                <ChipButton data-blank-it="" onMouseDown={(e) => e.preventDefault()} onClick={blankSelection} title={`Blank the selected words (${BLANK_KEY})`}>
                   Blank it
                 </ChipButton>
               ) : (
                 <span className="st-hint" style={{ marginTop: 0 }}>
-                  Select words to blank them (Ctrl+Shift+C on a keyboard).
+                  Select words to blank them ({BLANK_KEY} on a keyboard).
                 </span>
               )}
               <span className="sr-only" aria-live="polite">
@@ -1414,13 +1421,13 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         <Button variant="secondary" size="lg" onClick={handlePreview} disabled={isPreviewing || isPending || !ready}>
           {isPreviewing ? "Checking…" : "Check first"}
         </Button>
-        {/* A plain button with the kit's classes: Button sets aria-keyshortcuts from `kbd` alone, and Create answers both chords. */}
+        {/* A plain button with the kit's classes: its aria-keyshortcuts and keycap come from shortcuts.ts 'idea-create'. */}
         <button
           ref={createRef}
           type="submit"
           className={buttonClass("primary", "lg", false, "add-grow")}
           disabled={isPending || !ready}
-          aria-keyshortcuts="Control+Enter Meta+Enter"
+          aria-keyshortcuts={ariaKeysOf("idea-create")}
           onClick={() => {
             // The submit fires inside this click; the reset covers a click that submits nothing.
             explicitSubmit.current = true;
@@ -1431,7 +1438,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
         >
           {isPending ? "Filing…" : "Create"}
           <span className="kbd" aria-hidden="true">
-            Ctrl+Enter
+            {CREATE_KEY}
           </span>
         </button>
       </div>

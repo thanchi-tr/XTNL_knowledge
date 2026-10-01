@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the app icon. The same four as the web manifest's shortcuts,
+     plus the address setting this shell needs. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="quick_task"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_task"
+        android:shortcutShortLabel="@string/sc_task_short"
+        android:shortcutLongLabel="@string/sc_task_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtnl.app"
+            android:targetClass="com.xtnl.app.MainActivity"
+            android:data="xtnl://app/today?capture=task" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="review"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_review"
+        android:shortcutShortLabel="@string/sc_review_short"
+        android:shortcutLongLabel="@string/sc_review_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtnl.app"
+            android:targetClass="com.xtnl.app.MainActivity"
+            android:data="xtnl://app/review" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="new_idea"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_idea"
+        android:shortcutShortLabel="@string/sc_idea_short"
+        android:shortcutLongLabel="@string/sc_idea_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtnl.app"
+            android:targetClass="com.xtnl.app.MainActivity"
+            android:data="xtnl://app/add" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="change_address"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_link"
+        android:shortcutShortLabel="@string/sc_address_short"
+        android:shortcutLongLabel="@string/sc_address_long">
+        <intent
+            android:action="com.xtnl.app.CHANGE_ADDRESS"
+            android:targetPackage="com.xtnl.app"
+            android:targetClass="com.xtnl.app.MainActivity" />
+    </shortcut>
+</shortcuts>

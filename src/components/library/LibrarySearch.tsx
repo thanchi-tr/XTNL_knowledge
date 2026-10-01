@@ -20,6 +20,7 @@ import "./study.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { LIBRARY_SEARCH_EVENT, LIBRARY_SEARCH_PARAM, ariaKeysOf } from "@/lib/shortcuts";
 import type { CollectionLabel, QuestionType } from "@prisma/client";
 import { ideaHistory } from "@/app/actions/ideas";
 import { DIFFICULTY_META, type DifficultyBand } from "@/lib/difficulty";
@@ -95,6 +96,24 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
   const [removed, setRemoved] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const pushedIdea = useRef(false);
+
+  // '/' (src/lib/shortcuts.ts 'search') focuses the search box: by event while
+  // on /library, or by ?focus=search when it navigated here (the param is
+  // dropped once read, the rest of the query kept).
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const focusSearch = params.get(LIBRARY_SEARCH_PARAM) === "search";
+  useEffect(() => {
+    const focus = () => searchRef.current?.focus();
+    window.addEventListener(LIBRARY_SEARCH_EVENT, focus);
+    return () => window.removeEventListener(LIBRARY_SEARCH_EVENT, focus);
+  }, []);
+  useEffect(() => {
+    if (!focusSearch) return;
+    searchRef.current?.focus();
+    const url = new URL(window.location.href);
+    url.searchParams.delete(LIBRARY_SEARCH_PARAM);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [focusSearch]);
 
   const write = useCallback(
     (next: LibraryFilters, idea: string | null = openId) => {
@@ -201,7 +220,9 @@ export function LibrarySearch({ ideas, fields, allTags, now }: Props) {
           <span className="sr-only">Search ideas</span>
           <Icon name="search" />
           <input
+            ref={searchRef}
             type="search"
+            aria-keyshortcuts={ariaKeysOf("search")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={`Search ${plural(counts.all, "idea")}`}

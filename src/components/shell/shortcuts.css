@@ -1,0 +1,49 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   KEYBOARD SHORTCUTS (Shortcuts.tsx): the grouped list (the '?' sheet and
+   Settings), keycaps, and the 'g…' hint while a sequence waits.
+   Namespaced sc- (none is a Tailwind utility). Nothing animates: the hint
+   simply appears and leaves, so Full, Calm and Still look the same.
+   ===================================================================== */
+@layer components {
+  .sc-groups { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .sc-group { min-width: 0; }
+  .sc-head { margin: 0 0 4px; }
+  .sc-list { list-style: none; margin: 0; padding: 0; }
+  .sc-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 44px; padding: 6px 0; }
+  .sc-list > .sc-row + .sc-row { border-top: 1px solid var(--line-1); }
+  .sc-label { flex: 1 1 160px; min-width: 0; color: var(--ink-0); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+  .sc-scope { display: block; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .sc-keys { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; flex: none; max-width: 100%; }
+  .sc-combo { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .sc-sep { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .sc-kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 26px; padding: 0 7px; box-sizing: border-box;
+    font: 600 12px/1 var(--font-mono); color: var(--ink-0);
+    background: var(--sunken); border: 1px solid var(--line-ctl); border-bottom-width: 2px; border-radius: 6px;
+  }
+  .sc-foot { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+  .sc-foot p { margin: 0; font-size: 13px; line-height: 22px; color: var(--ink-1); }
+  .sc-foot .sc-kbd { height: 22px; min-width: 22px; }
+
+  /* The 'g…' hint: above where the tab bar sits, clear of the rail, and
+     bottom-left beside the sidebar from 1280 (the toast dock is bottom-right). */
+  .sc-hint {
+    position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));
+    z-index: var(--z-toast); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+    padding: 10px 12px; background: var(--overlay); border: 1px solid var(--line-2); border-radius: 14px;
+    box-shadow: var(--shadow-pop); color: var(--ink-1); font-size: 13px; line-height: 18px; pointer-events: none;
+  }
+  .sc-hint-lead { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-0); }
+  .sc-hint-dots { font-weight: 600; }
+  .sc-hint-list { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+  .sc-hint-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .sc-hint .sc-kbd { height: 22px; min-width: 22px; }
+  @media (min-width: 600px) {
+    .sc-hint { left: calc(var(--rail-w) + 16px); right: auto; max-width: min(520px, calc(100vw - var(--rail-w) - 32px)); }
+  }
+  @media (min-width: 1280px) {
+    .sc-hint { left: calc(var(--sidebar-w) + 20px); bottom: 20px; }
+  }
+}

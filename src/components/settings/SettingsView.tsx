@@ -9,6 +9,10 @@
  *              motion and autoAdvance; sound and haptics stay per device)
  *   Days       Capacity (the Today tile warns past it); rest weekdays, time off
  *              and "accept a loss" arrive with rest days and debt (M2)
+ *   Keyboard shortcuts
+ *              The same grouped list as the '?' sheet (shell/Shortcuts
+ *              ShortcutList, read from src/lib/shortcuts.ts) · Replay the tour
+ *              (tour-contract startTour)
  *   Study and data
  *              Today's focus (a fact) · Fields of interest (a sheet) ·
  *              Health sync (M4) · Data (Recompute attribution and the resets,
@@ -22,7 +26,9 @@ import { getResetPreview } from "@/app/actions/reset";
 import { setDailyCapacity } from "@/app/actions/tasks";
 import type { FieldFocus } from "@/lib/field-focus";
 import type { AutoAdvancePref, HapticsPref, MotionLevel, SoundPref, ThemePref } from "@/lib/celebration-types";
+import { startTour } from "@/lib/tour-contract";
 import { FieldFocusPanel } from "@/components/home/FieldFocusPanel";
+import { ShortcutList } from "@/components/shell/Shortcuts";
 import { DangerZone } from "@/components/taxonomy/DangerZone";
 import { ReattributeButton } from "@/components/taxonomy/ReattributeButton";
 import { Button } from "@/components/ui/Button";
@@ -51,6 +57,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
     <div className="set-grid">
       <div className="set-stack">
         <FeedbackSection />
+        <ShortcutsSection />
       </div>
       <div className="set-stack">
         <DaysSection capacity={data.capacity} />
@@ -163,6 +170,31 @@ function FeedbackSection() {
 }
 
 const MOTION_NAME: Record<MotionLevel, string> = { full: "Full", calm: "Calm", still: "Still" };
+
+// ─── Keyboard shortcuts ─────────────────────────────────────────────────────
+
+function ShortcutsSection() {
+  return (
+    <section aria-labelledby="set-keys">
+      <SectionHeader id="set-keys" title="Keyboard shortcuts" />
+      <div className="card set">
+        <div className="set-row">
+          <div className="n">
+            <b>The tour</b>
+            <span>A short walk through Today, capture, Study and these keys.</span>
+          </div>
+          <Button variant="secondary" icon="replay" onClick={() => startTour()}>
+            Replay the tour
+          </Button>
+        </div>
+        <div className="set-keys">
+          <p className="set-keys-note">For a hardware keyboard, on any screen. Press ? to see them anywhere in the app.</p>
+          <ShortcutList idPrefix="set-sc" />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 // ─── Days ───────────────────────────────────────────────────────────────────
 

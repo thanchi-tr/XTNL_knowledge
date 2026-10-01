@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web app's maskable icon keeps its art inside an 80% circle; the
+     adaptive icon's safe zone is 66 of 108 dp, so it is inset to fit. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_maskable"
+    android:inset="9%" />

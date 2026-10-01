@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 15 draws apps edge to edge by default. The web page lays itself
+         out for a normal window (its own top bar, tab bar and keyboard
+         handling), so the shell keeps the classic window: bars outside the
+         page, and the page resized above the keyboard (adjustResize). -->
+    <style name="Theme.Xtnl" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/xtnl_bg</item>
+        <item name="android:statusBarColor">@color/xtnl_bar</item>
+        <item name="android:navigationBarColor">@color/xtnl_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

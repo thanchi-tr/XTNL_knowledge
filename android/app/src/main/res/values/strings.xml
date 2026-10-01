@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">XTNL</string>
+    <string name="sc_task_short">Quick task</string>
+    <string name="sc_task_long">Capture a task</string>
+    <string name="sc_review_short">Review</string>
+    <string name="sc_review_long">Start a review</string>
+    <string name="sc_idea_short">New idea</string>
+    <string name="sc_idea_long">New idea</string>
+    <string name="sc_address_short">Address</string>
+    <string name="sc_address_long">Change the app\'s address</string>
+    <string name="offline_title">Can\'t reach XTNL</string>
+    <string name="offline_body">%1$s didn\'t answer. Check the connection, or that the server is running.</string>
+    <string name="retry">Retry</string>
+    <string name="change_address">Change address</string>
+    <string name="address_title">App address</string>
+    <string name="address_hint">https://your-app.vercel.app</string>
+    <string name="address_help">Emulator + dev server on this PC: http://10.0.2.2:3000. Phone on USB: run adb reverse tcp:3000 tcp:3000 and use http://localhost:3000.</string>
+    <string name="address_invalid">Enter an address starting with https:// (or http:// for a dev server).</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="reset">Default</string>
+</resources>

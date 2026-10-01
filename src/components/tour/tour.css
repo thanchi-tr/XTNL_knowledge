@@ -1,0 +1,52 @@
+@layer theme, base, components, art, effects, utilities;
+/* ═══ GUIDED TOUR (src/components/tour) ═════════════════════════════════════
+   A first-run walkthrough over the whole app: a veil that takes the clicks,
+   a spotlight cut out of the scrim by a box-shadow (decorative, aria-hidden),
+   and the card (role=dialog). Positions are written by Tour.tsx from the pure
+   placeCard() (tour-position.ts); nothing here transitions or animates: the
+   card's fade goes through the motion gateway (play), so Still shows the
+   resting style at once and Calm drops the movement.
+   Above sheets (z-sheet 50, the capture sheet 51), under a ceremony (70) and the fx layer (80). */
+
+@layer components {
+  .tour-root { position: fixed; inset: 0; z-index: calc(var(--z-sheet) + 10); pointer-events: none; }
+  .tour-veil { position: fixed; inset: 0; pointer-events: auto; background: transparent; }
+  .tour-root[data-spot="none"] .tour-veil { background: var(--scrim); }
+
+  .tour-spot {
+    position: fixed; left: 0; top: 0; width: 0; height: 0;
+    border-radius: var(--r-ctl);
+    box-shadow: 0 0 0 2px var(--ink-0), 0 0 0 200vmax var(--scrim);
+    pointer-events: none;
+  }
+  .tour-root[data-spot="none"] .tour-spot { visibility: hidden; }
+
+  .tour-card {
+    position: fixed; left: 12px; top: 12px;
+    width: min(360px, calc(100vw - 24px));
+    max-height: var(--tour-max-h, calc(50dvh - 32px));
+    overflow-y: auto; overscroll-behavior: contain;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 16px;
+    background: var(--overlay); color: var(--ink-0);
+    border: 1px solid var(--line-2); border-radius: var(--r-card);
+    box-shadow: var(--shadow-pop);
+    pointer-events: auto;
+  }
+  .tour-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .tour-count { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .tour-title { margin: 0; font-family: var(--font-display); font-size: 20px; line-height: 1.2; color: var(--ink-0); }
+  .tour-body { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-1); }
+  .tour-key {
+    display: inline-block; padding: 0 6px; margin: 0 1px;
+    font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--ink-0);
+    background: var(--sunken); border: 1px solid var(--line-2); border-radius: 6px;
+    white-space: nowrap;
+  }
+
+  .tour-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+  .tour-actions .btn { min-height: 44px; min-width: 44px; }
+  .tour-actions .tour-next { min-height: 44px; min-width: 72px; }
+  .tour-fill { flex: 1 1 0; }
+}

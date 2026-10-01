@@ -505,7 +505,7 @@ console.log("\n── Parent goals");
 
 console.log("\n── Hotkey");
 {
-  const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  const key = (k: string, mods: Partial<KeyLike & { code: string; keyCode: number }> = {}) => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
   const body = { tagName: "BODY", closest: () => null };
   const input = { tagName: "INPUT" };
   const area = { tagName: "textarea" };
@@ -514,22 +514,24 @@ console.log("\n── Hotkey");
   const inSheet = { tagName: "BUTTON", closest: (s: string) => (s === "[data-capture-sheet]" ? {} : null) };
   const h = (name: string, got: boolean, want: boolean) => report(`hotkey: ${name}`, got === want, `got ${got}`);
   h("'c' on the page opens", isCaptureHotkey(key("c"), body, false), true);
-  h("Ctrl+K opens", isCaptureHotkey(key("k", { ctrlKey: true }), body, false), true);
-  h("Cmd+K opens", isCaptureHotkey(key("K", { metaKey: true }), body, false), true);
+  h("Alt+N opens", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), body, false), true);
+  h("Mac Option+N (a dead tilde, keyCode 229) opens", isCaptureHotkey(key("Dead", { altKey: true, code: "KeyN", keyCode: 229 }), body, false), true);
   h("'c' in an input is ignored", isCaptureHotkey(key("c"), input, false), false);
   h("'c' in a textarea is ignored", isCaptureHotkey(key("c"), area, false), false);
   h("'c' in a select is ignored", isCaptureHotkey(key("c"), select, false), false);
   h("'c' in contenteditable is ignored", isCaptureHotkey(key("c"), editable, false), false);
-  // capture.md P2: Ctrl/Cmd+K works from any field and mid-review; 'c' keeps its guard.
-  h("Ctrl+K in an input opens", isCaptureHotkey(key("k", { ctrlKey: true }), input, false), true);
+  // capture.md P2: the chord (now Alt+N, never a browser key) works from any field and mid-review; 'c' keeps its guard.
+  h("Alt+N in an input opens", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), input, false), true);
   h("'c' during a review session is ignored", isCaptureHotkey(key("c"), body, true), false);
-  h("Ctrl+K during a review session opens", isCaptureHotkey(key("k", { ctrlKey: true }), body, true), true);
+  h("Alt+N during a review session opens", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), body, true), true);
   h("Shift+C is ignored", isCaptureHotkey(key("C", { shiftKey: true }), body, false), false);
   h("Ctrl+C is ignored (copy)", isCaptureHotkey(key("c", { ctrlKey: true }), body, false), false);
   h("Alt+C is ignored", isCaptureHotkey(key("c", { altKey: true }), body, false), false);
-  h("Ctrl+Shift+K is ignored", isCaptureHotkey(key("k", { ctrlKey: true, shiftKey: true }), body, false), false);
-  h("Ctrl+Cmd+K is ignored", isCaptureHotkey(key("k", { ctrlKey: true, metaKey: true }), body, false), false);
-  h("bare 'k' is ignored", isCaptureHotkey(key("k"), body, false), false);
+  h("Ctrl+K (the browsers' search key) is ignored", isCaptureHotkey(key("k", { ctrlKey: true }), body, false), false);
+  h("Cmd+K is ignored", isCaptureHotkey(key("k", { metaKey: true }), body, false), false);
+  h("Alt+Shift+N (Chrome's own chord) is ignored", isCaptureHotkey(key("N", { altKey: true, shiftKey: true, code: "KeyN" }), body, false), false);
+  h("Ctrl+Alt+N (AltGr) is ignored", isCaptureHotkey(key("n", { ctrlKey: true, altKey: true, code: "KeyN" }), body, false), false);
+  h("bare 'n' is ignored", isCaptureHotkey(key("n", { code: "KeyN" }), body, false), false);
   h("Tab is never taken", isCaptureHotkey(key("Tab"), body, false), false);
   h("a held key does not repeat-open", isCaptureHotkey(key("c", { repeat: true }), body, false), false);
   h("an IME composition is ignored", isCaptureHotkey(key("c", { isComposing: true }), body, false), false);
@@ -1137,27 +1139,31 @@ tire bring yes distant fill east paint language among today tonight tomorrow mon
   report("the exclude list is never read as a typo", excluded.length === 0, excluded.join(", "));
 }
 
-console.log("\n── Hotkey: Ctrl/Cmd+K from anywhere (P2)");
+console.log("\n── Hotkey: Alt+N from anywhere (P2)");
 {
-  const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  const key = (k: string, mods: Partial<KeyLike & { code: string; keyCode: number }> = {}) => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
   const body = { tagName: "BODY", closest: () => null };
   const input = { tagName: "INPUT", closest: () => null };
   const area = { tagName: "TEXTAREA", closest: () => null };
   const inSheet = { tagName: "INPUT", closest: (s: string) => (s === "[data-capture-sheet]" ? {} : null) };
   const h = (name: string, got: boolean, want: boolean) => report(`hotkey: ${name}`, got === want, `got ${got}`);
-  h("Ctrl+K in an INPUT opens", isCaptureHotkey(key("k", { ctrlKey: true }), input, false), true);
-  h("Ctrl+K in a TEXTAREA opens", isCaptureHotkey(key("k", { ctrlKey: true }), area, false), true);
-  h("Meta+K during review opens", isCaptureHotkey(key("k", { metaKey: true }), body, true), true);
-  h("Meta+K in a textarea during review opens", isCaptureHotkey(key("K", { metaKey: true }), area, true), true);
+  h("Alt+N in an INPUT opens", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), input, false), true);
+  h("Alt+N in a TEXTAREA opens", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), area, false), true);
+  h("Option+N during review opens", isCaptureHotkey(key("Dead", { altKey: true, code: "KeyN" }), body, true), true);
+  h("Option+N in a textarea during review opens", isCaptureHotkey(key("˜", { altKey: true, code: "KeyN" }), area, true), true);
+  h("Alt+N with no code (a synthetic event) reads the letter", isCaptureHotkey(key("n", { altKey: true }), area, false), true);
+  h("Alt on another physical key is ignored (Alt+B is /add's Blank it)", isCaptureHotkey(key("n", { altKey: true, code: "KeyB" }), area, false), false);
   h("'c' in an INPUT stays closed", isCaptureHotkey(key("c"), input, false), false);
   h("'c' during review stays closed", isCaptureHotkey(key("c"), body, true), false);
-  h("Ctrl+K inside the capture sheet does nothing", isCaptureHotkey(key("k", { ctrlKey: true }), inSheet, false), false);
+  h("Alt+N inside the capture sheet does nothing", isCaptureHotkey(key("n", { altKey: true, code: "KeyN" }), inSheet, false), false);
   h("'c' inside the capture sheet does nothing", isCaptureHotkey(key("c"), inSheet, false), false);
-  h("Ctrl+Shift+K is ignored", isCaptureHotkey(key("k", { ctrlKey: true, shiftKey: true }), input, false), false);
-  h("Ctrl+Alt+K is ignored", isCaptureHotkey(key("k", { ctrlKey: true, altKey: true }), input, false), false);
-  h("Ctrl+K while composing is ignored", isCaptureHotkey(key("k", { ctrlKey: true, isComposing: true }), input, false), false);
-  h("Ctrl+K held down does not repeat-open", isCaptureHotkey(key("k", { ctrlKey: true, repeat: true }), input, false), false);
-  h("Ctrl+K already handled is ignored", isCaptureHotkey(key("k", { ctrlKey: true, defaultPrevented: true }), area, false), false);
+  h("Ctrl+K in an INPUT no longer opens (it is Chrome's and Edge's)", isCaptureHotkey(key("k", { ctrlKey: true }), input, false), false);
+  h("Alt+Cmd+N is ignored", isCaptureHotkey(key("n", { altKey: true, metaKey: true, code: "KeyN" }), input, false), false);
+  h("Ctrl+Alt+N (AltGr) is ignored", isCaptureHotkey(key("n", { ctrlKey: true, altKey: true, code: "KeyN" }), input, false), false);
+  h("Alt+N while composing is ignored", isCaptureHotkey(key("n", { altKey: true, code: "KeyN", isComposing: true }), input, false), false);
+  h("Alt+N held down does not repeat-open", isCaptureHotkey(key("n", { altKey: true, code: "KeyN", repeat: true }), input, false), false);
+  h("Alt+N already handled is ignored", isCaptureHotkey(key("n", { altKey: true, code: "KeyN", defaultPrevented: true }), area, false), false);
+  h("'c' with keyCode 229 (an IME) is ignored", isCaptureHotkey(key("c", { keyCode: 229 }), body, false), false);
 }
 
 console.log("\n── Autocorrect: the task profile");

@@ -44,7 +44,7 @@ export function CharacterHero(p: Props) {
   const nextIsTitle = p.distance.nextAt === next;
   const material = crestMaterial(p.level, p.transcendent);
   return (
-    <section className="card hero-c" aria-labelledby="who">
+    <section className="card hero-c" aria-labelledby="who" data-tour="you-hero">
       <div className="hc-top">
         <Crest level={p.level} size={96} material={material} tracks={p.tracks} label={`Character level ${p.level}, ${material} crest`} />
         <div style={{ minWidth: 0 }}>
