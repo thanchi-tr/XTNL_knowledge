@@ -910,7 +910,7 @@ console.log("\n§7 goals");
   // SHORT.
   const short = (o: Partial<GoalInput> = {}) => goal({ horizon: "SHORT", krTarget: 1, progress: [{ day: CREATED, qty: 1 }], today: addDays(CREATED, 3), ...o });
   const same = closeDecision(short({ today: CREATED }));
-  check("SHORT: a same-day close pays 0", same.pays === 0 && same.why === "set today (3 needed)", same.why ?? "");
+  check("SHORT: a same-day close pays 0", same.pays === 0 && same.why === "set today; it pays once 3 days old", same.why ?? "");
   const s3 = closeDecision(short());
   check("SHORT: lifetime 3 at g 1 pays 1, depth 0", s3.pays === 1 && s3.why === null && s3.depth === 0 && s3.g === 1 && s3.reason === "GOAL_SHORT");
   const sHalf = closeDecision(short({ progress: [{ day: CREATED, qty: 0.5 }] }));
@@ -932,7 +932,7 @@ console.log("\n§7 goals");
   const m80 = closeDecision(goal());
   check("MID: g 0.8 at lifetime 21 pays 4.8 and adds depth 1", m80.pays === 4.8 && m80.depth === 1 && m80.why === null && m80.stated === 6 && m80.bar === 0.7, `${m80.pays} ${m80.depth}`);
   const m20 = closeDecision(goal({ today: addDays(CREATED, 20) }));
-  check("MID: lifetime 20 pays 0 'set 20 days ago (21 needed)'", m20.pays === 0 && m20.why === "set 20 days ago (21 needed)", m20.why ?? "");
+  check("MID: lifetime 20 pays 0 'set 20 days ago; it pays once 21 days old'", m20.pays === 0 && m20.why === "set 20 days ago; it pays once 21 days old", m20.why ?? "");
   const close = addDays(CREATED, 40);
   const twoMids = [paid("a", "MID", "CRAFT", addDays(close, -29), 6), paid("b", "MID", "CARE", addDays(close, -3), 4.2)];
   const m3 = closeDecision(goal({ today: close, goalMints: twoMids }));
@@ -946,7 +946,7 @@ console.log("\n§7 goals");
   // LONG.
   const long = (o: Partial<GoalInput> = {}) => goal({ horizon: "LONG", track: "CRAFT", krTarget: 10, progress: [{ day: CREATED, qty: 9 }], today: addDays(CREATED, 90), ...o });
   const l89 = closeDecision(long({ today: addDays(CREATED, 89) }));
-  check("LONG: lifetime 89 pays 0", l89.pays === 0 && l89.why === "set 89 days ago (90 needed)", l89.why ?? "");
+  check("LONG: lifetime 89 pays 0", l89.pays === 0 && l89.why === "set 89 days ago; it pays once 90 days old", l89.why ?? "");
   const l90 = closeDecision(long());
   check("LONG: g 0.9 at lifetime 90 pays 18 and adds depth 2", l90.pays === 18 && l90.depth === 2 && l90.reason === "GOAL_LONG", `${l90.pays} ${l90.depth}`);
   const lAgain = closeDecision(long({ goalMints: [paid("x", "LONG", "BODY", addDays(CREATED, 10), 20)] }));

@@ -61,7 +61,7 @@ const LADDER: GoalLadderData = {
   ],
   closed: [
     goal("g5", "Sort the garage", "MID", "DUTY", 0.8, "4 of 5 steps", "2026-09-26", { closed: { paid: 4.8, depth: 1, day: "2026-09-26", why: null } }),
-    goal("g6", "Book the dentist", "SHORT", "CARE", 1, "1 of 1 step", "2026-09-29", { closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago (3 needed)" } }),
+    goal("g6", "Book the dentist", "SHORT", "CARE", 1, "1 of 1 step", "2026-09-29", { closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago; it pays once 3 days old" } }),
   ],
 };
 

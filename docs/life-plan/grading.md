@@ -247,7 +247,7 @@ G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants i
     1. 'before life MP began';
     2. 'not measured: add a step or a number';
     3. 'not finished' (SHORT) or 'below 70%';
-    4. 'set 5 days ago (21 needed)' ('set today (3 needed)', 'set 1 day ago (3 needed)');
+    4. 'set 5 days ago; it pays once 21 days old' ('set today; it pays once 3 days old', 'set 1 day ago; it pays once 3 days old');
     5. '2 Short goals already paid this week', '2 Mid goals paid in the last 30 days' or 'a Long goal paid in the last 91 days'.
   - A SHORT that passes pays 1, trimmed to the room left in the close day's life week. A partial trim's why is 'trimmed by the life week's 8 MP cap'; with no room left it pays 0, 'the life week's 8 MP cap is reached'.
   - A goal whose goalMp was set to 0 pays 0 with the why 'it states 0 MP'.

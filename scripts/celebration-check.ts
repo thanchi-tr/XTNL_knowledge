@@ -703,10 +703,10 @@ function life() {
   check("goals: What moved has 'MP paid +4.8' and 'Duty depth +1'", mid[0]?.what.some((w) => w.label === "MP paid" && w.value === "+4.8") && mid[0]?.what.some((w) => w.label === "Duty depth" && w.value === "+1"));
   const short = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1, paid: 1, why: null, track: "BODY", depth: 0 })));
   check("goals: a SHORT paid in full says 'It pays the 1 MP stated when you set it.' and adds no depth row", (short[0]?.facts.lines ?? [])[0] === "It pays the 1 MP stated when you set it." && !short[0]?.what.some((w) => /depth/.test(w.label)), JSON.stringify(short[0]?.facts.lines));
-  const zero = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1, paid: 0, why: "set 1 day ago (3 needed)", track: "BODY" })));
+  const zero = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1, paid: 0, why: "set 1 day ago; it pays once 3 days old", track: "BODY" })));
   check(
     "goals: finished but paid 0 states the why, with the progress as its number",
-    zero.length === 1 && (zero[0].facts.lines ?? [])[0] === "Finished at 100%. It pays no MP: set 1 day ago (3 needed)." && zero[0].facts.amounts == null && zero[0].facts.numeral?.to === 100,
+    zero.length === 1 && (zero[0].facts.lines ?? [])[0] === "Finished at 100%. It pays no MP: set 1 day ago; it pays once 3 days old." && zero[0].facts.amounts == null && zero[0].facts.numeral?.to === 100,
     JSON.stringify(zero[0]?.facts)
   );
   const unknown = run(...goals(goal({ horizon: "SHORT", goalMp: 1, closedScore: 1 })));
@@ -717,8 +717,8 @@ function life() {
     long.length === 1 && long[0].kind === "goal-long" && long[0].tier === 3 && (long[0].facts.grants ?? []).join("|") === "+18 MP: 20 × 90%|Craft depth +2" && long[0].facts.amounts?.[0]?.value === 18,
     JSON.stringify(long[0]?.facts.grants)
   );
-  const longZero = run(...goals(goal({ horizon: "LONG", goalMp: 20, closedScore: 0.9, paid: 0, why: "set 89 days ago (90 needed)", track: "CRAFT" })));
-  check("goals: a LONG paid 0 says why on its cause line, with no grant", longZero[0]?.facts.cause === "Finished at 90%. It pays no MP: set 89 days ago (90 needed)." && (longZero[0]?.facts.grants ?? []).length === 0, JSON.stringify(longZero[0]?.facts));
+  const longZero = run(...goals(goal({ horizon: "LONG", goalMp: 20, closedScore: 0.9, paid: 0, why: "set 89 days ago; it pays once 90 days old", track: "CRAFT" })));
+  check("goals: a LONG paid 0 says why on its cause line, with no grant", longZero[0]?.facts.cause === "Finished at 90%. It pays no MP: set 89 days ago; it pays once 90 days old." && (longZero[0]?.facts.grants ?? []).length === 0, JSON.stringify(longZero[0]?.facts));
 
   // Every Seal and Ascension above is honest.
   const dishonest = all.filter((d) => d.tier >= 2).map((d) => [d.dedupeKey, honestyProblem(draftToEvent(d, "x"))] as const).filter(([, p]) => p !== null);

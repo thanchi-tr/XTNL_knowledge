@@ -160,7 +160,7 @@ export interface GoalRow {
   // M5, from the goal's 'mp:GOAL:<id>' decision row. Optional: older snapshots parse.
   /** MP the close actually paid (0 allowed). Absent when no decision row was read: then no MP is stated. */
   paid?: number;
-  /** Why it paid less than its scaled amount, or nothing ('set 12 days ago (21 needed)'); null when paid in full. */
+  /** Why it paid less than its scaled amount, or nothing ('set 12 days ago; it pays once 21 days old'); null when paid in full. */
   why?: string | null;
   /** The goal's track (BODY | DUTY | CRAFT | CARE). */
   track?: string | null;

@@ -324,7 +324,7 @@ export function goalLimitWindow(input: GoalInput): GoalLimitWindow {
  *   1. not launched                 'before life MP began'
  *   2. g null                       'not measured: add a step or a number'
  *   3. g below the bar              'not finished' (SHORT) / 'below 70%'
- *   4. lifetime < 3 / 21 / 90 days  'set 5 days ago (21 needed)'
+ *   4. lifetime < 3 / 21 / 90 days  'set 5 days ago; it pays once 21 days old'
  *   5. SHORT: 2 already paid in the close day's life week
  *   6. MID: 2 paid in the days (today − 30, today]
  *   7. LONG: 1 paid in the days (today − 91, today]
@@ -345,7 +345,7 @@ export function closeDecision(input: GoalInput): GoalPayout {
   if (g == null) return refuse("not measured: add a step or a number");
   if (g + 1e-9 < rule.bar) return refuse(rule.binary ? "not finished" : `below ${Math.round(rule.bar * 100)}%`);
   const lifetime = daysBetween(input.createdDay, input.today);
-  if (lifetime < rule.minLifetimeDays) return refuse(`set ${daysText(Math.max(0, lifetime))} (${rule.minLifetimeDays} needed)`);
+  if (lifetime < rule.minLifetimeDays) return refuse(`set ${daysText(Math.max(0, lifetime))}; it pays once ${rule.minLifetimeDays} days old`);
 
   const ownKey = goalMintKey(input.id);
   const limit = goalLimitWindow(input);

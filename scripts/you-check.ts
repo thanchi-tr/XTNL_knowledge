@@ -450,8 +450,8 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   check("ladder (U5/U6): a closed goal that was not measured shows no %", closedUnmeasured.meta === "Mid · Duty · not measured" && !closedUnmeasured.meta.includes("%"), closedUnmeasured.meta);
   const closed = goalRowCopy(item("MID", { g: 0.8, closed: { paid: 4.8, depth: 1, day: "2026-09-26", why: null } }), true, today);
   check("ladder: closed and paid", closed.closed === "Closed · paid ⬡ 4.8 · Duty depth +1" && closed.pays === null && closed.preview === null, closed.closed ?? "");
-  const closed0 = goalRowCopy(item("SHORT", { g: 1, closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago (3 needed)" } }), true, today);
-  check("ladder: closed for nothing says why", closed0.closed === "Closed · paid 0: set 1 day ago (3 needed)", closed0.closed ?? "");
+  const closed0 = goalRowCopy(item("SHORT", { g: 1, closed: { paid: 0, depth: 0, day: "2026-09-29", why: "set 1 day ago; it pays once 3 days old" } }), true, today);
+  check("ladder: closed for nothing says why", closed0.closed === "Closed · paid 0: set 1 day ago; it pays once 3 days old", closed0.closed ?? "");
   const before = goalRowCopy(item("MID", { g: 0.8, preview: payout("MID", 0.8, 0, "before life MP began") }), false, today);
   check("ladder: before life counts, no stated MP and no preview", before.pays === null && before.preview === null && before.meta === "Mid · Duty · 80%");
   const far = goalRowCopy(item("LONG", { g: null, dueDay: "2027-03-01" }), true, today);

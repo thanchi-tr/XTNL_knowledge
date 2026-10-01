@@ -485,7 +485,7 @@ closeDecision(input) returns a GoalPayout {horizon, track, reason, stated, bar, 
   1. not launched → 'before life MP began';
   2. g null → 'not measured: add a step or a number';
   3. g < bar → 'not finished' (SHORT) or 'below 70%';
-  4. lifetime < 3 / 21 / 90 → 'set N days ago (21 needed)';
+  4. lifetime < 3 / 21 / 90 → 'set N days ago; it pays once 21 days old';
   5. SHORT: ≥ 2 Short goals already paid in the same life week → '2 Short goals already paid this week';
   6. MID: ≥ 2 paid with day in (today − 30, today] → '2 Mid goals paid in the last 30 days';
   7. LONG: ≥ 1 paid in (today − 91, today] → 'a Long goal paid in the last 91 days'.
@@ -533,7 +533,7 @@ No UI calls them until phase B.
 - Closed ladder items are measured as of min(close day, due day) (`closedGoalReading`, U5).
 - The shared floored percentage is `goalPercent` (U6).
 - The ladder's cache key is 'goalLadder:<user>:<today>'.
-- More why strings: 'trimmed by the life week's 8 MP cap', 'set today (3 needed)' and 'it states 0 MP'.
+- More why strings: 'trimmed by the life week's 8 MP cap', 'set today; it pays once 3 days old' and 'it states 0 MP'.
 
 **Files.** new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/goals.ts; new C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/lib/goals-server.ts; C:/Users/Thanc/OneDrive/Desktop/XTNL-idea/src/app/actions/tasks.ts
 
