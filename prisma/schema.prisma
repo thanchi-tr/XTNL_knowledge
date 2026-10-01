@@ -849,3 +849,50 @@ model UserPrefs {
 
   @@schema("public")
 }
+
+// ── Body weight ────────────────────────────────────────────────────────────
+// A record, never a reward: no reading pays XP or MP, and nothing in the
+// economy reads these tables. Kept in kilograms; the unit is display only.
+// src/lib/weight.ts holds the rules (trend, rate, projection), and
+// src/lib/weight-server.ts the reads and writes.
+
+/// One weigh-in per life day: logging again that day replaces it.
+model BodyWeight {
+  id         String   @id @default(cuid())
+  userId     String
+  /// The life day (src/lib/life-day.ts dateColumn): a 01:00 weigh-in counts for the day before.
+  day        DateTime @db.Date
+  /// Kilograms, two decimals.
+  kg         Decimal  @db.Decimal(6, 2)
+  /// When it was logged (or measured, for an import).
+  measuredAt DateTime @default(now())
+  /// manual | capture | import
+  source     String   @default("manual")
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, day])
+  @@index([userId, day])
+  @@schema("public")
+}
+
+/// The weight goal and the unit weights are shown in. One row per user.
+model WeightGoal {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  /// kg | lb (display only; readings are stored in kg).
+  unit       String    @default("kg")
+  /// The target, in kg. Null: no target set, the card shows the trend only.
+  targetKg   Decimal?  @db.Decimal(6, 2)
+  /// An optional date to reach it by (a life day).
+  targetDay  DateTime? @db.Date
+  /// The trend weight when the target was set: the bar measures progress from here.
+  startKg    Decimal?  @db.Decimal(6, 2)
+  /// When the target was set (a life day).
+  startDay   DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@schema("public")
+}

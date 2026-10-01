@@ -32,6 +32,13 @@ import { MUST_WARNING, MUST_WARNING_BEFORE, duplicateNote, ideaChipLabel, insert
  * Under the chips: the quiet duplicate note ('Already on your board'), and
  * a Must with no day to be judged on — the warning and its four fix chips,
  * which the first Enter stops on (QuickCapture's block-once gate).
+ *
+ * A weigh-in line ('weight 72.4', weight-capture.ts) shows one chip and
+ * nothing else — 'Weight · 72.4 kg · today', no price, no feeds: a reading
+ * is a record, not a task. Tapping it keeps the whole line as text (a task)
+ * on the sheet and the server alike. A line shaped like a weigh-in whose
+ * number is out of range is read as a task, and says so under its chips
+ * (the same block-once gate as a Must).
  */
 
 const TOKEN_ICON: Partial<Record<CaptureToken["field"], IconName>> = {
@@ -63,6 +70,12 @@ interface Props {
   /** The four ways to give the Must a day (by today · by tmr · by fri · every <weekday>). */
   mustFixes: { id: string; label: string; insert: Insert }[];
   onFix: (insert: Insert) => void;
+  /** The line is a weigh-in: its one chip's label ('Weight · 72.4 kg · today'), or null. */
+  weighIn?: string | null;
+  /** Tapping the weigh-in chip: the whole line stays text. */
+  onKeepAsText?: () => void;
+  /** A weigh-in-shaped line whose number is out of range: what the sheet says under the chips, or null. */
+  weightRange?: string | null;
 }
 
 interface Grade {
@@ -130,7 +143,23 @@ function GradeText({ grade, parsed }: { grade: Grade; parsed: ParsedCapture }) {
   );
 }
 
-export function CaptureChips({ text, parsed, goals, rawBefore, onRevert, compact, feedsOpen, onToggleFeeds, duplicate, mustBlocked, mustFixes, onFix }: Props) {
+export function CaptureChips({
+  text,
+  parsed,
+  goals,
+  rawBefore,
+  onRevert,
+  compact,
+  feedsOpen,
+  onToggleFeeds,
+  duplicate,
+  mustBlocked,
+  mustFixes,
+  onFix,
+  weighIn = null,
+  onKeepAsText,
+  weightRange = null,
+}: Props) {
   const grade = useMemo(() => gradeOf(parsed, rawBefore), [parsed, rawBefore]);
   const parent = useMemo(
     () => (parsed.parentHint && goals ? matchParentGoal(parsed.parentHint, goals) : null),
@@ -146,6 +175,29 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert, compact
   }, [grade]);
 
   if (!text.trim()) return null;
+
+  if (weighIn) {
+    const words = text.trim();
+    return (
+      <div className="capture-chips">
+        <ul className="capture-chip-row" aria-label="How the line was read">
+          <li>
+            <button
+              type="button"
+              className="chip btn-chip capture-chip"
+              onClick={onKeepAsText}
+              onMouseDown={(e) => e.preventDefault()}
+              title={`Tap to keep “${words}” as text`}
+              aria-label={`${weighIn}. Tap to keep “${words}” as text.`}
+            >
+              <span className="num">{weighIn}</span>
+              <Icon name="x" className="capture-chip-x" />
+            </button>
+          </li>
+        </ul>
+      </div>
+    );
+  }
 
   const track = parsed.track ?? grade?.sizing.track ?? null;
   const hasFeeds = !!grade && !!track && feeds.length > 0;
@@ -262,6 +314,12 @@ export function CaptureChips({ text, parsed, goals, rawBefore, onRevert, compact
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {weightRange && (
+        <div className="capture-warning">
+          <p aria-live="polite">{weightRange}</p>
         </div>
       )}
 

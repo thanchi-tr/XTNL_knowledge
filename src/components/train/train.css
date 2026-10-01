@@ -1,0 +1,93 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   TRAIN — the Body weight card (src/components/train). Imported by
+   src/app/train/page.tsx and /dev/style/train. Namespaced wt- (a global
+   sheet is never removed on navigation, and no name may be a Tailwind
+   utility). Built on the kit: .card .sunk .meter .btn .chip.btn-chip.
+   Floors: 12 px text, 40 px targets (44 for the log button and the
+   unit switch), 16 px inputs at every width. Nothing here animates.
+   ===================================================================== */
+@layer components {
+  .wt-card { display: flex; flex-direction: column; gap: 16px; }
+  .wt-eyebrow { margin: 0; }
+  .wt-empty { margin: 0; color: var(--ink-1); }
+  .wt-head { display: flex; flex-direction: column; gap: 4px; }
+  .wt-head p { margin: 0; }
+  .wt-trend { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; color: var(--ink-0); }
+  .wt-trend-unit { font: 600 16px/20px var(--font-ui); color: var(--ink-1); }
+
+  /* ---------- target ---------- */
+  .wt-set { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .wt-set p { margin: 0; }
+  .wt-target { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+  .wt-target p { margin: 0; }
+  .wt-target-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .wt-target-h .btn { min-height: 44px; margin-right: -10px; }
+  .wt-progress { margin-top: 4px; }
+  .wt-ends { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .wt-proj { color: var(--ink-0); }
+  .wt-note { color: var(--ink-1); }
+
+  /* ---------- chart (labels are HTML so they stay 12 px at every width) ---------- */
+  .wt-chart { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .wt-plot { position: relative; width: 100%; }
+  .wt-plot > svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .wt-lbl {
+    position: absolute; white-space: nowrap; pointer-events: none; transform: translate(0, -50%);
+    font: 500 12px/14px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums lining-nums;
+  }
+  .wt-lbl-target { transform: translate(0, -115%); color: var(--ink-1); background: var(--card); padding: 0 3px; border-radius: 4px; }
+  .wt-axis { display: flex; justify-content: space-between; width: 85%; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .wt-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .wt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ---------- log form and goal form ---------- */
+  .wt-form, .wt-goal { display: flex; flex-direction: column; gap: 8px; }
+  .wt-label { display: block; font: 600 13px/18px var(--font-ui); color: var(--ink-1); }
+  .wt-field { display: flex; gap: 8px; align-items: stretch; }
+  .wt-input {
+    flex: 1 1 auto; min-width: 0; width: 100%; min-height: 48px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: var(--sunken);
+    padding: 10px 14px; font: 500 16px/1.4 var(--font-ui); color: var(--ink-0);
+  }
+  .wt-input::placeholder { color: var(--ink-2); }
+  .wt-input:hover { border-color: var(--ink-2); }
+  .wt-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .wt-input:disabled { opacity: .6; cursor: not-allowed; }
+  .wt-input[aria-invalid="true"] { border-color: var(--ink-0); }
+  .wt-unit-btn {
+    flex: none; min-width: 56px; min-height: 48px; border-radius: var(--r-ctl);
+    border: 1px solid var(--line-ctl); background: transparent; color: var(--ink-0);
+    font: 600 15px/1 var(--font-ui); cursor: pointer;
+  }
+  .wt-unit-btn:hover:not(:disabled) { background: var(--raised); }
+  .wt-unit-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .wt-unit-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .wt-unit-tag { flex: none; display: inline-flex; align-items: center; padding: 0 6px; font: 600 15px/1 var(--font-ui); color: var(--ink-1); }
+  .wt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wt-log { min-height: 44px; flex: 1 1 140px; }
+  .wt-msg { margin: 0; }
+  .wt-hint { margin: 0; }
+  .wt-date { flex: none; }
+  .wt-goal-actions { margin-top: 8px; }
+  .wt-goal-actions .btn { min-height: 44px; }
+
+  /* ---------- history ---------- */
+  .wt-hist { display: flex; flex-direction: column; gap: 6px; }
+  .wt-hist h3 { margin: 0; }
+  .wt-list { list-style: none; margin: 0; padding: 0; }
+  .wt-item { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+  .wt-item + .wt-item { border-top: 1px solid var(--line-1); }
+  .wt-day { flex: 1 1 auto; min-width: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wt-val { flex: none; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--ink-0); }
+  .wt-u { font-size: 12px; font-weight: 500; color: var(--ink-2); }
+  .wt-del {
+    flex: none; min-height: 40px; min-width: 64px; padding: 0 10px; border-radius: 10px;
+    border: 1px solid transparent; background: transparent; color: var(--ink-1);
+    font: 600 13px/1 var(--font-ui); cursor: pointer; white-space: nowrap;
+  }
+  .wt-del:hover:not(:disabled) { color: var(--ink-0); background: var(--raised); }
+  .wt-del:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .wt-del:disabled { opacity: .45; cursor: not-allowed; }
+  .wt-del.wt-armed { border-color: var(--line-ctl); color: var(--ink-0); }
+}

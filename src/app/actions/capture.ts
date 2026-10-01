@@ -7,6 +7,17 @@ import { cached, invalidate } from "@/lib/cache";
 import { getCurrentUserId } from "@/lib/user";
 import { dateColumn, todayKey, type DayKey } from "@/lib/life-day";
 import { parseCapture, sanitizeCaptureInput, type CaptureSpan } from "@/lib/capture-parse";
+import type { WeightUnit } from "@/lib/weight";
+import { deleteWeightCore, loadWeightGoal, logWeightCore } from "@/lib/weight-server";
+import {
+  WEIGH_IN_NOT_AN_EDIT,
+  mayBeWeighIn,
+  routeWeighIn,
+  undoWeighInCore,
+  weighInCore,
+  type UndoWeighInDeps,
+  type WeighInDeps,
+} from "@/components/capture/weight-capture";
 import {
   createTemplateCore,
   loadActiveTitles,
@@ -92,6 +103,33 @@ export interface CapturedItem {
   oldKept?: boolean;
   /** An 'idea: Q :: A' draft is being filed as an Idea in the background (fileIdeaDraftCore); no points are shown. */
   filing?: boolean;
+  /**
+   * Set when the line was a weigh-in (components/capture/weight-capture.ts):
+   * the reading was logged for its life day and no task was written. `id` is
+   * then 'weight:<day>', `projectedXp` 0, `href` '/train'; `kind`, `mode` and
+   * `where.lane` are placeholders nothing reads for a weigh-in.
+   */
+  weight?: CapturedWeight;
+}
+
+/** Where a body-weight reading came from (BodyWeight.source). */
+export type WeightSource = "manual" | "capture" | "import";
+
+/** A weigh-in from the capture line, and what its Undo needs. */
+export interface CapturedWeight {
+  /** The life day the reading is for. */
+  day: DayKey;
+  /** The reading as stored, in kg. */
+  kg: number;
+  /** The unit it is shown in: the one typed, else the user's. */
+  unit: WeightUnit;
+  /** The day as the line said it, against the server's life day at the save. */
+  when: "today" | "yesterday";
+  /** The reading this one replaced (Undo puts it back), or null: Undo deletes the day's reading. */
+  previousKg: number | null;
+  previousSource: WeightSource | null;
+  /** Whether Undo is on offer: false for a value already logged (nothing was written) or a replaced reading the server could not see. */
+  undoable: boolean;
 }
 
 /**
@@ -119,6 +157,63 @@ function prepareLine(text: unknown, reverted: unknown, today: DayKey): PreparedL
 /** A key the sheet sent with a line, or none; tasks.ts validates it (cleanCaptureKey). */
 function keyOf(key: unknown): string | null {
   return typeof key === "string" ? key : null;
+}
+
+// ── Weigh-ins (weight-capture.ts holds the rules; these bind them to the user) ──
+
+const asSource = (s: string): WeightSource => (s === "capture" || s === "import" ? s : "manual");
+
+/** The reading a life day holds now, read fresh (Undo compares against it). Throws when the table is missing; callers fail soft. */
+async function readWeightDay(userId: string, day: DayKey): Promise<{ kg: number; source: WeightSource } | null> {
+  const row = await prisma.bodyWeight.findUnique({ where: { userId_day: { userId, day: dateColumn(day) } }, select: { kg: true, source: true } });
+  return row ? { kg: Number(row.kg), source: asSource(row.source) } : null;
+}
+
+/** The user's unit for a bare number; loadWeightGoal fails soft to 'kg'. Read at most once per loader. */
+function unitLoader(userId: string): () => Promise<WeightUnit> {
+  let unit: Promise<WeightUnit> | null = null;
+  return () => (unit ??= loadWeightGoal(userId).then((g) => g.unit));
+}
+
+function weighInDeps(userId: string, loadUnit: () => Promise<WeightUnit>): WeighInDeps {
+  return {
+    loadUnit,
+    readDay: (day) => readWeightDay(userId, day),
+    log: (kg, opts) => logWeightCore(userId, kg, opts),
+  };
+}
+
+function undoWeighInDeps(userId: string): UndoWeighInDeps {
+  return {
+    readDay: (day) => readWeightDay(userId, day),
+    log: (kg, opts) => logWeightCore(userId, kg, opts),
+    remove: async (day) => {
+      const r = await deleteWeightCore(userId, day);
+      return r.ok ? { ok: true } : { ok: false, error: r.error };
+    },
+  };
+}
+
+/**
+ * A line that is a weigh-in, logged (weighInCore), or null: then it is a
+ * task. A line that cannot be one in either unit costs nothing here (no
+ * read); only a bare number reads the user's unit.
+ */
+async function weighInFromCapture(
+  text: unknown,
+  reverted: unknown,
+  today: DayKey,
+  loadUnit?: () => Promise<WeightUnit>
+): Promise<CaptureResult<CapturedItem> | null> {
+  const input = sanitizeCaptureInput(text, reverted);
+  if (!mayBeWeighIn(input.text, input.reverted, today)) return null;
+  try {
+    const userId = getCurrentUserId();
+    return await weighInCore(weighInDeps(userId, loadUnit ?? unitLoader(userId)), input.text, input.reverted, today);
+  } catch (err) {
+    console.error("Capture weigh-in failed:", err);
+    return { ok: false, error: SAVE_FAILED };
+  }
 }
 
 /** Whether a saved line files itself as an Idea after the response: a new idea draft with an answer. */
@@ -196,7 +291,16 @@ export async function createFromCapture(
   reverted?: CaptureSpan[],
   opts?: { refresh?: boolean; captureKey?: string }
 ): Promise<CaptureResult<CapturedItem>> {
-  const line = prepareLine(text, reverted, todayKey());
+  const today = todayKey();
+  // A weigh-in ('weight 72.4') is logged, never saved as a task. A resend is
+  // safe by nature: one reading per life day, and the same value again writes nothing.
+  const weighed = await weighInFromCapture(text, reverted, today);
+  if (weighed) {
+    if (weighed.ok && opts?.refresh === true) refresh();
+    return weighed;
+  }
+
+  const line = prepareLine(text, reverted, today);
   if (!line.ok) return line;
 
   let userId: string;
@@ -252,7 +356,19 @@ export async function recaptureFromCapture(
   opts?: { refresh?: boolean; captureKey?: string }
 ): Promise<CaptureResult<CapturedItem>> {
   if (typeof oldId !== "string" || !oldId) return { ok: false, error: "That capture is gone.", code: "gone" };
-  const line = prepareLine(text, reverted, todayKey());
+  const today = todayKey();
+  // A weigh-in is not a task row, so it cannot replace one (the sheet offers no Edit for it and stops this first).
+  const input = sanitizeCaptureInput(text, reverted);
+  if (mayBeWeighIn(input.text, input.reverted, today)) {
+    let loadUnit: () => Promise<WeightUnit> = async () => "kg";
+    try {
+      loadUnit = unitLoader(getCurrentUserId());
+    } catch {
+      /* the default unit decides */
+    }
+    if (await routeWeighIn(input.text, input.reverted, today, loadUnit)) return { ok: false, error: WEIGH_IN_NOT_AN_EDIT };
+  }
+  const line = prepareLine(text, reverted, today);
   if (!line.ok) return line;
 
   let userId: string;
@@ -311,9 +427,18 @@ export async function createManyFromCapture(
   // One life day for the whole list: every line parses as the preview drew it.
   const today = todayKey();
   const saved: SavedLine[] = [];
+  // One read of the user's unit for the whole list, and only if a line needs it.
+  const loadUnit = userId ? unitLoader(userId) : undefined;
+  let weighed = 0;
 
   const results = await runCaptureBatch<CapturedItem>(lines, async (line) => {
     if (!userId) return { ok: false, error: SAVE_FAILED };
+    // A pasted weigh-in is logged like a typed one, as that line's own result.
+    const weighIn = await weighInFromCapture(line.text, line.reverted, today, loadUnit);
+    if (weighIn) {
+      if (weighIn.ok) weighed += 1;
+      return weighIn;
+    }
     const prepared = prepareLine(line.text, line.reverted, today);
     if (!prepared.ok) return prepared;
     const created = await createTemplateCore(userId, prepared.parsed, { rawText: prepared.text, captureSource: "quick", captureKey: line.captureKey });
@@ -325,9 +450,33 @@ export async function createManyFromCapture(
   if (userId && saved.length > 0) {
     invalidate("life", "activity");
     afterSave(userId, saved);
-    if (opts?.refresh === true) refresh();
   }
+  if (userId && saved.length + weighed > 0 && opts?.refresh === true) refresh();
   return { results };
+}
+
+/**
+ * Undo of a weigh-in from the capture line (weight-capture.ts
+ * undoWeighInCore): while the day still holds that capture's reading, a
+ * fresh one is deleted and a replacing one gives back the reading it
+ * replaced. `weight` is the CapturedWeight the save returned; it is checked
+ * before it is trusted. `restoredKg`: the value put back, or null when the
+ * day has no reading again. 'gone': the reading is no longer this
+ * capture's (deleted, or changed since), and nothing was written.
+ */
+export async function undoWeightCapture(
+  weight: CapturedWeight,
+  opts?: { refresh?: boolean }
+): Promise<{ ok: true; value: { restoredKg: number | null } } | { ok: false; error: string; code?: "gone" }> {
+  let res: Awaited<ReturnType<typeof undoWeighInCore>>;
+  try {
+    res = await undoWeighInCore(undoWeighInDeps(getCurrentUserId()), weight);
+  } catch (err) {
+    console.error("undoWeightCapture failed:", err);
+    return { ok: false, error: "Couldn't undo the weigh-in. Try again, or change it on Train." };
+  }
+  if (res.ok && opts?.refresh === true) refresh();
+  return res;
 }
 
 /** An open template's title, for the sheet's quiet 'Already on your board' note (capture.md P3). */
@@ -357,6 +506,8 @@ export interface CaptureVocabulary {
   recent: string[];
   /** Open templates (not archived, not completed), at most 300, for the duplicate note. */
   active: CaptureActiveTitle[];
+  /** The unit a bare weigh-in number is read in ('weight 72.4'): the user's, 'kg' when unset or unreadable. */
+  weightUnit?: WeightUnit;
 }
 
 // The open goals come from tasks.ts loadOpenGoals: the same list, in the same
@@ -392,17 +543,20 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
   try {
     userId = getCurrentUserId();
   } catch {
-    return { words: [], goals: [], rawBefore: 0, day, recent: [], active: [] };
+    return { words: [], goals: [], rawBefore: 0, day, recent: [], active: [], weightUnit: "kg" };
   }
 
   const withWords = typeof opts === "object" && opts !== null && opts.words === true;
-  const [vocab, structure, goals, rawBefore, recent, active] = await Promise.all([
+  const [vocab, structure, goals, rawBefore, recent, active, weightUnit] = await Promise.all([
     withWords ? loadVocabulary().catch((): VocabWords => []) : Promise.resolve<VocabWords>([]),
     withWords ? loadStructureWords().catch((): StructureWords => []) : Promise.resolve<StructureWords>([]),
     loadOpenGoals(userId).catch(() => []),
     loadRawBefore(userId, day).catch(() => 0),
     loadRecentCaptures(userId, now).catch((): string[] => []),
     loadActiveTitles(userId, now).catch((): CaptureActiveTitle[] => []),
+    loadWeightGoal(userId)
+      .then((g): WeightUnit => (g.unit === "lb" ? "lb" : "kg"))
+      .catch((): WeightUnit => "kg"),
   ]);
 
   // The same merge as /add: structure names first, de-duplicated without case.
@@ -415,5 +569,5 @@ export async function loadCaptureVocabulary(opts?: { words?: boolean }): Promise
     words.push(word);
   }
 
-  return { words, goals, rawBefore, day, recent, active };
+  return { words, goals, rawBefore, day, recent, active, weightUnit };
 }

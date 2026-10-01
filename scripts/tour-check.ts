@@ -222,7 +222,7 @@ const TOUR_CSS = read("src/components/tour/tour.css");
   }
   check("contract: startTour is safe on the server", ok);
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
-  check("package.json: ui:check ends with tour-check, and tour:check runs it alone", / && tsx scripts\/tour-check\.ts$/.test(pkg.scripts["ui:check"]) && pkg.scripts["tour:check"] === "tsx scripts/tour-check.ts", pkg.scripts["ui:check"]);
+  check("package.json: ui:check runs tour-check, and tour:check runs it alone", / && tsx scripts\/tour-check\.ts( &&|$)/.test(pkg.scripts["ui:check"]) && pkg.scripts["tour:check"] === "tsx scripts/tour-check.ts", pkg.scripts["ui:check"]);
   check("contract: Tour is exported for the root layout", /export function Tour\(\)/.test(TOUR_TSX));
 }
 

@@ -9,6 +9,7 @@ import {
   createManyFromCapture,
   loadCaptureVocabulary,
   recaptureFromCapture,
+  undoWeightCapture,
   type CaptureErrorCode,
   type CaptureManyResult,
   type CaptureResult,
@@ -99,6 +100,19 @@ import {
   type VocabCache,
 } from "./capture-ui";
 import { pushEscapeLayer, trapTab } from "./layers";
+import type { WeightUnit } from "@/lib/weight";
+import {
+  WEIGHT_PRIMARY,
+  WEIGHT_UNDO_UNAVAILABLE,
+  WEIGH_IN_NOT_AN_EDIT,
+  mayBeWeighIn,
+  weighInOf,
+  weighInOutOfRange,
+  weightChipLabel,
+  weightRangeBlocked,
+  weightRangeNote,
+  weightUndoneCopy,
+} from "./weight-capture";
 
 /**
  * The one-line capture sheet, mounted once in the root layout.
@@ -142,6 +156,11 @@ import { pushEscapeLayer, trapTab } from "./layers";
  * inside <main>, whose @container would trap a fixed layer), under one
  * [data-capture-ui] marker so the review card can tell a tap meant for the
  * sheet from one meant for it.
+ *
+ * A weigh-in line ('weight 72.4', 'w 160 lb yesterday': weight-capture.ts)
+ * is logged as that day's reading, never saved as a task: one chip, 'Log
+ * weight', a toast with Undo and a View link to Train, no Edit, no board
+ * flash and no celebration (a record, not a reward).
  */
 
 const NO_WORDS: string[] = [];
@@ -254,6 +273,8 @@ function settleUnsent(
 export function QuickCapture() {
   const pathname = usePathname();
   const onToday = pathname === "/today";
+  /** The Train page shows the weight card: a weigh-in saved there refreshes it. */
+  const onTrain = pathname === "/train";
   const isClient = useSyncExternalStore(noopSubscribe, () => true, () => false);
 
   const [open, setOpen] = useState(false);
@@ -313,6 +334,7 @@ export function QuickCapture() {
   const openRef = useRef(false);
   const coarseRef = useRef(false);
   const onTodayRef = useRef(onToday);
+  const onTrainRef = useRef(onTrain);
   const insetRef = useRef(0);
   /** The toast this sheet has in the dock, and the state key it shows. */
   const dockRef = useRef<{ id: number; key: number } | null>(null);
@@ -352,6 +374,13 @@ export function QuickCapture() {
 
   const parsed = useMemo(() => (open && day ? parseCapture(text, { today: day, reverted }) : null), [open, day, text, reverted]);
   const ideaMode = parsed?.mode === "IDEA";
+  /** A bare weigh-in number is read in the user's unit (from the vocabulary; 'kg' until it loads). The server reads it the same way. */
+  const weightUnit: WeightUnit = vocab?.weightUnit ?? "kg";
+  const weighIn = useMemo(() => (open && day ? weighInOf(text, reverted, day, weightUnit) : null), [open, day, text, reverted, weightUnit]);
+  const weightOut = useMemo(
+    () => (open && day && !weighIn ? weighInOutOfRange(text, reverted, day, weightUnit) : null),
+    [open, day, text, reverted, weightUnit, weighIn]
+  );
   // An edit queued, failed or in flight locks its capture's Edit and Undo (C1: never two rows).
   const replacing = useMemo(() => {
     const lines: { replaces?: string; state: ReplacingState }[] = unsent.map((u) => ({ replaces: u.replaces, state: u.state }));
@@ -361,6 +390,7 @@ export function QuickCapture() {
 
   useLayoutEffect(() => {
     onTodayRef.current = onToday;
+    onTrainRef.current = onTrain;
     insetRef.current = inset;
     unsentRef.current = unsent;
     addedRef.current = added;
@@ -467,7 +497,7 @@ export function QuickCapture() {
     vocabLoading.current = true;
     loadCaptureVocabulary(withWords ? { words: true } : undefined)
       .then((v) => {
-        const cache: VocabCache = { day: v.day, goals: v.goals, recent: v.recent, rawBefore: v.rawBefore, active: v.active, at: Date.now() };
+        const cache: VocabCache = { day: v.day, goals: v.goals, recent: v.recent, rawBefore: v.rawBefore, active: v.active, ...(v.weightUnit ? { weightUnit: v.weightUnit } : {}), at: Date.now() };
         writeVocabCache(cache);
         setVocab((prev) => ({ ...cache, priced: true, words: withWords ? v.words : (prev?.words ?? null) }));
       })
@@ -586,16 +616,19 @@ export function QuickCapture() {
       } else if (!openRef.current && mine && o.sent - o.merged >= 2) {
         showToast({ kind: "summary", key: ++seq.current, titles: [...o.titles], failed: o.failed });
       } else {
-        // The live region says 'Added <title> → <where>. N added.' for a line of this opening.
-        const say = mine && !update && !item.duplicate ? addedAnnouncement(item.title, item.where.label, o.titles.length) : undefined;
+        // The live region says 'Added <title> → <where>. N added.' for a line of this opening (a weigh-in says its own toast).
+        const say = mine && !update && !item.duplicate && !item.weight ? addedAnnouncement(item.title, item.where.label, o.titles.length) : undefined;
         showToast({ kind: "added", key: ++seq.current, item, notMust, update }, say);
       }
-      // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
-      void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
-      // The board flashes where it went. Behind the open sheet's scrim the flash would be spent
-      // unseen (and the page scrolled under the modal), so it waits for the sheet to close.
-      if (openRef.current) heldCaptured.current = item;
-      else window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
+      // A weigh-in is a record, not a reward and not a board row: no mark, no flash.
+      if (!item.weight) {
+        // Tier 0: a capture saved. In place, no flight (a capture pays nothing yet); the toast says it.
+        void mark({ kind: "capture", id: `capture:${item.id}`, text: `Captured ${item.title}`, say: false });
+        // The board flashes where it went. Behind the open sheet's scrim the flash would be spent
+        // unseen (and the page scrolled under the modal), so it waits for the sheet to close.
+        if (openRef.current) heldCaptured.current = item;
+        else window.dispatchEvent(new CustomEvent<CapturedItem>(CAPTURED_EVENT, { detail: item }));
+      }
     } else if (res === null) {
       // The network, not the server: queued, and it retries on its own.
       const current = unsentRef.current.find((u) => u.nonce === line.nonce);
@@ -634,14 +667,16 @@ export function QuickCapture() {
     // An edit on its way locks the capture it replaces (Edit and Undo) until it settles.
     if (oldId) setSendingEdits((m) => new Map(m).set(line.nonce, oldId));
     if (origin === "user") showToast({ kind: "working", key: ++seq.current, message: line.replaces ? "Saving the change…" : "Saving…" });
+    // Today refreshes for every line; Train only for a weigh-in (its weight card).
+    const refreshPage = onTodayRef.current || (onTrainRef.current && mayBeWeighIn(line.text, line.reverted, todayKey()));
     startTransition(async () => {
       let res: CaptureResult<CapturedItem> | null;
       try {
         // The line's nonce is its capture key: a retry of a save whose answer
         // was lost finds the row it already wrote instead of writing a second.
         res = line.replaces
-          ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: onTodayRef.current, captureKey: line.nonce })
-          : await createFromCapture(line.text, line.reverted, { refresh: onTodayRef.current, captureKey: line.nonce });
+          ? await recaptureFromCapture(line.replaces, line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce })
+          : await createFromCapture(line.text, line.reverted, { refresh: refreshPage, captureKey: line.nonce });
       } catch {
         res = null;
       }
@@ -1105,20 +1140,30 @@ export function QuickCapture() {
     if (!line.text.trim() || !day) return;
     lastSubmitAt.current = now;
     const read = parseCapture(line.text, { today: day, reverted: line.reverted });
-    if (!read.title) {
+    const unit: WeightUnit = vocabRef.current?.weightUnit ?? "kg";
+    const weighed = weighInOf(line.text, line.reverted, day, unit);
+    // A weigh-in is not a task row, so it cannot replace one (the server refuses it too).
+    if (weighed && editing) {
+      setError(WEIGH_IN_NOT_AN_EDIT);
+      return;
+    }
+    if (!weighed && !read.title) {
       setError(TITLE_MISSING);
       return;
     }
-    // Block-once: a Must with no day stops the first press and offers the fix.
+    // Block-once: a Must with no day, or a weigh-in-shaped line whose number is
+    // out of range (it would be a task), stops the first press and says why.
     let notMust = false;
-    if (!opts.inbox) {
-      const gate = mustGate(blocked, line.text, !!read.compulsoryWarning);
+    if (!opts.inbox && !weighed) {
+      const out = weighInOutOfRange(line.text, line.reverted, day, unit);
+      const gate = mustGate(blocked, line.text, !!read.compulsoryWarning || out !== null);
       if (gate.action === "block") {
         setBlocked(gate.blocked);
+        if (out) announce(weightRangeBlocked(out));
         focusInput();
         return;
       }
-      notMust = gate.action === "save-not-must";
+      notMust = gate.action === "save-not-must" && !!read.compulsoryWarning;
     }
     const lineText = opts.inbox && !read.inbox ? toInboxLine(line.text) : line.text;
     const pending = stampLine({ text: lineText, reverted: line.reverted }, ++seq.current, now, randomSalt(), editing?.oldId ?? null);
@@ -1265,8 +1310,58 @@ export function QuickCapture() {
     openSheet({ edit: entry });
   };
 
+  /**
+   * Undo of a weigh-in (actions/capture.ts undoWeightCapture): a fresh
+   * reading is deleted, a replacing one gives back the reading it replaced —
+   * only while the day still holds this capture's value ('gone' otherwise).
+   */
+  const undoWeight = (item: CapturedItem) => {
+    const weight = item.weight;
+    if (!weight) return;
+    if (!weight.undoable) {
+      if (openRef.current) {
+        setNote(WEIGHT_UNDO_UNAVAILABLE);
+        announce(WEIGHT_UNDO_UNAVAILABLE);
+      } else showToast({ kind: "error", key: ++seq.current, head: "Not undone", message: WEIGHT_UNDO_UNAVAILABLE });
+      return;
+    }
+    setUndoBusy((s) => new Set(s).add(item.id));
+    showToast({ kind: "working", key: ++seq.current, message: "Undoing…" });
+    startTransition(async () => {
+      let res: { ok: true; restoredKg: number | null } | { ok: false; error: string; gone: boolean };
+      try {
+        const r = await undoWeightCapture(weight, { refresh: onTodayRef.current || onTrainRef.current });
+        res = r.ok ? { ok: true, restoredKg: r.value.restoredKg } : { ok: false, error: r.error, gone: r.code === "gone" };
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server to undo.", gone: false };
+      }
+      setUndoBusy((s) => {
+        const n = new Set(s);
+        n.delete(item.id);
+        return n;
+      });
+      if (res.ok) {
+        setCaptured((n) => Math.max(0, n - 1));
+        dispatchAdded({ type: "removed", id: item.id, now: Date.now() });
+        const copy = weightUndoneCopy(weight, item.title, res.restoredKg);
+        showToast({ kind: "removed", key: ++seq.current, title: copy.title, head: copy.head });
+      } else if (res.gone) {
+        // The day no longer holds this reading: its row goes, and nothing was written.
+        dispatchAdded({ type: "drop", id: item.id });
+        showToast({ kind: "error", key: ++seq.current, head: "Not undone", message: res.error });
+      } else {
+        showToast({ kind: "error", key: ++seq.current, head: "Didn't undo", message: res.error });
+      }
+      refocusLine();
+    });
+  };
+
   const undo = (item: CapturedItem) => {
     if (undoBusy.has(item.id)) return;
+    if (item.weight) {
+      undoWeight(item);
+      return;
+    }
     // An edit of this line is on its way: an Undo now would leave its new row standing.
     const lock = replacingRef.current.get(item.id);
     if (lock) {
@@ -1430,7 +1525,7 @@ export function QuickCapture() {
   // The keyboard path to Undo: Ctrl/Cmd+Z while an 'added' toast is showing
   // and the sheet is closed, from anywhere but a text field or a review
   // card. A capture made with 'c' and Enter can be taken back the same way.
-  const undoTarget = !open && toast?.kind === "added" && !toast.update ? toast.item : null;
+  const undoTarget = !open && toast?.kind === "added" && !toast.update && (!toast.item.weight || toast.item.weight.undoable) ? toast.item : null;
   useEffect(() => {
     if (!undoTarget) return;
     const item = undoTarget;
@@ -1446,6 +1541,15 @@ export function QuickCapture() {
   }, [undoTarget]);
 
   // ── Chips and the insert row ────────────────────────────────────────────
+
+  /** The weigh-in chip, tapped: the whole line stays text (a task), here and on the server (weight-capture revertedWholeLine). */
+  const keepLineAsText = () => {
+    const line = lineRef.current;
+    const span = { start: 0, end: line.text.length };
+    setLine(line.text, [...line.reverted, span]);
+    setRevertHistory((h) => [...h, { span, text: line.text }].slice(-20));
+    focusInput();
+  };
 
   const revert = (token: CaptureToken) => {
     const span = { start: token.start, end: token.end };
@@ -1570,18 +1674,20 @@ export function QuickCapture() {
   if (open && parsed && day) {
     const pinned = coarse || compact;
     const empty = !text.trim();
-    const canSave = !empty && !!parsed.title;
-    const canInbox = canSave && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
+    const canSave = !empty && (!!parsed.title || !!weighIn);
+    const canInbox = canSave && !weighIn && !editing && !parsed.inbox && parsed.kind === "TASK" && !parsed.doneNow;
     const primary = primaryAction({ editing: !!editing, coarse, empty, sentThisOpening, parsed });
+    const primaryLabel = weighIn && !primary.done && !editing ? WEIGHT_PRIMARY : primary.label;
     const priced = vocab && vocab.day === day && vocab.priced ? vocab.rawBefore : null;
-    const duplicate = vocab && parsed.title && !ideaMode ? duplicateOf(parsed.title, vocab.active, editing?.norm ?? null) : null;
+    const duplicate = vocab && parsed.title && !ideaMode && !weighIn ? duplicateOf(parsed.title, vocab.active, editing?.norm ?? null) : null;
     const mustBlocked = blocked !== null && blocked === text;
     const offToday = !onToday;
     const hint = coarse ? TOUCH_HINT : KEY_HINT;
 
     // The slot above the line: word hints for an idea, suggestions after '^' or '#', Recent on an empty line, else the insert row.
     let slot: React.ReactNode = null;
-    if (!paste) {
+    // A weigh-in has no grammar to add: no insert row, no suggestions.
+    if (!paste && !weighIn) {
       if (ideaMode) {
         slot = (
           <div className="capture-hints">
@@ -1676,6 +1782,7 @@ export function QuickCapture() {
         lines={paste.lines}
         truncated={paste.truncated}
         today={day}
+        weightUnit={weightUnit}
         onRemove={(i) =>
           setPaste((p) => {
             if (!p) return p;
@@ -1698,6 +1805,9 @@ export function QuickCapture() {
         mustBlocked={mustBlocked}
         mustFixes={mustFixInserts(day)}
         onFix={insertIntoLine}
+        weighIn={weighIn ? weightChipLabel(weighIn, weightUnit, day) : null}
+        onKeepAsText={keepLineAsText}
+        weightRange={weightOut ? (mustBlocked ? weightRangeBlocked(weightOut) : weightRangeNote(weightOut)) : null}
       />
     );
 
@@ -1736,7 +1846,7 @@ export function QuickCapture() {
         ) : (
           <>
             <button type="button" className={`btn btn-primary capture-save${pinned ? "" : " lg"}`} onClick={onPrimary} disabled={!primary.done && !canSave}>
-              {primary.label}
+              {primaryLabel}
             </button>
             {canInbox && (
               <button type="button" className={`btn btn-secondary${pinned ? "" : " lg"}`} onClick={() => submit("button", false, { inbox: true })}>

@@ -133,6 +133,7 @@ export interface TopTitle {
 export const DEV_STYLE_PAGES: readonly SubPage[] = [
   { href: "/dev/style", label: "Style" },
   { href: "/dev/style/today", label: "Today fixtures" },
+  { href: "/dev/style/train", label: "Train fixtures" },
   { href: "/dev/style/review", label: "Review fixtures" },
   { href: "/dev/style/celebrate", label: "Celebrations" },
   { href: "/dev/style/art", label: "Art" },

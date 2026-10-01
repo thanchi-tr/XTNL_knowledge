@@ -58,6 +58,7 @@ const ROUTES = opt(
     "/dev/style/celebrate",
     "/dev/style/art",
     "/dev/style/settings",
+    "/dev/style/train",
   ].join(",")
 ).split(",");
 const WIDTHS = opt("widths", "344,375,932,1440").split(",").map(Number);

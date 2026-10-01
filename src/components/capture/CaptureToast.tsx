@@ -24,7 +24,8 @@ export type Toast =
   | { kind: "added"; key: number; item: CapturedItem; notMust: boolean; update: boolean }
   /** An edit refused (too late, or the capture is gone): the line waits for 'Save as new'. */
   | { kind: "too-late"; key: number; nonce: string; message: string }
-  | { kind: "removed"; key: number; title: string }
+  /** Undone. `head` is 'Restored' when a weigh-in's Undo gave the day's earlier reading back (default 'Removed'). */
+  | { kind: "removed"; key: number; title: string; head?: string }
   | { kind: "error"; key: number; head: string; message: string }
   /** A network failure: the line is queued and retries on its own. */
   | { kind: "queued"; key: number; offline: boolean }
@@ -131,7 +132,7 @@ export function dockToastOf(toast: Toast, ctx: { offToday: boolean; lock?: strin
     case "working":
       return { body: toast.message, holdMs: TOAST_MS };
     case "removed":
-      return { title: "Removed", body: toast.title, holdMs: TOAST_SHORT_MS };
+      return { title: toast.head ?? "Removed", body: toast.title, holdMs: TOAST_SHORT_MS };
     case "error":
       return { title: toast.head, body: toast.message, action: { label: "Open", onAction: on.onOpen }, holdMs: TOAST_MS };
     case "queued":
@@ -146,11 +147,13 @@ export function dockToastOf(toast: Toast, ctx: { offToday: boolean; lock?: strin
       const { item, notMust, update } = toast;
       const copy = toastCopy(item, { notMust, update, offToday: ctx.offToday });
       const lock = ctx.lock ?? null;
-      const edit = lock ? undefined : on.onEdit;
+      // A weigh-in has no Edit (it is not a task row), and Undo only when it wrote something it can take back.
+      const edit = lock || item.weight ? undefined : on.onEdit;
+      const canUndo = !lock && !update && (!item.weight || item.weight.undoable);
       return {
         title: copy.head,
         body: <ToastBody copy={copy} onEdit={!update && edit ? () => edit(item) : undefined} onLink={on.onLink} note={lock} />,
-        action: lock ? undefined : update ? (edit ? { label: "Edit", onAction: () => edit(item) } : undefined) : { label: "Undo", onAction: () => on.onUndo(item) },
+        action: canUndo ? { label: "Undo", onAction: () => on.onUndo(item) } : !lock && update && edit ? { label: "Edit", onAction: () => edit(item) } : undefined,
         holdMs: TOAST_MS,
       };
     }
@@ -177,7 +180,7 @@ export function StatusLine({
     case "removed":
       return (
         <span>
-          <span className="t-meta">Removed</span> · {toast.title}
+          <span className="t-meta">{toast.head ?? "Removed"}</span> · {toast.title}
         </span>
       );
     case "queued":
@@ -231,7 +234,7 @@ export function toastSentence(toast: Toast, offToday: boolean): string {
     case "working":
       return toast.message;
     case "removed":
-      return `Removed ${toast.title}`;
+      return `${toast.head ?? "Removed"} ${toast.title}`;
     case "queued":
       return `Queued. ${toast.offline ? QUEUED_OFFLINE : QUEUED_ONLINE}`;
     case "unsent-saved":

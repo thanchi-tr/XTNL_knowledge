@@ -37,9 +37,11 @@ export type CacheTag =
   /** The life system's slow-moving rows: task templates, life settings, tracks, workouts. */
   | "life"
   /** The life ledger and everything read from it: the daily streak, the Today board, day totals. */
-  | "activity";
+  | "activity"
+  /** Body weight readings and the weight goal (src/lib/weight-server.ts). */
+  | "weight";
 
-export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity"];
+export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight"];
 
 /**
  * Short by design. The cache exists to collapse the several round trips of

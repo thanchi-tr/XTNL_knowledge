@@ -39,6 +39,8 @@ import { captureShapeOf } from "../../lib/capture-shape";
 import { nextDue, parseRule } from "../../lib/recurrence";
 import { dayName, placeOf, shortDate, startDayFor, weekdayName, type BoardTemplate } from "../../lib/today-board";
 import type { CaptureActiveTitle, CapturedItem } from "../../app/actions/capture";
+import type { WeightUnit } from "../../lib/weight";
+import { weightToastCopy } from "./weight-capture";
 
 /**
  * Where a repeating capture lands when it is not due today: 'Next: Thu'.
@@ -157,7 +159,7 @@ export const TOUCH_HINT = "Enter adds the next line · Add closes";
 /** The desktop's. */
 export const KEY_HINT = "Enter saves · Shift+Enter saves and stays · Esc closes";
 /** The grammar, as one line of hint from 600 px while the line is empty (the insert row teaches it below 600). */
-export const LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · idea: Q :: A · goal: · #body · ^goal · ? inbox";
+export const LEGEND = "! must · ~30m · daily · every mon,thu · 3x/week · by fri · tmr · x done · idea: Q :: A · goal: · #body · ^goal · ? inbox · weight 72.4";
 /** 'Tap here to type': a phone opened from the home-screen shortcut whose keyboard did not rise on its own. */
 export const POCKET_PLACEHOLDER = "Tap here to type";
 export const POCKET_WAIT_MS = 600;
@@ -938,9 +940,11 @@ export const FILING_WHERE = "filing now. If it looks like one you have, it waits
  * link to the row on Today.
  */
 export function toastCopy(
-  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept">,
+  item: Pick<CapturedItem, "id" | "title" | "projectedXp" | "kind" | "doneNow" | "doneNowError" | "duplicate" | "href" | "where" | "filing" | "oldKept" | "weight">,
   ctx: { notMust?: boolean; update?: boolean; offToday?: boolean } = {}
 ): ToastCopy {
+  // A weigh-in is a record, not a task: its own copy, no figure, View goes to Train (weight-capture.ts).
+  if (item.weight) return weightToastCopy({ where: item.where, duplicate: item.duplicate, weight: item.weight });
   const where = item.where?.label ?? null;
   const view = ctx.offToday ? { label: "View", href: `/today#t-${item.id}` } : null;
   const priced = Number.isFinite(item.projectedXp) && item.projectedXp > 0;
@@ -1121,6 +1125,8 @@ export interface VocabCache {
   recent: string[];
   rawBefore: number;
   active: CaptureActiveTitle[];
+  /** The unit a bare weigh-in number is read in; absent in a cache written before weigh-ins (then 'kg'). */
+  weightUnit?: WeightUnit;
   /** When the server answered (epoch ms). */
   at: number;
 }
@@ -1148,7 +1154,8 @@ export function parseVocabCache(raw: unknown): VocabCache | null {
         })
         .slice(0, ACTIVE_SCAN_MAX)
     : [];
-  return { day: r.day, goals, recent, rawBefore, active, at: r.at };
+  const weightUnit: WeightUnit | undefined = r.weightUnit === "kg" || r.weightUnit === "lb" ? r.weightUnit : undefined;
+  return { day: r.day, goals, recent, rawBefore, active, ...(weightUnit ? { weightUnit } : {}), at: r.at };
 }
 
 /**

@@ -13,7 +13,9 @@ import { addedRowCopy, visibleAdded, type AddedEntry } from "./capture-ui";
  * page's life (QuickCapture's addedReducer), so it is still here when the
  * sheet opens again; rows leave at ten minutes, when Edit and Undo would no
  * longer be honoured. While an edit of a row is on its way (capture-ui
- * replacingOf), its Edit and Undo are off and the row says why.
+ * replacingOf), its Edit and Undo are off and the row says why. A
+ * weigh-in's row ('Weight 72.4 kg · Train') has no Edit (it is not a task
+ * row), and Undo only when the save wrote something it can take back.
  */
 
 interface Props {
@@ -78,12 +80,16 @@ export function JustAdded({ entries, wide, showAll, onShowAll, onEdit, onUndo, b
                 )}
               </span>
               <span className="capture-added-acts">
-                <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onEdit(e)} disabled={pending} aria-label={`Edit ${row.title}`}>
-                  Edit
-                </button>
-                <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onUndo(e)} disabled={pending} aria-label={`Undo ${row.title}`}>
-                  Undo
-                </button>
+                {!e.item.weight && (
+                  <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onEdit(e)} disabled={pending} aria-label={`Edit ${row.title}`}>
+                    Edit
+                  </button>
+                )}
+                {(!e.item.weight || e.item.weight.undoable) && (
+                  <button type="button" className="btn btn-quiet capture-row-btn" onClick={() => onUndo(e)} disabled={pending} aria-label={`Undo ${row.title}`}>
+                    Undo
+                  </button>
+                )}
               </span>
             </li>
           );
