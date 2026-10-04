@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
+<title>Set an aim</title>
+<meta name="description" content="Mockup, revision 3: the roadmap intake page /you/roadmap/new at 344 and 932 px, with its no-key, track-Area, unmeasured-pace, date and refusal states.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* =====================================================================
+   XTNL · SIGIL & SLATE — roadmap mockups (lane M, roadmap.md rev 3, F23).
+   Tokens copied from src/app/styles/tokens.css (Night, the default).
+   Kit classes mirror src/app/styles/components.css and src/components/home/you.css.
+   The rm-* block is what src/components/roadmap/roadmap.css will carry (in the
+   real file: first line "@layer theme, base, components, art, effects, utilities;",
+   rules inside @layer components, rm-* names only, no Tailwind-utility names).
+   Only transform, opacity and stroke-dashoffset would animate; this file animates
+   nothing. No gold (it means spending MP) and no --owed (nothing here is debt).
+   ===================================================================== */
+:root{
+  color-scheme:dark;
+  --canvas:#050609;--page:#0a0d13;--sunken:#07090e;--card:#11151d;--raised:#171c26;--overlay:#1d2330;
+  --bar:#0c0f15;--scrim:rgba(3,4,7,.66);--curtain:#05060a;--face:#0d1017;
+  --ink-0:#f1f3f8;--ink-1:#c3cad8;--ink-2:#9aa3b5;--ink-mute:#6f788c;
+  --line-1:rgba(255,255,255,.065);--line-2:rgba(255,255,255,.11);--line-ctl:#76819a;--hi:rgba(255,255,255,.04);
+  --kept:#5fd38d;--on-kept:#0b1a12;--owed:#e07a95;--on-owed:#26060e;--held:#72d2ec;--on-held:#06161c;
+  --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
+  --xp:#fdaf3a;--on-xp:#221400;--pts:#8ea6ff;--on-pts:#07103a;--mp:#ffe08a;--on-mp:#2a1d00;
+  --light:#fff1cf;--light-glow:rgba(255,222,150,.34);
+  --iron-a:#c3c9d4;--iron-m:#8a93a4;--iron-b:#434a5a;--bronze-a:#f3c08f;--bronze-m:#c0834f;--bronze-b:#8a5530;
+  --gold-a:#fff0bd;--gold-m:#f0c75e;--gold-b:#c9901f;
+  --focus:var(--ink-0);--shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);
+  --font-ui:"Inter","Segoe UI",system-ui,sans-serif;
+  --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --s-1:2px;--s-2:4px;--s-3:6px;--s-4:8px;--s-5:12px;--s-6:16px;--s-7:20px;--s-8:24px;--s-9:32px;--s-10:40px;--s-11:56px;
+  --r-chip:8px;--r-ctl:12px;--r-card:16px;--r-sheet:24px;--r-pill:999px;--hit:44px;--hit-min:40px;
+  --topbar-h:56px;--tabbar-h:64px;--rail-w:84px;--sidebar-w:232px;
+  --t-press:90ms;--t-quick:160ms;--t-base:240ms;--ease-out:cubic-bezier(.16,1,.3,1);
+  --z-bar:20;--z-sheet:50;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;background:var(--canvas)}
+body{background:var(--canvas);color:var(--ink-0);font:400 15px/1.45 var(--font-ui);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:inherit}
+a{color:inherit}
+ul,ol{list-style:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- type roles ---------- */
+.t-display-l{font:600 30px/34px var(--font-display)}
+.t-display-m{font:600 21px/26px var(--font-display)}
+.t-display-s{font:600 19px/23px var(--font-display)}
+.t-epithet{font:italic 400 17px/1.3 var(--font-display);color:var(--ink-1)}
+.t-body-l{font:500 15px/20px var(--font-ui)}
+.t-body{font:400 15px/1.45 var(--font-ui)}
+.t-meta{font:400 13px/18px var(--font-ui);color:var(--ink-2)}
+.t-eyebrow{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.t-mono{font:500 12.5px/1.4 var(--font-mono)}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.ink-0{color:var(--ink-0)} .ink-1{color:var(--ink-1)} .ink-2{color:var(--ink-2)}
+.t-error{display:flex;gap:8px;align-items:baseline;font:600 13px/18px var(--font-ui);color:var(--ink-0)}
+.t-error::before{content:"";width:7px;height:7px;flex:none;transform:rotate(45deg) translateY(-1px);background:var(--ink-0);border-radius:1px}
+
+/* ---------- icons & glyphs ---------- */
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.g{width:14px;height:14px;flex:none}
+svg.sig{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;flex:none}
+.c-xp{color:var(--xp)} .c-mp{color:var(--mp)} .c-pts{color:var(--pts)}
+.cur{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cur svg.g{width:13px;height:13px}
+.crest text{font-family:var(--font-display);font-weight:700;fill:#f1f3f8}
+
+/* ---------- surfaces ---------- */
+.card{background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card);box-shadow:inset 0 1px 0 var(--hi)}
+.pad{padding:14px} .pad-l{padding:16px}
+.sunk{background:var(--sunken);border:1px solid var(--line-2);border-radius:12px}
+
+/* ---------- buttons ---------- */
+.btn{min-height:44px;border-radius:var(--r-ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1.2 var(--font-ui);padding:0 14px;white-space:nowrap;text-decoration:none}
+.btn.lg{min-height:48px;font-size:15px;padding:0 18px}
+.btn-block{width:100%}
+.btn-primary{background:var(--ink-0);color:var(--page)}
+.btn-secondary{border:1px solid var(--line-ctl);color:var(--ink-0)}
+.btn-quiet{color:var(--ink-1);padding:0 10px}
+.btn-danger{border:1px solid var(--owed);color:var(--owed)} /* the kit's danger voice: Archive only */
+.icon-btn{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;position:relative;color:var(--ink-1);flex:none}
+.link{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;display:inline-flex;align-items:center}
+.ilink{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px}
+.badge{position:absolute;top:5px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink-0);color:var(--page);font:700 12px/18px var(--font-ui);text-align:center;box-shadow:0 0 0 2px var(--bar)}
+
+/* ---------- chips ---------- */
+.chip{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip svg.g,.chip svg.sig,.chip svg.i{width:12px;height:12px}
+.chip.btn-chip{min-height:40px;padding:0 12px;border-color:var(--line-ctl);color:var(--ink-0);font-size:13px}
+.chip.btn-chip[aria-pressed="true"]{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.chip.quiet{border-style:dashed;color:var(--ink-2)}
+
+/* ---------- meters ---------- */
+.meter{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));box-shadow:inset 0 0 0 1px var(--line-2);position:relative;overflow:hidden}
+.meter>i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:4px;background:var(--ink-0);transform-origin:left;transform:scaleX(var(--v,0))}
+.meter>i.from{background:var(--ink-1);opacity:.55}
+.meter .cap{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--ink-1);left:var(--at)}
+.meter.thin{height:6px}
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.segs i{height:6px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 9%,transparent)}
+.segs i.on{background:var(--ink-0)}
+.segs i.cur{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.segs.tall i{height:8px}
+
+/* ---------- tabs / segmented / switch ---------- */
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.tabs::-webkit-scrollbar{display:none}
+.tab-s{min-height:40px;padding:0 14px;border-radius:10px;font:600 14px var(--font-ui);color:var(--ink-2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none;flex:none}
+.tab-s[aria-current="page"]{color:var(--ink-0);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-2)}
+.rdot{width:7px;height:7px;border-radius:50%;background:linear-gradient(#ffe7a3,#c9901f);display:inline-block}
+.segc{display:inline-flex;border:1px solid var(--line-ctl);border-radius:12px;padding:2px;gap:2px;flex-wrap:wrap;max-width:100%}
+.segc button{min-height:40px;min-width:56px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;color:var(--ink-1)}
+.segc button[aria-pressed="true"]{background:var(--ink-0);color:var(--page)}
+.segc.fill{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%}
+.segc.fill button{min-width:0;padding:0 6px}
+.switch{width:52px;height:32px;border-radius:16px;background:var(--sunken);border:1px solid var(--line-ctl);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--ink-2)}
+.switch[aria-checked="true"]{background:color-mix(in srgb,var(--ink-0) 22%,var(--sunken));border-color:var(--ink-1)}
+.switch[aria-checked="true"]::after{transform:translateX(20px);background:var(--ink-0)}
+.switch-hit{min-width:44px;min-height:44px;display:grid;place-items:center;flex:none}
+
+/* ---------- inputs (study.css .st-input; 16 px under 600 px) ---------- */
+.st-input{width:100%;min-height:48px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);padding:12px 14px;font:400 16px/1.45 var(--font-ui);color:var(--ink-0)}
+textarea.st-input{resize:vertical;min-height:72px}
+.st-input::placeholder{color:var(--ink-2)}
+.st-label{display:block;font:600 13px/18px var(--font-ui);color:var(--ink-1);margin-bottom:6px}
+.st-hint{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:6px}
+.st-count{float:right;font:500 12px/18px var(--font-mono);color:var(--ink-2)}
+
+/* =====================================================================
+   SHELL inside a frame. A frame stands in for one viewport: .f344 has the
+   top bar with the crest and the tab bar (< 600 px); .f932 has the rail and the
+   top-bar tabs (600–1279 px). <main> is the "main" container, as in the app.
+   ===================================================================== */
+.app{min-height:100%}
+.f932 .app{display:grid;grid-template-columns:var(--rail-w) minmax(0,1fr)}
+.col{display:flex;flex-direction:column;min-width:0;min-height:100%}
+.main{flex:1;container:main/inline-size;min-width:0}
+.page{padding:6px 16px 28px;margin:0 auto;max-width:1240px}
+.page.narrow{max-width:640px}
+@container main (min-width:600px){.page{padding:8px 24px 40px}}
+.topbar{position:sticky;top:0;z-index:var(--z-bar);height:var(--topbar-h);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;background:var(--bar)}
+.crest-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font:600 19px/23px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-tabs{display:none}
+.f932 .topbar{height:60px;padding:0 12px 0 20px}
+.f932 .crest-btn{display:none}
+.f932 .tb-title{flex:0 1 auto;margin-right:12px}
+.f932 .tb-tabs{display:flex;flex:1;min-width:0}
+.tabbar{position:sticky;bottom:0;z-index:var(--z-bar);height:var(--tabbar-h);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;background:var(--bar);border-top:1px solid var(--line-1)}
+.f932 .tabbar{display:none}
+.tab{text-decoration:none;height:var(--tabbar-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 12px/14px var(--font-ui);color:var(--ink-2);position:relative}
+.tab svg.i{width:22px;height:22px}
+.tab[aria-current="page"]{color:var(--ink-0)}
+.tab[aria-current="page"]::before{content:"";position:absolute;top:0;left:30%;right:30%;height:2px;border-radius:0 0 2px 2px;background:var(--ink-0)}
+.tab .badge{top:7px;right:calc(50% - 24px)}
+.tab-plus{display:grid;place-items:center}
+.tab-plus span{width:52px;height:52px;border-radius:18px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.tab-plus svg.i{width:24px;height:24px;stroke-width:2.2}
+.rail{display:none}
+.f932 .rail{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;align-items:center;padding:10px 0 12px;gap:4px;z-index:var(--z-bar)}
+.rail a,.rail button{width:72px;min-height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 12px/14px var(--font-ui);color:var(--ink-2);text-decoration:none;position:relative}
+.rail a[aria-current="page"]{color:var(--ink-0);background:var(--raised)}
+.rail .r-plus span{width:48px;height:48px;border-radius:16px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.rail .r-plus{margin-bottom:10px}
+.rail .rail-grow{flex:1}
+.rail .badge{top:6px;right:14px}
+.sec-h{display:flex;align-items:baseline;gap:4px 9px;padding:0 4px 8px;flex-wrap:wrap}
+.sec-h h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);white-space:nowrap}
+.sec-h .aside{margin-left:auto;font-size:13px;color:var(--ink-2);text-align:right}
+.lane-mark{width:9px;height:9px;transform:rotate(45deg);border:1.5px solid var(--ink-2);border-radius:1.5px;flex:none}
+
+/* ---------- You (you.css) ---------- */
+.you-tabs{margin:2px 0 14px}
+.f932 .you-tabs{display:none}
+.you-grid{display:grid;gap:16px}
+@container main (min-width:760px){.you-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.you-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.hero-c{padding:16px;container:hero/inline-size}
+.hc-top{display:flex;gap:16px;align-items:center}
+.hc-top h2{font:600 30px/34px var(--font-display);overflow-wrap:anywhere}
+.lvl-line{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin:16px 0 8px}
+.lvl-line b{font-weight:600}
+.lvl-line .nx{display:flex;align-items:center;gap:6px;color:var(--ink-2)}
+.blurb{font:italic 400 14px/1.45 var(--font-display);color:var(--ink-2);margin:8px 0 0}
+.purse{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.purse>div+div{border-left:1px solid var(--line-1);padding-left:12px}
+.purse>div:nth-child(3){border-left:0;padding-left:0}
+@container hero (min-width:440px){.purse{grid-template-columns:repeat(4,minmax(0,1fr))}.purse>div:nth-child(3){border-left:1px solid var(--line-1);padding-left:12px}}
+.purse .v{font:600 20px/1 var(--font-display);display:flex;gap:6px;align-items:center;font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.purse .v small{font:500 13px var(--font-ui);color:var(--ink-2)}
+.purse .v svg.g{width:16px;height:16px}
+.purse .k{font-size:12px;color:var(--ink-2);margin-top:5px}
+.ready-c{display:flex;gap:12px;align-items:center;padding:12px 12px 12px 14px;border-color:color-mix(in srgb,var(--gold-m) 40%,transparent)}
+.ready-c .t{flex:1;min-width:0} .ready-c b{font-weight:600;display:block}
+.coin44{width:44px;height:44px;flex:none}
+.trk-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;padding:12px 14px}
+.trk-row+.trk-row{border-top:1px solid var(--line-1)}
+.trk-row>svg.sig{width:22px;height:22px;margin-top:1px}
+.trk-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.trk-h b,.trk-h .lv{font:600 16px var(--font-display);font-variant-numeric:tabular-nums}
+.wk{margin-left:auto;display:flex;gap:3px;align-items:center}
+.wk i{width:9px;height:9px;transform:rotate(45deg);border-radius:1.5px;border:1.5px solid var(--ink-mute)}
+.wk i.k{background:var(--kept);border-color:var(--kept)}
+.wk i.h{background:var(--hatch);border-color:var(--held)}
+.trk-row .meter{margin:8px 0 6px}
+.trk-row .t-meta b{color:var(--ink-1);font-weight:600}
+.radar-c{padding:14px;container-type:inline-size}
+.radar-plot{position:relative;width:min(420px,100cqi - 56px);margin:0 auto}
+.radar-plot>svg{width:100%;height:auto;display:block;overflow:visible}
+.radar-lbl{position:absolute;width:max-content;max-width:7.5em;pointer-events:none;font:500 12px/14px var(--font-ui);color:var(--ink-2)}
+.radar-lbl.at-start{transform:translate(0,-50%)} .radar-lbl.at-middle{transform:translate(-50%,-50%);text-align:center} .radar-lbl.at-end{transform:translate(-100%,-50%);text-align:right}
+.radar-lbl.lead{color:var(--ink-0);font-weight:700}
+.rlegend{display:flex;gap:16px;font-size:12px;color:var(--ink-2);justify-content:center;flex-wrap:wrap;margin:8px 0 4px}
+.top3 li{display:flex;gap:10px;align-items:center;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;flex-wrap:wrap}
+.top3 li .note{margin-left:auto;font-size:13px;color:var(--ink-2)}
+.mo{display:flex;gap:12px;align-items:center;padding:12px 14px;min-height:64px}
+.mo+.mo{border-top:1px solid var(--line-1)}
+.mo .art{width:44px;height:44px;flex:none;display:grid;place-items:center}
+.mo .art>svg.sig{width:22px;height:22px}
+.mo b{font-weight:600;display:block}
+.mo .mo-body{flex:1;min-width:0}
+
+/* =====================================================================
+   ROADMAP (rm-*) — what roadmap.css will carry.
+   ===================================================================== */
+.rm-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.rm-grid{display:grid;gap:16px}
+@container main (min-width:760px){.rm-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.rm-aim{padding:16px}
+.rm-aim-t{font:600 19px/23px var(--font-display);overflow-wrap:anywhere}
+.rm-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.rm-lines{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-lines b{color:var(--ink-1);font-weight:600}
+.rm-lead{font-size:14px;line-height:20px;color:var(--ink-1);margin-top:12px}
+.rm-note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-note>svg.i{width:18px;height:18px;color:var(--ink-1);margin-top:1px}
+.rm-note b{color:var(--ink-0);font-weight:600}
+.rm-banner{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;padding:12px 14px;border-color:var(--line-ctl)}
+.rm-banner .t{flex:1 1 200px;min-width:0;font-size:14px;line-height:19px}
+.rm-banner .t b{display:block;font-weight:600}
+/* provenance: a class is always words; colour is never alone */
+.pv{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-1);border:1px solid var(--line-2);max-width:100%}
+.pv svg.i,.pv svg.g{width:12px;height:12px}
+.pv-draft{border:1px dashed var(--line-ctl);color:var(--ink-0)}
+.pv-kept{border:1px dashed var(--ink-mute);color:var(--ink-2)}
+.pv-yours{color:var(--ink-1)}
+.cap{font-size:13px;line-height:18px;color:var(--ink-2)}
+.cap b{color:var(--ink-1);font-weight:600}
+/* flags: blocking = ink on raised with the flag glyph; notes = quiet */
+.fl{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-0);background:var(--raised);border:1px solid var(--line-ctl);max-width:100%}
+.fl svg.i{width:12px;height:12px;stroke-width:2}
+.fl-note{font-weight:500;color:var(--ink-2);background:none;border-color:var(--line-2)}
+/* verdicts: a word and a glyph */
+.vd{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px 2px 8px;border-radius:var(--r-chip);border:1px solid var(--line-ctl);font:600 13px/18px var(--font-ui);color:var(--ink-0);white-space:nowrap}
+.vd svg.i{width:15px;height:15px;stroke-width:2}
+.vd-q{border-color:var(--line-2);color:var(--ink-1)}
+.vd-x{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+/* items (ItemRow): label line · chip line · action line */
+.it{padding:10px 12px 12px;border-radius:12px;border:1px solid var(--line-1);background:var(--card)}
+.it+.it{margin-top:8px}
+.it.s-draft{border:1px dashed var(--line-ctl)}
+.it.s-kept{border:1px dashed var(--ink-mute)}
+.it-k{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-bottom:2px}
+.it-l{font:500 15px/20px var(--font-ui);overflow-wrap:anywhere}
+.it-l s{color:var(--ink-2);text-decoration-thickness:2px}
+.it-m{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:3px}
+.it-m b{color:var(--ink-1);font-weight:600}
+.it-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.it-why{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.it-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.acts-n{display:none}
+@container main (max-width:379.98px){.acts-w{display:none}.acts-n{display:flex}}
+.ov{width:40px;min-width:40px;padding:0;justify-content:center}
+/* milestone card */
+.ms-h{display:grid;grid-template-columns:34px minmax(0,1fr);gap:4px 10px;padding:14px 14px 12px}
+.ms-n{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--line-ctl);border-radius:10px;font:600 15px var(--font-display);font-variant-numeric:tabular-nums}
+.ms-n.cur{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.ms-t{font:600 17px/22px var(--font-display);overflow-wrap:anywhere}
+.ms-w{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:2px}
+.ms-sec{padding:12px 14px;border-top:1px solid var(--line-1)}
+.ms-sec>.ms-sh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.ms-sh .t-eyebrow{color:var(--ink-1)}
+.ms-sh .cap{text-align:right}
+/* checks */
+.ck{padding:10px 0}
+.ck+.ck{border-top:1px solid var(--line-1)}
+.ck-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.ck-h b{font-weight:600;font-size:14px}
+.ck p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.ck p.fixed{color:var(--ink-2)}
+/* measure rows */
+.mr{padding:12px 0}
+.mr+.mr{border-top:1px solid var(--line-1)}
+.mr-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.mr-h b{font-weight:600;font-size:14px;line-height:19px}
+.mr-h .pct{font:600 17px/1 var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mr .meter{margin:8px 0 6px}
+.mr .t-meta b{color:var(--ink-1);font-weight:600}
+.mr .t-meta+.t-meta{margin-top:2px}
+.rm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.rm-head .big{font:600 30px/1 var(--font-display);font-variant-numeric:tabular-nums}
+/* domain / topic / practice rows */
+.dr{display:grid;grid-template-columns:22px minmax(0,1fr);gap:2px 10px;padding:10px 0}
+.dr+.dr{border-top:1px solid var(--line-1)}
+.dr>svg.sig{margin-top:3px;width:16px;height:16px;color:var(--ink-1)}
+.dr b{font-weight:600}
+.dr .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.how{margin-top:4px}
+.how>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.how>summary::-webkit-details-marker{display:none}
+.how>summary svg.i{width:16px;height:16px}
+.how[open]>summary svg.i{transform:rotate(90deg)}
+.how ol{margin:0 0 6px 20px;list-style:decimal;font-size:13px;line-height:19px;color:var(--ink-1)}
+.how ol li+li{margin-top:2px}
+.how p{font-size:13px;line-height:18px;color:var(--ink-2)}
+/* milestones list */
+.ml-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:60px;padding:8px 14px}
+.ml-row+.ml-row{border-top:1px solid var(--line-1)}
+.ml-row b{font-weight:600;display:block;overflow-wrap:anywhere}
+.ml-row .r{font:600 15px var(--font-display);font-variant-numeric:tabular-nums;text-align:right}
+.ml-row .ms-n{width:28px;height:28px;font-size:13px;border-radius:8px}
+.ml-row.later .ms-n{border-style:dashed}
+/* throughput */
+.tp{display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.tp>div{padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:baseline}
+.tp>div+div{border-top:1px solid var(--line-1)}
+.tp .k{font-size:14px;color:var(--ink-1)}
+.tp .v{font:600 15px var(--font-ui);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tp .s{grid-column:1/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+/* form (intake) */
+.rm-form{display:flex;flex-direction:column;gap:14px}
+.rm-fs{padding:16px;display:flex;flex-direction:column;gap:16px}
+.rm-f>.st-label{display:flex;justify-content:space-between;gap:8px}
+.rm-f>.st-label .opt{font-weight:400;color:var(--ink-2)}
+.rm-pick{display:flex;align-items:center;gap:10px;width:100%;min-height:56px;padding:8px 12px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);text-align:left}
+.rm-pick .t{flex:1;min-width:0}
+.rm-pick b{display:block;font-weight:600}
+.rm-pick>svg.sig{width:18px;height:18px}
+.rm-dchips{display:flex;flex-wrap:wrap;gap:6px}
+.rm-dchip{min-height:44px;padding:4px 12px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;text-align:left;max-width:100%}
+.rm-dchip b{font:600 13px/17px var(--font-ui)}
+.rm-dchip span{font-size:12px;line-height:15px;color:var(--ink-2)}
+.rm-dchip[aria-pressed="true"]{background:var(--ink-0);border-color:var(--ink-0);color:var(--page)}
+.rm-dchip[aria-pressed="true"] span{color:color-mix(in srgb,var(--page) 75%,transparent)}
+.rm-dchip.add{border-style:dashed;color:var(--ink-1)}
+.rm-step{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rm-step .st-input{width:76px;text-align:center;font-family:var(--font-mono)}
+.rm-step .icon-btn{border:1px solid var(--line-ctl)}
+.rm-fact{margin-top:8px;padding:10px 12px;border-radius:12px;background:var(--sunken);border:1px solid var(--line-2);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-fact .t-eyebrow{display:block;margin-bottom:2px;font-size:12px}
+.rm-adv{border-top:1px solid var(--line-1);padding-top:4px}
+.rm-adv>summary{min-height:44px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font:600 14px var(--font-ui);color:var(--ink-1)}
+.rm-adv>summary::-webkit-details-marker{display:none}
+.rm-adv>summary .aside{margin-left:auto;font-weight:400;font-size:13px;color:var(--ink-2);text-align:right}
+.rm-adv[open]>summary svg.i{transform:rotate(90deg)}
+.rm-adv-b{display:flex;flex-direction:column;gap:14px;padding:6px 0 4px}
+.rm-sw{display:flex;align-items:center;gap:12px}
+.rm-sw .t{flex:1;min-width:0;font-size:14px}
+.rm-sticky{position:sticky;bottom:var(--tabbar-h);z-index:2;display:flex;flex-wrap:wrap;gap:8px;padding:12px 0;margin-top:4px;background:linear-gradient(transparent,var(--page) 30%)}
+.f932 .rm-sticky{bottom:0}
+.rm-sticky .btn{flex:1 1 auto}
+.rm-sticky .t-meta{flex-basis:100%}
+.rm-sk{background:color-mix(in srgb,var(--ink-0) 7%,var(--card));border-radius:8px}
+/* the Aim card (F15) */
+.aim-c{padding:14px}
+.aim-t{font:600 17px/22px var(--font-display);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.aim-ms{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:13px;line-height:18px;color:var(--ink-1);margin:12px 0 6px}
+.aim-ms b{color:var(--ink-0);font-weight:600}
+.aim-g{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:14px 0 8px}
+.aim-g .big{font:600 22px/1 var(--font-display);font-variant-numeric:tabular-nums}
+.aim-g .cap{text-align:right}
+.aim-next{display:flex;gap:8px;align-items:baseline;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.aim-next .k{font-weight:600;color:var(--ink-0)}
+.aim-acts{display:flex;gap:8px;margin-top:12px}
+.aim-acts .btn{flex:1}
+.aim-empty{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;min-height:56px}
+.aim-empty .t{flex:1;min-width:0;font-size:14px;line-height:19px;color:var(--ink-1)}
+.aim-empty .t a{color:var(--ink-0);font-weight:600}
+
+/* ---------- static sheet and toast (the real ones portal to <body>) ---------- */
+.shf{background:color-mix(in srgb,var(--page) 35%,#000);padding-top:56px}
+.sheet-s{background:var(--overlay);border-radius:var(--r-sheet) var(--r-sheet) 0 0;border-top:1px solid var(--line-2);padding:8px 16px 20px;box-shadow:var(--shadow-pop);container:main/inline-size}
+.grabber{width:40px;height:4px;border-radius:2px;background:var(--line-ctl);margin:0 auto 12px}
+.sheet-h{display:flex;align-items:flex-start;gap:8px}
+.sheet-h .t{flex:1;min-width:0}
+.sheet-s h2{font:600 21px/26px var(--font-display)}
+.sheet-s .sub{font-size:14px;color:var(--ink-2);margin-top:4px}
+.sheet-s .card{background:var(--raised)}
+.toast-s{background:var(--overlay);border:1px solid var(--line-2);border-radius:14px;padding:10px 10px 10px 14px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow-pop)}
+.toast-s .tt{flex:1;font-size:14px;line-height:1.4;min-width:0}
+.toast-s .tt b{font:600 16px/20px var(--font-display);display:block}
+
+/* =====================================================================
+   MOCKUP CHROME (not part of the app)
+   ===================================================================== */
+.mk{max-width:1440px;margin:0 auto;padding:28px 24px 8px}
+.mk .t-eyebrow{color:var(--ink-2)}
+.mk h1{font:600 30px/34px var(--font-display);margin-top:4px}
+.mk>p{color:var(--ink-1);max-width:92ch;margin-top:10px;font-size:15px}
+.mk-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.mk-nav a{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;align-items:center;font:600 13px var(--font-ui);text-decoration:none;color:var(--ink-0)}
+.mk-nav a[aria-current="page"]{background:var(--ink-0);color:var(--page)}
+.mk-ex{display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:4px 10px;border-radius:8px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-sec{max-width:1440px;margin:0 auto;padding:24px 24px 8px}
+.mk-sec>h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);margin-bottom:6px}
+.mk-sec>p{font-size:14px;color:var(--ink-2);max-width:92ch;margin-bottom:14px}
+.mk-row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.mk-fig{display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%}
+.mk-tag{font:600 12px/16px var(--font-mono);color:var(--ink-2)}
+.mk-tag b{color:var(--ink-0)}
+.mk-cap{max-width:344px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.mk-cap b{color:var(--ink-1)}
+.mk-cap li{margin-top:4px;padding-left:12px;position:relative}
+.mk-cap li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;transform:rotate(45deg);background:var(--ink-2)}
+.mk-cap.wide{max-width:932px}
+.mk-scroll{max-width:100%;overflow-x:auto}
+.frame{background:var(--page);border:1px solid var(--line-2);border-radius:20px;overflow:clip;position:relative;flex:none}
+.f344{width:344px}
+.f932{width:932px}
+.mk-legend{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.mk-legend>span{display:inline-flex;gap:6px;align-items:center}
+.fold{position:absolute;left:0;right:0;height:0;border-top:2px dashed #9aa3b5;z-index:30;pointer-events:none}
+.fold span{position:absolute;right:6px;top:-22px;font:600 12px/16px var(--font-mono);color:#0a0d13;background:#c3cad8;padding:1px 6px;border-radius:6px}
+.mk-geo{font:600 12px/16px var(--font-mono);color:var(--ink-1);padding:8px 10px;border:1px dashed var(--line-ctl);border-radius:10px;max-width:344px}
+/* outline items (later milestones: listed, decided at Start) */
+.oi{padding:9px 0;border-top:1px solid var(--line-1)}
+.oi:first-child{border-top:0;padding-top:2px}
+.oi .it-l{font-size:14px;line-height:19px}
+.oi .it-chips{margin-top:6px}
+.ms-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.vds{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bulk{display:flex;flex-direction:column;gap:6px;padding:12px 14px 14px;border-top:1px solid var(--line-1)}
+.status-run{display:flex;gap:12px;align-items:flex-start;padding:16px}
+.status-run b{display:block;font:600 17px/22px var(--font-display)}
+.btn-wrap{white-space:normal;text-align:center;line-height:1.3;padding:8px 14px}
+/* the roadmap page: one markup, two layouts. Below 760 px of main the two
+   columns dissolve (display:contents) and `order` restores the reading order
+   Aim → Now (week quests first) → Toward the aim → Milestones → one
+   'How this is worked out' disclosure (revision 3, F18). */
+.rm-cols{display:flex;flex-direction:column;gap:16px}
+.rm-cols>.rm-col{display:contents}
+@container main (min-width:760px){.rm-cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}.rm-cols>.rm-col{display:flex;flex-direction:column;gap:16px;min-width:0}}
+.o1{order:1}.o2{order:2}.o3{order:3}.o4{order:4}.o5{order:5}.o6{order:6}.o7{order:7}.o8{order:8}.o9{order:9}.o10{order:10}
+.slow{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0);margin-left:6px;vertical-align:1px}
+.done-l{display:flex;gap:8px;align-items:flex-start}
+.done-l>svg.i{width:18px;height:18px;color:var(--kept);margin-top:1px}
+.floor{width:100%;border-collapse:collapse;font-size:13px}
+.floor th{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:left;padding:6px 8px}
+.floor td{padding:8px;border-top:1px solid var(--line-1);font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.floor td:first-child{color:var(--ink-0);font-weight:600}
+.rm-chips .chip{white-space:normal;max-width:100%;min-height:24px;padding-top:2px;padding-bottom:2px}
+/* 1440: the sidebar shell (≥ 1280 px) */
+@container main (min-width:1000px){.page{padding:12px 32px 48px}}
+.f1440{width:1440px}
+.sidebar{display:none}
+.f1440 .app{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+.f1440 .rail,.f1440 .tabbar,.f1440 .crest-btn,.f1440 .tb-tabs,.f1440 .you-tabs{display:none}
+.f1440 .topbar{height:60px;padding:0 20px 0 32px}
+.f1440 .rm-sticky{bottom:0}
+.f1440 .sidebar{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;padding:14px 12px;gap:6px;z-index:var(--z-bar)}
+.sb-char{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:var(--card);border:1px solid var(--line-1);text-decoration:none}
+.sb-char .who{min-width:0;flex:1}
+.sb-char .who b{font:600 16px/20px var(--font-display);display:block}
+.sb-char .who span{font-size:12px;color:var(--ink-2)}
+.sb-sec{margin-top:10px}
+.sb-sec>a{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-radius:12px;font:600 14px var(--font-ui);color:var(--ink-1);text-decoration:none}
+.sb-sec>a[aria-current="page"]{background:var(--raised);color:var(--ink-0)}
+.sb-sec .n{margin-left:auto;min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--ink-0);color:var(--page);font:700 12px/20px var(--font-ui);text-align:center}
+.sb-sub{display:flex;flex-direction:column;padding-left:40px}
+.sb-sub a{min-height:40px;display:flex;align-items:center;font-size:14px;color:var(--ink-2);text-decoration:none;border-radius:10px;padding:0 10px;margin-left:-10px}
+.sb-sub a[aria-current="page"]{color:var(--ink-0)}
+.sec-h .aside a.hit{display:inline-flex;align-items:center;min-height:40px;margin:-12px 0;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+.ms-sec .rm-quest-row,.ms-sec .rm-quest-line{padding-left:0;padding-right:0}
+
+/* =====================================================================
+   REVISION 3 (roadmap.md rev 3, 2026-10-04): the Aim rank, Proficiency and
+   week quests. Still rm-* names only, ink only: no gold (MP spending), no
+   --owed (nothing here is debt), no status hue without a word.
+   ===================================================================== */
+/* Aim rank + Proficiency: one block (F12, F18 §1, F19 (d)) */
+.rm-rp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.rm-rp .k{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.rm-rp .v{font:600 19px/23px var(--font-display);display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap;font-variant-numeric:tabular-nums lining-nums;margin-top:2px}
+.rm-rp .pf{text-align:right}
+.rm-rp .pf .v{justify-content:flex-end}
+.rm-rp .new{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0)}
+.rm-rp .meter{grid-column:1/-1;margin-top:10px}
+.rm-rp .full{grid-column:1/-1}
+.rm-rp .cap{margin-top:6px}
+.rm-rp .t-meta{margin-top:4px}
+.rm-rp .chg{color:var(--ink-1)}
+.rm-parts{grid-column:1/-1}
+.rm-parts>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.rm-parts>summary::-webkit-details-marker{display:none}
+.rm-parts>summary svg.i{width:16px;height:16px}
+.rm-parts[open]>summary svg.i{transform:rotate(90deg)}
+.rm-parts p{font-size:13px;line-height:18px;color:var(--ink-1);margin:0 0 4px}
+/* the "Aim ranks on this plan" ladder: on = given, cur = the next rank (ink outline) */
+.rm-ladder{display:flex;flex-direction:column;margin:2px 0 6px}
+.rm-ladder li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:0 8px;align-items:baseline;padding:5px 0;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-ladder li::before{content:"";width:9px;height:9px;transform:rotate(45deg) translateY(-1px);border:1.5px solid var(--ink-mute);border-radius:1.5px;align-self:center}
+.rm-ladder li b{font-weight:600;color:var(--ink-1)}
+.rm-ladder li.on::before{background:var(--ink-0);border-color:var(--ink-0)}
+.rm-ladder li.on b{color:var(--ink-0)}
+.rm-ladder li.cur::before{border-color:var(--ink-0);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink-0) 22%,transparent)}
+.rm-ladder li.cur b{color:var(--ink-0)}
+.rk{display:block;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rk b{color:var(--ink-0);font-weight:600}
+/* Week quests (F17 Today card, the aim line, the roadmap variant): rm-quest-* */
+.rm-quest{overflow:hidden}
+.rm-quest-legend{padding:10px 14px 2px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:2px 10px;align-items:start;min-height:48px;padding:10px 14px;color:inherit;text-decoration:none;position:relative}
+a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
+.rm-quest-row+.rm-quest-row,.rm-quest-row+.rm-quest-line,.rm-quest-line+.rm-quest-row,.rm-quest-line+.rm-quest-line,.rm-quest-more+.rm-quest-row,.rm-quest-more+.rm-quest-line{border-top:1px solid var(--line-1)}
+.rm-quest-row>svg.sig,.rm-quest-row>svg.i,.rm-quest-line>svg.sig,.rm-quest-line>svg.i{width:20px;height:20px;color:var(--ink-1);margin-top:0}
+.rm-quest-row .lbl{font:500 14px/19px var(--font-ui);overflow-wrap:anywhere;min-width:0}
+.rm-quest-row .cnt{font:600 13px/19px var(--font-ui);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;color:var(--ink-0)}
+.rm-quest-row .meter{grid-column:2/-1;margin:6px 0 2px}
+.rm-quest-row .ev{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row .ev b{color:var(--ink-1);font-weight:600}
+.rm-quest-row .ev+.ev{margin-top:2px}
+.rm-quest-row .lnk{grid-column:2/-1;margin-top:2px}
+.rm-quest-line{display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-line .lbl{overflow-wrap:anywhere;min-width:0}
+.rm-quest-line .lbl span{color:var(--ink-2)}
+.rm-quest-row.done .lbl,.rm-quest-line.done .lbl{color:var(--ink-1)}
+.rm-quest .done>svg.i{color:var(--kept)}
+.rm-quest-more{display:flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;width:100%;text-align:left;font:600 13px var(--font-ui);color:var(--ink-0);border-top:1px solid var(--line-1)}
+.rm-quest-more svg.i{width:16px;height:16px}
+.rm-quest-more[aria-expanded="true"] svg.i{transform:rotate(180deg)}
+.rm-quest-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-one{display:grid;grid-template-columns:20px minmax(0,1fr) auto 16px;gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-one b{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rm-quest-one .n{font-size:13px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.rm-quest-one>svg.i{width:20px;height:20px;color:var(--ink-1)}
+.rm-quest-one>svg.i:last-child{width:16px;height:16px;color:var(--ink-2)}
+.rm-quest-one.done>svg.i:first-child{color:var(--kept)}
+.rm-qsub{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 4px}
+.rm-qsub .t-eyebrow{color:var(--ink-1)}
+.rm-qsub .cap{text-align:right}
+.rm-cards{grid-column:2/-1;margin-top:4px;display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cards li{display:flex;justify-content:space-between;gap:10px}
+.rm-cards li span:last-child{color:var(--ink-2);white-space:nowrap}
+.rm-past{display:flex;flex-direction:column}
+.rm-past li{display:flex;justify-content:space-between;gap:10px;align-items:center;min-height:40px;font-size:13px;color:var(--ink-1);border-top:1px solid var(--line-1)}
+.rm-past li span:last-child{color:var(--ink-2);text-align:right}
+.rm-basis{display:flex;flex-direction:column;gap:0}
+.rm-basis li{padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-basis li:first-child{border-top:0}
+.rm-basis li b{color:var(--ink-0);font-weight:600}
+.rm-basis .t-eyebrow{display:block;margin:12px 0 2px}
+/* the roadmap page's reference disclosure: one at 344, open as a column from 760 */
+.rm-ref{min-width:0}
+.rm-ref>summary{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 14px;cursor:pointer;list-style:none;background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card)}
+.rm-ref>summary::-webkit-details-marker{display:none}
+.rm-ref>summary b{font-weight:600;flex:1;min-width:0}
+.rm-ref>summary span{font-size:13px;color:var(--ink-2);text-align:right}
+.rm-ref>summary svg.i{width:16px;height:16px;color:var(--ink-2)}
+.rm-ref[open]>summary svg.i{transform:rotate(90deg)}
+.rm-ref-b{display:flex;flex-direction:column;gap:16px;padding-top:16px}
+@container main (min-width:760px){.rm-ref>summary{display:none}.rm-ref-b{padding-top:0}}
+.rm-lever{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-lever .t-meta{margin:0}
+.aim-q{padding:8px 0;margin-top:12px;border-top:1px solid var(--line-1)}
+.aim-line{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:2px}
+.ml-row .rkc{font-size:13px;color:var(--ink-2);white-space:nowrap;text-align:right}
+.ml-row .rkc b{color:var(--ink-1);font-weight:600}
+.ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+  <!-- UI icons (Icon.tsx): 24 px, stroke 1.75, round caps, currentColor -->
+  <symbol id="i-today" viewBox="0 0 24 24"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v2.2M5.3 9.3l1.5 1.5M18.7 9.3l-1.5 1.5M8 21h8"/></symbol>
+  <symbol id="i-study" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <symbol id="i-train" viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h6.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.6 2H4.4zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><path d="M12 2.8l7.5 4.3v9.8L12 21.2l-7.5-4.3V7.1z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4.5h11l-2 4 2 4H5"/></symbol>
+  <symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.01"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.2 6.2l2.6 2.6M15.2 15.2l2.6 2.6M6.2 17.8l2.6-2.6M15.2 8.8l2.6-2.6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <!-- verdict glyphs (always beside their word) -->
+  <symbol id="v-fits" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="v-tight" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="v-over" viewBox="0 0 24 24"><path d="M12 3.8l9 15.7H3z"/><path d="M12 10v4.2M12 16.9v.01"/></symbol>
+  <symbol id="v-imp" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></symbol>
+  <symbol id="v-fitted" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16M8 5v6M16 13v6"/></symbol>
+  <symbol id="v-unv" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.6 2.6"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <!-- currency glyphs (filled) -->
+  <symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
+  <symbol id="c-pts" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8.5 10L12 22 3.5 12zm0 4.6L7.4 12 12 17.4 16.6 12z"/><path fill="currentColor" d="M12 9.2l2.4 2.8-2.4 2.8-2.4-2.8z"/></symbol>
+  <symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>
+  <!-- life-track and knowledge sigils (stroke, ink): told apart by shape, never hue -->
+  <symbol id="s-body" viewBox="0 0 24 24"><path d="M12 3.5l8.5 15.5h-17z"/></symbol>
+  <symbol id="s-duty" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z"/></symbol>
+  <symbol id="s-craft" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 12h14"/></symbol>
+  <symbol id="s-care" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="s-know" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <!-- materials -->
+  <linearGradient id="m-iron" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c3c9d4"/><stop offset=".45" stop-color="#8a93a4"/><stop offset="1" stop-color="#434a5a"/></linearGradient>
+  <linearGradient id="m-bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3c08f"/><stop offset=".5" stop-color="#c0834f"/><stop offset="1" stop-color="#8a5530"/></linearGradient>
+  <linearGradient id="m-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff0bd"/><stop offset=".45" stop-color="#f0c75e"/><stop offset="1" stop-color="#a8721a"/></linearGradient>
+  <!-- the crest: level 14, iron, with its track edges (Duty .8, Craft .62, Care .4, Body .55) -->
+  <symbol id="crest14" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="6" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+    <line x1="50" y1="12.5" x2="84.21" y2="32.25" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="12.5" x2="77.37" y2="28.3" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="84.21" y1="71.75" x2="50" y2="91.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="84.21" y1="71.75" x2="62.9" y2="84" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="50" y1="91.5" x2="15.79" y2="71.75" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="91.5" x2="36.32" y2="83.6" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="15.79" y1="32.25" x2="50" y2="12.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="15.79" y1="32.25" x2="34.61" y2="21.39" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <text x="50" y="63.5" text-anchor="middle" font-size="32" font-family="Fraunces, Georgia, serif" font-weight="700" fill="#f1f3f8">14</text>
+  </symbol>
+  <symbol id="crest-plain" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="crest15b" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-bronze)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-bronze)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <!-- an emblem coin stand-in for the ready callout (unchanged component) -->
+  <symbol id="coin-ready" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="#0d1017" stroke="url(#m-gold)" stroke-width="3.5"/><circle cx="32" cy="32" r="22" fill="none" stroke="url(#m-gold)" stroke-opacity=".35"/><path d="M20 40c5 0 7-14 12-14s7 14 12 14" fill="none" stroke="#00cc7a" stroke-width="2.6" stroke-linecap="round"/><circle cx="32" cy="32" r="31" fill="none" stroke="#f0c75e" stroke-width="1.5" stroke-dasharray="3 3"/></symbol>
+
+  <!-- revision 3 additions -->
+  <symbol id="i-step" viewBox="0 0 24 24"><path d="M4 19h5v-5h5V9h6"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5l2.5-8h11l2.5 8v5H4zM4 13.5h4.5l1 2h5l1-2H20"/></symbol>
+  <symbol id="h-rest" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-sword" viewBox="0 0 24 24"><path d="M14.5 4.5H19.5v5L10 19l-5-5zM7.5 16.5l-3 3M6 13l5 5"/></symbol>
+
+</defs>
+</svg>
+
+<header class="mk">
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 1 of 5 · roadmap.md rev 3, F2</div>
+  <h1>Set an aim — /you/roadmap/new</h1>
+  <p>The intake page. The user writes an <b>Aim</b> in their own words and picks its <b>Area</b> (a Field it grows, or a life track for a practice-only aim), then gives what the planner genuinely needs: a date, hours a week, a starting point and an intensity. Optional fields carry the facts only the user can supply (constraints, an exam, the official syllabus with its source, and "hours this usually takes" with its source). Every figure under a field is the app's own reading of the user's records, never a model's. <b>Revision 3</b> changes two things here: an aim's date is at most 3 years away (the "Beyond this plan" tail is cut), and the privacy line gains the free-tier note, because this server's Gemini key is on Google's free tier.</p>
+  <div class="mk-ex">Example data — fake but plausible numbers for this user's library (Trading, Mathematics &amp; Statistics, Biological &amp; Chemical Sciences …), as of Sun 4 Oct 2026</div>
+  <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html" aria-current="page">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
+  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
+  <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+
+</header>
+
+<section class="mk-sec">
+  <h2>The form, with a Gemini key · 344 then 932</h2>
+  <p>Form template: max width 640, 16 px inputs under 600 px, the sticky submit copied from .add-sticky (above the tab bar on a phone). Nothing is encoded in the URL; the unsent form survives in guarded localStorage. The page title comes from nav.titleFor ("Set an aim"); the You tabs keep Roadmap current.</p>
+  <div class="mk-row">
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover · tab bar</div>
+      <div class="frame f344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Set an aim</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+      <div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<p class="t-meta" style="margin:0 4px 12px">Say what you want to be able to do. Gemini can draft the structure; the app sets every date, level and target from your records, and measures progress from them.</p>
+<form class="rm-form" onsubmit="return false">
+  <section class="card rm-fs" aria-label="The aim">
+    <div class="rm-f">
+      <label class="st-label">What do you want to be able to do? <span class="st-count">66 / 140</span></label>
+      <textarea class="st-input" rows="2">Become a consistently profitable systematic EUR/USD trader by 2028</textarea>
+      <p class="st-hint">Shown exactly as you wrote it, everywhere. Never rewritten.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Area — what this grows</span>
+      <button type="button" class="rm-pick" aria-haspopup="dialog"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Trading</b><span class="t-meta">Field · level 6 · 215 cards</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <p class="st-hint">One of your Fields, or a life track for an aim that is practice only. Gemini never picks the Area.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Practices count toward</span>
+      <div class="segc fill" role="group" aria-label="Practices count toward"><button type="button" aria-pressed="true">Craft</button><button type="button" aria-pressed="false">Body</button><button type="button" aria-pressed="false">Care</button><button type="button" aria-pressed="false">Duty</button></div>
+      <p class="st-hint">The life track the practices you start will feed on Today.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Domains you already have <span class="opt">5 chosen</span></span>
+      <div class="rm-dchips" role="group" aria-label="Domains">
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Algorithmic Backtesting</b><span>46 cards · 19 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Risk Management</b><span>38 cards · 21 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Quantitative System Dev</b><span>33 cards · 9 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Market Psychology</b><span>29 cards · 12 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Forex 101</b><span>52 cards · 31 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Scalping</b><span>17 cards · 3 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Probability Theory</b><span>Mathematics &amp; Statistics · 41 cards · 14 at level 6+</span></button>
+        <button type="button" class="rm-dchip add"><b>+ Add a Domain from another Field</b><span>your library only</span></button>
+      </div>
+      <p class="st-hint">Prefilled with the Trading Domains that hold cards. Counts are your cards today.</p>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Time and pace">
+    <div class="rm-f">
+      <span class="st-label">By when</span>
+      <button type="button" class="rm-pick"><svg class="i"><use href="#i-cal"/></svg><span class="t"><b>Fri 31 Dec 2027</b><span class="t-meta">453 days from today</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <div class="rm-chips"><button type="button" class="chip btn-chip">3 months</button><button type="button" class="chip btn-chip">6 months</button><button type="button" class="chip btn-chip">12 months</button><button type="button" class="chip btn-chip">24 months</button><button type="button" class="chip btn-chip">3 years</button></div>
+      <p class="st-hint">The app splits this into 6 milestones of 10–11 weeks. Each ends on a Sunday; the last ends on your date.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Hours a week for this aim</span>
+      <div class="rm-step"><button type="button" class="icon-btn" aria-label="One hour less"><svg class="i"><use href="#i-minus"/></svg></button><input class="st-input" value="8" inputmode="numeric" aria-label="Hours a week"><button type="button" class="icon-btn" aria-label="One hour more"><svg class="i"><use href="#i-plus"/></svg></button><span class="t-meta">h a week · 1 to 40</span></div>
+      <div class="rm-fact"><span class="t-eyebrow">What the app has seen</span>You've tracked ≈ 9 h 10 a week of tasks (task estimates, not timed; median of 4 weeks).</div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Where you're starting</span>
+      <div class="segc fill" role="group" aria-label="Where you're starting" style="grid-auto-flow:row;grid-template-columns:1fr 1fr"><button type="button" aria-pressed="false">New to it</button><button type="button" aria-pressed="false">Some basics</button><button type="button" aria-pressed="true">Working knowledge</button><button type="button" aria-pressed="false">Strong, aiming higher</button></div>
+      <div class="rm-fact"><span class="t-eyebrow">Your cards, from the app</span>Trading: 215 cards, 95 at level 6+, 13 mastered. Your choice sets only the first milestone's level; the cards decide the rest.</div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">How hard</span>
+      <div class="segc fill" role="group" aria-label="How hard"><button type="button" aria-pressed="false">Light</button><button type="button" aria-pressed="true">Steady</button><button type="button" aria-pressed="false">Push</button></div>
+      <p class="st-hint">Scales every fitted target: Light 50%, Steady 70%, Push 90% of what your reviews can be expected to reach.</p>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Facts only you can give">
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Reality check<span class="aside">optional · not set</span></summary>
+      <div class="rm-adv-b">
+        <p class="st-hint" style="margin:0">Without this the app can't say whether the aim fits your time — only whether its own targets do.</p>
+      </div>
+    </details>
+    <div class="rm-f">
+      <label class="st-label">Constraints <span class="opt">optional · 87 / 280</span></label>
+      <textarea class="st-input" rows="2">Full-time job: evenings and Sunday mornings only. No money for paid courses or signals.</textarea>
+      <p class="st-hint">Shown to Gemini as limits. The app doesn't check them; it flags suggestions that seem to clash.</p>
+    </div>
+    <div class="rm-f">
+      <label class="st-label">Exam or certificate <span class="opt">optional</span></label>
+      <input class="st-input" placeholder="Leave blank if there isn't one">
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Official syllabus<span class="aside">optional · none</span></summary>
+      <div class="rm-adv-b"><p class="st-hint" style="margin:0">Paste the topic list from the official source. The plan's topics then come from your list.</p></div>
+    </details>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Advanced<span class="aside">practices on</span></summary>
+    </details>
+  </section>
+
+  <div class="rm-sticky">
+    <button type="button" class="btn btn-primary lg">Draft with Gemini</button>
+    <button type="button" class="btn btn-secondary lg">Build from my numbers</button>
+  </div>
+</form>
+
+      </div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+      <ul class="mk-cap">
+        <li><b>Aim</b> is the user's sentence, verbatim. The "by 2028" inside it is theirs; the date that drives the plan is the separate "By when" field.</li>
+        <li><b>Area</b> is the user's pick. The model never picks it, and a Field is never created except through "New Field…".</li>
+        <li>Each Domain chip shows the real card count and count at level 6+. "Probability Theory" was added from another Field.</li>
+        <li>No "New cards a week" field: the chosen Domains have a measured pace (it appears only when they don't; see variant F).</li>
+        <li>The two buttons wrap to two rows at 312 px of content; neither is ever disabled.</li>
+        <li>The date chips stop at 3 years (SPAN_MAX_DAYS 1,080). Nothing here mentions ranks or week quests: they follow from the plan the app builds. Six milestones means the aim itself can give the Aim rank Paragon; a 6-month aim tops out at Journeyman, and the Roadmap page says so.</li>
+      </ul>
+    </figure>
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>932</b> · rail · top-bar tabs · one 640 px column</div>
+      <div class="mk-scroll">
+      <div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Set an aim</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page narrow">
+      <div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<p class="t-meta" style="margin:0 4px 12px">Say what you want to be able to do. Gemini can draft the structure; the app sets every date, level and target from your records, and measures progress from them.</p>
+<form class="rm-form" onsubmit="return false">
+  <section class="card rm-fs" aria-label="The aim">
+    <div class="rm-f">
+      <label class="st-label">What do you want to be able to do? <span class="st-count">66 / 140</span></label>
+      <textarea class="st-input" rows="2">Become a consistently profitable systematic EUR/USD trader by 2028</textarea>
+      <p class="st-hint">Shown exactly as you wrote it, everywhere. Never rewritten.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Area — what this grows</span>
+      <button type="button" class="rm-pick" aria-haspopup="dialog"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Trading</b><span class="t-meta">Field · level 6 · 215 cards</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <p class="st-hint">One of your Fields, or a life track for an aim that is practice only. Gemini never picks the Area.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Practices count toward</span>
+      <div class="segc fill" role="group" aria-label="Practices count toward"><button type="button" aria-pressed="true">Craft</button><button type="button" aria-pressed="false">Body</button><button type="button" aria-pressed="false">Care</button><button type="button" aria-pressed="false">Duty</button></div>
+      <p class="st-hint">The life track the practices you start will feed on Today.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Domains you already have <span class="opt">5 chosen</span></span>
+      <div class="rm-dchips" role="group" aria-label="Domains">
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Algorithmic Backtesting</b><span>46 cards · 19 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Risk Management</b><span>38 cards · 21 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Quantitative System Dev</b><span>33 cards · 9 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Market Psychology</b><span>29 cards · 12 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Forex 101</b><span>52 cards · 31 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="false"><b>Scalping</b><span>17 cards · 3 at level 6+</span></button>
+        <button type="button" class="rm-dchip" aria-pressed="true"><b>Probability Theory</b><span>Mathematics &amp; Statistics · 41 cards · 14 at level 6+</span></button>
+        <button type="button" class="rm-dchip add"><b>+ Add a Domain from another Field</b><span>your library only</span></button>
+      </div>
+      <p class="st-hint">Prefilled with the Trading Domains that hold cards. Counts are your cards today.</p>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Time and pace">
+    <div class="rm-f">
+      <span class="st-label">By when</span>
+      <button type="button" class="rm-pick"><svg class="i"><use href="#i-cal"/></svg><span class="t"><b>Fri 31 Dec 2027</b><span class="t-meta">453 days from today</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+      <div class="rm-chips"><button type="button" class="chip btn-chip">3 months</button><button type="button" class="chip btn-chip">6 months</button><button type="button" class="chip btn-chip">12 months</button><button type="button" class="chip btn-chip">24 months</button><button type="button" class="chip btn-chip">3 years</button></div>
+      <p class="st-hint">The app splits this into 6 milestones of 10–11 weeks. Each ends on a Sunday; the last ends on your date.</p>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Hours a week for this aim</span>
+      <div class="rm-step"><button type="button" class="icon-btn" aria-label="One hour less"><svg class="i"><use href="#i-minus"/></svg></button><input class="st-input" value="8" inputmode="numeric" aria-label="Hours a week"><button type="button" class="icon-btn" aria-label="One hour more"><svg class="i"><use href="#i-plus"/></svg></button><span class="t-meta">h a week · 1 to 40</span></div>
+      <div class="rm-fact"><span class="t-eyebrow">What the app has seen</span>You've tracked ≈ 9 h 10 a week of tasks (task estimates, not timed; median of 4 weeks).</div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">Where you're starting</span>
+      <div class="segc fill" role="group" aria-label="Where you're starting" style="grid-auto-flow:row;grid-template-columns:1fr 1fr"><button type="button" aria-pressed="false">New to it</button><button type="button" aria-pressed="false">Some basics</button><button type="button" aria-pressed="true">Working knowledge</button><button type="button" aria-pressed="false">Strong, aiming higher</button></div>
+      <div class="rm-fact"><span class="t-eyebrow">Your cards, from the app</span>Trading: 215 cards, 95 at level 6+, 13 mastered. Your choice sets only the first milestone's level; the cards decide the rest.</div>
+    </div>
+    <div class="rm-f">
+      <span class="st-label">How hard</span>
+      <div class="segc fill" role="group" aria-label="How hard"><button type="button" aria-pressed="false">Light</button><button type="button" aria-pressed="true">Steady</button><button type="button" aria-pressed="false">Push</button></div>
+      <p class="st-hint">Scales every fitted target: Light 50%, Steady 70%, Push 90% of what your reviews can be expected to reach.</p>
+    </div>
+  </section>
+
+  <section class="card rm-fs" aria-label="Facts only you can give">
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Reality check<span class="aside">optional · not set</span></summary>
+      <div class="rm-adv-b">
+        <p class="st-hint" style="margin:0">Without this the app can't say whether the aim fits your time — only whether its own targets do.</p>
+      </div>
+    </details>
+    <div class="rm-f">
+      <label class="st-label">Constraints <span class="opt">optional · 87 / 280</span></label>
+      <textarea class="st-input" rows="2">Full-time job: evenings and Sunday mornings only. No money for paid courses or signals.</textarea>
+      <p class="st-hint">Shown to Gemini as limits. The app doesn't check them; it flags suggestions that seem to clash.</p>
+    </div>
+    <div class="rm-f">
+      <label class="st-label">Exam or certificate <span class="opt">optional</span></label>
+      <input class="st-input" placeholder="Leave blank if there isn't one">
+    </div>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Official syllabus<span class="aside">optional · none</span></summary>
+      <div class="rm-adv-b"><p class="st-hint" style="margin:0">Paste the topic list from the official source. The plan's topics then come from your list.</p></div>
+    </details>
+    <details class="rm-adv">
+      <summary><svg class="i"><use href="#i-chev"/></svg>Advanced<span class="aside">practices on</span></summary>
+    </details>
+  </section>
+
+  <div class="rm-sticky">
+    <button type="button" class="btn btn-primary lg">Draft with Gemini</button>
+    <button type="button" class="btn btn-secondary lg">Build from my numbers</button>
+  </div>
+</form>
+
+      </div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+      </div>
+      <ul class="mk-cap wide">
+        <li>From 600 px the You tabs move into the top bar and the sticky submit sits at the bottom edge (no tab bar). The form stays one column: it is a form, not a dashboard.</li>
+        <li>Under every field sits code's truth about the user (tracked hours, cards at level 6+), so the choice is made against facts, not a guess.</li>
+      </ul>
+    </figure>
+  </div>
+</section>
+
+<section class="mk-sec">
+  <h2>States and sheets · 344</h2>
+  <p>Each frame is one state of the same page. Copy in quotation marks in roadmap.md is used verbatim.</p>
+  <div class="mk-row">
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>A</b> · Area picker sheet</div>
+      <div class="frame f344 shf">
+        <div class="sheet-s" role="dialog" aria-label="Area — what this grows">
+          <div class="grabber"></div>
+          <div class="sheet-h"><div class="t"><h2>Area — what this grows</h2><p class="sub">Progress is measured in the Area you pick. Gemini never picks it.</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+          <div class="t-eyebrow" style="margin:14px 0 6px">Your Fields</div>
+          <div class="card">
+            <button class="rm-pick" style="border:0;background:none;border-radius:16px 16px 0 0" aria-pressed="true"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Trading</b><span class="t-meta">level 6 · 215 cards</span></span><svg class="i"><use href="#i-check"/></svg></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0;background:none"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Computer Science</b><span class="t-meta">level 7 · 188 cards</span></span></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0;background:none"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Mathematics &amp; Statistics</b><span class="t-meta">level 5 · 124 cards</span></span></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0;background:none"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Business &amp; Finance</b><span class="t-meta">level 4 · 96 cards</span></span></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0;background:none"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Personal Skill</b><span class="t-meta">level 4 · 88 cards · This Field is excused from quotas and Boss</span></span></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0;background:none"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Biological &amp; Chemical Sciences</b><span class="t-meta">level 3 · 71 cards</span></span></button>
+            <button class="rm-pick" style="border:0;border-top:1px solid var(--line-1);border-radius:0 0 16px 16px;background:none"><svg class="i"><use href="#i-plus"/></svg><span class="t"><b>New Field…</b><span class="t-meta">asks you to confirm first</span></span></button>
+          </div>
+          <div class="t-eyebrow" style="margin:16px 0 6px">A life track, practice only</div>
+          <p class="t-meta" style="margin:0 2px 8px">For an aim with no cards to hold (a 10K, a care routine). The plan then has practices and steps only.</p>
+          <div class="segc fill" role="group" aria-label="Life track" style="grid-template-columns:1fr 1fr;grid-auto-flow:row">
+            <button aria-pressed="false" style="display:flex;gap:8px;align-items:center;justify-content:center"><svg class="sig"><use href="#s-body"/></svg>Body</button>
+            <button aria-pressed="false" style="display:flex;gap:8px;align-items:center;justify-content:center"><svg class="sig"><use href="#s-care"/></svg>Care</button>
+            <button aria-pressed="false" style="display:flex;gap:8px;align-items:center;justify-content:center"><svg class="sig"><use href="#s-duty"/></svg>Duty</button>
+            <button aria-pressed="false" style="display:flex;gap:8px;align-items:center;justify-content:center"><svg class="sig"><use href="#s-craft"/></svg>Craft</button>
+          </div>
+        </div>
+      </div>
+      <ul class="mk-cap">
+        <li>Each Field shows its real level and card count. A Field in maintenance says so.</li>
+        <li>Tracks are told apart by sigil shape, never hue.</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>B</b> · Reality check and Advanced open</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <section class="card rm-fs">
+          <details class="rm-adv" open style="border-top:0;padding-top:0">
+            <summary><svg class="i"><use href="#i-chev"/></svg>Reality check<span class="aside">optional</span></summary>
+            <div class="rm-adv-b">
+              <p class="st-hint" style="margin:0">Without this the app can't say whether the aim fits your time — only whether its own targets do.</p>
+              <div class="rm-f"><label class="st-label">Hours this usually takes <span class="opt">1 to 5000</span></label><input class="st-input" placeholder="e.g. 1500" inputmode="numeric"></div>
+              <div class="rm-f"><label class="st-label">Where that figure comes from <span class="opt">0 / 120</span></label><input class="st-input" placeholder="A source you trust"></div>
+            </div>
+          </details>
+          <details class="rm-adv" open>
+            <summary><svg class="i"><use href="#i-chev"/></svg>Official syllabus<span class="aside">optional</span></summary>
+            <div class="rm-adv-b">
+              <p class="st-hint" style="margin:0">Paste the topic list from the official source. The plan's topics then come from your list.</p>
+              <textarea class="st-input" rows="3" placeholder="One topic per line · up to 40 lines"></textarea>
+              <input class="st-input" placeholder="Source">
+            </div>
+          </details>
+          <details class="rm-adv" open>
+            <summary><svg class="i"><use href="#i-chev"/></svg>Advanced</summary>
+            <div class="rm-adv-b">
+              <div class="rm-sw"><span class="t">Include practices (things to do, not just know)</span><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Include practices"></button></span></div>
+              <p class="st-hint" style="margin:0">Drafting sends Google your aim, Area name, constraints, exam name, syllabus lines, and your Domain names with their card counts — never your cards, their titles or ids.</p>
+              <p class="st-hint" style="margin:0">This server's Gemini key is on Google's free tier, so Google may use what drafting sends to improve its products.</p>
+            </div>
+          </details>
+        </section>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>Both reality-check inputs and the syllabus are the user's own facts (YOURS, with a source note). They are the only route for an outside fact into the plan.</li>
+        <li>The privacy line is generated from the pack builder's section list, so it can't drift from what is sent.</li>
+        <li>Revision 3: the free-tier line (the user's answer, 2026-10-04) shows only with a key and GEMINI_KEY_TIER 'FREE'; with 'PAID' it is absent, so it changes with one constant when billing does. Without a key there is no drafting at all (variant C).</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>C</b> · no Gemini key on this server</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <div class="rm-sticky" style="position:static;background:none">
+          <button type="button" class="btn btn-primary lg">Build from my numbers</button>
+          <button type="button" class="btn btn-secondary lg">Write it myself</button>
+          <p class="t-meta">Gemini isn't set up on this server — the checks and measures still run.</p>
+        </div>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>No disabled "Draft with Gemini" button: it is simply absent. The same editor, checks and measures run on the in-house starter or a hand-written plan.</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>D</b> · continuing a draft · date limits</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <section class="card rm-note" style="margin-bottom:14px"><svg class="i"><use href="#i-info"/></svg><span style="flex:1">Continuing your draft from 3 Oct · <a class="ilink" href="#">Discard it</a></span></section>
+        <section class="card rm-fs">
+          <div class="rm-f">
+            <span class="st-label">By when</span>
+            <button type="button" class="rm-pick"><svg class="i"><use href="#i-cal"/></svg><span class="t"><b>Sun 1 Nov 2026</b><span class="t-meta">28 days from today</span></span></button>
+            <p class="t-error" role="alert" style="margin-top:8px">Too short for a roadmap — capture it as a goal on Today.</p>
+          </div>
+          <div class="rm-f">
+            <span class="st-label">By when</span>
+            <button type="button" class="rm-pick"><svg class="i"><use href="#i-cal"/></svg><span class="t"><b>Sun 30 Sep 2029</b><span class="t-meta">1,092 days from today</span></span></button>
+            <p class="t-error" role="alert" style="margin-top:8px">Set where you want to be in 3 years; planning further out comes later.</p>
+          </div>
+        </section>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>One open roadmap per user: /new edits the open DRAFT instead of creating another.</li>
+        <li>Under 35 days and over 1,080 days are refused, each with the spec's own words. Revision 3 cut revision 2's "Beyond this plan" tail and its 5-year limit: a further aim is set as where you want to be in 3 years.</li>
+        <li>Errors use the kit's .t-error (ink and a diamond), never --owed.</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>E</b> · a life-track Area (practice only)</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <section class="card rm-fs">
+          <div class="rm-f">
+            <label class="st-label">What do you want to be able to do? <span class="st-count">29 / 140</span></label>
+            <textarea class="st-input" rows="1">Run 10 km in under 50 minutes</textarea>
+          </div>
+          <div class="rm-f">
+            <span class="st-label">Area — what this grows</span>
+            <button type="button" class="rm-pick"><svg class="sig"><use href="#s-body"/></svg><span class="t"><b>Body · practice only</b><span class="t-meta">track level 6 · its last 2 judged weeks kept</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+          </div>
+          <div class="rm-f">
+            <span class="st-label">Practices count toward</span>
+            <div class="rm-fact" style="margin-top:0"><b class="ink-0">Body</b> — fixed by the Area. The plan has practices and steps only; there are no cards to hold.</div>
+          </div>
+          <div class="rm-f">
+            <label class="st-label">Constraints <span class="opt">optional · 51 / 280</span></label>
+            <textarea class="st-input" rows="2">Knee injury last year, no running two days in a row</textarea>
+            <p class="st-hint">Shown to Gemini as limits. The app doesn't check them; it flags suggestions that seem to clash.</p>
+          </div>
+        </section>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>No Domain chips and no level: fieldId is null. "Include practices" is always on for a track Area.</li>
+        <li>The fact line is the track's own record, not a guess about the user's fitness.</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>F</b> · a Field with no measured pace</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <section class="card rm-fs">
+          <div class="rm-f">
+            <span class="st-label">Area — what this grows</span>
+            <button type="button" class="rm-pick"><svg class="sig"><use href="#s-know"/></svg><span class="t"><b>Biological &amp; Chemical Sciences</b><span class="t-meta">Field · level 3 · 71 cards</span></span><svg class="i"><use href="#i-chev"/></svg></button>
+          </div>
+          <div class="rm-f">
+            <span class="st-label">Domains you already have <span class="opt">1 chosen</span></span>
+            <div class="rm-dchips"><button type="button" class="rm-dchip" aria-pressed="true"><b>Radiographic Imaging</b><span>24 cards · 7 at level 6+</span></button><button type="button" class="rm-dchip" aria-pressed="false"><b>Cellular Biology</b><span>18 cards · 4 at level 6+</span></button></div>
+          </div>
+          <div class="rm-f">
+            <label class="st-label">New cards a week <span class="opt">optional · 0 to 100</span></label>
+            <input class="st-input" placeholder="e.g. 4" inputmode="numeric" style="max-width:140px">
+            <p class="st-hint">How many new cards a week will you write for this? Leave it blank and new cards won't be counted until your pace is measured.</p>
+          </div>
+        </section>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>Shown only when neither the chosen Domains nor the Field have a measured pace (≥ 4 weeks of history, median above 0). A typed rate is YOURS and is labelled "your rate, not yet measured" wherever it is used.</li>
+        <li>There is no assumed pace constant: blank means targets come from existing cards only.</li>
+      </ul>
+    </figure>
+
+    <figure class="mk-fig">
+      <div class="mk-tag"><b>G</b> · another roadmap is ACTIVE</div>
+      <div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+        <div class="rm-sticky" style="position:static;background:none">
+          <button type="button" class="btn btn-primary lg">Draft with Gemini</button>
+          <button type="button" class="btn btn-secondary lg">Build from my numbers</button>
+          <p class="t-error" role="alert" style="flex-basis:100%">You already have an active roadmap: "Become a consistently profitable systematic EUR/USD trader by 2028".</p>
+          <p class="t-meta"><a class="ilink" href="#">Open it</a> · <a class="ilink" href="#">Archive it to start another</a></p>
+        </div>
+      </div></div></div>
+      <ul class="mk-cap">
+        <li>saveIntake is claim-first under an advisory lock: a double tap writes one row, and an ACTIVE roadmap refuses with a way out, never a dead end.</li>
+      </ul>
+    </figure>
+  </div>
+</section>
+
+</body>
+</html>

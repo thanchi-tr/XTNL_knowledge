@@ -1,0 +1,1665 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
+<title>Living roadmap</title>
+<meta name="description" content="Mockup, revision 3: the active roadmap page /you/roadmap at 344, 932 and 1440 px with the Aim rank, Proficiency and this week's week quests, plus calibrating, behind, target-lowered, Start, practice-only, past-due and late-window states and the sheets.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* =====================================================================
+   XTNL · SIGIL & SLATE — roadmap mockups (lane M, roadmap.md rev 3, F23).
+   Tokens copied from src/app/styles/tokens.css (Night, the default).
+   Kit classes mirror src/app/styles/components.css and src/components/home/you.css.
+   The rm-* block is what src/components/roadmap/roadmap.css will carry (in the
+   real file: first line "@layer theme, base, components, art, effects, utilities;",
+   rules inside @layer components, rm-* names only, no Tailwind-utility names).
+   Only transform, opacity and stroke-dashoffset would animate; this file animates
+   nothing. No gold (it means spending MP) and no --owed (nothing here is debt).
+   ===================================================================== */
+:root{
+  color-scheme:dark;
+  --canvas:#050609;--page:#0a0d13;--sunken:#07090e;--card:#11151d;--raised:#171c26;--overlay:#1d2330;
+  --bar:#0c0f15;--scrim:rgba(3,4,7,.66);--curtain:#05060a;--face:#0d1017;
+  --ink-0:#f1f3f8;--ink-1:#c3cad8;--ink-2:#9aa3b5;--ink-mute:#6f788c;
+  --line-1:rgba(255,255,255,.065);--line-2:rgba(255,255,255,.11);--line-ctl:#76819a;--hi:rgba(255,255,255,.04);
+  --kept:#5fd38d;--on-kept:#0b1a12;--owed:#e07a95;--on-owed:#26060e;--held:#72d2ec;--on-held:#06161c;
+  --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
+  --xp:#fdaf3a;--on-xp:#221400;--pts:#8ea6ff;--on-pts:#07103a;--mp:#ffe08a;--on-mp:#2a1d00;
+  --light:#fff1cf;--light-glow:rgba(255,222,150,.34);
+  --iron-a:#c3c9d4;--iron-m:#8a93a4;--iron-b:#434a5a;--bronze-a:#f3c08f;--bronze-m:#c0834f;--bronze-b:#8a5530;
+  --gold-a:#fff0bd;--gold-m:#f0c75e;--gold-b:#c9901f;
+  --focus:var(--ink-0);--shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);
+  --font-ui:"Inter","Segoe UI",system-ui,sans-serif;
+  --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --s-1:2px;--s-2:4px;--s-3:6px;--s-4:8px;--s-5:12px;--s-6:16px;--s-7:20px;--s-8:24px;--s-9:32px;--s-10:40px;--s-11:56px;
+  --r-chip:8px;--r-ctl:12px;--r-card:16px;--r-sheet:24px;--r-pill:999px;--hit:44px;--hit-min:40px;
+  --topbar-h:56px;--tabbar-h:64px;--rail-w:84px;--sidebar-w:232px;
+  --t-press:90ms;--t-quick:160ms;--t-base:240ms;--ease-out:cubic-bezier(.16,1,.3,1);
+  --z-bar:20;--z-sheet:50;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;background:var(--canvas)}
+body{background:var(--canvas);color:var(--ink-0);font:400 15px/1.45 var(--font-ui);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:inherit}
+a{color:inherit}
+ul,ol{list-style:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- type roles ---------- */
+.t-display-l{font:600 30px/34px var(--font-display)}
+.t-display-m{font:600 21px/26px var(--font-display)}
+.t-display-s{font:600 19px/23px var(--font-display)}
+.t-epithet{font:italic 400 17px/1.3 var(--font-display);color:var(--ink-1)}
+.t-body-l{font:500 15px/20px var(--font-ui)}
+.t-body{font:400 15px/1.45 var(--font-ui)}
+.t-meta{font:400 13px/18px var(--font-ui);color:var(--ink-2)}
+.t-eyebrow{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.t-mono{font:500 12.5px/1.4 var(--font-mono)}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.ink-0{color:var(--ink-0)} .ink-1{color:var(--ink-1)} .ink-2{color:var(--ink-2)}
+.t-error{display:flex;gap:8px;align-items:baseline;font:600 13px/18px var(--font-ui);color:var(--ink-0)}
+.t-error::before{content:"";width:7px;height:7px;flex:none;transform:rotate(45deg) translateY(-1px);background:var(--ink-0);border-radius:1px}
+
+/* ---------- icons & glyphs ---------- */
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.g{width:14px;height:14px;flex:none}
+svg.sig{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;flex:none}
+.c-xp{color:var(--xp)} .c-mp{color:var(--mp)} .c-pts{color:var(--pts)}
+.cur{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cur svg.g{width:13px;height:13px}
+.crest text{font-family:var(--font-display);font-weight:700;fill:#f1f3f8}
+
+/* ---------- surfaces ---------- */
+.card{background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card);box-shadow:inset 0 1px 0 var(--hi)}
+.pad{padding:14px} .pad-l{padding:16px}
+.sunk{background:var(--sunken);border:1px solid var(--line-2);border-radius:12px}
+
+/* ---------- buttons ---------- */
+.btn{min-height:44px;border-radius:var(--r-ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1.2 var(--font-ui);padding:0 14px;white-space:nowrap;text-decoration:none}
+.btn.lg{min-height:48px;font-size:15px;padding:0 18px}
+.btn-block{width:100%}
+.btn-primary{background:var(--ink-0);color:var(--page)}
+.btn-secondary{border:1px solid var(--line-ctl);color:var(--ink-0)}
+.btn-quiet{color:var(--ink-1);padding:0 10px}
+.btn-danger{border:1px solid var(--owed);color:var(--owed)} /* the kit's danger voice: Archive only */
+.icon-btn{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;position:relative;color:var(--ink-1);flex:none}
+.link{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;display:inline-flex;align-items:center}
+.ilink{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px}
+.badge{position:absolute;top:5px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink-0);color:var(--page);font:700 12px/18px var(--font-ui);text-align:center;box-shadow:0 0 0 2px var(--bar)}
+
+/* ---------- chips ---------- */
+.chip{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip svg.g,.chip svg.sig,.chip svg.i{width:12px;height:12px}
+.chip.btn-chip{min-height:40px;padding:0 12px;border-color:var(--line-ctl);color:var(--ink-0);font-size:13px}
+.chip.btn-chip[aria-pressed="true"]{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.chip.quiet{border-style:dashed;color:var(--ink-2)}
+
+/* ---------- meters ---------- */
+.meter{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));box-shadow:inset 0 0 0 1px var(--line-2);position:relative;overflow:hidden}
+.meter>i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:4px;background:var(--ink-0);transform-origin:left;transform:scaleX(var(--v,0))}
+.meter>i.from{background:var(--ink-1);opacity:.55}
+.meter .cap{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--ink-1);left:var(--at)}
+.meter.thin{height:6px}
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.segs i{height:6px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 9%,transparent)}
+.segs i.on{background:var(--ink-0)}
+.segs i.cur{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.segs.tall i{height:8px}
+
+/* ---------- tabs / segmented / switch ---------- */
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.tabs::-webkit-scrollbar{display:none}
+.tab-s{min-height:40px;padding:0 14px;border-radius:10px;font:600 14px var(--font-ui);color:var(--ink-2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none;flex:none}
+.tab-s[aria-current="page"]{color:var(--ink-0);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-2)}
+.rdot{width:7px;height:7px;border-radius:50%;background:linear-gradient(#ffe7a3,#c9901f);display:inline-block}
+.segc{display:inline-flex;border:1px solid var(--line-ctl);border-radius:12px;padding:2px;gap:2px;flex-wrap:wrap;max-width:100%}
+.segc button{min-height:40px;min-width:56px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;color:var(--ink-1)}
+.segc button[aria-pressed="true"]{background:var(--ink-0);color:var(--page)}
+.segc.fill{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%}
+.segc.fill button{min-width:0;padding:0 6px}
+.switch{width:52px;height:32px;border-radius:16px;background:var(--sunken);border:1px solid var(--line-ctl);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--ink-2)}
+.switch[aria-checked="true"]{background:color-mix(in srgb,var(--ink-0) 22%,var(--sunken));border-color:var(--ink-1)}
+.switch[aria-checked="true"]::after{transform:translateX(20px);background:var(--ink-0)}
+.switch-hit{min-width:44px;min-height:44px;display:grid;place-items:center;flex:none}
+
+/* ---------- inputs (study.css .st-input; 16 px under 600 px) ---------- */
+.st-input{width:100%;min-height:48px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);padding:12px 14px;font:400 16px/1.45 var(--font-ui);color:var(--ink-0)}
+textarea.st-input{resize:vertical;min-height:72px}
+.st-input::placeholder{color:var(--ink-2)}
+.st-label{display:block;font:600 13px/18px var(--font-ui);color:var(--ink-1);margin-bottom:6px}
+.st-hint{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:6px}
+.st-count{float:right;font:500 12px/18px var(--font-mono);color:var(--ink-2)}
+
+/* =====================================================================
+   SHELL inside a frame. A frame stands in for one viewport: .f344 has the
+   top bar with the crest and the tab bar (< 600 px); .f932 has the rail and the
+   top-bar tabs (600–1279 px). <main> is the "main" container, as in the app.
+   ===================================================================== */
+.app{min-height:100%}
+.f932 .app{display:grid;grid-template-columns:var(--rail-w) minmax(0,1fr)}
+.col{display:flex;flex-direction:column;min-width:0;min-height:100%}
+.main{flex:1;container:main/inline-size;min-width:0}
+.page{padding:6px 16px 28px;margin:0 auto;max-width:1240px}
+.page.narrow{max-width:640px}
+@container main (min-width:600px){.page{padding:8px 24px 40px}}
+.topbar{position:sticky;top:0;z-index:var(--z-bar);height:var(--topbar-h);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;background:var(--bar)}
+.crest-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font:600 19px/23px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-tabs{display:none}
+.f932 .topbar{height:60px;padding:0 12px 0 20px}
+.f932 .crest-btn{display:none}
+.f932 .tb-title{flex:0 1 auto;margin-right:12px}
+.f932 .tb-tabs{display:flex;flex:1;min-width:0}
+.tabbar{position:sticky;bottom:0;z-index:var(--z-bar);height:var(--tabbar-h);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;background:var(--bar);border-top:1px solid var(--line-1)}
+.f932 .tabbar{display:none}
+.tab{text-decoration:none;height:var(--tabbar-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 12px/14px var(--font-ui);color:var(--ink-2);position:relative}
+.tab svg.i{width:22px;height:22px}
+.tab[aria-current="page"]{color:var(--ink-0)}
+.tab[aria-current="page"]::before{content:"";position:absolute;top:0;left:30%;right:30%;height:2px;border-radius:0 0 2px 2px;background:var(--ink-0)}
+.tab .badge{top:7px;right:calc(50% - 24px)}
+.tab-plus{display:grid;place-items:center}
+.tab-plus span{width:52px;height:52px;border-radius:18px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.tab-plus svg.i{width:24px;height:24px;stroke-width:2.2}
+.rail{display:none}
+.f932 .rail{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;align-items:center;padding:10px 0 12px;gap:4px;z-index:var(--z-bar)}
+.rail a,.rail button{width:72px;min-height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 12px/14px var(--font-ui);color:var(--ink-2);text-decoration:none;position:relative}
+.rail a[aria-current="page"]{color:var(--ink-0);background:var(--raised)}
+.rail .r-plus span{width:48px;height:48px;border-radius:16px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.rail .r-plus{margin-bottom:10px}
+.rail .rail-grow{flex:1}
+.rail .badge{top:6px;right:14px}
+.sec-h{display:flex;align-items:baseline;gap:4px 9px;padding:0 4px 8px;flex-wrap:wrap}
+.sec-h h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);white-space:nowrap}
+.sec-h .aside{margin-left:auto;font-size:13px;color:var(--ink-2);text-align:right}
+.lane-mark{width:9px;height:9px;transform:rotate(45deg);border:1.5px solid var(--ink-2);border-radius:1.5px;flex:none}
+
+/* ---------- You (you.css) ---------- */
+.you-tabs{margin:2px 0 14px}
+.f932 .you-tabs{display:none}
+.you-grid{display:grid;gap:16px}
+@container main (min-width:760px){.you-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.you-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.hero-c{padding:16px;container:hero/inline-size}
+.hc-top{display:flex;gap:16px;align-items:center}
+.hc-top h2{font:600 30px/34px var(--font-display);overflow-wrap:anywhere}
+.lvl-line{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin:16px 0 8px}
+.lvl-line b{font-weight:600}
+.lvl-line .nx{display:flex;align-items:center;gap:6px;color:var(--ink-2)}
+.blurb{font:italic 400 14px/1.45 var(--font-display);color:var(--ink-2);margin:8px 0 0}
+.purse{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.purse>div+div{border-left:1px solid var(--line-1);padding-left:12px}
+.purse>div:nth-child(3){border-left:0;padding-left:0}
+@container hero (min-width:440px){.purse{grid-template-columns:repeat(4,minmax(0,1fr))}.purse>div:nth-child(3){border-left:1px solid var(--line-1);padding-left:12px}}
+.purse .v{font:600 20px/1 var(--font-display);display:flex;gap:6px;align-items:center;font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.purse .v small{font:500 13px var(--font-ui);color:var(--ink-2)}
+.purse .v svg.g{width:16px;height:16px}
+.purse .k{font-size:12px;color:var(--ink-2);margin-top:5px}
+.ready-c{display:flex;gap:12px;align-items:center;padding:12px 12px 12px 14px;border-color:color-mix(in srgb,var(--gold-m) 40%,transparent)}
+.ready-c .t{flex:1;min-width:0} .ready-c b{font-weight:600;display:block}
+.coin44{width:44px;height:44px;flex:none}
+.trk-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;padding:12px 14px}
+.trk-row+.trk-row{border-top:1px solid var(--line-1)}
+.trk-row>svg.sig{width:22px;height:22px;margin-top:1px}
+.trk-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.trk-h b,.trk-h .lv{font:600 16px var(--font-display);font-variant-numeric:tabular-nums}
+.wk{margin-left:auto;display:flex;gap:3px;align-items:center}
+.wk i{width:9px;height:9px;transform:rotate(45deg);border-radius:1.5px;border:1.5px solid var(--ink-mute)}
+.wk i.k{background:var(--kept);border-color:var(--kept)}
+.wk i.h{background:var(--hatch);border-color:var(--held)}
+.trk-row .meter{margin:8px 0 6px}
+.trk-row .t-meta b{color:var(--ink-1);font-weight:600}
+.radar-c{padding:14px;container-type:inline-size}
+.radar-plot{position:relative;width:min(420px,100cqi - 56px);margin:0 auto}
+.radar-plot>svg{width:100%;height:auto;display:block;overflow:visible}
+.radar-lbl{position:absolute;width:max-content;max-width:7.5em;pointer-events:none;font:500 12px/14px var(--font-ui);color:var(--ink-2)}
+.radar-lbl.at-start{transform:translate(0,-50%)} .radar-lbl.at-middle{transform:translate(-50%,-50%);text-align:center} .radar-lbl.at-end{transform:translate(-100%,-50%);text-align:right}
+.radar-lbl.lead{color:var(--ink-0);font-weight:700}
+.rlegend{display:flex;gap:16px;font-size:12px;color:var(--ink-2);justify-content:center;flex-wrap:wrap;margin:8px 0 4px}
+.top3 li{display:flex;gap:10px;align-items:center;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;flex-wrap:wrap}
+.top3 li .note{margin-left:auto;font-size:13px;color:var(--ink-2)}
+.mo{display:flex;gap:12px;align-items:center;padding:12px 14px;min-height:64px}
+.mo+.mo{border-top:1px solid var(--line-1)}
+.mo .art{width:44px;height:44px;flex:none;display:grid;place-items:center}
+.mo .art>svg.sig{width:22px;height:22px}
+.mo b{font-weight:600;display:block}
+.mo .mo-body{flex:1;min-width:0}
+
+/* =====================================================================
+   ROADMAP (rm-*) — what roadmap.css will carry.
+   ===================================================================== */
+.rm-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.rm-grid{display:grid;gap:16px}
+@container main (min-width:760px){.rm-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.rm-aim{padding:16px}
+.rm-aim-t{font:600 19px/23px var(--font-display);overflow-wrap:anywhere}
+.rm-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.rm-lines{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-lines b{color:var(--ink-1);font-weight:600}
+.rm-lead{font-size:14px;line-height:20px;color:var(--ink-1);margin-top:12px}
+.rm-note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-note>svg.i{width:18px;height:18px;color:var(--ink-1);margin-top:1px}
+.rm-note b{color:var(--ink-0);font-weight:600}
+.rm-banner{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;padding:12px 14px;border-color:var(--line-ctl)}
+.rm-banner .t{flex:1 1 200px;min-width:0;font-size:14px;line-height:19px}
+.rm-banner .t b{display:block;font-weight:600}
+/* provenance: a class is always words; colour is never alone */
+.pv{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-1);border:1px solid var(--line-2);max-width:100%}
+.pv svg.i,.pv svg.g{width:12px;height:12px}
+.pv-draft{border:1px dashed var(--line-ctl);color:var(--ink-0)}
+.pv-kept{border:1px dashed var(--ink-mute);color:var(--ink-2)}
+.pv-yours{color:var(--ink-1)}
+.cap{font-size:13px;line-height:18px;color:var(--ink-2)}
+.cap b{color:var(--ink-1);font-weight:600}
+/* flags: blocking = ink on raised with the flag glyph; notes = quiet */
+.fl{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-0);background:var(--raised);border:1px solid var(--line-ctl);max-width:100%}
+.fl svg.i{width:12px;height:12px;stroke-width:2}
+.fl-note{font-weight:500;color:var(--ink-2);background:none;border-color:var(--line-2)}
+/* verdicts: a word and a glyph */
+.vd{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px 2px 8px;border-radius:var(--r-chip);border:1px solid var(--line-ctl);font:600 13px/18px var(--font-ui);color:var(--ink-0);white-space:nowrap}
+.vd svg.i{width:15px;height:15px;stroke-width:2}
+.vd-q{border-color:var(--line-2);color:var(--ink-1)}
+.vd-x{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+/* items (ItemRow): label line · chip line · action line */
+.it{padding:10px 12px 12px;border-radius:12px;border:1px solid var(--line-1);background:var(--card)}
+.it+.it{margin-top:8px}
+.it.s-draft{border:1px dashed var(--line-ctl)}
+.it.s-kept{border:1px dashed var(--ink-mute)}
+.it-k{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-bottom:2px}
+.it-l{font:500 15px/20px var(--font-ui);overflow-wrap:anywhere}
+.it-l s{color:var(--ink-2);text-decoration-thickness:2px}
+.it-m{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:3px}
+.it-m b{color:var(--ink-1);font-weight:600}
+.it-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.it-why{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.it-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.acts-n{display:none}
+@container main (max-width:379.98px){.acts-w{display:none}.acts-n{display:flex}}
+.ov{width:40px;min-width:40px;padding:0;justify-content:center}
+/* milestone card */
+.ms-h{display:grid;grid-template-columns:34px minmax(0,1fr);gap:4px 10px;padding:14px 14px 12px}
+.ms-n{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--line-ctl);border-radius:10px;font:600 15px var(--font-display);font-variant-numeric:tabular-nums}
+.ms-n.cur{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.ms-t{font:600 17px/22px var(--font-display);overflow-wrap:anywhere}
+.ms-w{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:2px}
+.ms-sec{padding:12px 14px;border-top:1px solid var(--line-1)}
+.ms-sec>.ms-sh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.ms-sh .t-eyebrow{color:var(--ink-1)}
+.ms-sh .cap{text-align:right}
+/* checks */
+.ck{padding:10px 0}
+.ck+.ck{border-top:1px solid var(--line-1)}
+.ck-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.ck-h b{font-weight:600;font-size:14px}
+.ck p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.ck p.fixed{color:var(--ink-2)}
+/* measure rows */
+.mr{padding:12px 0}
+.mr+.mr{border-top:1px solid var(--line-1)}
+.mr-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.mr-h b{font-weight:600;font-size:14px;line-height:19px}
+.mr-h .pct{font:600 17px/1 var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mr .meter{margin:8px 0 6px}
+.mr .t-meta b{color:var(--ink-1);font-weight:600}
+.mr .t-meta+.t-meta{margin-top:2px}
+.rm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.rm-head .big{font:600 30px/1 var(--font-display);font-variant-numeric:tabular-nums}
+/* domain / topic / practice rows */
+.dr{display:grid;grid-template-columns:22px minmax(0,1fr);gap:2px 10px;padding:10px 0}
+.dr+.dr{border-top:1px solid var(--line-1)}
+.dr>svg.sig{margin-top:3px;width:16px;height:16px;color:var(--ink-1)}
+.dr b{font-weight:600}
+.dr .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.how{margin-top:4px}
+.how>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.how>summary::-webkit-details-marker{display:none}
+.how>summary svg.i{width:16px;height:16px}
+.how[open]>summary svg.i{transform:rotate(90deg)}
+.how ol{margin:0 0 6px 20px;list-style:decimal;font-size:13px;line-height:19px;color:var(--ink-1)}
+.how ol li+li{margin-top:2px}
+.how p{font-size:13px;line-height:18px;color:var(--ink-2)}
+/* milestones list */
+.ml-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:60px;padding:8px 14px}
+.ml-row+.ml-row{border-top:1px solid var(--line-1)}
+.ml-row b{font-weight:600;display:block;overflow-wrap:anywhere}
+.ml-row .r{font:600 15px var(--font-display);font-variant-numeric:tabular-nums;text-align:right}
+.ml-row .ms-n{width:28px;height:28px;font-size:13px;border-radius:8px}
+.ml-row.later .ms-n{border-style:dashed}
+/* throughput */
+.tp{display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.tp>div{padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:baseline}
+.tp>div+div{border-top:1px solid var(--line-1)}
+.tp .k{font-size:14px;color:var(--ink-1)}
+.tp .v{font:600 15px var(--font-ui);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tp .s{grid-column:1/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+/* form (intake) */
+.rm-form{display:flex;flex-direction:column;gap:14px}
+.rm-fs{padding:16px;display:flex;flex-direction:column;gap:16px}
+.rm-f>.st-label{display:flex;justify-content:space-between;gap:8px}
+.rm-f>.st-label .opt{font-weight:400;color:var(--ink-2)}
+.rm-pick{display:flex;align-items:center;gap:10px;width:100%;min-height:56px;padding:8px 12px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);text-align:left}
+.rm-pick .t{flex:1;min-width:0}
+.rm-pick b{display:block;font-weight:600}
+.rm-pick>svg.sig{width:18px;height:18px}
+.rm-dchips{display:flex;flex-wrap:wrap;gap:6px}
+.rm-dchip{min-height:44px;padding:4px 12px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;text-align:left;max-width:100%}
+.rm-dchip b{font:600 13px/17px var(--font-ui)}
+.rm-dchip span{font-size:12px;line-height:15px;color:var(--ink-2)}
+.rm-dchip[aria-pressed="true"]{background:var(--ink-0);border-color:var(--ink-0);color:var(--page)}
+.rm-dchip[aria-pressed="true"] span{color:color-mix(in srgb,var(--page) 75%,transparent)}
+.rm-dchip.add{border-style:dashed;color:var(--ink-1)}
+.rm-step{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rm-step .st-input{width:76px;text-align:center;font-family:var(--font-mono)}
+.rm-step .icon-btn{border:1px solid var(--line-ctl)}
+.rm-fact{margin-top:8px;padding:10px 12px;border-radius:12px;background:var(--sunken);border:1px solid var(--line-2);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-fact .t-eyebrow{display:block;margin-bottom:2px;font-size:12px}
+.rm-adv{border-top:1px solid var(--line-1);padding-top:4px}
+.rm-adv>summary{min-height:44px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font:600 14px var(--font-ui);color:var(--ink-1)}
+.rm-adv>summary::-webkit-details-marker{display:none}
+.rm-adv>summary .aside{margin-left:auto;font-weight:400;font-size:13px;color:var(--ink-2);text-align:right}
+.rm-adv[open]>summary svg.i{transform:rotate(90deg)}
+.rm-adv-b{display:flex;flex-direction:column;gap:14px;padding:6px 0 4px}
+.rm-sw{display:flex;align-items:center;gap:12px}
+.rm-sw .t{flex:1;min-width:0;font-size:14px}
+.rm-sticky{position:sticky;bottom:var(--tabbar-h);z-index:2;display:flex;flex-wrap:wrap;gap:8px;padding:12px 0;margin-top:4px;background:linear-gradient(transparent,var(--page) 30%)}
+.f932 .rm-sticky{bottom:0}
+.rm-sticky .btn{flex:1 1 auto}
+.rm-sticky .t-meta{flex-basis:100%}
+.rm-sk{background:color-mix(in srgb,var(--ink-0) 7%,var(--card));border-radius:8px}
+/* the Aim card (F15) */
+.aim-c{padding:14px}
+.aim-t{font:600 17px/22px var(--font-display);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.aim-ms{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:13px;line-height:18px;color:var(--ink-1);margin:12px 0 6px}
+.aim-ms b{color:var(--ink-0);font-weight:600}
+.aim-g{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:14px 0 8px}
+.aim-g .big{font:600 22px/1 var(--font-display);font-variant-numeric:tabular-nums}
+.aim-g .cap{text-align:right}
+.aim-next{display:flex;gap:8px;align-items:baseline;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.aim-next .k{font-weight:600;color:var(--ink-0)}
+.aim-acts{display:flex;gap:8px;margin-top:12px}
+.aim-acts .btn{flex:1}
+.aim-empty{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;min-height:56px}
+.aim-empty .t{flex:1;min-width:0;font-size:14px;line-height:19px;color:var(--ink-1)}
+.aim-empty .t a{color:var(--ink-0);font-weight:600}
+
+/* ---------- static sheet and toast (the real ones portal to <body>) ---------- */
+.shf{background:color-mix(in srgb,var(--page) 35%,#000);padding-top:56px}
+.sheet-s{background:var(--overlay);border-radius:var(--r-sheet) var(--r-sheet) 0 0;border-top:1px solid var(--line-2);padding:8px 16px 20px;box-shadow:var(--shadow-pop);container:main/inline-size}
+.grabber{width:40px;height:4px;border-radius:2px;background:var(--line-ctl);margin:0 auto 12px}
+.sheet-h{display:flex;align-items:flex-start;gap:8px}
+.sheet-h .t{flex:1;min-width:0}
+.sheet-s h2{font:600 21px/26px var(--font-display)}
+.sheet-s .sub{font-size:14px;color:var(--ink-2);margin-top:4px}
+.sheet-s .card{background:var(--raised)}
+.toast-s{background:var(--overlay);border:1px solid var(--line-2);border-radius:14px;padding:10px 10px 10px 14px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow-pop)}
+.toast-s .tt{flex:1;font-size:14px;line-height:1.4;min-width:0}
+.toast-s .tt b{font:600 16px/20px var(--font-display);display:block}
+
+/* =====================================================================
+   MOCKUP CHROME (not part of the app)
+   ===================================================================== */
+.mk{max-width:1440px;margin:0 auto;padding:28px 24px 8px}
+.mk .t-eyebrow{color:var(--ink-2)}
+.mk h1{font:600 30px/34px var(--font-display);margin-top:4px}
+.mk>p{color:var(--ink-1);max-width:92ch;margin-top:10px;font-size:15px}
+.mk-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.mk-nav a{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;align-items:center;font:600 13px var(--font-ui);text-decoration:none;color:var(--ink-0)}
+.mk-nav a[aria-current="page"]{background:var(--ink-0);color:var(--page)}
+.mk-ex{display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:4px 10px;border-radius:8px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-sec{max-width:1440px;margin:0 auto;padding:24px 24px 8px}
+.mk-sec>h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);margin-bottom:6px}
+.mk-sec>p{font-size:14px;color:var(--ink-2);max-width:92ch;margin-bottom:14px}
+.mk-row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.mk-fig{display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%}
+.mk-tag{font:600 12px/16px var(--font-mono);color:var(--ink-2)}
+.mk-tag b{color:var(--ink-0)}
+.mk-cap{max-width:344px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.mk-cap b{color:var(--ink-1)}
+.mk-cap li{margin-top:4px;padding-left:12px;position:relative}
+.mk-cap li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;transform:rotate(45deg);background:var(--ink-2)}
+.mk-cap.wide{max-width:932px}
+.mk-scroll{max-width:100%;overflow-x:auto}
+.frame{background:var(--page);border:1px solid var(--line-2);border-radius:20px;overflow:clip;position:relative;flex:none}
+.f344{width:344px}
+.f932{width:932px}
+.mk-legend{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.mk-legend>span{display:inline-flex;gap:6px;align-items:center}
+.fold{position:absolute;left:0;right:0;height:0;border-top:2px dashed #9aa3b5;z-index:30;pointer-events:none}
+.fold span{position:absolute;right:6px;top:-22px;font:600 12px/16px var(--font-mono);color:#0a0d13;background:#c3cad8;padding:1px 6px;border-radius:6px}
+.mk-geo{font:600 12px/16px var(--font-mono);color:var(--ink-1);padding:8px 10px;border:1px dashed var(--line-ctl);border-radius:10px;max-width:344px}
+/* outline items (later milestones: listed, decided at Start) */
+.oi{padding:9px 0;border-top:1px solid var(--line-1)}
+.oi:first-child{border-top:0;padding-top:2px}
+.oi .it-l{font-size:14px;line-height:19px}
+.oi .it-chips{margin-top:6px}
+.ms-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.vds{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bulk{display:flex;flex-direction:column;gap:6px;padding:12px 14px 14px;border-top:1px solid var(--line-1)}
+.status-run{display:flex;gap:12px;align-items:flex-start;padding:16px}
+.status-run b{display:block;font:600 17px/22px var(--font-display)}
+.btn-wrap{white-space:normal;text-align:center;line-height:1.3;padding:8px 14px}
+/* the roadmap page: one markup, two layouts. Below 760 px of main the two
+   columns dissolve (display:contents) and `order` restores the reading order
+   Aim → Now (week quests first) → Toward the aim → Milestones → one
+   'How this is worked out' disclosure (revision 3, F18). */
+.rm-cols{display:flex;flex-direction:column;gap:16px}
+.rm-cols>.rm-col{display:contents}
+@container main (min-width:760px){.rm-cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}.rm-cols>.rm-col{display:flex;flex-direction:column;gap:16px;min-width:0}}
+.o1{order:1}.o2{order:2}.o3{order:3}.o4{order:4}.o5{order:5}.o6{order:6}.o7{order:7}.o8{order:8}.o9{order:9}.o10{order:10}
+.slow{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0);margin-left:6px;vertical-align:1px}
+.done-l{display:flex;gap:8px;align-items:flex-start}
+.done-l>svg.i{width:18px;height:18px;color:var(--kept);margin-top:1px}
+.floor{width:100%;border-collapse:collapse;font-size:13px}
+.floor th{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:left;padding:6px 8px}
+.floor td{padding:8px;border-top:1px solid var(--line-1);font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.floor td:first-child{color:var(--ink-0);font-weight:600}
+.rm-chips .chip{white-space:normal;max-width:100%;min-height:24px;padding-top:2px;padding-bottom:2px}
+/* 1440: the sidebar shell (≥ 1280 px) */
+@container main (min-width:1000px){.page{padding:12px 32px 48px}}
+.f1440{width:1440px}
+.sidebar{display:none}
+.f1440 .app{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+.f1440 .rail,.f1440 .tabbar,.f1440 .crest-btn,.f1440 .tb-tabs,.f1440 .you-tabs{display:none}
+.f1440 .topbar{height:60px;padding:0 20px 0 32px}
+.f1440 .rm-sticky{bottom:0}
+.f1440 .sidebar{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;padding:14px 12px;gap:6px;z-index:var(--z-bar)}
+.sb-char{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:var(--card);border:1px solid var(--line-1);text-decoration:none}
+.sb-char .who{min-width:0;flex:1}
+.sb-char .who b{font:600 16px/20px var(--font-display);display:block}
+.sb-char .who span{font-size:12px;color:var(--ink-2)}
+.sb-sec{margin-top:10px}
+.sb-sec>a{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-radius:12px;font:600 14px var(--font-ui);color:var(--ink-1);text-decoration:none}
+.sb-sec>a[aria-current="page"]{background:var(--raised);color:var(--ink-0)}
+.sb-sec .n{margin-left:auto;min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--ink-0);color:var(--page);font:700 12px/20px var(--font-ui);text-align:center}
+.sb-sub{display:flex;flex-direction:column;padding-left:40px}
+.sb-sub a{min-height:40px;display:flex;align-items:center;font-size:14px;color:var(--ink-2);text-decoration:none;border-radius:10px;padding:0 10px;margin-left:-10px}
+.sb-sub a[aria-current="page"]{color:var(--ink-0)}
+.sec-h .aside a.hit{display:inline-flex;align-items:center;min-height:40px;margin:-12px 0;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+.ms-sec .rm-quest-row,.ms-sec .rm-quest-line{padding-left:0;padding-right:0}
+
+/* =====================================================================
+   REVISION 3 (roadmap.md rev 3, 2026-10-04): the Aim rank, Proficiency and
+   week quests. Still rm-* names only, ink only: no gold (MP spending), no
+   --owed (nothing here is debt), no status hue without a word.
+   ===================================================================== */
+/* Aim rank + Proficiency: one block (F12, F18 §1, F19 (d)) */
+.rm-rp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.rm-rp .k{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.rm-rp .v{font:600 19px/23px var(--font-display);display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap;font-variant-numeric:tabular-nums lining-nums;margin-top:2px}
+.rm-rp .pf{text-align:right}
+.rm-rp .pf .v{justify-content:flex-end}
+.rm-rp .new{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0)}
+.rm-rp .meter{grid-column:1/-1;margin-top:10px}
+.rm-rp .full{grid-column:1/-1}
+.rm-rp .cap{margin-top:6px}
+.rm-rp .t-meta{margin-top:4px}
+.rm-rp .chg{color:var(--ink-1)}
+.rm-parts{grid-column:1/-1}
+.rm-parts>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.rm-parts>summary::-webkit-details-marker{display:none}
+.rm-parts>summary svg.i{width:16px;height:16px}
+.rm-parts[open]>summary svg.i{transform:rotate(90deg)}
+.rm-parts p{font-size:13px;line-height:18px;color:var(--ink-1);margin:0 0 4px}
+/* the "Aim ranks on this plan" ladder: on = given, cur = the next rank (ink outline) */
+.rm-ladder{display:flex;flex-direction:column;margin:2px 0 6px}
+.rm-ladder li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:0 8px;align-items:baseline;padding:5px 0;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-ladder li::before{content:"";width:9px;height:9px;transform:rotate(45deg) translateY(-1px);border:1.5px solid var(--ink-mute);border-radius:1.5px;align-self:center}
+.rm-ladder li b{font-weight:600;color:var(--ink-1)}
+.rm-ladder li.on::before{background:var(--ink-0);border-color:var(--ink-0)}
+.rm-ladder li.on b{color:var(--ink-0)}
+.rm-ladder li.cur::before{border-color:var(--ink-0);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink-0) 22%,transparent)}
+.rm-ladder li.cur b{color:var(--ink-0)}
+.rk{display:block;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rk b{color:var(--ink-0);font-weight:600}
+/* Week quests (F17 Today card, the aim line, the roadmap variant): rm-quest-* */
+.rm-quest{overflow:hidden}
+.rm-quest-legend{padding:10px 14px 2px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:2px 10px;align-items:start;min-height:48px;padding:10px 14px;color:inherit;text-decoration:none;position:relative}
+a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
+.rm-quest-row+.rm-quest-row,.rm-quest-row+.rm-quest-line,.rm-quest-line+.rm-quest-row,.rm-quest-line+.rm-quest-line,.rm-quest-more+.rm-quest-row,.rm-quest-more+.rm-quest-line{border-top:1px solid var(--line-1)}
+.rm-quest-row>svg.sig,.rm-quest-row>svg.i,.rm-quest-line>svg.sig,.rm-quest-line>svg.i{width:20px;height:20px;color:var(--ink-1);margin-top:0}
+.rm-quest-row .lbl{font:500 14px/19px var(--font-ui);overflow-wrap:anywhere;min-width:0}
+.rm-quest-row .cnt{font:600 13px/19px var(--font-ui);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;color:var(--ink-0)}
+.rm-quest-row .meter{grid-column:2/-1;margin:6px 0 2px}
+.rm-quest-row .ev{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row .ev b{color:var(--ink-1);font-weight:600}
+.rm-quest-row .ev+.ev{margin-top:2px}
+.rm-quest-row .lnk{grid-column:2/-1;margin-top:2px}
+.rm-quest-line{display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-line .lbl{overflow-wrap:anywhere;min-width:0}
+.rm-quest-line .lbl span{color:var(--ink-2)}
+.rm-quest-row.done .lbl,.rm-quest-line.done .lbl{color:var(--ink-1)}
+.rm-quest .done>svg.i{color:var(--kept)}
+.rm-quest-more{display:flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;width:100%;text-align:left;font:600 13px var(--font-ui);color:var(--ink-0);border-top:1px solid var(--line-1)}
+.rm-quest-more svg.i{width:16px;height:16px}
+.rm-quest-more[aria-expanded="true"] svg.i{transform:rotate(180deg)}
+.rm-quest-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-one{display:grid;grid-template-columns:20px minmax(0,1fr) auto 16px;gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-one b{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rm-quest-one .n{font-size:13px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.rm-quest-one>svg.i{width:20px;height:20px;color:var(--ink-1)}
+.rm-quest-one>svg.i:last-child{width:16px;height:16px;color:var(--ink-2)}
+.rm-quest-one.done>svg.i:first-child{color:var(--kept)}
+.rm-qsub{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 4px}
+.rm-qsub .t-eyebrow{color:var(--ink-1)}
+.rm-qsub .cap{text-align:right}
+.rm-cards{grid-column:2/-1;margin-top:4px;display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cards li{display:flex;justify-content:space-between;gap:10px}
+.rm-cards li span:last-child{color:var(--ink-2);white-space:nowrap}
+.rm-past{display:flex;flex-direction:column}
+.rm-past li{display:flex;justify-content:space-between;gap:10px;align-items:center;min-height:40px;font-size:13px;color:var(--ink-1);border-top:1px solid var(--line-1)}
+.rm-past li span:last-child{color:var(--ink-2);text-align:right}
+.rm-basis{display:flex;flex-direction:column;gap:0}
+.rm-basis li{padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-basis li:first-child{border-top:0}
+.rm-basis li b{color:var(--ink-0);font-weight:600}
+.rm-basis .t-eyebrow{display:block;margin:12px 0 2px}
+/* the roadmap page's reference disclosure: one at 344, open as a column from 760 */
+.rm-ref{min-width:0}
+.rm-ref>summary{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 14px;cursor:pointer;list-style:none;background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card)}
+.rm-ref>summary::-webkit-details-marker{display:none}
+.rm-ref>summary b{font-weight:600;flex:1;min-width:0}
+.rm-ref>summary span{font-size:13px;color:var(--ink-2);text-align:right}
+.rm-ref>summary svg.i{width:16px;height:16px;color:var(--ink-2)}
+.rm-ref[open]>summary svg.i{transform:rotate(90deg)}
+.rm-ref-b{display:flex;flex-direction:column;gap:16px;padding-top:16px}
+@container main (min-width:760px){.rm-ref>summary{display:none}.rm-ref-b{padding-top:0}}
+.rm-lever{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-lever .t-meta{margin:0}
+.aim-q{padding:8px 0;margin-top:12px;border-top:1px solid var(--line-1)}
+.aim-line{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:2px}
+.ml-row .rkc{font-size:13px;color:var(--ink-2);white-space:nowrap;text-align:right}
+.ml-row .rkc b{color:var(--ink-1);font-weight:600}
+.ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+  <!-- UI icons (Icon.tsx): 24 px, stroke 1.75, round caps, currentColor -->
+  <symbol id="i-today" viewBox="0 0 24 24"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v2.2M5.3 9.3l1.5 1.5M18.7 9.3l-1.5 1.5M8 21h8"/></symbol>
+  <symbol id="i-study" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <symbol id="i-train" viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h6.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.6 2H4.4zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><path d="M12 2.8l7.5 4.3v9.8L12 21.2l-7.5-4.3V7.1z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4.5h11l-2 4 2 4H5"/></symbol>
+  <symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.01"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.2 6.2l2.6 2.6M15.2 15.2l2.6 2.6M6.2 17.8l2.6-2.6M15.2 8.8l2.6-2.6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <!-- verdict glyphs (always beside their word) -->
+  <symbol id="v-fits" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="v-tight" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="v-over" viewBox="0 0 24 24"><path d="M12 3.8l9 15.7H3z"/><path d="M12 10v4.2M12 16.9v.01"/></symbol>
+  <symbol id="v-imp" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></symbol>
+  <symbol id="v-fitted" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16M8 5v6M16 13v6"/></symbol>
+  <symbol id="v-unv" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.6 2.6"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <!-- currency glyphs (filled) -->
+  <symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
+  <symbol id="c-pts" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8.5 10L12 22 3.5 12zm0 4.6L7.4 12 12 17.4 16.6 12z"/><path fill="currentColor" d="M12 9.2l2.4 2.8-2.4 2.8-2.4-2.8z"/></symbol>
+  <symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>
+  <!-- life-track and knowledge sigils (stroke, ink): told apart by shape, never hue -->
+  <symbol id="s-body" viewBox="0 0 24 24"><path d="M12 3.5l8.5 15.5h-17z"/></symbol>
+  <symbol id="s-duty" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z"/></symbol>
+  <symbol id="s-craft" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 12h14"/></symbol>
+  <symbol id="s-care" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="s-know" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <!-- materials -->
+  <linearGradient id="m-iron" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c3c9d4"/><stop offset=".45" stop-color="#8a93a4"/><stop offset="1" stop-color="#434a5a"/></linearGradient>
+  <linearGradient id="m-bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3c08f"/><stop offset=".5" stop-color="#c0834f"/><stop offset="1" stop-color="#8a5530"/></linearGradient>
+  <linearGradient id="m-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff0bd"/><stop offset=".45" stop-color="#f0c75e"/><stop offset="1" stop-color="#a8721a"/></linearGradient>
+  <!-- the crest: level 14, iron, with its track edges (Duty .8, Craft .62, Care .4, Body .55) -->
+  <symbol id="crest14" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="6" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+    <line x1="50" y1="12.5" x2="84.21" y2="32.25" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="12.5" x2="77.37" y2="28.3" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="84.21" y1="71.75" x2="50" y2="91.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="84.21" y1="71.75" x2="62.9" y2="84" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="50" y1="91.5" x2="15.79" y2="71.75" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="91.5" x2="36.32" y2="83.6" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="15.79" y1="32.25" x2="50" y2="12.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="15.79" y1="32.25" x2="34.61" y2="21.39" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <text x="50" y="63.5" text-anchor="middle" font-size="32" font-family="Fraunces, Georgia, serif" font-weight="700" fill="#f1f3f8">14</text>
+  </symbol>
+  <symbol id="crest-plain" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="crest15b" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-bronze)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-bronze)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <!-- an emblem coin stand-in for the ready callout (unchanged component) -->
+  <symbol id="coin-ready" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="#0d1017" stroke="url(#m-gold)" stroke-width="3.5"/><circle cx="32" cy="32" r="22" fill="none" stroke="url(#m-gold)" stroke-opacity=".35"/><path d="M20 40c5 0 7-14 12-14s7 14 12 14" fill="none" stroke="#00cc7a" stroke-width="2.6" stroke-linecap="round"/><circle cx="32" cy="32" r="31" fill="none" stroke="#f0c75e" stroke-width="1.5" stroke-dasharray="3 3"/></symbol>
+
+  <!-- revision 3 additions -->
+  <symbol id="i-step" viewBox="0 0 24 24"><path d="M4 19h5v-5h5V9h6"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5l2.5-8h11l2.5 8v5H4zM4 13.5h4.5l1 2h5l1-2H20"/></symbol>
+  <symbol id="h-rest" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-sword" viewBox="0 0 24 24"><path d="M14.5 4.5H19.5v5L10 19l-5-5zM7.5 16.5l-3 3M6 13l5 5"/></symbol>
+
+</defs>
+</svg>
+<header class="mk">
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 3 of 5 · roadmap.md rev 3, F10–F14, F18</div>
+  <h1>Living roadmap — /you/roadmap (ACTIVE)</h1>
+  <p>The second You tab once a plan is accepted. Revision 3 adds the <b>Aim rank</b> and <b>Proficiency</b> to the Aim header, puts this week's <b>week quests</b> first inside Now, and folds the reference sections into one disclosure at 344. Every figure is computed in-house from the app's own rows and says what kind of evidence it is: cards your reviews brought to a level (tested), cards you added (counted by the app), and sessions and steps you ticked (from your ticks). Week quests, Proficiency and the rank pay nothing and call no model.</p>
+  <div class="mk-ex">Example data — fake but plausible, as of Thu 28 Jan 2027 09:12 (milestone 1 reached 18 Dec; milestone 2 started Mon 21 Dec)</div>
+  <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html" aria-current="page">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html">5 · Today's week quests</a></nav>
+  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
+  <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<section class="mk-sec">
+<h2>on-pace · 344, 932 and 1440</h2>
+<p>One markup, two layouts. Below 760 px of main the two columns dissolve (display: contents) and CSS order gives the revision 3 reading order: Aim (with the Aim rank and Proficiency) → Now, with this week's quests first → Toward the aim → Milestones → one "How this is worked out" disclosure holding Your capacity, Is this realistic?, How this was drafted and How this is measured → the footer actions. From 760 px, left is Aim, Now, Milestones; right is Toward the aim and the four reference sections, open. No chart and no graph canvas: the pace is text.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover</div>
+<div style="position:relative"><div class="frame f344" id="rm344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027 · 48 wk left</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 4 Oct</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Aspirant</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">41%</div></div>
+      <div class="meter" role="meter" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 41%, tested by your reviews and your ticks"><i style="--v:.4189"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 55% · tested by your reviews · practice 23% · from your ticks · milestones 1 of 6</p><p class="t-meta full">Next rank: Journeyman at milestone 2 · rank is kept for good</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan"><li class="on"><span><b>Initiate</b> · from your first acceptance</span></li><li class="on"><span><b>Aspirant</b> · milestone 1 · reached 18 Dec</span></li><li class="cur"><span><b>Journeyman</b> · milestone 2 · next rank</span></li><li><span><b>Specialist</b> · milestone 3</span></li><li><span><b>Expert</b> · milestone 4</span></li><li><span><b>Virtuoso</b> · milestone 5 · milestone 6 keeps your rank</span></li><li><span><b>Paragon</b> · when the aim is reached</span></li></ol><p class="t-meta">Top rank on this plan: Paragon, when the aim is reached.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div>
+  </section>
+  <div class="o2" id="now">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 2 of 6</h2><span class="aside">day 39 of 77</span></div>
+    <section class="card" aria-label="Current milestone">
+      <div class="ms-h"><span class="ms-n cur">2</span><div>
+        <div class="ms-t">Risk and position sizing</div>
+        <div class="ms-w">Mon 21 Dec → Sun 7 Mar · started Mon 21 Dec</div>
+        <div class="rm-chips" style="margin-top:8px"><span class="chip">Current</span><span class="pv">Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%</span></div>
+        <p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+      </div></div>
+      <div class="ms-sec" id="week-quests">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 25 – Sun 31 Jan · fixed Mon 04:15</span></div>
+
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">tested by your reviews · measured 09:12</p><p class="ev">4 cards can reach level 6 this week if passed when due; a card that was due anyway counts:</p><ul class="rm-cards" aria-label="Cards that can reach level 6 this week"><li><span>Kelly sizing with estimation error</span><span>due Tue · now level 6</span></li><li><span>Fixed-fractional vs fixed-ratio sizing</span><span>due Wed · level 5</span></li><li><span>Volatility-scaled stop distance</span><span>due Wed · level 5</span></li><li><span>Risk of ruin, informally</span><span>due Sat · level 5</span></li></ul></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counted by the app; it doesn't judge them · counts toward Trading's weekly quota too</p><p class="ev">New cards count toward Milestone 2 once they reach level 6+.</p><a class="link lnk" href="#">Add a card here</a></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">1 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Study Risk Management, Position Sizing · 2 sessions × 30 min</span><span class="cnt num">2 of 2 sessions · done</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss</span><span class="cnt num">0 of 1 step</span><p class="ev">you tick it</p><a class="link lnk" href="final-today-quests.html">On Today</a></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p>
+        <div class="rm-qsub" style="margin-top:14px"><span class="t-eyebrow">Past week quests</span><span class="cap">final from the Wednesday after</span></div><ul class="rm-past"><li><span>Week of 18 Jan</span><span>4 of 5 done</span></li><li><span>Week of 11 Jan</span><span>5 of 5 done</span></li><li><span>Week of 4 Jan</span><span>3 of 5 done · 2 days held</span></li><li><span>Week of 28 Dec</span><span>2 of 4 done</span></li><li><span>Week of 21 Dec</span><span>3 of 4 done</span></li></ul>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">23%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Milestone 2, 23%, tested by your reviews"><i style="--v:.238"></i></div>
+        <p class="t-meta">The slowest part sets the milestone · On pace for 7 Mar.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">the same numbers as Today's goal card</span></div>
+        <div class="mr" style="padding-top:2px">
+          <div class="mr-h"><b>Cards at level 6+ in Risk Management, Position Sizing<span class="slow">slowest</span></b><span class="pct">23%</span></div>
+          <div class="meter"><i style="--v:.238"></i></div>
+          <p class="t-meta"><b>+5 of 21</b> since start · holding <b>26 of 42</b> · 21 already counted when you started</p>
+          <p class="t-meta">each recalled after a gap of about 12 days · tested by your reviews · measured 09:12</p>
+          <p class="t-meta">On pace for 7 Mar · 19 cards in the pipeline can reach level 6 by then if passed on their day.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Practice kept</b><span class="pct">50%</span></div>
+          <div class="meter"><i style="--v:.5"></i></div>
+          <p class="t-meta"><b>22 of 44</b> sessions · 28 planned so far · from your ticks</p>
+          <p class="t-meta">On pace.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Steps</b><span class="pct">1 of 3</span></div>
+          <p class="t-meta">you ticked one on Tue 12 Jan</p>
+        </div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Domains needed</span><span class="cap">from your library</span></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Risk Management</b><div class="t-meta">47 cards · 24 at level 6+ · Domain level 5</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a><a class="chip btn-chip" href="#">Library</a></div></div></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Position Sizing</b><div class="t-meta">14 cards · 2 at level 6+ · Domain level 1 · you created it on 21 Dec</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a></div></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">write cards on it in its Domain; review them when due</span></div>
+        <div class="it"><div class="it-l">Kelly sizing and its limits</div><div class="it-m">Position Sizing: 14 cards · 2 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span></div></div>
+        <div class="it s-kept"><div class="it-l">Correlated positions</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-kept">Gemini's words · kept by you · not checked</span><button class="chip btn-chip ov" style="margin-left:auto" aria-label="More: I checked this, Edit"><svg class="i"><use href="#i-dot3"/></svg></button></div></div>
+        <div class="it"><div class="it-l">Maximum adverse excursion</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">on Today under this goal</span></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span></div><div class="it-l">Backtest</div><div class="it-m">3× a week · 45 min · kept <b>10 of 16</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div>
+          <details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Pick a narrow point you get wrong.</li><li>Work on only that point for the whole session.</li><li>Check each attempt against a correct answer straight away.</li><li>Note what went wrong before the next attempt.</li></ol></details></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Reading</span><span class="pv pv-yours">Written by the app</span></div><div class="it-l">Study Risk Management, Position Sizing</div><div class="it-m">2× a week · 30 min · kept <b>12 of 12</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Steps</span><span class="cap">you tick these</span></div>
+        <div class="done-l"><svg class="i"><use href="#i-tick"/></svg><div><div class="it-l">Write the position-sizing rule for the system</div><div class="it-m">done Tue 12 Jan</div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Set a maximum daily loss</div><div class="it-m">this week's step · <a class="ilink" href="final-today-quests.html">On Today</a></div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Write the exit rule for a losing streak</div><div class="it-m">a week quest from the week three quarters of the window has passed</div></div></div>
+      </div>
+      <div class="ms-sec" id="checkpoint">
+        <div class="ms-sh"><span class="t-eyebrow">Checkpoint · performance check</span><span class="cap">context only</span></div>
+        <div class="it-l">Size historical trades by hand</div>
+        <p class="t-meta" style="margin-top:3px">no score logged yet · your bar 8 of 10 · doesn't move your progress</p>
+        <p class="t-meta">A week quest asks for a score from the week of 22 Feb, when 80% of the window has passed.</p>
+        <div class="it-acts"><button class="chip btn-chip">Log a score</button></div>
+      </div>
+    </section>
+  </div>
+  <div class="o4">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 31 Dec 2027</span></div>
+    <section class="card">
+      <div class="ml-row"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Backtests that hold up</b><span class="t-meta">Reached 18 Dec · 4 Oct – 20 Dec</span></div><span class="r">100%<small>→ Aspirant</small></span></div>
+      <div class="ml-row"><span class="ms-n cur">2</span><div><b>Risk and position sizing</b><span class="t-meta">Current · 21 Dec – 7 Mar</span></div><span class="r">23%<small>→ Journeyman</small></span></div>
+      <div class="ml-row"><span class="ms-n">3</span><div><b>Forward-testing on a demo account</b><span class="t-meta">Outline · 8 Mar – 16 May</span></div><span class="r"><small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Execution and costs</b><span class="t-meta">Outline · 17 May – 1 Aug</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row"><span class="ms-n">5</span><div><b>Live trading at small size</b><span class="t-meta">Outline · 2 Aug – 17 Oct</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <div class="ml-row"><span class="ms-n">6</span><div><b>Consistency review</b><span class="t-meta">Outline · 18 Oct – 31 Dec 2027</span></div><span class="r"><small>keeps your rank</small></span></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">Reaching the aim gives the Aim rank Paragon.</p>
+    </section>
+  </div>
+  <div class="o7 it-acts" style="margin-top:0"><button class="btn btn-secondary">Re-plan</button><button class="btn btn-danger">Archive</button></div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2><span class="aside">since you began · 4 Oct</span></div>
+    <section class="card">
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Algorithmic Backtesting, Quantitative System Dev, Risk Management, Market Psychology · cards at level 10+</b><span class="pct">15%</span></div>
+        <div class="meter"><i style="--v:.15"></i></div>
+        <div class="t-meta"><b>+6 of 40</b> since you began · holding <b>12 of 46</b></div>
+        <div class="t-meta">each recalled after a gap of about 50 days · tested by your reviews · measured 09:12</div>
+        <div class="t-meta">On pace for 31 Dec 2027.</div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div>
+        <div class="mr-h"><b>Milestones reached</b><span class="pct">1 of 6</span></div>
+        <div class="segs tall" style="margin:8px 0 4px" role="img" aria-label="Milestone 1 reached, milestone 2 current, 4 to come"><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div>
+        <div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 76%</span></div>
+        <div class="t-meta">39 of 51 sessions · from your ticks · context, not part of progress</div>
+      </div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">This app tests the cards you hold through your reviews and counts the practice you tick. Whether that makes you 'Become a consistently profitable systematic EUR/USD trader by 2028' is yours to judge.</p>
+    </section>
+  </div>
+  <details class="rm-ref o5">
+    <summary><b>How this is worked out</b><span>capacity · realism · drafting · measuring</span><svg class="i"><use href="#i-chev"/></svg></summary>
+    <div class="rm-ref-b">
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Your capacity</h2><span class="aside">what the app has seen</span></div>
+        <section class="card tp">
+          <div><span class="k">Hours you gave this aim</span><span class="v">8 h a week</span><span class="s">your estimate</span></div>
+          <div><span class="k">Tracked time, all tasks</span><span class="v">≈ 9 h 10</span><span class="s">median week · a lean week ≈ 6 h 20 · task estimates, not timed; 38% sized by Gemini</span></div>
+          <div><span class="k">Reviews a day</span><span class="v">27</span><span class="s">median of 28 days</span></div>
+          <div><span class="k">Pass share</span><span class="v">84% (reads high)</span><span class="s">lapses by neglect aren't logged, so this reads high</span></div>
+          <div><span class="k">New cards a week</span><span class="v">3 here · 9 in all</span><span class="s">median of 8 weeks</span></div>
+          <div><span class="k">Recurring tasks kept</span><span class="v">74%</span><span class="s">tasks of 20 min or more · 38 judged · from your ticks</span></div>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Is this realistic?</h2><span class="aside"><a class="ilink" href="#sheet-worked">Constants</a></span></div>
+        <section class="card pad">
+          <div class="t-eyebrow">Milestone 2 · current</div>
+          <div class="ck">
+            <div class="ck-h"><b>Targets vs your pace</b><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span></div>
+            <p>Re-fitted at Start on 21 Dec, at Steady: 21 then, plus 70% of the ≈ 30 more your reviews could be expected to bring to level 6 by 7 Mar = 42.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div>
+            <p>Worst week needs ≈ 3 h 50; you have ≈ 4 h 30 (your 8 h × 74% kept, capped at +50% of the ≈ 9 h 10 you track).</p>
+            <p class="fixed">Counts only what the app tracks: reviews, new cards and the practices below. Time to study the material elsewhere isn't estimated.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>Aim check</b></div>
+            <p>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></p>
+          </div>
+          <div class="t-eyebrow" style="margin-top:10px">Milestones 3–6 · as accepted</div>
+          <ul style="margin-top:6px">
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">3</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">4</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-tight"/></svg>Tight</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">5</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">6</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+          </ul>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+        <section class="card tp">
+          <div><span class="k">Drafted by</span><span class="v t-mono">gemini-3.5-flash-lite</span><span class="s">prompt v2 · Sun 4 Oct 09:12 · 1 draft · 2 items dropped by the checker (a link, an unknown Domain key) · 1 matched to your library</span></div>
+          <div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 4 Oct</span></div>
+        </section>
+      </div>
+      <section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span><b>How this is measured</b> Cards your reviews bring to a level are tested; cards you add are counted by the app; practice sessions and steps are your own ticks. Proficiency, the Aim rank and week quests are worked out from those rows. No model judges progress. <a class="ilink" href="#sheet-measured">Open</a></span></section>
+    </div>
+  </details>
+</div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div><div class="fold" style="top:818px"><span>818 · tab bar starts</span></div></div>
+<p class="mk-geo" id="geo-rm">Measuring…</p>
+<ul class="mk-cap"><li><b>Aim rank Aspirant</b> came from reaching milestone 1 (place 1 in the plan). Milestone 2 gives Journeyman; milestone 6 keeps the rank; Paragon comes only with the aim, because this plan has 4 or more milestones. The ladder sits in the "Aim ranks on this plan" disclosure.</li><li><b>Proficiency 41%</b> always shows its parts line here (cards 55% · practice 23% · milestones 1 of 6). It is the stored PROFICIENCY reading, the same one the Aim card reads.</li><li><b>Week quests</b> come first in Now: the set the life cron froze at Mon 04:15, every row with its evidence in words. RAISE lists the cards and their due days; PRACTICE says the milestone counts 80% of the sessions it asks for. No row links to Review.</li><li>"Past week quests" are final from the Wednesday 04:00 after their Sunday ("still settling" before). "· 2 days held" is ink, never red.</li><li>The study practice is the app's own (CodeText), so its week quest needed no check; "Backtest" is the user's edit (YoursText).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · two columns</div>
+<div class="mk-scroll"><div class="frame f932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027 · 48 wk left</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 4 Oct</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Aspirant</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">41%</div></div>
+      <div class="meter" role="meter" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 41%, tested by your reviews and your ticks"><i style="--v:.4189"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 55% · tested by your reviews · practice 23% · from your ticks · milestones 1 of 6</p><p class="t-meta full">Next rank: Journeyman at milestone 2 · rank is kept for good</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan"><li class="on"><span><b>Initiate</b> · from your first acceptance</span></li><li class="on"><span><b>Aspirant</b> · milestone 1 · reached 18 Dec</span></li><li class="cur"><span><b>Journeyman</b> · milestone 2 · next rank</span></li><li><span><b>Specialist</b> · milestone 3</span></li><li><span><b>Expert</b> · milestone 4</span></li><li><span><b>Virtuoso</b> · milestone 5 · milestone 6 keeps your rank</span></li><li><span><b>Paragon</b> · when the aim is reached</span></li></ol><p class="t-meta">Top rank on this plan: Paragon, when the aim is reached.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div>
+  </section>
+  <div class="o2" id="now-2">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 2 of 6</h2><span class="aside">day 39 of 77</span></div>
+    <section class="card" aria-label="Current milestone">
+      <div class="ms-h"><span class="ms-n cur">2</span><div>
+        <div class="ms-t">Risk and position sizing</div>
+        <div class="ms-w">Mon 21 Dec → Sun 7 Mar · started Mon 21 Dec</div>
+        <div class="rm-chips" style="margin-top:8px"><span class="chip">Current</span><span class="pv">Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%</span></div>
+        <p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+      </div></div>
+      <div class="ms-sec" id="week-quests-2">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 25 – Sun 31 Jan · fixed Mon 04:15</span></div>
+
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">tested by your reviews · measured 09:12</p><p class="ev">4 cards can reach level 6 this week if passed when due; a card that was due anyway counts:</p><ul class="rm-cards" aria-label="Cards that can reach level 6 this week"><li><span>Kelly sizing with estimation error</span><span>due Tue · now level 6</span></li><li><span>Fixed-fractional vs fixed-ratio sizing</span><span>due Wed · level 5</span></li><li><span>Volatility-scaled stop distance</span><span>due Wed · level 5</span></li><li><span>Risk of ruin, informally</span><span>due Sat · level 5</span></li></ul></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counted by the app; it doesn't judge them · counts toward Trading's weekly quota too</p><p class="ev">New cards count toward Milestone 2 once they reach level 6+.</p><a class="link lnk" href="#">Add a card here</a></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">1 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Study Risk Management, Position Sizing · 2 sessions × 30 min</span><span class="cnt num">2 of 2 sessions · done</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss</span><span class="cnt num">0 of 1 step</span><p class="ev">you tick it</p><a class="link lnk" href="final-today-quests.html">On Today</a></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p>
+        <div class="rm-qsub" style="margin-top:14px"><span class="t-eyebrow">Past week quests</span><span class="cap">final from the Wednesday after</span></div><ul class="rm-past"><li><span>Week of 18 Jan</span><span>4 of 5 done</span></li><li><span>Week of 11 Jan</span><span>5 of 5 done</span></li><li><span>Week of 4 Jan</span><span>3 of 5 done · 2 days held</span></li><li><span>Week of 28 Dec</span><span>2 of 4 done</span></li><li><span>Week of 21 Dec</span><span>3 of 4 done</span></li></ul>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">23%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Milestone 2, 23%, tested by your reviews"><i style="--v:.238"></i></div>
+        <p class="t-meta">The slowest part sets the milestone · On pace for 7 Mar.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">the same numbers as Today's goal card</span></div>
+        <div class="mr" style="padding-top:2px">
+          <div class="mr-h"><b>Cards at level 6+ in Risk Management, Position Sizing<span class="slow">slowest</span></b><span class="pct">23%</span></div>
+          <div class="meter"><i style="--v:.238"></i></div>
+          <p class="t-meta"><b>+5 of 21</b> since start · holding <b>26 of 42</b> · 21 already counted when you started</p>
+          <p class="t-meta">each recalled after a gap of about 12 days · tested by your reviews · measured 09:12</p>
+          <p class="t-meta">On pace for 7 Mar · 19 cards in the pipeline can reach level 6 by then if passed on their day.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Practice kept</b><span class="pct">50%</span></div>
+          <div class="meter"><i style="--v:.5"></i></div>
+          <p class="t-meta"><b>22 of 44</b> sessions · 28 planned so far · from your ticks</p>
+          <p class="t-meta">On pace.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Steps</b><span class="pct">1 of 3</span></div>
+          <p class="t-meta">you ticked one on Tue 12 Jan</p>
+        </div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Domains needed</span><span class="cap">from your library</span></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Risk Management</b><div class="t-meta">47 cards · 24 at level 6+ · Domain level 5</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a><a class="chip btn-chip" href="#">Library</a></div></div></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Position Sizing</b><div class="t-meta">14 cards · 2 at level 6+ · Domain level 1 · you created it on 21 Dec</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a></div></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">write cards on it in its Domain; review them when due</span></div>
+        <div class="it"><div class="it-l">Kelly sizing and its limits</div><div class="it-m">Position Sizing: 14 cards · 2 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span></div></div>
+        <div class="it s-kept"><div class="it-l">Correlated positions</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-kept">Gemini's words · kept by you · not checked</span><button class="chip btn-chip ov" style="margin-left:auto" aria-label="More: I checked this, Edit"><svg class="i"><use href="#i-dot3"/></svg></button></div></div>
+        <div class="it"><div class="it-l">Maximum adverse excursion</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">on Today under this goal</span></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span></div><div class="it-l">Backtest</div><div class="it-m">3× a week · 45 min · kept <b>10 of 16</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div>
+          <details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Pick a narrow point you get wrong.</li><li>Work on only that point for the whole session.</li><li>Check each attempt against a correct answer straight away.</li><li>Note what went wrong before the next attempt.</li></ol></details></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Reading</span><span class="pv pv-yours">Written by the app</span></div><div class="it-l">Study Risk Management, Position Sizing</div><div class="it-m">2× a week · 30 min · kept <b>12 of 12</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Steps</span><span class="cap">you tick these</span></div>
+        <div class="done-l"><svg class="i"><use href="#i-tick"/></svg><div><div class="it-l">Write the position-sizing rule for the system</div><div class="it-m">done Tue 12 Jan</div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Set a maximum daily loss</div><div class="it-m">this week's step · <a class="ilink" href="final-today-quests.html">On Today</a></div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Write the exit rule for a losing streak</div><div class="it-m">a week quest from the week three quarters of the window has passed</div></div></div>
+      </div>
+      <div class="ms-sec" id="checkpoint-2">
+        <div class="ms-sh"><span class="t-eyebrow">Checkpoint · performance check</span><span class="cap">context only</span></div>
+        <div class="it-l">Size historical trades by hand</div>
+        <p class="t-meta" style="margin-top:3px">no score logged yet · your bar 8 of 10 · doesn't move your progress</p>
+        <p class="t-meta">A week quest asks for a score from the week of 22 Feb, when 80% of the window has passed.</p>
+        <div class="it-acts"><button class="chip btn-chip">Log a score</button></div>
+      </div>
+    </section>
+  </div>
+  <div class="o4">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 31 Dec 2027</span></div>
+    <section class="card">
+      <div class="ml-row"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Backtests that hold up</b><span class="t-meta">Reached 18 Dec · 4 Oct – 20 Dec</span></div><span class="r">100%<small>→ Aspirant</small></span></div>
+      <div class="ml-row"><span class="ms-n cur">2</span><div><b>Risk and position sizing</b><span class="t-meta">Current · 21 Dec – 7 Mar</span></div><span class="r">23%<small>→ Journeyman</small></span></div>
+      <div class="ml-row"><span class="ms-n">3</span><div><b>Forward-testing on a demo account</b><span class="t-meta">Outline · 8 Mar – 16 May</span></div><span class="r"><small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Execution and costs</b><span class="t-meta">Outline · 17 May – 1 Aug</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row"><span class="ms-n">5</span><div><b>Live trading at small size</b><span class="t-meta">Outline · 2 Aug – 17 Oct</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <div class="ml-row"><span class="ms-n">6</span><div><b>Consistency review</b><span class="t-meta">Outline · 18 Oct – 31 Dec 2027</span></div><span class="r"><small>keeps your rank</small></span></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">Reaching the aim gives the Aim rank Paragon.</p>
+    </section>
+  </div>
+  <div class="o7 it-acts" style="margin-top:0"><button class="btn btn-secondary">Re-plan</button><button class="btn btn-danger">Archive</button></div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2><span class="aside">since you began · 4 Oct</span></div>
+    <section class="card">
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Algorithmic Backtesting, Quantitative System Dev, Risk Management, Market Psychology · cards at level 10+</b><span class="pct">15%</span></div>
+        <div class="meter"><i style="--v:.15"></i></div>
+        <div class="t-meta"><b>+6 of 40</b> since you began · holding <b>12 of 46</b></div>
+        <div class="t-meta">each recalled after a gap of about 50 days · tested by your reviews · measured 09:12</div>
+        <div class="t-meta">On pace for 31 Dec 2027.</div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div>
+        <div class="mr-h"><b>Milestones reached</b><span class="pct">1 of 6</span></div>
+        <div class="segs tall" style="margin:8px 0 4px" role="img" aria-label="Milestone 1 reached, milestone 2 current, 4 to come"><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div>
+        <div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 76%</span></div>
+        <div class="t-meta">39 of 51 sessions · from your ticks · context, not part of progress</div>
+      </div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">This app tests the cards you hold through your reviews and counts the practice you tick. Whether that makes you 'Become a consistently profitable systematic EUR/USD trader by 2028' is yours to judge.</p>
+    </section>
+  </div>
+  <details class="rm-ref o5" open>
+    <summary><b>How this is worked out</b><span>capacity · realism · drafting · measuring</span><svg class="i"><use href="#i-chev"/></svg></summary>
+    <div class="rm-ref-b">
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Your capacity</h2><span class="aside">what the app has seen</span></div>
+        <section class="card tp">
+          <div><span class="k">Hours you gave this aim</span><span class="v">8 h a week</span><span class="s">your estimate</span></div>
+          <div><span class="k">Tracked time, all tasks</span><span class="v">≈ 9 h 10</span><span class="s">median week · a lean week ≈ 6 h 20 · task estimates, not timed; 38% sized by Gemini</span></div>
+          <div><span class="k">Reviews a day</span><span class="v">27</span><span class="s">median of 28 days</span></div>
+          <div><span class="k">Pass share</span><span class="v">84% (reads high)</span><span class="s">lapses by neglect aren't logged, so this reads high</span></div>
+          <div><span class="k">New cards a week</span><span class="v">3 here · 9 in all</span><span class="s">median of 8 weeks</span></div>
+          <div><span class="k">Recurring tasks kept</span><span class="v">74%</span><span class="s">tasks of 20 min or more · 38 judged · from your ticks</span></div>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Is this realistic?</h2><span class="aside"><a class="ilink" href="#sheet-worked">Constants</a></span></div>
+        <section class="card pad">
+          <div class="t-eyebrow">Milestone 2 · current</div>
+          <div class="ck">
+            <div class="ck-h"><b>Targets vs your pace</b><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span></div>
+            <p>Re-fitted at Start on 21 Dec, at Steady: 21 then, plus 70% of the ≈ 30 more your reviews could be expected to bring to level 6 by 7 Mar = 42.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div>
+            <p>Worst week needs ≈ 3 h 50; you have ≈ 4 h 30 (your 8 h × 74% kept, capped at +50% of the ≈ 9 h 10 you track).</p>
+            <p class="fixed">Counts only what the app tracks: reviews, new cards and the practices below. Time to study the material elsewhere isn't estimated.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>Aim check</b></div>
+            <p>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></p>
+          </div>
+          <div class="t-eyebrow" style="margin-top:10px">Milestones 3–6 · as accepted</div>
+          <ul style="margin-top:6px">
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">3</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">4</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-tight"/></svg>Tight</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">5</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">6</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+          </ul>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+        <section class="card tp">
+          <div><span class="k">Drafted by</span><span class="v t-mono">gemini-3.5-flash-lite</span><span class="s">prompt v2 · Sun 4 Oct 09:12 · 1 draft · 2 items dropped by the checker (a link, an unknown Domain key) · 1 matched to your library</span></div>
+          <div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 4 Oct</span></div>
+        </section>
+      </div>
+      <section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span><b>How this is measured</b> Cards your reviews bring to a level are tested; cards you add are counted by the app; practice sessions and steps are your own ticks. Proficiency, the Aim rank and week quests are worked out from those rows. No model judges progress. <a class="ilink" href="#sheet-measured">Open</a></span></section>
+    </div>
+  </details>
+</div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>From 760 px of main the reference sections stand open in the right column (the disclosure's summary hides), as revision 2 had them.</li><li>Today's goal card, this page, the Aim card on /you and the goal close all read the same stored readings: 23% for Milestone 2, measured 09:12.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>1440</b> · sidebar · the desktop</div>
+<div class="mk-scroll"><div class="frame f1440"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><nav class="sidebar" aria-label="Sections">
+<a class="sb-char" href="#"><svg width="48" height="50" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg><div class="who"><b>Adept</b><span>of the Deep Archive</span><div class="meter thin" style="margin-top:6px"><i style="--v:.86"></i></div><span>86% to Practitioner</span></div></a>
+<button class="btn btn-primary btn-block" style="margin-top:4px"><svg class="i"><use href="#i-plus"/></svg>Capture</button>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="n num">3</span></a></div>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="n num">26</span></a></div>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a></div>
+<div class="sb-sec"><a href="#" aria-current="page"><svg class="i"><use href="#i-sheet"/></svg>You</a><div class="sb-sub"><a href="#">Sheet</a><a href="#" aria-current="page">Roadmap</a><a href="#">Skills</a><a href="#">Loadout</a><a href="#">Moments</a><a href="#">Stats</a><a href="#">Settings</a></div></div></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-cols">
+<div class="rm-col">
+  <section class="card rm-aim o1" aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027 · 48 wk left</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 4 Oct</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Aspirant</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">41%</div></div>
+      <div class="meter" role="meter" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 41%, tested by your reviews and your ticks"><i style="--v:.4189"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 55% · tested by your reviews · practice 23% · from your ticks · milestones 1 of 6</p><p class="t-meta full">Next rank: Journeyman at milestone 2 · rank is kept for good</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan"><li class="on"><span><b>Initiate</b> · from your first acceptance</span></li><li class="on"><span><b>Aspirant</b> · milestone 1 · reached 18 Dec</span></li><li class="cur"><span><b>Journeyman</b> · milestone 2 · next rank</span></li><li><span><b>Specialist</b> · milestone 3</span></li><li><span><b>Expert</b> · milestone 4</span></li><li><span><b>Virtuoso</b> · milestone 5 · milestone 6 keeps your rank</span></li><li><span><b>Paragon</b> · when the aim is reached</span></li></ol><p class="t-meta">Top rank on this plan: Paragon, when the aim is reached.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div>
+  </section>
+  <div class="o2" id="now-3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 2 of 6</h2><span class="aside">day 39 of 77</span></div>
+    <section class="card" aria-label="Current milestone">
+      <div class="ms-h"><span class="ms-n cur">2</span><div>
+        <div class="ms-t">Risk and position sizing</div>
+        <div class="ms-w">Mon 21 Dec → Sun 7 Mar · started Mon 21 Dec</div>
+        <div class="rm-chips" style="margin-top:8px"><span class="chip">Current</span><span class="pv">Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%</span></div>
+        <p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+      </div></div>
+      <div class="ms-sec" id="week-quests-3">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 25 – Sun 31 Jan · fixed Mon 04:15</span></div>
+
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">tested by your reviews · measured 09:12</p><p class="ev">4 cards can reach level 6 this week if passed when due; a card that was due anyway counts:</p><ul class="rm-cards" aria-label="Cards that can reach level 6 this week"><li><span>Kelly sizing with estimation error</span><span>due Tue · now level 6</span></li><li><span>Fixed-fractional vs fixed-ratio sizing</span><span>due Wed · level 5</span></li><li><span>Volatility-scaled stop distance</span><span>due Wed · level 5</span></li><li><span>Risk of ruin, informally</span><span>due Sat · level 5</span></li></ul></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counted by the app; it doesn't judge them · counts toward Trading's weekly quota too</p><p class="ev">New cards count toward Milestone 2 once they reach level 6+.</p><a class="link lnk" href="#">Add a card here</a></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">1 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Study Risk Management, Position Sizing · 2 sessions × 30 min</span><span class="cnt num">2 of 2 sessions · done</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss</span><span class="cnt num">0 of 1 step</span><p class="ev">you tick it</p><a class="link lnk" href="final-today-quests.html">On Today</a></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p>
+        <div class="rm-qsub" style="margin-top:14px"><span class="t-eyebrow">Past week quests</span><span class="cap">final from the Wednesday after</span></div><ul class="rm-past"><li><span>Week of 18 Jan</span><span>4 of 5 done</span></li><li><span>Week of 11 Jan</span><span>5 of 5 done</span></li><li><span>Week of 4 Jan</span><span>3 of 5 done · 2 days held</span></li><li><span>Week of 28 Dec</span><span>2 of 4 done</span></li><li><span>Week of 21 Dec</span><span>3 of 4 done</span></li></ul>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">23%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Milestone 2, 23%, tested by your reviews"><i style="--v:.238"></i></div>
+        <p class="t-meta">The slowest part sets the milestone · On pace for 7 Mar.</p>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Measures</span><span class="cap">the same numbers as Today's goal card</span></div>
+        <div class="mr" style="padding-top:2px">
+          <div class="mr-h"><b>Cards at level 6+ in Risk Management, Position Sizing<span class="slow">slowest</span></b><span class="pct">23%</span></div>
+          <div class="meter"><i style="--v:.238"></i></div>
+          <p class="t-meta"><b>+5 of 21</b> since start · holding <b>26 of 42</b> · 21 already counted when you started</p>
+          <p class="t-meta">each recalled after a gap of about 12 days · tested by your reviews · measured 09:12</p>
+          <p class="t-meta">On pace for 7 Mar · 19 cards in the pipeline can reach level 6 by then if passed on their day.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Practice kept</b><span class="pct">50%</span></div>
+          <div class="meter"><i style="--v:.5"></i></div>
+          <p class="t-meta"><b>22 of 44</b> sessions · 28 planned so far · from your ticks</p>
+          <p class="t-meta">On pace.</p>
+        </div>
+        <div class="mr">
+          <div class="mr-h"><b>Steps</b><span class="pct">1 of 3</span></div>
+          <p class="t-meta">you ticked one on Tue 12 Jan</p>
+        </div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Domains needed</span><span class="cap">from your library</span></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Risk Management</b><div class="t-meta">47 cards · 24 at level 6+ · Domain level 5</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a><a class="chip btn-chip" href="#">Library</a></div></div></div>
+        <div class="dr"><svg class="sig"><use href="#s-know"/></svg><div><b>Position Sizing</b><div class="t-meta">14 cards · 2 at level 6+ · Domain level 1 · you created it on 21 Dec</div><div class="acts"><a class="chip btn-chip" href="#">Add a card here</a></div></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to learn</span><span class="cap">write cards on it in its Domain; review them when due</span></div>
+        <div class="it"><div class="it-l">Kelly sizing and its limits</div><div class="it-m">Position Sizing: 14 cards · 2 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span></div></div>
+        <div class="it s-kept"><div class="it-l">Correlated positions</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-kept">Gemini's words · kept by you · not checked</span><button class="chip btn-chip ov" style="margin-left:auto" aria-label="More: I checked this, Edit"><svg class="i"><use href="#i-dot3"/></svg></button></div></div>
+        <div class="it"><div class="it-l">Maximum adverse excursion</div><div class="it-m">Risk Management: 47 cards · 24 at level 6+</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">What to practise</span><span class="cap">on Today under this goal</span></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Deliberate practice</span></div><div class="it-l">Backtest</div><div class="it-m">3× a week · 45 min · kept <b>10 of 16</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div>
+          <details class="how"><summary><svg class="i"><use href="#i-chev"/></svg>How</summary><ol><li>Pick a narrow point you get wrong.</li><li>Work on only that point for the whole session.</li><li>Check each attempt against a correct answer straight away.</li><li>Note what went wrong before the next attempt.</li></ol></details></div>
+        <div class="it"><div class="it-chips" style="margin:0 0 6px"><span class="chip">Reading</span><span class="pv pv-yours">Written by the app</span></div><div class="it-l">Study Risk Management, Position Sizing</div><div class="it-m">2× a week · 30 min · kept <b>12 of 12</b> so far · from your ticks · <a class="ilink" href="final-today-quests.html">On Today</a></div></div>
+      </div>
+      <div class="ms-sec">
+        <div class="ms-sh"><span class="t-eyebrow">Steps</span><span class="cap">you tick these</span></div>
+        <div class="done-l"><svg class="i"><use href="#i-tick"/></svg><div><div class="it-l">Write the position-sizing rule for the system</div><div class="it-m">done Tue 12 Jan</div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Set a maximum daily loss</div><div class="it-m">this week's step · <a class="ilink" href="final-today-quests.html">On Today</a></div></div></div>
+        <div class="dr" style="padding-bottom:0"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-step"/></svg><div><div class="it-l">Write the exit rule for a losing streak</div><div class="it-m">a week quest from the week three quarters of the window has passed</div></div></div>
+      </div>
+      <div class="ms-sec" id="checkpoint-3">
+        <div class="ms-sh"><span class="t-eyebrow">Checkpoint · performance check</span><span class="cap">context only</span></div>
+        <div class="it-l">Size historical trades by hand</div>
+        <p class="t-meta" style="margin-top:3px">no score logged yet · your bar 8 of 10 · doesn't move your progress</p>
+        <p class="t-meta">A week quest asks for a score from the week of 22 Feb, when 80% of the window has passed.</p>
+        <div class="it-acts"><button class="chip btn-chip">Log a score</button></div>
+      </div>
+    </section>
+  </div>
+  <div class="o4">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Milestones</h2><span class="aside">6 · to 31 Dec 2027</span></div>
+    <section class="card">
+      <div class="ml-row"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Backtests that hold up</b><span class="t-meta">Reached 18 Dec · 4 Oct – 20 Dec</span></div><span class="r">100%<small>→ Aspirant</small></span></div>
+      <div class="ml-row"><span class="ms-n cur">2</span><div><b>Risk and position sizing</b><span class="t-meta">Current · 21 Dec – 7 Mar</span></div><span class="r">23%<small>→ Journeyman</small></span></div>
+      <div class="ml-row"><span class="ms-n">3</span><div><b>Forward-testing on a demo account</b><span class="t-meta">Outline · 8 Mar – 16 May</span></div><span class="r"><small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Execution and costs</b><span class="t-meta">Outline · 17 May – 1 Aug</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row"><span class="ms-n">5</span><div><b>Live trading at small size</b><span class="t-meta">Outline · 2 Aug – 17 Oct</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <div class="ml-row"><span class="ms-n">6</span><div><b>Consistency review</b><span class="t-meta">Outline · 18 Oct – 31 Dec 2027</span></div><span class="r"><small>keeps your rank</small></span></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">Reaching the aim gives the Aim rank Paragon.</p>
+    </section>
+  </div>
+  <div class="o7 it-acts" style="margin-top:0"><button class="btn btn-secondary">Re-plan</button><button class="btn btn-danger">Archive</button></div>
+</div>
+<div class="rm-col">
+  <div class="o3">
+    <div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2><span class="aside">since you began · 4 Oct</span></div>
+    <section class="card">
+      <div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div>
+        <div class="mr-h"><b>Algorithmic Backtesting, Quantitative System Dev, Risk Management, Market Psychology · cards at level 10+</b><span class="pct">15%</span></div>
+        <div class="meter"><i style="--v:.15"></i></div>
+        <div class="t-meta"><b>+6 of 40</b> since you began · holding <b>12 of 46</b></div>
+        <div class="t-meta">each recalled after a gap of about 50 days · tested by your reviews · measured 09:12</div>
+        <div class="t-meta">On pace for 31 Dec 2027.</div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div>
+        <div class="mr-h"><b>Milestones reached</b><span class="pct">1 of 6</span></div>
+        <div class="segs tall" style="margin:8px 0 4px" role="img" aria-label="Milestone 1 reached, milestone 2 current, 4 to come"><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div>
+        <div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 76%</span></div>
+        <div class="t-meta">39 of 51 sessions · from your ticks · context, not part of progress</div>
+      </div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">This app tests the cards you hold through your reviews and counts the practice you tick. Whether that makes you 'Become a consistently profitable systematic EUR/USD trader by 2028' is yours to judge.</p>
+    </section>
+  </div>
+  <details class="rm-ref o5" open>
+    <summary><b>How this is worked out</b><span>capacity · realism · drafting · measuring</span><svg class="i"><use href="#i-chev"/></svg></summary>
+    <div class="rm-ref-b">
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Your capacity</h2><span class="aside">what the app has seen</span></div>
+        <section class="card tp">
+          <div><span class="k">Hours you gave this aim</span><span class="v">8 h a week</span><span class="s">your estimate</span></div>
+          <div><span class="k">Tracked time, all tasks</span><span class="v">≈ 9 h 10</span><span class="s">median week · a lean week ≈ 6 h 20 · task estimates, not timed; 38% sized by Gemini</span></div>
+          <div><span class="k">Reviews a day</span><span class="v">27</span><span class="s">median of 28 days</span></div>
+          <div><span class="k">Pass share</span><span class="v">84% (reads high)</span><span class="s">lapses by neglect aren't logged, so this reads high</span></div>
+          <div><span class="k">New cards a week</span><span class="v">3 here · 9 in all</span><span class="s">median of 8 weeks</span></div>
+          <div><span class="k">Recurring tasks kept</span><span class="v">74%</span><span class="s">tasks of 20 min or more · 38 judged · from your ticks</span></div>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>Is this realistic?</h2><span class="aside"><a class="ilink" href="#sheet-worked">Constants</a></span></div>
+        <section class="card pad">
+          <div class="t-eyebrow">Milestone 2 · current</div>
+          <div class="ck">
+            <div class="ck-h"><b>Targets vs your pace</b><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span></div>
+            <p>Re-fitted at Start on 21 Dec, at Steady: 21 then, plus 70% of the ≈ 30 more your reviews could be expected to bring to level 6 by 7 Mar = 42.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div>
+            <p>Worst week needs ≈ 3 h 50; you have ≈ 4 h 30 (your 8 h × 74% kept, capped at +50% of the ≈ 9 h 10 you track).</p>
+            <p class="fixed">Counts only what the app tracks: reviews, new cards and the practices below. Time to study the material elsewhere isn't estimated.</p>
+          </div>
+          <div class="ck">
+            <div class="ck-h"><b>Aim check</b></div>
+            <p>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></p>
+          </div>
+          <div class="t-eyebrow" style="margin-top:10px">Milestones 3–6 · as accepted</div>
+          <ul style="margin-top:6px">
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">3</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">4</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-tight"/></svg>Tight</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">5</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+            <li class="oi"><div class="vds"><span class="t-meta" style="min-width:16px">6</span><span class="vd vd-q"><svg class="i"><use href="#v-fitted"/></svg>Fitted</span><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div></li>
+          </ul>
+        </section>
+      </div>
+      <div>
+        <div class="sec-h"><span class="lane-mark"></span><h2>How this was drafted</h2></div>
+        <section class="card tp">
+          <div><span class="k">Drafted by</span><span class="v t-mono">gemini-3.5-flash-lite</span><span class="s">prompt v2 · Sun 4 Oct 09:12 · 1 draft · 2 items dropped by the checker (a link, an unknown Domain key) · 1 matched to your library</span></div>
+          <div><span class="k">Plan history</span><span class="v">v1</span><span class="s">v1 accepted 4 Oct</span></div>
+        </section>
+      </div>
+      <section class="card rm-note"><svg class="i"><use href="#i-info"/></svg><span><b>How this is measured</b> Cards your reviews bring to a level are tested; cards you add are counted by the app; practice sessions and steps are your own ticks. Proficiency, the Aim rank and week quests are worked out from those rows. No model judges progress. <a class="ilink" href="#sheet-measured">Open</a></span></section>
+    </div>
+  </details>
+</div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>Main 1208 px, page 1144 px: the right column is ≈ 537 px, as F18 says.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec">
+<h2>Other states · 344</h2>
+<p>Each frame is one state of the same page. Example data; the as-of date is in each tag.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · no roadmap yet</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div><section class="card" style="padding:20px 16px;text-align:center"><svg class="i" style="width:28px;height:28px;color:var(--ink-1)"><use href="#i-route"/></svg><b style="display:block;font:600 19px/23px var(--font-display);margin-top:8px">Set an aim</b><p class="t-meta" style="margin:6px auto 14px;max-width:30ch">Say what you want to be able to do. Gemini can draft a roadmap, or build one from your numbers.</p><a class="btn btn-primary" href="final-roadmap-new.html">Set an aim</a></section>
+</div></div></div>
+<ul class="mk-cap"><li>Without a key the line ends "…build one from your own numbers."</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · accepted-calibrating · started Thu 26 Nov 2026</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Read chest X-ray reports with confidence</p>
+      <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Biological &amp; Chemical Sciences · level 3</span><span class="chip">by 28 Mar 2027 · 17 wk left</span></div>
+      <div class="rm-lines"><span>Plan v1 · accepted today</span></div><div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Initiate</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">14%</div></div>
+      <div class="meter" role="meter" aria-valuenow="14" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 14%, tested by your reviews and your ticks"><i style="--v:.1404"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 10:04</p>
+      <p class="t-meta full">cards 23% · tested by your reviews · practice 0% · from your ticks · milestones 0 of 2</p><p class="t-meta full">Next rank: Aspirant at milestone 1 · rank is kept for good</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan"><li class="on"><span><b>Initiate</b> · from your first acceptance</span></li><li class="cur"><span><b>Aspirant</b> · milestone 1 · next rank</span></li><li><span><b>Journeyman</b> · milestone 2</span></li></ol><p class="t-meta">Top rank on this plan: Journeyman.</p></details>
+    </div></section><section class="card"><div class="ms-h"><span class="ms-n cur">1</span><div><div class="ms-t">Reading the normal film</div><div class="ms-w">Thu 26 Nov → Sun 24 Jan · started today</div><p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Aspirant</b></p></div></div>
+      <div class="ms-sec" id="week-quests-4">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Thu 26 – Sun 29 Nov · fixed at Start, 10:04</span></div>
+        <p class="t-meta" style="padding:8px 0;color:var(--ink-1)">No card in Radiographic Imaging can reach level 6 this week even if every review passes; 3 can by Mon 7 Dec.</p>
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 2 cards to Radiographic Imaging</span><span class="cnt num">0 of 2 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:0"></i></div><p class="ev">counted by the app; it doesn't judge them</p><p class="ev">best case — your pass rate is still calibrating · your rate, not yet measured (4 a week)</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Study Radiographic Imaging · 2 sessions × 30 min</span><span class="cnt num">0 of 2 sessions</span><p class="ev">from your ticks · Thu to Sun only: the week began before Start</p></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+
+
+      </div>
+      <div class="ms-sec"><div class="mr" style="padding:0"><div class="mr-h"><b>Hold 15 cards at level 6+ in Radiographic Imaging (now 7)</b><span class="pct">0%</span></div><div class="meter"><i style="--v:0"></i></div><p class="t-meta">+0 of 8 since start · tested by your reviews · measured 10:04</p><p class="t-meta">best case — your pass rate is still calibrating · new cards counted at your rate, not yet measured (4 a week)</p></div></div>
+      <div class="ms-sec"><div class="ck" style="padding-top:0"><div class="ck-h"><b>App-tracked time</b><span class="vd vd-q"><svg class="i"><use href="#v-unv"/></svg>Unverified · Fits</span></div><p>Worst week needs ≈ 1 h 50; you said 4 h × 0.7 while your hours are calibrating (1 of 4 weeks).</p><p class="fixed">Counts only what the app tracks: reviews, new cards and the practices below. Time to study the material elsewhere isn't estimated.</p></div></div>
+    </section><section class="card tp"><div><span class="k">Tracked time</span><span class="v">Calibrating</span><span class="s">1 of 4 weeks</span></div><div><span class="k">Pass share</span><span class="v">Calibrating</span><span class="s">12 of 30 reviews in 28 days</span></div></section></div>
+</div></div></div>
+<ul class="mk-cap"><li>Start froze this week's set (source START) for Thu to Sun, so a 3-a-week practice asks round(3 × 4 ÷ 7) = 2.</li><li>No RAISE row: no card here can reach level 6 before Sunday. The lag line says so, on this page only; it is the review schedule, not a delay.</li><li>"best case" while the pass rate calibrates; "Unverified · Fits", never a plain "Fits", while tracked time calibrates.</li><li>A 2-milestone plan tops out at Journeyman, and the ladder says so.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · behind: QUESTS_BEHIND · as of Thu 4 Feb 2027</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-banner"><div class="t"><b>Behind on new cards for Milestone 2</b>Behind on new cards for Milestone 2: this week asks 5 of the 7 needed to stay on plan, and writing that can still reach level 6 by 7 Mar ends Wed 10 Feb.</div></section><section class="card pad"><div class="t-eyebrow">What acts on Milestone 2</div>
+      <div class="rm-lever">
+        <button class="btn btn-primary btn-wrap">Reschedule Milestone 2</button><p class="t-meta">A later due day counts as Carried when you close it.</p>
+        <p class="t-meta" style="color:var(--ink-1)">Or let it close short: it pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg>6 × progress</span> from 70%.</p>
+        <button class="btn btn-secondary btn-wrap">Re-fit later milestones</button><p class="t-meta">This re-fits Milestones 3 to 6; it doesn't change Milestone 2.</p>
+      </div></section><section class="card"><div class="ms-h"><span class="ms-n cur">2</span><div><div class="ms-t">Risk and position sizing</div><div class="ms-w">Mon 21 Dec → Sun 7 Mar · day 46 of 77</div></div></div>
+      <div class="ms-sec" id="week-quests-5">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 1 – Sun 7 Feb · fixed Mon 04:15</span></div>
+
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">0 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:0"></i></div><p class="ev">tested by your reviews · measured 09:12 · 4 can reach level 6 this week if passed when due</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">1 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.2"></i></div><p class="ev">counted by the app; it doesn't judge them · counts toward Trading's weekly quota too</p><p class="ev">capped: 1.5 × the 3.0 a week the plan needed at Start is the most a week asks</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">0 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+
+
+      </div>
+      <div class="ms-sec"><div class="rm-head"><span class="big">19%</span><span class="cap" style="text-align:right">tested by your reviews<br>measured 09:12</span></div><div class="meter" style="margin:10px 0 8px"><i style="--v:.19"></i></div>
+      <p class="t-meta">About 3 weeks behind: at your pace about 36 of 42 by 7 Mar.</p></div>
+    </section></div>
+</div></div></div>
+<ul class="mk-cap"><li>QUESTS_BEHIND fires in the first week whose ADD is capped by catch-up (cappedBy CATCHUP) with fewer than 2 writing weeks left: here 1.4 (Mon 1 Feb to Wed 10 Feb). The missed cards are not piled onto the week.</li><li>Its levers act on the open milestone: Reschedule (with the Carried rule in words), closing short (the stated-pay line; absent when it states 0), and a re-fit that says it touches only later milestones.</li><li>A CAPACITY cap ("practices and reviews fill this week's time") is a note, not this trigger. Neither ever reaches Today or the bell.</li><li>When the pass rate has moved since Start, a note says the week keeps Start's figures and what a re-fit would give (not shown here).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · target-lowered · Proficiency changed by a re-plan</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card rm-aim " aria-label="Aim">
+    <div class="t-eyebrow">Aim</div>
+    <p class="rm-aim-t" style="margin-top:6px">Become a consistently profitable systematic EUR/USD trader by 2028</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-know"/></svg>Trading · level 6</span><span class="chip">by 31 Dec 2027 · 48 wk left</span><span class="chip quiet">Target lowered</span></div>
+    <div class="rm-lines"><span><b>Target lowered 46 → 38 on 26 Jan (re-plan)</b></span><span>Plan v2 · accepted 26 Jan</span></div>
+    <div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Aspirant</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">46%</div></div>
+      <div class="meter" role="meter" aria-valuenow="46" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 46%, tested by your reviews and your ticks"><i style="--v:.4652"></i></div>
+      <p class="cap full">tested by your reviews and your ticks · measured 09:12</p>
+      <p class="t-meta full">cards 63% · tested by your reviews · practice 23% · from your ticks · milestones 1 of 6</p><p class="t-meta full chg">Changed on Tue 26 Jan · the re-plan lowered the end target 46 → 38 (was 41%)</p><p class="t-meta full">Next rank: Journeyman at milestone 2 · rank is kept for good</p>
+
+    </div>
+
+  </section><section class="card"><div class="trk-row"><svg class="sig"><use href="#s-know"/></svg><div><div class="mr-h"><b>Algorithmic Backtesting, Quantitative System Dev, Risk Management, Market Psychology · cards at level 10+</b><span class="pct">18%</span></div><div class="meter"><i style="--v:.1875"></i></div><div class="t-meta"><b>+6 of 32</b> since you began · holding <b>12 of 38</b> · counted from 4 Oct</div></div></div></section><section class="card tp"><div><span class="k">Plan history</span><span class="v">v2</span><span class="s">v1 accepted 4 Oct · v2 accepted 26 Jan: end target 46 → 38, due unchanged</span></div></section></div>
+</div></div></div>
+<ul class="mk-cap"><li>The end state stays anchored at the first acceptance (baseline 6 on 4 Oct), so a re-plan can't rebase "Toward the aim". The marker shows for 28 days; Plan history keeps the full list.</li><li>Proficiency's basis changes only with a plan decision, and the change is shown as one: "Changed on … (was 41%)" replaces the week's delta and carries no ↑. 46% is the same cards measured against a smaller end state, not progress.</li><li>The rank is unchanged: a re-plan never raises a milestone's rank above its lineage's first one, and never lowers a rank already given.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · Re-plan sheet</div>
+<div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="Re-plan">
+<div class="grabber"></div>
+<div class="sheet-h"><div class="t"><h2>Re-plan the unstarted milestones</h2><p class="sub">Milestone 2 is started and stays as it is.</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div><div class="rm-stack" style="gap:10px;margin-top:14px"><button class="card rm-pick" style="background:var(--raised)"><svg class="i"><use href="#i-route"/></svg><span class="t"><b>Re-fit to my numbers</b><span class="t-meta">In-house. Re-splits the dates of Milestones 3 to 6 and re-fits levels, targets and sessions from today's cards, pace and hours. Labels and your decisions stay.</span></span></button><button class="card rm-pick" style="background:var(--raised)"><svg class="i"><use href="#i-edit"/></svg><span class="t"><b>Edit by hand</b><span class="t-meta">The same editor and checks.</span></span></button></div><p class="t-meta" style="margin-top:12px">Either path makes a new draft version you review like the first. The plan you have stays until you accept; Undo brings it back. Ranks are assigned again only for unstarted milestones, never above their first value.</p>
+</div></div>
+<ul class="mk-cap"><li>Revision 3 cut "Re-draft the unstarted milestones" (a Gemini re-draft) from v1: a re-plan is a re-fit or by hand.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · milestone 1 closed · aftercare · Start · as of Mon 21 Dec 07:30</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="rm-stack"><section class="card"><div class="ms-h"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><div class="ms-t">Backtests that hold up</div><div class="ms-w">Reached Fri 18 Dec · gave the Aim rank Aspirant · closed Sun 20 Dec · paid <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6</div></div></div>
+      <div class="ms-sec"><div class="ms-sh"><span class="t-eyebrow">Still on Today from milestone 1</span></div>
+        <div class="dr"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-today"/></svg><div><b>Drill reading backtest reports</b><div class="t-meta">on Today · 2× a week</div><div class="acts"><button class="chip btn-chip">Keep on Today</button><button class="chip btn-chip">Archive</button></div></div></div>
+        <div class="dr"><svg class="i" style="width:16px;height:16px;margin-top:3px"><use href="#i-today"/></svg><div><b>Rebuild a strategy test from scratch</b><div class="t-meta">on Today · 1× a week</div><div class="acts"><button class="chip btn-chip">Keep on Today</button><button class="chip btn-chip">Archive</button></div></div></div>
+      </div></section><section class="card"><div class="ms-h"><span class="ms-n">2</span><div><div class="ms-t">Risk and position sizing</div><div class="ms-w">Mon 21 Dec → Sun 7 Mar · Outline</div></div></div>
+      <div class="ms-sec"><p class="t-body">Start milestone 2 when you're ready.</p>
+        <p class="t-meta" style="margin-top:4px">Becomes a Mid goal on Today · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%.</p>
+        <p class="rk" style="margin-top:4px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p>
+        <button class="btn btn-primary btn-block" style="margin-top:12px">Start milestone 2</button></div></section></div>
+</div></div></div>
+<ul class="mk-cap"><li>"gave the Aim rank Aspirant" shows in the Milestones list for 7 days. The reach rested on ticks, so it was pending until the close at 100% confirmed it.</li><li>Nothing is archived silently: open practices from a closed milestone wait for the user's choice, with the archive's undo toast. Closing played the existing goal Seal; no new celebration kind exists.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · start-refit: the Start sheet · Mon 21 Dec</div>
+<div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="Start milestone 2">
+<div class="grabber"></div>
+
+<div class="sheet-h"><div class="t"><h2>Start milestone 2</h2><p class="sub">Risk and position sizing · Mon 21 Dec → Sun 7 Mar</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="t-eyebrow" style="margin:14px 0 6px">Today's check</div>
+<div class="sunk" style="padding:12px">
+  <p class="t-meta" style="color:var(--ink-1)">Target 46 was fitted when you accepted; fitted today it would be 42 (fewer new cards in these Domains than planned).</p>
+  <div class="it-acts"><button class="chip btn-chip" aria-pressed="true">Use 42</button><button class="chip btn-chip">Keep 46 — Over</button></div>
+  <div class="ck" style="padding-bottom:0"><div class="ck-h"><b>App-tracked time</b><span class="vd"><svg class="i"><use href="#v-fits"/></svg>Fits</span></div><p>Worst week needs ≈ 3 h 50; you have ≈ 4 h 30.</p></div>
+</div>
+<div class="t-eyebrow" style="margin:16px 0 6px">Still to decide</div>
+<div class="it s-draft"><div class="it-k">Topic · Scalping</div><div class="it-l">Order-flow basics</div><div class="it-chips"><span class="pv pv-draft">Gemini suggestion · not checked</span><span class="fl"><svg class="i"><use href="#i-flag"/></svg>Outside this milestone</span></div><div class="it-acts"><button class="chip btn-chip">Move to milestone 3</button><button class="chip btn-chip">Drop</button></div></div>
+<div class="t-eyebrow" style="margin:16px 0 6px">What goes to Today</div>
+<div class="it s-kept"><div class="it-k">Mid goal</div><div class="it-l">Risk and position sizing</div><div class="it-chips"><span class="pv pv-kept">Gemini's words · kept by you · not checked</span></div><p class="it-why">Gemini's words — goes to Today as written.</p><div class="it-acts acts-w"><button class="chip btn-chip">I checked this</button><button class="chip btn-chip">Edit</button></div><div class="it-acts acts-n"><button class="chip btn-chip">I checked this</button><button class="chip btn-chip ov" aria-label="More: Edit"><svg class="i"><use href="#i-dot3"/></svg></button></div></div>
+<div class="it s-kept"><div class="it-k">Domain · in your library</div><div class="it-l">Risk Management</div><div class="it-m">42 cards · 21 at level 6+</div><div class="it-chips"><span class="pv pv-kept">Gemini's words · kept by you · not checked</span></div><p class="it-why">Gemini picked this Domain — it sets what counts.</p><div class="it-acts"><button class="chip btn-chip">I checked this</button><button class="chip btn-chip">Map to…</button></div></div>
+<div class="it"><div class="it-k">Domain · created by you today</div><div class="it-l">Position Sizing</div><div class="it-m">0 cards yet · <a class="ilink" href="#">Add a card here</a></div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></div></div>
+<div class="it"><div class="it-k">Practice · Reading</div><div class="it-l">Study Risk Management, Position Sizing</div><div class="it-m">2× a week · 30 min · ≈ <span class="cur"><svg class="g c-xp" aria-label="XP"><use href="#c-xp"/></svg>10</span> a session</div><div class="rm-sw" style="margin-top:4px"><span class="t it-chips" style="margin-top:0"><span class="pv pv-yours">Written by the app</span></span><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Add to Today"></button></span></div></div>
+<div class="it"><div class="it-k">Practice · Deliberate practice</div><div class="it-l">Backtest</div><div class="it-m">3× a week · 45 min · ≈ <span class="cur"><svg class="g c-xp" aria-label="XP"><use href="#c-xp"/></svg>14</span> a session</div><div class="rm-sw" style="margin-top:4px"><span class="t it-chips" style="margin-top:0"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></span><span class="switch-hit"><button class="switch" role="switch" aria-checked="true" aria-label="Add to Today"></button></span></div></div>
+<div class="it"><div class="it-k">Steps</div><div class="it-l">Write the position-sizing rule for the system · Set a maximum daily loss · Write the exit rule for a losing streak</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span></div></div>
+<div class="it"><div class="it-k">Checkpoint · performance check</div><div class="it-l">Size historical trades by hand</div><div class="it-m">your bar 8 of 10 · a week quest may show it</div><div class="it-chips"><span class="pv pv-yours"><svg class="i"><use href="#i-edit"/></svg>You wrote this</span></div></div>
+<div class="t-eyebrow" style="margin:16px 0 6px">Pay</div>
+<p class="t-meta" style="color:var(--ink-1)">Becomes a Mid goal on Today, due Sun 7 Mar · pays <svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg> 6 × progress from 70%, once 21 days old · progress from your records, no +1</p>
+<p class="t-meta" style="margin-top:4px">1 Mid goal paid in the last 30 days (Backtests that hold up, 20 Dec): a second one can still pay.</p>
+<div class="t-eyebrow" style="margin:16px 0 6px">Week quests if you start now</div>
+<div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 2 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">2 cards</span><p class="ev">tested by your reviews</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 3 cards to Risk Management or Position Sizing</span><span class="cnt num">3 cards</span><p class="ev">counted by the app; it doesn't judge them</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">3 sessions</span><p class="ev">from your ticks</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Study Risk Management, Position Sizing · 2 sessions × 30 min</span><span class="cnt num">2 sessions</span><p class="ev">from your ticks</p></div></div>
+<p class="t-meta">Mon 21 – Sun 27 Dec · fixed for the week once you start. Worked out from your cards and the plan; they pay nothing.</p>
+<div class="rm-sticky" style="position:static;background:none;margin-top:8px"><button class="btn btn-primary lg">Next row to check</button><p class="t-meta">Start is offered when every row going to Today is yours or written by the app · 2 left.</p></div>
+
+</div></div>
+<ul class="mk-cap"><li>Start re-runs feasibility on today's cards and pace: [Use 42] is re-fitted (worked out); [Keep 46] needs the Over switch.</li><li>Revision 3: the milestone's Domains are Today-bound rows too. They set the paying scope, the target fitted over it, and the names a week quest shows ("Add 3 cards to Risk Management or Position Sizing"), so a Domain Gemini picked must be checked or mapped first. "Position Sizing" was Gemini's proposed name, created by the user under a name they confirmed.</li><li>Nothing reaches Today in Gemini's words without a tap: here the goal title and one Domain are still "kept · not checked", so Start waits on 2 rows.</li><li>The week quest preview is the generator's own set for the rest of this life week, from the same inputs Start will freeze (source START).</li><li>A practice still open on Today from milestone 1 under the same name would read "… is already on Today (from Milestone 1)" with its switch off; "Continue &lt;practice&gt;" is deferred.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · Start before the goal seams land</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card"><div class="ms-h"><span class="ms-n">1</span><div><div class="ms-t">Backtests that hold up</div><div class="ms-w">Sun 4 Oct → Sun 20 Dec · Planned</div></div></div><div class="ms-sec"><p class="t-meta" style="color:var(--ink-1)">Starting milestones arrives with the next update.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>While ROADMAP_GOALS_LIVE is false the Start button is hidden, not disabled. No milestone starts, so no week quests exist yet.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>I</b> · a Body plan, practice only · as of Thu 7 Jan 2027</div>
+<div class="frame f344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-current="page" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">You</div><h1>Roadmap</h1></div>
+<nav class="tb-tabs tabs" aria-label="You pages"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page">
+<div class="tabs you-tabs" role="tablist" aria-label="You"><a class="tab-s" href="#">Sheet</a><a class="tab-s" href="#" aria-current="page">Roadmap</a><a class="tab-s" href="#">Skills <span class="rdot" aria-label="1 ready"></span></a><a class="tab-s" href="#">Loadout</a><a class="tab-s" href="#">Moments</a><a class="tab-s" href="#">Stats</a><a class="tab-s" href="#">Settings</a></div>
+<div class="rm-stack">
+  <section class="card rm-aim"><div class="t-eyebrow">Aim</div><p class="rm-aim-t" style="margin-top:6px">Run 10 km in under 50 minutes</p>
+    <div class="rm-chips"><span class="chip"><svg class="sig"><use href="#s-body"/></svg>Body · practice only</span><span class="chip">by 25 Apr 2027 · 15 wk left</span></div>
+    <div class="rm-lines"><span>Plan v1 · accepted 5 Oct</span></div><div class="rm-rp">
+      <div><div class="k">Aim rank</div><div class="v">Aspirant</div></div>
+      <div class="pf"><div class="k">Proficiency</div><div class="v num">37%</div></div>
+      <div class="meter" role="meter" aria-valuenow="37" aria-valuemin="0" aria-valuemax="100" aria-label="Proficiency 37%, from your ticks"><i style="--v:.3789"></i></div>
+      <p class="cap full">from your ticks · measured 09:12</p>
+      <p class="t-meta full">practice 40% · from your ticks · milestones 1 of 3</p><p class="t-meta full">Next rank: Journeyman at milestone 2 · rank is kept for good</p>
+      <details class="rm-parts"><summary><svg class="i"><use href="#i-chev"/></svg>Aim ranks on this plan</summary><ol class="rm-ladder" aria-label="Aim ranks on this plan"><li class="on"><span><b>Initiate</b> · from your first acceptance</span></li><li class="on"><span><b>Aspirant</b> · milestone 1 · reached 13 Dec</span></li><li class="cur"><span><b>Journeyman</b> · milestone 2 · next rank</span></li><li><span><b>Specialist</b> · milestone 3</span></li></ol><p class="t-meta">Top rank on this plan: Specialist.</p></details>
+    </div>
+    <div class="rm-lines"><span>Aim not checked: the app doesn't know how long this usually takes · <a class="ilink" href="#">Add a figure</a></span></div></section>
+  <div><div class="sec-h"><span class="lane-mark"></span><h2>Now · milestone 2 of 3</h2><span class="aside">day 25 of 63</span></div>
+    <section class="card">
+      <div class="ms-h"><span class="ms-n cur">2</span><div><div class="ms-t">Build an aerobic base</div><div class="ms-w">Mon 14 Dec → Sun 14 Feb · started 14 Dec</div><p class="rk" style="margin-top:8px">Reaching it gives the Aim rank&nbsp;<b>Journeyman</b></p></div></div>
+      <div class="ms-sec"><div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 4 – Sun 10 Jan · fixed Mon 04:15</span></div>
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Easy runs · 3 sessions × 45 min</span><span class="cnt num">1 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Strength for knees and hips · 2 sessions × 30 min</span><span class="cnt num">0 of 2 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p><a class="link lnk" href="final-today-quests.html">On Today</a></div></div>
+        <p class="cap" style="margin-top:8px">Week quests pay nothing. Session rows count toward Milestone 2 as you do them.</p>
+        <div class="rm-qsub" style="margin-top:14px"><span class="t-eyebrow">Past week quests</span></div>
+        <ul class="rm-past"><li><span>Week of 28 Dec</span><span>4 of 5 done</span></li><li><span>Week of 21 Dec</span><span>5 of 5 done</span></li><li><span>Week of 14 Dec</span><span>3 of 4 done · capped</span></li></ul>
+      </div>
+      <div class="ms-sec">
+        <div class="rm-head"><span class="big">58%</span><span class="cap" style="text-align:right">slowest part is from your ticks<br>measured 09:12</span></div>
+        <div class="meter" style="margin:10px 0 8px"><i style="--v:.583"></i></div>
+        <div class="mr" style="padding-bottom:0"><div class="mr-h"><b>Practice kept<span class="slow">slowest</span></b><span class="pct">58%</span></div><p class="t-meta"><b>14 of 24</b> sessions · 18 planned so far · from your ticks · On pace.</p></div>
+      </div>
+      <div class="ms-sec"><div class="ms-sh"><span class="t-eyebrow">What to practise</span></div>
+        <div class="it"><div class="it-k">Workout</div><div class="it-l">Easy runs</div><div class="it-m">3× a week · 45 min · kept <b>9 of 11</b> so far</div></div>
+        <div class="it"><div class="it-k">Workout</div><div class="it-l">Strength for knees and hips</div><div class="it-m">2× a week · 30 min · kept <b>5 of 7</b> so far</div></div>
+        <p class="t-meta" style="margin-top:10px">Not medical advice — check health-related changes with a professional.</p></div>
+      <div class="ms-sec"><div class="ms-sh"><span class="t-eyebrow">Steps</span></div><div class="done-l"><svg class="i"><use href="#i-tick"/></svg><div><div class="it-l">Run a timed 5 km</div><div class="it-m">done Sun 3 Jan</div></div></div></div>
+    </section></div>
+  <div><div class="sec-h"><span class="lane-mark"></span><h2>Toward the aim</h2></div>
+    <section class="card">
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-flag"/></svg><div><div class="mr-h"><b>Milestones reached</b><span class="pct">1 of 3</span></div><div class="segs tall" style="margin:8px 0 4px"><i class="on"></i><i class="cur"></i><i></i></div></div></div>
+      <div class="trk-row"><svg class="i" style="width:22px;height:22px"><use href="#i-tick"/></svg><div><div class="mr-h"><b>Practice kept since you began</b><span class="pct">≈ 81%</span></div><div class="t-meta">39 of 48 sessions · from your ticks</div></div></div>
+      <div class="trk-row"><svg class="sig"><use href="#s-body"/></svg><div><div class="mr-h"><b>Weight</b></div><div class="t-meta">trend 82.4 kg · your weight goal 78 kg by Mar · you logged · context, not part of progress</div></div></div>
+      <p class="rm-note" style="border-top:1px solid var(--line-1)">This app counts the practice and steps you tick. Whether that makes you 'Run 10 km in under 50 minutes' is yours to judge.</p>
+    </section></div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">3</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-current="page" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div>
+<ul class="mk-cap"><li>A life-track Area: no Domains and no card measures, so the week asks only for sessions (and a step when one is due), every count is "from your ticks", and Proficiency renormalises to practice 0.625, milestones 0.375: 0.625 × 0.406 + 0.375 × 1/3 = 0.379 → 37%.</li><li>"· capped" on a past week is ink. Weight is a context line (you logged), never a paying part.</li><li>Copy question kept from revision 2: the fixed line drops "tests the cards you hold" for a practice-only plan.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>J</b> · past due · as of Thu 11 Mar 2027</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card"><div class="ms-h"><span class="ms-n cur">2</span><div><div class="ms-t">Risk and position sizing</div><div class="ms-w">Mon 21 Dec → Sun 7 Mar</div><div class="rm-chips" style="margin-top:8px"><span class="chip">Past due</span></div></div></div>
+      <div class="ms-sec"><p class="t-body" style="font-weight:600">Milestone 2 was due Sun 7 Mar — close or reschedule it</p>
+        <p class="t-meta" style="margin-top:4px">No week quests this week. The goal on Today is Carried, never owed.</p>
+        <div class="it-acts"><button class="chip btn-chip">Reschedule Milestone 2</button><a class="chip btn-chip" href="final-today-quests.html">Close it on Today</a></div>
+        <div class="rm-qsub" style="margin-top:14px"><span class="t-eyebrow">Past week quests</span><span class="cap">final from the Wednesday after</span></div>
+        <ul class="rm-past"><li><span>Week of 1 Mar</span><span>still settling</span></li><li><span>Week of 22 Feb</span><span>4 of 5 done</span></li><li><span>Week of 15 Feb</span><span>3 of 4 done</span></li></ul>
+      </div></section>
+</div></div></div>
+<ul class="mk-cap"><li>PAST_DUE: an empty set is frozen for the week (so it never regenerates), Today shows no card, and nothing reads red.</li><li>"still settling": the week of 1 Mar is final from Wed 10 Mar 04:00 (WEEK_QUEST_FINAL_LAG_DAYS 3, so a Sunday session recorded on Monday and a make-up both land first).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>K</b> · late in the window · week of Mon 22 Feb</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card"><div class="ms-h"><span class="ms-n cur">2</span><div><div class="ms-t">Risk and position sizing</div><div class="ms-w">Mon 21 Dec → Sun 7 Mar · day 67 of 77</div></div></div>
+      <div class="ms-sec" id="week-quests-6">
+        <div class="ms-sh"><span class="t-eyebrow">Week quests</span><span class="cap">Mon 22 – Sun 28 Feb · fixed Mon 04:15</span></div>
+        <p class="t-meta" style="padding:8px 0;color:var(--ink-1)">No new cards this week: a card written after Wed 10 Feb can't reach level 6 by 7 Mar.</p>
+        <div class="rm-quest"><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 5 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">tested by your reviews · measured 09:12</p><p class="ev">4 come due Wed, 1 Thu, 2 Fri</p><p class="ev">1 card slipped back to level 5 on Thu</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest · 3 sessions × 45 min</span><span class="cnt num">2 of 3 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div><div class="rm-quest-row"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Study Risk Management, Position Sizing · 2 sessions × 30 min</span><span class="cnt num">1 of 2 sessions</span><p class="ev">from your ticks · the milestone counts 80% of these</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Write the exit rule for a losing streak</span><span class="cnt num">0 of 1 step</span><p class="ev">you tick it</p></div><div class="rm-quest-row"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="lbl">Checkpoint: Size historical trades by hand · log your score</span><span class="cnt num">not logged yet</span><p class="ev">you log it · doesn't move your progress</p><a class="link lnk" href="#sheet-log">Log a score</a></div></div>
+        <div class="it-acts"><a class="chip btn-chip" href="#sheet-basis">How these were set</a></div>
+
+
+      </div>
+      <p class="cap" style="padding:0 14px 12px">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; a checkpoint score is for your judgement.</p>
+    </section>
+</div></div></div>
+<ul class="mk-cap"><li>Bringing cards to a level lags writing them, so RAISE grows late in a window (here 5: 9 still to bring over 2 weeks; 7 cards can reach level 6, ≈ 5.9 at the pass rate stored at Start) while ADD has stopped.</li><li>RAISE is net: a card that slipped offsets one that rose, the row stops reading done, and the slip caption says why, in ink.</li><li>The checkpoint row appears once 80% of the window has passed and never moves progress; the footer gains its clause.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>L</b> · Milestones list: every status word</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card">
+      <div class="ml-row"><span class="ms-n" style="border-color:var(--ink-0)">1</span><div><b>Backtests that hold up</b><span class="t-meta">Reached 18 Dec · gave the Aim rank Aspirant</span></div><span class="r">100%<small>→ Aspirant</small></span></div>
+      <div class="ml-row"><span class="ms-n">2</span><div><b>Risk and position sizing</b><span class="t-meta">Reached · counts from Thu</span></div><span class="r">100%<small>→ Journeyman</small></span></div>
+      <div class="ml-row"><span class="ms-n cur">3</span><div><b>Forward-testing on a demo account</b><span class="t-meta">Current · 8 Mar – 16 May</span></div><span class="r">12%<small>→ Specialist</small></span></div>
+      <div class="ml-row"><span class="ms-n">4</span><div><b>Execution and costs</b><span class="t-meta">Planned · 17 May – 1 Aug</span></div><span class="r"><small>→ Expert</small></span></div>
+      <div class="ml-row later"><span class="ms-n">5</span><div><b>Live trading at small size</b><span class="t-meta">Later · no dates</span></div><span class="r"><small>→ Virtuoso</small></span></div>
+      <div class="ml-row"><span class="ms-n">·</span><div><b>Other words</b><span class="t-meta">Outline · Dropped · Slipped · Past due</span></div><span class="r"></span></div>
+      <div class="ml-row"><span class="ms-n">2</span><div><b>Risk and position sizing</b><span class="t-meta">Closed at 82% · not reached, so it didn't give the Aim rank Journeyman. A later milestone still gives its own Aim rank.</span></div><span class="r">82%</span></div>
+    </section>
+</div></div></div>
+<ul class="mk-cap"><li>Each milestone carries the Aim rank of its place in the plan (min(place, 5)); a rank is given only by a confirmed reach and is kept for good.</li><li>"Reached · counts from Thu": a reach that rests on ticks waits 2 days; until then it gives no rank and no "milestones reached".</li><li>The last row is an alternative ending for milestone 2, shown for its words.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec">
+<h2>Sheets · 344</h2>
+
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>M</b> · How these were set (week of 25 Jan)</div>
+<div id="sheet-basis"></div><div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="How these week quests were set">
+<div class="grabber"></div>
+
+<div class="sheet-h"><div class="t"><h2>How these week quests were set</h2><p class="sub">Milestone 2 · Mon 25 – Sun 31 Jan · fixed Mon 04:15 by the daily run</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<ul class="rm-basis" style="margin-top:10px">
+<li>Everything is read as of Mon 04:00 except card levels, read Mon 04:15. The set doesn't change this week; finished weeks keep it as issued.</li>
+<li><span class="t-eyebrow">Bring · tested</span><b>Gap:</b> 42 − 25 = 17 cards to bring to level 6+ (your Sunday reading 25; the milestone's baseline 21).</li>
+<li><b>Weeks left:</b> 6, this one included · <b>pace</b> 17 ÷ 6 → 3.</li>
+<li><b>Reach:</b> 4 cards can reach level 6 this week if passed on their day; at the 84% pass rate stored at Start, about 3.4 (best case 4). Asked: 3.</li>
+<li>A card that was due anyway counts: passing its review is the step. The schedule never lets a card level early.</li>
+<li><span class="t-eyebrow">Add · counted by the app</span><b>Still needed:</b> 11 new cards (each has a 42% chance, 0.84⁵, of reaching level 6 by 7 Mar).</li>
+<li><b>Writing weeks left:</b> 2.4 — a card written after Wed 10 Feb can't reach level 6 by 7 Mar · <b>pace</b> 11 ÷ 2.4 → 5.</li>
+<li><b>Most a week asks:</b> 1.5 × the 3.0 a week the plan needed at Start → 5. <b>Room:</b> ≈ 4 h 30 available − ≈ 3 h 15 of practices and reviews → 75 min → 15 cards at 5 min. Asked: 5; no cap bound.</li>
+<li>Trading's weekly quota counts these cards too; other Fields' quotas: none this week.</li>
+<li><span class="t-eyebrow">Sessions and steps · your ticks</span>Backtest 3 a week → 3; Study 2 a week → 2 (no held days). The milestone counts 80% of planned sessions; the week asks for the plan itself. Missed sessions don't carry over.</li>
+<li>Step 2 of 3 became a week quest once half the window had passed (54% at Sunday).</li>
+<li>Checkpoint: from the week the window passes 80% (week of 22 Feb).</li>
+<li><span class="t-eyebrow">Capacity</span>≈ 4 h 30: your 8 h × 74% kept, capped at +50% of the ≈ 9 h 10 you track (task estimates, not timed).</li>
+</ul>
+</div></div>
+<ul class="mk-cap"><li>Every count is worked out by code; no model is called. The basis is stored with the set, so this sheet shows what was asked and why, not today's recomputation.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>N</b> · How this is measured</div>
+<div id="sheet-measured"></div><div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="How this is measured">
+<div class="grabber"></div>
+
+<div class="sheet-h"><div class="t"><h2>How this is measured</h2><p class="sub">Gemini fills slots; code computes; you decide; the app measures.</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="tp card" style="margin-top:12px">
+  <div><span class="k">Cards at level N+</span><span class="s">Your cards in the milestone's Domains at that level or higher. Levels move only through your reviews, and fall when a card lapses. Tested.</span></div>
+  <div><span class="k">Practice kept</span><span class="s">Sessions you tick on Today, up to the planned number each week. Rest, sick, vacation and freeze days lower the target. From your ticks.</span></div>
+  <div><span class="k">Steps</span><span class="s">Ticked once. From your ticks.</span></div>
+  <div><span class="k">Progress</span><span class="s">A milestone's progress is its slowest part, read from the last stored reading of each part. Today, this page, the Aim card and the goal close read the same rows.</span></div>
+  <div><span class="k">Checkpoint</span><span class="s">A score you log. Context only: it never moves progress.</span></div>
+</div>
+<div class="t-eyebrow" style="margin:14px 0 6px">Week quests</div>
+<table class="floor"><thead><tr><th>Row</th><th>Counted from</th></tr></thead><tbody>
+<tr><td>Bring</td><td>the milestone's stored card reading gained above the week's floor (net: a slipped card offsets) · tested</td></tr>
+<tr><td>Add</td><td>new cards filed in the Domains this week, not archived or moved out · counted by the app</td></tr>
+<tr><td>Sessions</td><td>sessions ticked this week, up to the week's number · from your ticks</td></tr>
+<tr><td>Step</td><td>the step ticked this week · from your ticks</td></tr>
+<tr><td>Checkpoint</td><td>a score logged this week · you logged it</td></tr></tbody></table>
+<p class="t-meta" style="margin-top:6px">A week runs Monday 04:00 to Monday 04:00, Sydney time. Week quests have no tick of their own and pay nothing.</p>
+<div class="t-eyebrow" style="margin:14px 0 6px">Proficiency and the Aim rank</div>
+<p class="t-meta" style="color:var(--ink-1)">Proficiency = 60% cards + 25% practice + 15% milestones reached, over the parts your plan has. Cards: your best cards toward the end target, each level weighted by the review time it stands for (a level-6 card is 25 of a level-8 card's 69), so new or once-passed cards add nothing. Practice: sessions ticked toward the plan's own. It can fall; a plan change is shown as one.</p>
+<p class="t-meta" style="color:var(--ink-1);margin-top:6px">Each milestone carries the Aim rank of its place in the plan; reaching it gives that Aim rank, and the rank is kept for good. Paragon comes only with the aim, on a plan of 4 or more milestones.</p>
+<div class="t-eyebrow" style="margin:14px 0 8px">What each label means</div>
+<div class="rm-stack" style="gap:8px">
+  <span><span class="cap">tested by your reviews · measured 09:12</span> — counted by code from your cards</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> — cards you added, recorded</span>
+  <span><span class="cap">from your ticks</span> — your own record of doing it</span>
+  <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> — estimated, never measured</span>
+  <span><span class="cap">worked out</span> — computed by code from the above and published constants</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> — typed, edited or checked by you</span>
+  <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> — kept, not checked</span>
+  <span><span class="pv pv-draft">Gemini suggestion · not checked</span> — not decided</span>
+</div>
+</div></div>
+
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>O</b> · How this is worked out</div>
+<div id="sheet-worked"></div><div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="How this is worked out">
+<div class="grabber"></div>
+
+<div class="sheet-h"><div class="t"><h2>How this is worked out</h2><p class="sub">Policy, not facts. The same numbers are on Today › Rules.</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="t-eyebrow" style="margin:14px 0 4px">The fastest a new card can climb · spacing × 1.0</div>
+<table class="floor"><thead><tr><th>Level</th><th>Every pass on time</th><th>With lucky gaps</th><th>Weight</th></tr></thead>
+<tbody><tr><td>4</td><td>6 days</td><td>6 days</td><td>6</td></tr><tr><td>6</td><td>25 days</td><td>22 days</td><td>25</td></tr><tr><td>8</td><td>69 days</td><td>56 days</td><td>69</td></tr><tr><td>10</td><td>155 days</td><td>133 days</td><td>155</td></tr><tr><td>12</td><td>340 days</td><td>318 days</td><td>340</td></tr></tbody></table>
+<p class="t-meta" style="margin-top:8px">A target past the lucky-gaps column is Impossible. Weight is the review time a level stands for (always at spacing × 1.0); Proficiency uses it.</p>
+<div class="t-eyebrow" style="margin:14px 0 4px">Fitting and time</div>
+<p class="t-meta" style="color:var(--ink-1)">Light 50% · Steady 70% · Push 90% of the expected reach. Expected reach discounts each pass by your pass share. Reviews 20 s a card and a new card 5 min (assumed — neither is timed). Your hours count × your kept share (0.7 while calibrating), capped at +50% of tracked time (at least 2 h). Fits up to 80% of the worst week, Tight to 100%, Over beyond.</p>
+<div class="t-eyebrow" style="margin:14px 0 4px">Week quests</div>
+<p class="t-meta" style="color:var(--ink-1)">Bring: the gap ÷ the weeks left, at most what can reach the level this week at the pass rate stored at Start. Add: the new cards still needed, spread over the writing weeks left, at most 1.5 × what the plan needed a week at Start (at least 3) and what the week's time holds. Sessions: the plan's own; missed ones don't carry over. A step from the point its share of the window has passed; a checkpoint from 80%. At most 7 a week.</p>
+<div class="t-eyebrow" style="margin:14px 0 4px">Proficiency and the Aim rank</div>
+<p class="t-meta" style="color:var(--ink-1)">Cards 0.6 · practice 0.25 · milestones 0.15, shared over the parts present. Aim ranks: Initiate, Aspirant, Journeyman, Specialist, Expert, Virtuoso, Paragon; milestone n carries the Aim rank at place min(n, 5); Paragon needs the aim reached on a plan of 4 or more milestones. A reach that rests on ticks counts after 2 days.</p>
+</div></div>
+
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>P</b> · Log a checkpoint score</div>
+<div id="sheet-log"></div><div class="frame f344 shf"><div class="sheet-s" role="dialog" aria-label="Log a score">
+<div class="grabber"></div>
+
+<div class="sheet-h"><div class="t"><h2>Size historical trades by hand</h2><p class="sub">Performance check · your bar is 8 of 10</p></div><button class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+<div class="rm-form" style="margin-top:14px">
+  <div class="rm-step"><input class="st-input" value="7" inputmode="decimal" aria-label="Score"><span class="t-meta">of</span><input class="st-input" value="10" inputmode="decimal" aria-label="Out of"></div>
+  <div class="rm-f"><label class="st-label">Note <span class="opt">optional</span></label><input class="st-input" placeholder="What tripped you up"></div>
+  <button class="btn btn-primary lg btn-block">Log 7 of 10</button>
+  <p class="t-meta">Logged scores are yours and never overwritten. They sit beside progress and never move it. A log this week marks the checkpoint week quest done.</p>
+</div>
+</div></div>
+<ul class="mk-cap"><li>If every paying part is met but the latest log is under the bar: "Your plan says ready; your checkpoint says not yet — the plan may be missing something."</li></ul>
+</figure>
+</div>
+</section>
+<script>
+/* Mockup only: reports where Now and its week quests start on the 344 frame. */
+(function () {
+  function run() {
+    var f = document.getElementById('rm344'), out = document.getElementById('geo-rm');
+    if (!f || !out) return;
+    var fr = f.getBoundingClientRect(), now = f.querySelector('#now'), q = f.querySelector('#week-quests');
+    if (!now || !q) return;
+    var a = Math.round(now.getBoundingClientRect().top - fr.top), b = Math.round(q.getBoundingClientRect().top - fr.top);
+    out.textContent = 'Measured here at 344 px: Now starts ' + a + ' px down and its week quests ' + b + ' px down' + (b < 818 ? ' (on the first screen, 818).' : ' (below the first screen, 818).');
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(run);
+  addEventListener('resize', run);
+})();
+</script>
+</body>
+</html>

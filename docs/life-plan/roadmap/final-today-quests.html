@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="dark">
+<title>Today week quests</title>
+<meta name="description" content="Mockup, revision 3: Today's Week quests · Milestone 2 card in context with M2's board (Must lane, Owed row, DayLedger Quest ring, Next up) at 344, 932 and 1440 px, collapsed and open, with its states.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400&family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* =====================================================================
+   XTNL · SIGIL & SLATE — roadmap mockups (lane M, roadmap.md rev 3, F23).
+   Tokens copied from src/app/styles/tokens.css (Night, the default).
+   Kit classes mirror src/app/styles/components.css and src/components/home/you.css.
+   The rm-* block is what src/components/roadmap/roadmap.css will carry (in the
+   real file: first line "@layer theme, base, components, art, effects, utilities;",
+   rules inside @layer components, rm-* names only, no Tailwind-utility names).
+   Only transform, opacity and stroke-dashoffset would animate; this file animates
+   nothing. No gold (it means spending MP) and no --owed (nothing here is debt).
+   ===================================================================== */
+:root{
+  color-scheme:dark;
+  --canvas:#050609;--page:#0a0d13;--sunken:#07090e;--card:#11151d;--raised:#171c26;--overlay:#1d2330;
+  --bar:#0c0f15;--scrim:rgba(3,4,7,.66);--curtain:#05060a;--face:#0d1017;
+  --ink-0:#f1f3f8;--ink-1:#c3cad8;--ink-2:#9aa3b5;--ink-mute:#6f788c;
+  --line-1:rgba(255,255,255,.065);--line-2:rgba(255,255,255,.11);--line-ctl:#76819a;--hi:rgba(255,255,255,.04);
+  --kept:#5fd38d;--on-kept:#0b1a12;--owed:#e07a95;--on-owed:#26060e;--held:#72d2ec;--on-held:#06161c;
+  --hatch:repeating-linear-gradient(135deg,color-mix(in srgb,var(--held) 55%,transparent) 0 2px,transparent 2px 5px);
+  --xp:#fdaf3a;--on-xp:#221400;--pts:#8ea6ff;--on-pts:#07103a;--mp:#ffe08a;--on-mp:#2a1d00;
+  --light:#fff1cf;--light-glow:rgba(255,222,150,.34);
+  --iron-a:#c3c9d4;--iron-m:#8a93a4;--iron-b:#434a5a;--bronze-a:#f3c08f;--bronze-m:#c0834f;--bronze-b:#8a5530;
+  --gold-a:#fff0bd;--gold-m:#f0c75e;--gold-b:#c9901f;
+  --focus:var(--ink-0);--shadow-pop:0 16px 40px -12px rgba(0,0,0,.6);
+  --font-ui:"Inter","Segoe UI",system-ui,sans-serif;
+  --font-display:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --s-1:2px;--s-2:4px;--s-3:6px;--s-4:8px;--s-5:12px;--s-6:16px;--s-7:20px;--s-8:24px;--s-9:32px;--s-10:40px;--s-11:56px;
+  --r-chip:8px;--r-ctl:12px;--r-card:16px;--r-sheet:24px;--r-pill:999px;--hit:44px;--hit-min:40px;
+  --topbar-h:56px;--tabbar-h:64px;--rail-w:84px;--sidebar-w:232px;
+  --t-press:90ms;--t-quick:160ms;--t-base:240ms;--ease-out:cubic-bezier(.16,1,.3,1);
+  --z-bar:20;--z-sheet:50;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;background:var(--canvas)}
+body{background:var(--canvas);color:var(--ink-0);font:400 15px/1.45 var(--font-ui);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:inherit}
+a{color:inherit}
+ul,ol{list-style:none}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- type roles ---------- */
+.t-display-l{font:600 30px/34px var(--font-display)}
+.t-display-m{font:600 21px/26px var(--font-display)}
+.t-display-s{font:600 19px/23px var(--font-display)}
+.t-epithet{font:italic 400 17px/1.3 var(--font-display);color:var(--ink-1)}
+.t-body-l{font:500 15px/20px var(--font-ui)}
+.t-body{font:400 15px/1.45 var(--font-ui)}
+.t-meta{font:400 13px/18px var(--font-ui);color:var(--ink-2)}
+.t-eyebrow{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.t-mono{font:500 12.5px/1.4 var(--font-mono)}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.ink-0{color:var(--ink-0)} .ink-1{color:var(--ink-1)} .ink-2{color:var(--ink-2)}
+.t-error{display:flex;gap:8px;align-items:baseline;font:600 13px/18px var(--font-ui);color:var(--ink-0)}
+.t-error::before{content:"";width:7px;height:7px;flex:none;transform:rotate(45deg) translateY(-1px);background:var(--ink-0);border-radius:1px}
+
+/* ---------- icons & glyphs ---------- */
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.g{width:14px;height:14px;flex:none}
+svg.sig{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;flex:none}
+.c-xp{color:var(--xp)} .c-mp{color:var(--mp)} .c-pts{color:var(--pts)}
+.cur{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cur svg.g{width:13px;height:13px}
+.crest text{font-family:var(--font-display);font-weight:700;fill:#f1f3f8}
+
+/* ---------- surfaces ---------- */
+.card{background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card);box-shadow:inset 0 1px 0 var(--hi)}
+.pad{padding:14px} .pad-l{padding:16px}
+.sunk{background:var(--sunken);border:1px solid var(--line-2);border-radius:12px}
+
+/* ---------- buttons ---------- */
+.btn{min-height:44px;border-radius:var(--r-ctl);display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1.2 var(--font-ui);padding:0 14px;white-space:nowrap;text-decoration:none}
+.btn.lg{min-height:48px;font-size:15px;padding:0 18px}
+.btn-block{width:100%}
+.btn-primary{background:var(--ink-0);color:var(--page)}
+.btn-secondary{border:1px solid var(--line-ctl);color:var(--ink-0)}
+.btn-quiet{color:var(--ink-1);padding:0 10px}
+.btn-danger{border:1px solid var(--owed);color:var(--owed)} /* the kit's danger voice: Archive only */
+.icon-btn{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;position:relative;color:var(--ink-1);flex:none}
+.link{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px;min-height:40px;display:inline-flex;align-items:center}
+.ilink{color:var(--ink-0);text-decoration:underline;text-underline-offset:3px}
+.badge{position:absolute;top:5px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--ink-0);color:var(--page);font:700 12px/18px var(--font-ui);text-align:center;box-shadow:0 0 0 2px var(--bar)}
+
+/* ---------- chips ---------- */
+.chip{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 8px;border-radius:var(--r-chip);font:600 12px/1.25 var(--font-ui);border:1px solid var(--line-2);color:var(--ink-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip svg.g,.chip svg.sig,.chip svg.i{width:12px;height:12px}
+.chip.btn-chip{min-height:40px;padding:0 12px;border-color:var(--line-ctl);color:var(--ink-0);font-size:13px}
+.chip.btn-chip[aria-pressed="true"]{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.chip.quiet{border-style:dashed;color:var(--ink-2)}
+
+/* ---------- meters ---------- */
+.meter{height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink-0) 8%,var(--sunken));box-shadow:inset 0 0 0 1px var(--line-2);position:relative;overflow:hidden}
+.meter>i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:4px;background:var(--ink-0);transform-origin:left;transform:scaleX(var(--v,0))}
+.meter>i.from{background:var(--ink-1);opacity:.55}
+.meter .cap{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--ink-1);left:var(--at)}
+.meter.thin{height:6px}
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.segs i{height:6px;border-radius:2px;background:color-mix(in srgb,var(--ink-0) 9%,transparent)}
+.segs i.on{background:var(--ink-0)}
+.segs i.cur{box-shadow:inset 0 0 0 1.5px var(--ink-0)}
+.segs.tall i{height:8px}
+
+/* ---------- tabs / segmented / switch ---------- */
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.tabs::-webkit-scrollbar{display:none}
+.tab-s{min-height:40px;padding:0 14px;border-radius:10px;font:600 14px var(--font-ui);color:var(--ink-2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none;flex:none}
+.tab-s[aria-current="page"]{color:var(--ink-0);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-2)}
+.rdot{width:7px;height:7px;border-radius:50%;background:linear-gradient(#ffe7a3,#c9901f);display:inline-block}
+.segc{display:inline-flex;border:1px solid var(--line-ctl);border-radius:12px;padding:2px;gap:2px;flex-wrap:wrap;max-width:100%}
+.segc button{min-height:40px;min-width:56px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:600;color:var(--ink-1)}
+.segc button[aria-pressed="true"]{background:var(--ink-0);color:var(--page)}
+.segc.fill{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;width:100%}
+.segc.fill button{min-width:0;padding:0 6px}
+.switch{width:52px;height:32px;border-radius:16px;background:var(--sunken);border:1px solid var(--line-ctl);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--ink-2)}
+.switch[aria-checked="true"]{background:color-mix(in srgb,var(--ink-0) 22%,var(--sunken));border-color:var(--ink-1)}
+.switch[aria-checked="true"]::after{transform:translateX(20px);background:var(--ink-0)}
+.switch-hit{min-width:44px;min-height:44px;display:grid;place-items:center;flex:none}
+
+/* ---------- inputs (study.css .st-input; 16 px under 600 px) ---------- */
+.st-input{width:100%;min-height:48px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);padding:12px 14px;font:400 16px/1.45 var(--font-ui);color:var(--ink-0)}
+textarea.st-input{resize:vertical;min-height:72px}
+.st-input::placeholder{color:var(--ink-2)}
+.st-label{display:block;font:600 13px/18px var(--font-ui);color:var(--ink-1);margin-bottom:6px}
+.st-hint{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:6px}
+.st-count{float:right;font:500 12px/18px var(--font-mono);color:var(--ink-2)}
+
+/* =====================================================================
+   SHELL inside a frame. A frame stands in for one viewport: .f344 has the
+   top bar with the crest and the tab bar (< 600 px); .f932 has the rail and the
+   top-bar tabs (600–1279 px). <main> is the "main" container, as in the app.
+   ===================================================================== */
+.app{min-height:100%}
+.f932 .app{display:grid;grid-template-columns:var(--rail-w) minmax(0,1fr)}
+.col{display:flex;flex-direction:column;min-width:0;min-height:100%}
+.main{flex:1;container:main/inline-size;min-width:0}
+.page{padding:6px 16px 28px;margin:0 auto;max-width:1240px}
+.page.narrow{max-width:640px}
+@container main (min-width:600px){.page{padding:8px 24px 40px}}
+.topbar{position:sticky;top:0;z-index:var(--z-bar);height:var(--topbar-h);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;background:var(--bar)}
+.crest-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font:600 19px/23px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-tabs{display:none}
+.f932 .topbar{height:60px;padding:0 12px 0 20px}
+.f932 .crest-btn{display:none}
+.f932 .tb-title{flex:0 1 auto;margin-right:12px}
+.f932 .tb-tabs{display:flex;flex:1;min-width:0}
+.tabbar{position:sticky;bottom:0;z-index:var(--z-bar);height:var(--tabbar-h);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;background:var(--bar);border-top:1px solid var(--line-1)}
+.f932 .tabbar{display:none}
+.tab{text-decoration:none;height:var(--tabbar-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 12px/14px var(--font-ui);color:var(--ink-2);position:relative}
+.tab svg.i{width:22px;height:22px}
+.tab[aria-current="page"]{color:var(--ink-0)}
+.tab[aria-current="page"]::before{content:"";position:absolute;top:0;left:30%;right:30%;height:2px;border-radius:0 0 2px 2px;background:var(--ink-0)}
+.tab .badge{top:7px;right:calc(50% - 24px)}
+.tab-plus{display:grid;place-items:center}
+.tab-plus span{width:52px;height:52px;border-radius:18px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.tab-plus svg.i{width:24px;height:24px;stroke-width:2.2}
+.rail{display:none}
+.f932 .rail{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;align-items:center;padding:10px 0 12px;gap:4px;z-index:var(--z-bar)}
+.rail a,.rail button{width:72px;min-height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 12px/14px var(--font-ui);color:var(--ink-2);text-decoration:none;position:relative}
+.rail a[aria-current="page"]{color:var(--ink-0);background:var(--raised)}
+.rail .r-plus span{width:48px;height:48px;border-radius:16px;background:var(--ink-0);color:var(--page);display:grid;place-items:center}
+.rail .r-plus{margin-bottom:10px}
+.rail .rail-grow{flex:1}
+.rail .badge{top:6px;right:14px}
+.sec-h{display:flex;align-items:baseline;gap:4px 9px;padding:0 4px 8px;flex-wrap:wrap}
+.sec-h h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);white-space:nowrap}
+.sec-h .aside{margin-left:auto;font-size:13px;color:var(--ink-2);text-align:right}
+.lane-mark{width:9px;height:9px;transform:rotate(45deg);border:1.5px solid var(--ink-2);border-radius:1.5px;flex:none}
+
+/* ---------- You (you.css) ---------- */
+.you-tabs{margin:2px 0 14px}
+.f932 .you-tabs{display:none}
+.you-grid{display:grid;gap:16px}
+@container main (min-width:760px){.you-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.you-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.hero-c{padding:16px;container:hero/inline-size}
+.hc-top{display:flex;gap:16px;align-items:center}
+.hc-top h2{font:600 30px/34px var(--font-display);overflow-wrap:anywhere}
+.lvl-line{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;margin:16px 0 8px}
+.lvl-line b{font-weight:600}
+.lvl-line .nx{display:flex;align-items:center;gap:6px;color:var(--ink-2)}
+.blurb{font:italic 400 14px/1.45 var(--font-display);color:var(--ink-2);margin:8px 0 0}
+.purse{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.purse>div+div{border-left:1px solid var(--line-1);padding-left:12px}
+.purse>div:nth-child(3){border-left:0;padding-left:0}
+@container hero (min-width:440px){.purse{grid-template-columns:repeat(4,minmax(0,1fr))}.purse>div:nth-child(3){border-left:1px solid var(--line-1);padding-left:12px}}
+.purse .v{font:600 20px/1 var(--font-display);display:flex;gap:6px;align-items:center;font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.purse .v small{font:500 13px var(--font-ui);color:var(--ink-2)}
+.purse .v svg.g{width:16px;height:16px}
+.purse .k{font-size:12px;color:var(--ink-2);margin-top:5px}
+.ready-c{display:flex;gap:12px;align-items:center;padding:12px 12px 12px 14px;border-color:color-mix(in srgb,var(--gold-m) 40%,transparent)}
+.ready-c .t{flex:1;min-width:0} .ready-c b{font-weight:600;display:block}
+.coin44{width:44px;height:44px;flex:none}
+.trk-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;padding:12px 14px}
+.trk-row+.trk-row{border-top:1px solid var(--line-1)}
+.trk-row>svg.sig{width:22px;height:22px;margin-top:1px}
+.trk-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.trk-h b,.trk-h .lv{font:600 16px var(--font-display);font-variant-numeric:tabular-nums}
+.wk{margin-left:auto;display:flex;gap:3px;align-items:center}
+.wk i{width:9px;height:9px;transform:rotate(45deg);border-radius:1.5px;border:1.5px solid var(--ink-mute)}
+.wk i.k{background:var(--kept);border-color:var(--kept)}
+.wk i.h{background:var(--hatch);border-color:var(--held)}
+.trk-row .meter{margin:8px 0 6px}
+.trk-row .t-meta b{color:var(--ink-1);font-weight:600}
+.radar-c{padding:14px;container-type:inline-size}
+.radar-plot{position:relative;width:min(420px,100cqi - 56px);margin:0 auto}
+.radar-plot>svg{width:100%;height:auto;display:block;overflow:visible}
+.radar-lbl{position:absolute;width:max-content;max-width:7.5em;pointer-events:none;font:500 12px/14px var(--font-ui);color:var(--ink-2)}
+.radar-lbl.at-start{transform:translate(0,-50%)} .radar-lbl.at-middle{transform:translate(-50%,-50%);text-align:center} .radar-lbl.at-end{transform:translate(-100%,-50%);text-align:right}
+.radar-lbl.lead{color:var(--ink-0);font-weight:700}
+.rlegend{display:flex;gap:16px;font-size:12px;color:var(--ink-2);justify-content:center;flex-wrap:wrap;margin:8px 0 4px}
+.top3 li{display:flex;gap:10px;align-items:center;min-height:44px;border-top:1px solid var(--line-1);font-size:14px;flex-wrap:wrap}
+.top3 li .note{margin-left:auto;font-size:13px;color:var(--ink-2)}
+.mo{display:flex;gap:12px;align-items:center;padding:12px 14px;min-height:64px}
+.mo+.mo{border-top:1px solid var(--line-1)}
+.mo .art{width:44px;height:44px;flex:none;display:grid;place-items:center}
+.mo .art>svg.sig{width:22px;height:22px}
+.mo b{font-weight:600;display:block}
+.mo .mo-body{flex:1;min-width:0}
+
+/* =====================================================================
+   ROADMAP (rm-*) — what roadmap.css will carry.
+   ===================================================================== */
+.rm-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.rm-grid{display:grid;gap:16px}
+@container main (min-width:760px){.rm-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start}}
+.rm-aim{padding:16px}
+.rm-aim-t{font:600 19px/23px var(--font-display);overflow-wrap:anywhere}
+.rm-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.rm-lines{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-lines b{color:var(--ink-1);font-weight:600}
+.rm-lead{font-size:14px;line-height:20px;color:var(--ink-1);margin-top:12px}
+.rm-note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-note>svg.i{width:18px;height:18px;color:var(--ink-1);margin-top:1px}
+.rm-note b{color:var(--ink-0);font-weight:600}
+.rm-banner{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center;padding:12px 14px;border-color:var(--line-ctl)}
+.rm-banner .t{flex:1 1 200px;min-width:0;font-size:14px;line-height:19px}
+.rm-banner .t b{display:block;font-weight:600}
+/* provenance: a class is always words; colour is never alone */
+.pv{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-1);border:1px solid var(--line-2);max-width:100%}
+.pv svg.i,.pv svg.g{width:12px;height:12px}
+.pv-draft{border:1px dashed var(--line-ctl);color:var(--ink-0)}
+.pv-kept{border:1px dashed var(--ink-mute);color:var(--ink-2)}
+.pv-yours{color:var(--ink-1)}
+.cap{font-size:13px;line-height:18px;color:var(--ink-2)}
+.cap b{color:var(--ink-1);font-weight:600}
+/* flags: blocking = ink on raised with the flag glyph; notes = quiet */
+.fl{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:2px 8px;border-radius:var(--r-chip);font:600 12px/16px var(--font-ui);color:var(--ink-0);background:var(--raised);border:1px solid var(--line-ctl);max-width:100%}
+.fl svg.i{width:12px;height:12px;stroke-width:2}
+.fl-note{font-weight:500;color:var(--ink-2);background:none;border-color:var(--line-2)}
+/* verdicts: a word and a glyph */
+.vd{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px 2px 8px;border-radius:var(--r-chip);border:1px solid var(--line-ctl);font:600 13px/18px var(--font-ui);color:var(--ink-0);white-space:nowrap}
+.vd svg.i{width:15px;height:15px;stroke-width:2}
+.vd-q{border-color:var(--line-2);color:var(--ink-1)}
+.vd-x{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+/* items (ItemRow): label line · chip line · action line */
+.it{padding:10px 12px 12px;border-radius:12px;border:1px solid var(--line-1);background:var(--card)}
+.it+.it{margin-top:8px}
+.it.s-draft{border:1px dashed var(--line-ctl)}
+.it.s-kept{border:1px dashed var(--ink-mute)}
+.it-k{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-bottom:2px}
+.it-l{font:500 15px/20px var(--font-ui);overflow-wrap:anywhere}
+.it-l s{color:var(--ink-2);text-decoration-thickness:2px}
+.it-m{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:3px}
+.it-m b{color:var(--ink-1);font-weight:600}
+.it-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.it-why{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.it-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.acts-n{display:none}
+@container main (max-width:379.98px){.acts-w{display:none}.acts-n{display:flex}}
+.ov{width:40px;min-width:40px;padding:0;justify-content:center}
+/* milestone card */
+.ms-h{display:grid;grid-template-columns:34px minmax(0,1fr);gap:4px 10px;padding:14px 14px 12px}
+.ms-n{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--line-ctl);border-radius:10px;font:600 15px var(--font-display);font-variant-numeric:tabular-nums}
+.ms-n.cur{background:var(--ink-0);color:var(--page);border-color:var(--ink-0)}
+.ms-t{font:600 17px/22px var(--font-display);overflow-wrap:anywhere}
+.ms-w{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:2px}
+.ms-sec{padding:12px 14px;border-top:1px solid var(--line-1)}
+.ms-sec>.ms-sh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.ms-sh .t-eyebrow{color:var(--ink-1)}
+.ms-sh .cap{text-align:right}
+/* checks */
+.ck{padding:10px 0}
+.ck+.ck{border-top:1px solid var(--line-1)}
+.ck-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.ck-h b{font-weight:600;font-size:14px}
+.ck p{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:6px}
+.ck p.fixed{color:var(--ink-2)}
+/* measure rows */
+.mr{padding:12px 0}
+.mr+.mr{border-top:1px solid var(--line-1)}
+.mr-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.mr-h b{font-weight:600;font-size:14px;line-height:19px}
+.mr-h .pct{font:600 17px/1 var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mr .meter{margin:8px 0 6px}
+.mr .t-meta b{color:var(--ink-1);font-weight:600}
+.mr .t-meta+.t-meta{margin-top:2px}
+.rm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.rm-head .big{font:600 30px/1 var(--font-display);font-variant-numeric:tabular-nums}
+/* domain / topic / practice rows */
+.dr{display:grid;grid-template-columns:22px minmax(0,1fr);gap:2px 10px;padding:10px 0}
+.dr+.dr{border-top:1px solid var(--line-1)}
+.dr>svg.sig{margin-top:3px;width:16px;height:16px;color:var(--ink-1)}
+.dr b{font-weight:600}
+.dr .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.how{margin-top:4px}
+.how>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.how>summary::-webkit-details-marker{display:none}
+.how>summary svg.i{width:16px;height:16px}
+.how[open]>summary svg.i{transform:rotate(90deg)}
+.how ol{margin:0 0 6px 20px;list-style:decimal;font-size:13px;line-height:19px;color:var(--ink-1)}
+.how ol li+li{margin-top:2px}
+.how p{font-size:13px;line-height:18px;color:var(--ink-2)}
+/* milestones list */
+.ml-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:10px;min-height:60px;padding:8px 14px}
+.ml-row+.ml-row{border-top:1px solid var(--line-1)}
+.ml-row b{font-weight:600;display:block;overflow-wrap:anywhere}
+.ml-row .r{font:600 15px var(--font-display);font-variant-numeric:tabular-nums;text-align:right}
+.ml-row .ms-n{width:28px;height:28px;font-size:13px;border-radius:8px}
+.ml-row.later .ms-n{border-style:dashed}
+/* throughput */
+.tp{display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.tp>div{padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:baseline}
+.tp>div+div{border-top:1px solid var(--line-1)}
+.tp .k{font-size:14px;color:var(--ink-1)}
+.tp .v{font:600 15px var(--font-ui);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tp .s{grid-column:1/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+/* form (intake) */
+.rm-form{display:flex;flex-direction:column;gap:14px}
+.rm-fs{padding:16px;display:flex;flex-direction:column;gap:16px}
+.rm-f>.st-label{display:flex;justify-content:space-between;gap:8px}
+.rm-f>.st-label .opt{font-weight:400;color:var(--ink-2)}
+.rm-pick{display:flex;align-items:center;gap:10px;width:100%;min-height:56px;padding:8px 12px;border-radius:var(--r-ctl);border:1px solid var(--line-ctl);background:var(--sunken);text-align:left}
+.rm-pick .t{flex:1;min-width:0}
+.rm-pick b{display:block;font-weight:600}
+.rm-pick>svg.sig{width:18px;height:18px}
+.rm-dchips{display:flex;flex-wrap:wrap;gap:6px}
+.rm-dchip{min-height:44px;padding:4px 12px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;text-align:left;max-width:100%}
+.rm-dchip b{font:600 13px/17px var(--font-ui)}
+.rm-dchip span{font-size:12px;line-height:15px;color:var(--ink-2)}
+.rm-dchip[aria-pressed="true"]{background:var(--ink-0);border-color:var(--ink-0);color:var(--page)}
+.rm-dchip[aria-pressed="true"] span{color:color-mix(in srgb,var(--page) 75%,transparent)}
+.rm-dchip.add{border-style:dashed;color:var(--ink-1)}
+.rm-step{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rm-step .st-input{width:76px;text-align:center;font-family:var(--font-mono)}
+.rm-step .icon-btn{border:1px solid var(--line-ctl)}
+.rm-fact{margin-top:8px;padding:10px 12px;border-radius:12px;background:var(--sunken);border:1px solid var(--line-2);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-fact .t-eyebrow{display:block;margin-bottom:2px;font-size:12px}
+.rm-adv{border-top:1px solid var(--line-1);padding-top:4px}
+.rm-adv>summary{min-height:44px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font:600 14px var(--font-ui);color:var(--ink-1)}
+.rm-adv>summary::-webkit-details-marker{display:none}
+.rm-adv>summary .aside{margin-left:auto;font-weight:400;font-size:13px;color:var(--ink-2);text-align:right}
+.rm-adv[open]>summary svg.i{transform:rotate(90deg)}
+.rm-adv-b{display:flex;flex-direction:column;gap:14px;padding:6px 0 4px}
+.rm-sw{display:flex;align-items:center;gap:12px}
+.rm-sw .t{flex:1;min-width:0;font-size:14px}
+.rm-sticky{position:sticky;bottom:var(--tabbar-h);z-index:2;display:flex;flex-wrap:wrap;gap:8px;padding:12px 0;margin-top:4px;background:linear-gradient(transparent,var(--page) 30%)}
+.f932 .rm-sticky{bottom:0}
+.rm-sticky .btn{flex:1 1 auto}
+.rm-sticky .t-meta{flex-basis:100%}
+.rm-sk{background:color-mix(in srgb,var(--ink-0) 7%,var(--card));border-radius:8px}
+/* the Aim card (F15) */
+.aim-c{padding:14px}
+.aim-t{font:600 17px/22px var(--font-display);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.aim-ms{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:13px;line-height:18px;color:var(--ink-1);margin:12px 0 6px}
+.aim-ms b{color:var(--ink-0);font-weight:600}
+.aim-g{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:14px 0 8px}
+.aim-g .big{font:600 22px/1 var(--font-display);font-variant-numeric:tabular-nums}
+.aim-g .cap{text-align:right}
+.aim-next{display:flex;gap:8px;align-items:baseline;margin-top:10px;padding-top:10px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.aim-next .k{font-weight:600;color:var(--ink-0)}
+.aim-acts{display:flex;gap:8px;margin-top:12px}
+.aim-acts .btn{flex:1}
+.aim-empty{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;min-height:56px}
+.aim-empty .t{flex:1;min-width:0;font-size:14px;line-height:19px;color:var(--ink-1)}
+.aim-empty .t a{color:var(--ink-0);font-weight:600}
+
+/* ---------- static sheet and toast (the real ones portal to <body>) ---------- */
+.shf{background:color-mix(in srgb,var(--page) 35%,#000);padding-top:56px}
+.sheet-s{background:var(--overlay);border-radius:var(--r-sheet) var(--r-sheet) 0 0;border-top:1px solid var(--line-2);padding:8px 16px 20px;box-shadow:var(--shadow-pop);container:main/inline-size}
+.grabber{width:40px;height:4px;border-radius:2px;background:var(--line-ctl);margin:0 auto 12px}
+.sheet-h{display:flex;align-items:flex-start;gap:8px}
+.sheet-h .t{flex:1;min-width:0}
+.sheet-s h2{font:600 21px/26px var(--font-display)}
+.sheet-s .sub{font-size:14px;color:var(--ink-2);margin-top:4px}
+.sheet-s .card{background:var(--raised)}
+.toast-s{background:var(--overlay);border:1px solid var(--line-2);border-radius:14px;padding:10px 10px 10px 14px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow-pop)}
+.toast-s .tt{flex:1;font-size:14px;line-height:1.4;min-width:0}
+.toast-s .tt b{font:600 16px/20px var(--font-display);display:block}
+
+/* =====================================================================
+   MOCKUP CHROME (not part of the app)
+   ===================================================================== */
+.mk{max-width:1440px;margin:0 auto;padding:28px 24px 8px}
+.mk .t-eyebrow{color:var(--ink-2)}
+.mk h1{font:600 30px/34px var(--font-display);margin-top:4px}
+.mk>p{color:var(--ink-1);max-width:92ch;margin-top:10px;font-size:15px}
+.mk-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.mk-nav a{min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line-ctl);display:inline-flex;align-items:center;font:600 13px var(--font-ui);text-decoration:none;color:var(--ink-0)}
+.mk-nav a[aria-current="page"]{background:var(--ink-0);color:var(--page)}
+.mk-ex{display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:4px 10px;border-radius:8px;border:1px dashed var(--line-ctl);font:600 12px/16px var(--font-mono);color:var(--ink-1)}
+.mk-sec{max-width:1440px;margin:0 auto;padding:24px 24px 8px}
+.mk-sec>h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1);margin-bottom:6px}
+.mk-sec>p{font-size:14px;color:var(--ink-2);max-width:92ch;margin-bottom:14px}
+.mk-row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.mk-fig{display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%}
+.mk-tag{font:600 12px/16px var(--font-mono);color:var(--ink-2)}
+.mk-tag b{color:var(--ink-0)}
+.mk-cap{max-width:344px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.mk-cap b{color:var(--ink-1)}
+.mk-cap li{margin-top:4px;padding-left:12px;position:relative}
+.mk-cap li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;transform:rotate(45deg);background:var(--ink-2)}
+.mk-cap.wide{max-width:932px}
+.mk-scroll{max-width:100%;overflow-x:auto}
+.frame{background:var(--page);border:1px solid var(--line-2);border-radius:20px;overflow:clip;position:relative;flex:none}
+.f344{width:344px}
+.f932{width:932px}
+.mk-legend{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.mk-legend>span{display:inline-flex;gap:6px;align-items:center}
+.fold{position:absolute;left:0;right:0;height:0;border-top:2px dashed #9aa3b5;z-index:30;pointer-events:none}
+.fold span{position:absolute;right:6px;top:-22px;font:600 12px/16px var(--font-mono);color:#0a0d13;background:#c3cad8;padding:1px 6px;border-radius:6px}
+.mk-geo{font:600 12px/16px var(--font-mono);color:var(--ink-1);padding:8px 10px;border:1px dashed var(--line-ctl);border-radius:10px;max-width:344px}
+/* outline items (later milestones: listed, decided at Start) */
+.oi{padding:9px 0;border-top:1px solid var(--line-1)}
+.oi:first-child{border-top:0;padding-top:2px}
+.oi .it-l{font-size:14px;line-height:19px}
+.oi .it-chips{margin-top:6px}
+.ms-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.vds{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bulk{display:flex;flex-direction:column;gap:6px;padding:12px 14px 14px;border-top:1px solid var(--line-1)}
+.status-run{display:flex;gap:12px;align-items:flex-start;padding:16px}
+.status-run b{display:block;font:600 17px/22px var(--font-display)}
+.btn-wrap{white-space:normal;text-align:center;line-height:1.3;padding:8px 14px}
+/* the roadmap page: one markup, two layouts. Below 760 px of main the two
+   columns dissolve (display:contents) and `order` restores the reading order
+   Aim → Now (week quests first) → Toward the aim → Milestones → one
+   'How this is worked out' disclosure (revision 3, F18). */
+.rm-cols{display:flex;flex-direction:column;gap:16px}
+.rm-cols>.rm-col{display:contents}
+@container main (min-width:760px){.rm-cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}.rm-cols>.rm-col{display:flex;flex-direction:column;gap:16px;min-width:0}}
+.o1{order:1}.o2{order:2}.o3{order:3}.o4{order:4}.o5{order:5}.o6{order:6}.o7{order:7}.o8{order:8}.o9{order:9}.o10{order:10}
+.slow{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0);margin-left:6px;vertical-align:1px}
+.done-l{display:flex;gap:8px;align-items:flex-start}
+.done-l>svg.i{width:18px;height:18px;color:var(--kept);margin-top:1px}
+.floor{width:100%;border-collapse:collapse;font-size:13px}
+.floor th{font:600 12px/16px var(--font-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:left;padding:6px 8px}
+.floor td{padding:8px;border-top:1px solid var(--line-1);font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.floor td:first-child{color:var(--ink-0);font-weight:600}
+.rm-chips .chip{white-space:normal;max-width:100%;min-height:24px;padding-top:2px;padding-bottom:2px}
+/* 1440: the sidebar shell (≥ 1280 px) */
+@container main (min-width:1000px){.page{padding:12px 32px 48px}}
+.f1440{width:1440px}
+.sidebar{display:none}
+.f1440 .app{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+.f1440 .rail,.f1440 .tabbar,.f1440 .crest-btn,.f1440 .tb-tabs,.f1440 .you-tabs{display:none}
+.f1440 .topbar{height:60px;padding:0 20px 0 32px}
+.f1440 .rm-sticky{bottom:0}
+.f1440 .sidebar{position:sticky;top:0;align-self:start;height:100vh;max-height:1200px;background:var(--bar);border-right:1px solid var(--line-1);display:flex;flex-direction:column;padding:14px 12px;gap:6px;z-index:var(--z-bar)}
+.sb-char{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:var(--card);border:1px solid var(--line-1);text-decoration:none}
+.sb-char .who{min-width:0;flex:1}
+.sb-char .who b{font:600 16px/20px var(--font-display);display:block}
+.sb-char .who span{font-size:12px;color:var(--ink-2)}
+.sb-sec{margin-top:10px}
+.sb-sec>a{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-radius:12px;font:600 14px var(--font-ui);color:var(--ink-1);text-decoration:none}
+.sb-sec>a[aria-current="page"]{background:var(--raised);color:var(--ink-0)}
+.sb-sec .n{margin-left:auto;min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--ink-0);color:var(--page);font:700 12px/20px var(--font-ui);text-align:center}
+.sb-sub{display:flex;flex-direction:column;padding-left:40px}
+.sb-sub a{min-height:40px;display:flex;align-items:center;font-size:14px;color:var(--ink-2);text-decoration:none;border-radius:10px;padding:0 10px;margin-left:-10px}
+.sb-sub a[aria-current="page"]{color:var(--ink-0)}
+.sec-h .aside a.hit{display:inline-flex;align-items:center;min-height:40px;margin:-12px 0;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+.ms-sec .rm-quest-row,.ms-sec .rm-quest-line{padding-left:0;padding-right:0}
+
+/* =====================================================================
+   REVISION 3 (roadmap.md rev 3, 2026-10-04): the Aim rank, Proficiency and
+   week quests. Still rm-* names only, ink only: no gold (MP spending), no
+   --owed (nothing here is debt), no status hue without a word.
+   ===================================================================== */
+/* Aim rank + Proficiency: one block (F12, F18 §1, F19 (d)) */
+.rm-rp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-1)}
+.rm-rp .k{font:600 12px/16px var(--font-ui);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2)}
+.rm-rp .v{font:600 19px/23px var(--font-display);display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap;font-variant-numeric:tabular-nums lining-nums;margin-top:2px}
+.rm-rp .pf{text-align:right}
+.rm-rp .pf .v{justify-content:flex-end}
+.rm-rp .new{display:inline-flex;align-items:center;min-height:20px;padding:0 6px;border-radius:6px;border:1px solid var(--line-ctl);font:600 12px/16px var(--font-ui);color:var(--ink-0)}
+.rm-rp .meter{grid-column:1/-1;margin-top:10px}
+.rm-rp .full{grid-column:1/-1}
+.rm-rp .cap{margin-top:6px}
+.rm-rp .t-meta{margin-top:4px}
+.rm-rp .chg{color:var(--ink-1)}
+.rm-parts{grid-column:1/-1}
+.rm-parts>summary{min-height:40px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--font-ui);color:var(--ink-1);cursor:pointer;list-style:none}
+.rm-parts>summary::-webkit-details-marker{display:none}
+.rm-parts>summary svg.i{width:16px;height:16px}
+.rm-parts[open]>summary svg.i{transform:rotate(90deg)}
+.rm-parts p{font-size:13px;line-height:18px;color:var(--ink-1);margin:0 0 4px}
+/* the "Aim ranks on this plan" ladder: on = given, cur = the next rank (ink outline) */
+.rm-ladder{display:flex;flex-direction:column;margin:2px 0 6px}
+.rm-ladder li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:0 8px;align-items:baseline;padding:5px 0;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-ladder li::before{content:"";width:9px;height:9px;transform:rotate(45deg) translateY(-1px);border:1.5px solid var(--ink-mute);border-radius:1.5px;align-self:center}
+.rm-ladder li b{font-weight:600;color:var(--ink-1)}
+.rm-ladder li.on::before{background:var(--ink-0);border-color:var(--ink-0)}
+.rm-ladder li.on b{color:var(--ink-0)}
+.rm-ladder li.cur::before{border-color:var(--ink-0);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink-0) 22%,transparent)}
+.rm-ladder li.cur b{color:var(--ink-0)}
+.rk{display:block;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rk b{color:var(--ink-0);font-weight:600}
+/* Week quests (F17 Today card, the aim line, the roadmap variant): rm-quest-* */
+.rm-quest{overflow:hidden}
+.rm-quest-legend{padding:10px 14px 2px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:2px 10px;align-items:start;min-height:48px;padding:10px 14px;color:inherit;text-decoration:none;position:relative}
+a.rm-quest-row:hover,button.rm-quest-line:hover{background:var(--raised)}
+.rm-quest-row+.rm-quest-row,.rm-quest-row+.rm-quest-line,.rm-quest-line+.rm-quest-row,.rm-quest-line+.rm-quest-line,.rm-quest-more+.rm-quest-row,.rm-quest-more+.rm-quest-line{border-top:1px solid var(--line-1)}
+.rm-quest-row>svg.sig,.rm-quest-row>svg.i,.rm-quest-line>svg.sig,.rm-quest-line>svg.i{width:20px;height:20px;color:var(--ink-1);margin-top:0}
+.rm-quest-row .lbl{font:500 14px/19px var(--font-ui);overflow-wrap:anywhere;min-width:0}
+.rm-quest-row .cnt{font:600 13px/19px var(--font-ui);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;color:var(--ink-0)}
+.rm-quest-row .meter{grid-column:2/-1;margin:6px 0 2px}
+.rm-quest-row .ev{grid-column:2/-1;font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-row .ev b{color:var(--ink-1);font-weight:600}
+.rm-quest-row .ev+.ev{margin-top:2px}
+.rm-quest-row .lnk{grid-column:2/-1;margin-top:2px}
+.rm-quest-line{display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-line .lbl{overflow-wrap:anywhere;min-width:0}
+.rm-quest-line .lbl span{color:var(--ink-2)}
+.rm-quest-row.done .lbl,.rm-quest-line.done .lbl{color:var(--ink-1)}
+.rm-quest .done>svg.i{color:var(--kept)}
+.rm-quest-more{display:flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;width:100%;text-align:left;font:600 13px var(--font-ui);color:var(--ink-0);border-top:1px solid var(--line-1)}
+.rm-quest-more svg.i{width:16px;height:16px}
+.rm-quest-more[aria-expanded="true"] svg.i{transform:rotate(180deg)}
+.rm-quest-foot{padding:10px 14px 12px;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-2)}
+.rm-quest-one{display:grid;grid-template-columns:20px minmax(0,1fr) auto 16px;gap:0 10px;align-items:center;width:100%;min-height:44px;padding:8px 14px;text-align:left;color:inherit;text-decoration:none;font-size:14px;line-height:19px}
+.rm-quest-one b{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rm-quest-one .n{font-size:13px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.rm-quest-one>svg.i{width:20px;height:20px;color:var(--ink-1)}
+.rm-quest-one>svg.i:last-child{width:16px;height:16px;color:var(--ink-2)}
+.rm-quest-one.done>svg.i:first-child{color:var(--kept)}
+.rm-qsub{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 4px}
+.rm-qsub .t-eyebrow{color:var(--ink-1)}
+.rm-qsub .cap{text-align:right}
+.rm-cards{grid-column:2/-1;margin-top:4px;display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-cards li{display:flex;justify-content:space-between;gap:10px}
+.rm-cards li span:last-child{color:var(--ink-2);white-space:nowrap}
+.rm-past{display:flex;flex-direction:column}
+.rm-past li{display:flex;justify-content:space-between;gap:10px;align-items:center;min-height:40px;font-size:13px;color:var(--ink-1);border-top:1px solid var(--line-1)}
+.rm-past li span:last-child{color:var(--ink-2);text-align:right}
+.rm-basis{display:flex;flex-direction:column;gap:0}
+.rm-basis li{padding:8px 0;border-top:1px solid var(--line-1);font-size:13px;line-height:18px;color:var(--ink-1)}
+.rm-basis li:first-child{border-top:0}
+.rm-basis li b{color:var(--ink-0);font-weight:600}
+.rm-basis .t-eyebrow{display:block;margin:12px 0 2px}
+/* the roadmap page's reference disclosure: one at 344, open as a column from 760 */
+.rm-ref{min-width:0}
+.rm-ref>summary{display:flex;align-items:center;gap:10px;min-height:52px;padding:0 14px;cursor:pointer;list-style:none;background:var(--card);border:1px solid var(--line-1);border-radius:var(--r-card)}
+.rm-ref>summary::-webkit-details-marker{display:none}
+.rm-ref>summary b{font-weight:600;flex:1;min-width:0}
+.rm-ref>summary span{font-size:13px;color:var(--ink-2);text-align:right}
+.rm-ref>summary svg.i{width:16px;height:16px;color:var(--ink-2)}
+.rm-ref[open]>summary svg.i{transform:rotate(90deg)}
+.rm-ref-b{display:flex;flex-direction:column;gap:16px;padding-top:16px}
+@container main (min-width:760px){.rm-ref>summary{display:none}.rm-ref-b{padding-top:0}}
+.rm-lever{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rm-lever .t-meta{margin:0}
+.aim-q{padding:8px 0;margin-top:12px;border-top:1px solid var(--line-1)}
+.aim-line{font-size:13px;line-height:18px;color:var(--ink-1);margin-top:2px}
+.ml-row .rkc{font-size:13px;color:var(--ink-2);white-space:nowrap;text-align:right}
+.ml-row .rkc b{color:var(--ink-1);font-weight:600}
+.ml-row .r small{display:block;font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+
+/* =====================================================================
+   TODAY BOARD (copied in spirit from src/components/today/today.css after
+   M2's merge at 9b3d299): one DOM, three orders by the width of <main>.
+     compact  one column in the order of the .o1–.o11 classes
+     >= 640   c1 (Day, Next up, Asks) then c2 (the lanes) | c3 (Goals + week quests, Inbox, Close)
+     >= 1100  c1 | c2 | c3
+   ===================================================================== */
+.today-board .board{display:flex;flex-direction:column;gap:16px}
+.today-board .board>.c1,.today-board .board>.c2,.today-board .board>.c3{display:contents}
+.today-board .o1{order:1}.today-board .o2{order:2}.today-board .o3{order:3}.today-board .o4{order:4}.today-board .o5{order:5}.today-board .o6{order:6}.today-board .o7{order:7}.today-board .o8{order:8}.today-board .o9{order:9}.today-board .o10{order:10}.today-board .o11{order:11}
+.today-board .o1,.today-board .o2,.today-board .o3,.today-board .o9{min-width:0}
+@container main (min-width:640px){
+  .today-board .board{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px;align-items:start}
+  .today-board .board>.c1,.today-board .board>.c2,.today-board .board>.c3{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .today-board .board>.c1{grid-column:1;grid-row:1}
+  .today-board .board>.c2{grid-column:1;grid-row:2}
+  .today-board .board>.c3{grid-column:2;grid-row:1/span 2}
+}
+@container main (min-width:1100px){
+  .today-board .board{grid-template-columns:minmax(0,1fr) minmax(0,1.25fr) minmax(0,.9fr)}
+  .today-board .board>.c1{grid-column:1;grid-row:1}
+  .today-board .board>.c2{grid-column:2;grid-row:1}
+  .today-board .board>.c3{grid-column:3;grid-row:1}
+}
+.o9-stack{display:flex;flex-direction:column;gap:16px}
+.today-day{padding:14px 14px 12px;position:relative;overflow:hidden}
+.today-day .d-top{display:flex;align-items:center;gap:12px}
+.today-day .streak-line{display:flex;align-items:baseline;gap:6px}
+.today-day .streak-num{font:600 30px/1 var(--font-display);font-variant-numeric:tabular-nums lining-nums}
+.today-day .streak-word{font:600 15px/1.2 var(--font-display);color:var(--ink-1)}
+.today-day .streak-cap{font-size:13px;line-height:18px;color:var(--ink-2);margin-top:4px}
+.seal{width:52px;height:52px;flex:none}
+.seal svg{width:100%;height:100%;overflow:visible}
+.today-day .d-full{margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1)}
+.today-day .d-full-h{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.today-day .d-full-h .t-eyebrow{color:var(--ink-1)}
+.today-day .d-full-h .aside{margin-left:auto;font-size:12px;color:var(--ink-2);text-align:right}
+.today-day .rings{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.today-day .rg{display:flex;align-items:center;gap:8px;min-width:0}
+.today-day .rg .lbl b{display:block;font:600 13px/16px var(--font-ui)}
+.today-day .rg .lbl span{display:block;font-size:12px;line-height:16px;color:var(--ink-2)}
+.today-day .full-note{font-size:12px;line-height:16px;color:var(--ink-2);margin-top:10px;display:flex;gap:6px;align-items:flex-start}
+.today-day .full-note svg{width:14px;height:14px;flex:none;margin-top:1px}
+.today-day .cells{display:grid;grid-template-columns:1fr 1fr 1.15fr;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-1)}
+.today-day .cell+.cell{border-left:1px solid var(--line-1);padding-left:12px}
+.today-day .cell .v{font:600 20px/1 var(--font-display);display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums lining-nums}
+.today-day .cell .v svg.g{width:15px;height:15px}
+.today-day .cell .v small{font:500 13px var(--font-ui);color:var(--ink-2)}
+.today-day .cell .k{display:block;font-size:12px;line-height:16px;color:var(--ink-2);margin-top:5px}
+.pring{position:relative;width:40px;height:40px;flex:none}
+.pring>svg{width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.pring .trk{fill:none;stroke:color-mix(in srgb,var(--ink-0) 10%,transparent);stroke-width:4.5}
+.pring .val{fill:none;stroke:var(--ink-0);stroke-width:4.5;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:calc(100 - var(--p,0))}
+.pring.closed .val{stroke:var(--kept)}
+.pring .ctr{position:absolute;inset:0;display:grid;place-items:center}
+.pring .ctr svg.i{width:16px;height:16px;color:var(--kept);stroke-width:2.6}
+.pring .ctr .n{font:600 12px/1 var(--font-ui);font-variant-numeric:tabular-nums}
+.today-hero{padding:16px;display:flex;flex-direction:column}
+.today-hero .hero-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.today-hero h2{margin-top:6px;overflow-wrap:anywhere}
+.today-hero>.t-meta{margin-top:4px}
+.today-hero .hero-segs{margin:14px 0 12px}
+.today-hero .focus-line{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink-1);margin:0 0 14px;flex-wrap:wrap}
+.kbd{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border-radius:5px;border:1px solid color-mix(in srgb,var(--page) 40%,transparent);font:600 12px/1 var(--font-mono);margin-left:4px}
+.today-ask{display:flex;align-items:center;gap:12px;padding:10px 10px 10px 14px}
+.today-ask .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-0);flex:none}
+.today-ask .txt{flex:1;min-width:0}
+.today-ask .txt b{font-weight:600;display:block}
+.today-ask .txt span{font-size:13px;line-height:18px;color:var(--ink-2)}
+.today-lane{position:relative;min-width:0}
+.today-lane .lane-h{display:flex;align-items:center;gap:9px;padding:0 4px 8px;min-height:28px}
+.today-lane .lane-h h2{font:700 12px/16px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-1)}
+.today-lane .lane-count{margin-left:auto;font-size:13px;color:var(--ink-2);white-space:nowrap}
+.today-lane.lane-must .lane-mark{border-color:var(--ink-0)}
+.today-lane .lane-body{overflow:hidden}
+.today-lane .lane-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px 8px;margin-top:-2px}
+.t-row+.t-row,.t-row+.makeup,.makeup+.t-row{border-top:1px solid var(--line-1)}
+.t-row .row{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;column-gap:6px;padding:8px 6px 8px 4px;min-height:64px}
+.t-row .r-title{display:block;font:500 15px/20px var(--font-ui);overflow-wrap:anywhere}
+.t-row .row.done .r-title{color:var(--ink-2)}
+.t-row .r-meta{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;margin-top:2px;font-size:13px;line-height:18px;color:var(--ink-2)}
+.t-row .r-bit{display:inline-flex;gap:5px;align-items:center}
+.t-row .r-bit svg.i,.t-row .r-bit svg.sig{width:13px;height:13px}
+.t-row .r-bit.due{color:var(--ink-0);font-weight:600}
+.t-row .r-bit.kept-at{color:var(--kept)}
+.tick{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;flex:none}
+.tick .tick-ring{width:24px;height:24px;border-radius:50%;border:2px solid var(--line-ctl);display:grid;place-items:center}
+.tick .tick-ring svg{width:15px;height:15px;fill:none;stroke:var(--on-kept);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.tick[data-shape="diamond"] .tick-ring{width:21px;height:21px;border-radius:4px;transform:rotate(45deg)}
+.tick[data-shape="diamond"] .tick-ring svg{transform:rotate(-45deg)}
+.tick[data-state="done"] .tick-ring{background:var(--kept);border-color:var(--kept)}
+.tick[data-state="done"] .tick-ring svg{opacity:1}
+.price{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:flex-end;padding:0 2px 0 4px;flex:none}
+.pill{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--line-2);font:600 13px var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-1);display:inline-flex;gap:5px;align-items:center}
+.pill svg.g{width:12px;height:12px}
+.pill.paid{color:var(--ink-0);background:color-mix(in srgb,var(--xp) 14%,transparent);border-color:color-mix(in srgb,var(--xp) 38%,transparent)}
+.chip.kept{color:var(--kept);background:color-mix(in srgb,var(--kept) 12%,transparent);border-color:color-mix(in srgb,var(--kept) 34%,transparent)}
+.chip.owed{color:var(--owed);background:color-mix(in srgb,var(--owed) 12%,transparent);border-color:color-mix(in srgb,var(--owed) 36%,transparent)}
+.chip.held{color:var(--held);background:color-mix(in srgb,var(--held) 11%,transparent);border-color:color-mix(in srgb,var(--held) 34%,transparent)}
+.makeup{padding:12px 12px 12px 16px;position:relative}
+.makeup::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--owed)}
+.makeup .mh{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.makeup .mh .when{font-size:13px;color:var(--ink-2)}
+.makeup .mu-text{font-size:15px;line-height:20px;margin-top:8px}
+.makeup .mu-sub{font-size:13px;color:var(--ink-2);margin-top:2px;line-height:18px}
+.makeup .acts{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.owed-sum{display:flex;align-items:center;gap:10px;padding:0 14px;min-height:52px;width:100%;text-align:left}
+.owed-sum b{font-weight:600;flex:1}
+.owed-sum svg.sig{color:var(--owed)}
+.today-goals .goal{padding:14px}
+.today-goals .goal+.goal{border-top:1px solid var(--line-1)}
+.today-goals .gh{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.today-goals .gh b{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.today-goals .gh span{font-size:13px;color:var(--ink-2);white-space:nowrap;display:inline-flex;gap:4px;align-items:center}
+.today-goals .meter{margin:10px 0 8px}
+.today-goals .gf{font-size:13px;line-height:18px;color:var(--ink-2);display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.today-goals .goal-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.collapsed{display:flex;align-items:center;gap:10px;padding:0 14px;min-height:52px;width:100%;text-align:left;text-decoration:none;color:inherit}
+.collapsed+.collapsed{border-top:1px solid var(--line-1)}
+.collapsed b{font-weight:600;flex:1;min-width:0}
+.collapsed span{font-size:13px;color:var(--ink-2)}
+.collapsed svg.i:last-child{width:16px;height:16px;color:var(--ink-2)}
+.today-close .close-day{display:flex;gap:12px;align-items:center;padding:14px;width:100%;text-align:left}
+.today-close .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--sunken);color:var(--ink-1);flex:none}
+.today-close .close-txt{flex:1;min-width:0}
+.today-close .close-txt b{display:block;font:600 16px/20px var(--font-display)}
+.today-close .close-txt span{font-size:13px;line-height:18px;color:var(--ink-2)}
+.today-close[data-prominent="1"]{border-color:var(--line-ctl)}
+.today-close[data-prominent="1"] .ic{background:var(--ink-0);color:var(--page)}
+.today-close .close-more{border-top:1px solid var(--line-1)}
+.today-close .close-off{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:0 14px;color:var(--ink-1);font:600 14px var(--font-ui);text-align:left}
+.today-close .close-off svg{color:var(--held)}
+.today-board .foot-note{font-size:12px;line-height:16px;color:var(--ink-2);text-align:center;padding:4px 0 8px}
+.today-board .page-tight{padding-top:8px}
+
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+  <!-- UI icons (Icon.tsx): 24 px, stroke 1.75, round caps, currentColor -->
+  <symbol id="i-today" viewBox="0 0 24 24"><path d="M3 18h18M6.5 18a5.5 5.5 0 0 1 11 0M12 5v2.2M5.3 9.3l1.5 1.5M18.7 9.3l-1.5 1.5M8 21h8"/></symbol>
+  <symbol id="i-study" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <symbol id="i-train" viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.2-5.5 4.3 11 2.3-5.5h6.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.6 2H4.4zM10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><path d="M12 2.8l7.5 4.3v9.8L12 21.2l-7.5-4.3V7.1z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4.5h11l-2 4 2 4H5"/></symbol>
+  <symbol id="i-dot3" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.01"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.2 6.2l2.6 2.6M15.2 15.2l2.6 2.6M6.2 17.8l2.6-2.6M15.2 8.8l2.6-2.6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <!-- verdict glyphs (always beside their word) -->
+  <symbol id="v-fits" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <symbol id="v-tight" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="v-over" viewBox="0 0 24 24"><path d="M12 3.8l9 15.7H3z"/><path d="M12 10v4.2M12 16.9v.01"/></symbol>
+  <symbol id="v-imp" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></symbol>
+  <symbol id="v-fitted" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16M8 5v6M16 13v6"/></symbol>
+  <symbol id="v-unv" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="2.6 2.6"/><path d="M8 12.3l2.7 2.7L16 9.6"/></symbol>
+  <!-- currency glyphs (filled) -->
+  <symbol id="c-xp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l2.3 7.9 7.9 2.3-7.9 2.3L12 22.2l-2.3-7.9L1.8 12l7.9-2.3z"/></symbol>
+  <symbol id="c-pts" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8.5 10L12 22 3.5 12zm0 4.6L7.4 12 12 17.4 16.6 12z"/><path fill="currentColor" d="M12 9.2l2.4 2.8-2.4 2.8-2.4-2.8z"/></symbol>
+  <symbol id="c-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.8l8.8 5.1v10.2L12 22.2l-8.8-5.1V6.9zm0 4.3L6.9 9v6l5.1 2.9 5.1-2.9V9z"/></symbol>
+  <!-- life-track and knowledge sigils (stroke, ink): told apart by shape, never hue -->
+  <symbol id="s-body" viewBox="0 0 24 24"><path d="M12 3.5l8.5 15.5h-17z"/></symbol>
+  <symbol id="s-duty" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 8-7 10-4-2-7-5.4-7-10V5.8z"/></symbol>
+  <symbol id="s-craft" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M5 12h14"/></symbol>
+  <symbol id="s-care" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.4A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="s-know" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.5 3.5 5.2v13c3-.7 6-.4 8.5 1.3 2.5-1.7 5.5-2 8.5-1.3v-13c-3-.7-6-.4-8.5 1.3zM12 6.5v13"/></symbol>
+  <!-- materials -->
+  <linearGradient id="m-iron" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c3c9d4"/><stop offset=".45" stop-color="#8a93a4"/><stop offset="1" stop-color="#434a5a"/></linearGradient>
+  <linearGradient id="m-bronze" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3c08f"/><stop offset=".5" stop-color="#c0834f"/><stop offset="1" stop-color="#8a5530"/></linearGradient>
+  <linearGradient id="m-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff0bd"/><stop offset=".45" stop-color="#f0c75e"/><stop offset="1" stop-color="#a8721a"/></linearGradient>
+  <!-- the crest: level 14, iron, with its track edges (Duty .8, Craft .62, Care .4, Body .55) -->
+  <symbol id="crest14" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="6" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+    <line x1="50" y1="12.5" x2="84.21" y2="32.25" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="12.5" x2="77.37" y2="28.3" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="84.21" y1="71.75" x2="50" y2="91.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="84.21" y1="71.75" x2="62.9" y2="84" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="50" y1="91.5" x2="15.79" y2="71.75" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="50" y1="91.5" x2="36.32" y2="83.6" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="15.79" y1="32.25" x2="50" y2="12.5" stroke="rgba(255,255,255,.12)" stroke-width="2.4" stroke-linecap="round"/><line x1="15.79" y1="32.25" x2="34.61" y2="21.39" stroke="#fff1cf" stroke-opacity=".92" stroke-width="2.4" stroke-linecap="round"/>
+    <text x="50" y="63.5" text-anchor="middle" font-size="32" font-family="Fraunces, Georgia, serif" font-weight="700" fill="#f1f3f8">14</text>
+  </symbol>
+  <symbol id="crest-plain" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-iron)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-iron)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <symbol id="crest15b" viewBox="0 0 100 104">
+    <polygon points="50,8 88.11,30 88.11,74 50,96 11.89,74 11.89,30" fill="#0d1017" stroke="url(#m-bronze)" stroke-width="7" stroke-linejoin="round"/>
+    <polygon points="50,16 81.18,34 81.18,70 50,88 18.82,70 18.82,34" fill="none" stroke="url(#m-bronze)" stroke-opacity=".38" stroke-width="1.6"/>
+  </symbol>
+  <!-- an emblem coin stand-in for the ready callout (unchanged component) -->
+  <symbol id="coin-ready" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="#0d1017" stroke="url(#m-gold)" stroke-width="3.5"/><circle cx="32" cy="32" r="22" fill="none" stroke="url(#m-gold)" stroke-opacity=".35"/><path d="M20 40c5 0 7-14 12-14s7 14 12 14" fill="none" stroke="#00cc7a" stroke-width="2.6" stroke-linecap="round"/><circle cx="32" cy="32" r="31" fill="none" stroke="#f0c75e" stroke-width="1.5" stroke-dasharray="3 3"/></symbol>
+
+  <!-- revision 3 additions -->
+  <symbol id="i-step" viewBox="0 0 24 24"><path d="M4 19h5v-5h5V9h6"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5l2.5-8h11l2.5 8v5H4zM4 13.5h4.5l1 2h5l1-2H20"/></symbol>
+  <symbol id="h-rest" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></symbol>
+  <symbol id="i-sword" viewBox="0 0 24 24"><path d="M14.5 4.5H19.5v5L10 19l-5-5zM7.5 16.5l-3 3M6 13l5 5"/></symbol>
+
+</defs>
+</svg>
+<header class="mk">
+  <div class="t-eyebrow">XTNL · Roadmap · mockup 5 of 5 · roadmap.md rev 3, F13, F14, F16 seams 16–17, F17</div>
+  <h1>Today — the week quests card</h1>
+  <p>Each started milestone is sliced into this life week (Monday 04:00 to Monday 04:00, Sydney): concrete actions whose counts code works out from the milestone's own gap, the weeks left, what the review schedule lets cards reach, and the time the app has seen you keep. The app's own rows verify each one: cards your reviews brought to the level (tested), cards you added (counted by the app), and sessions and steps you ticked. A week quest has no checkbox, pays nothing, and is frozen for its week. On Today it is a quiet card under the goals, headed <b>Week quests · Milestone 2</b> (the request's working name "This week's quests" would put a bare "quests" on screen, which the naming rules ban).</p>
+  <div class="mk-ex">Example data — fake but plausible, as of Thu 28 Jan 2027 09:12 · M2's board as merged at 9b3d299 · same plan as mockups 2–4</div>
+  <nav class="mk-nav" aria-label="Roadmap mockups"><a href="final-roadmap-new.html">1 · Set an aim</a><a href="final-roadmap-draft.html">2 · Draft review</a><a href="final-roadmap.html">3 · Living roadmap</a><a href="final-aim-card.html">4 · Character page</a><a href="final-today-quests.html" aria-current="page">5 · Today's week quests</a></nav>
+  <div class="mk-legend" aria-label="Provenance classes as rendered">
+  <span><span class="pv pv-draft">Gemini suggestion · not checked</span> DRAFT</span>
+  <span><span class="pv pv-kept">Gemini's words · kept by you · not checked</span> KEPT_SUGGESTION</span>
+  <span><span class="pv pv-yours"><svg class="i"><use href="#i-check"/></svg>You checked this</span> YOURS</span>
+  <span><span class="cap">tested by your reviews · measured 09:12</span> MEASURED</span>
+  <span><span class="cap">counted by the app; it doesn't judge them</span> RECORDED</span>
+  <span><span class="cap">from your ticks</span> SELF_REPORTED</span>
+  <span><span class="cap">≈ 9 h 10 (task estimates, not timed)</span> ESTIMATED</span>
+  <span><span class="cap">plain, basis on "How this is worked out"</span> WORKED_OUT</span>
+</div>
+</header>
+<section class="mk-sec">
+<h2>The board · 344, 932 and 1440 · quests collapsed</h2>
+<p>One DOM, three orders (today.css): at 344 the board is one column in .o1–.o11 order, so the card follows Next up, the Ask, M2's Must lane, Planned and Habits, and sits with the goals; from 640 px of main it moves to the right-hand column under the goals, beside the DayLedger's Quest ring and Next up · Quest; from 1100 px it is the third column. It never sits above Next up, the Must lane or an Ask. TodayBoard renders it through the optional questsSlot inside .o9, directly after GoalsStrip; buildBoard and todayCountsOf are untouched.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>344</b> × 882 · Galaxy Fold cover</div>
+<div style="position:relative"><div class="frame f344" id="td344"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">Today</div><h1>Thursday, 28 January</h1></div>
+<nav class="tb-tabs tabs" aria-label="Today pages"><a class="tab-s" href="#" aria-current="page">Board</a><a class="tab-s" href="#">Weekly review</a><a class="tab-s" href="#">Rules</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page today-board">
+<div class="board">
+  <div class="c1">
+    <section class="card today-day o2" aria-label="Day ledger">
+  <div class="d-top">
+    <div class="seal" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="var(--light-glow)"/><circle cx="26" cy="26" r="21" fill="none" stroke="var(--light)" stroke-width="2"/><path d="M26.6 13.5c.5 2.6-.9 4.2-2.3 5.8-1.4 1.6-2.7 3.1-2.7 5.5a4.7 4.7 0 0 0 9.4 0c0-1.8-.8-3.2-1.6-4.3-.3 1.1-.9 2-1.7 2.4.5-3.1-.2-6.8-1.1-9.4z" fill="var(--light)"/></svg></div>
+    <div><div class="streak-line"><span class="streak-num">12</span><span class="streak-word">day streak</span></div><p class="streak-cap">Kept today.</p></div>
+  </div>
+  <div class="d-full">
+    <div class="d-full-h"><span class="t-eyebrow">Full day</span><span class="t-meta num">1 of 3</span><span class="aside">+0.5 MP when it settles</span></div>
+    <div class="rings"><div class="rg"><div class="pring" style="--p:50" role="img" aria-label="Musts 1 of 2"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">1/2</span></div></div><div class="lbl"><b>Musts</b><span class="num">1 of 2</span></div></div><div class="rg"><div class="pring" style="--p:40" role="img" aria-label="Quest 6 of 15"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">6</span></div></div><div class="lbl"><b>Quest</b><span class="num">6 of 15</span></div></div><div class="rg"><div class="pring closed" style="--p:100" role="img" aria-label="Life 1 of 1"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div><div class="lbl"><b>Life</b><span class="num">1 of 1</span></div></div></div>
+    <p class="full-note"><svg class="i"><use href="#i-clock"/></svg><span>A Full day also repairs a broken day before it, once a week.</span></p>
+  </div>
+  <div class="cells">
+    <div class="cell"><div class="v"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg><b>14.2</b></div><div class="k">life XP</div></div>
+    <div class="cell"><div class="v"><svg class="g c-pts" aria-label="review points"><use href="#c-pts"/></svg><b>9.0</b></div><div class="k">review pts</div></div>
+    <div class="cell"><div class="v">3h 10<small>/ 4h</small></div><div class="k">planned of capacity</div></div>
+  </div>
+</section>
+    <section class="card today-hero o3" aria-labelledby="nu-h">
+  <div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 6 min</span></div>
+  <h2 id="nu-h" class="t-display-m">Clear the review quest</h2>
+  <p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p>
+  <div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="focus-line"><svg class="sig"><use href="#s-know"/></svg><span>Focus today: <b>Trading</b> pays +32%</span></div>
+  <a class="btn btn-primary lg btn-block" href="#"><svg class="i"><use href="#i-study"/></svg>Start review <span class="kbd">R</span></a>
+</section>
+    <section class="card today-ask o4"><span class="dot" aria-hidden="true"></span><div class="txt"><b>Yesterday: 1 to record</b><span>Tick what you did before Wednesday is judged.</span></div><button class="btn btn-secondary">Record</button></section>
+  </div>
+  <div class="c2" data-tour="today-lanes">
+    <section class="today-lane lane-must o5" aria-labelledby="lane-must"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div></div></section>
+    <section class="today-lane o6" aria-labelledby="lane-planned"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section>
+    <section class="today-lane o7" aria-labelledby="lane-habits"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Study Risk Management, Position Sizing"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Study Risk Management, Position Sizing</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section>
+
+  </div>
+  <div class="c3">
+    <div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section></div></div></div>
+    <section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section>
+    <section class="card today-close o11"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+    <div class="foot-note o11"><p>Life XP and review points are two ledgers. They are never added together.</p></div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div><div class="fold" style="top:818px"><span>818 · tab bar starts</span></div><div class="fold" style="top:882px"><span>882 · first screen ends</span></div></div>
+<p class="mk-geo" id="geo-td344">Measuring…</p>
+<ul class="mk-cap"><li><b>Collapsed:</b> up to 3 rows (WEEK_QUEST_ROWS_TODAY), open ones first, in Today's order: Bring and Add (one link each, ≥ 48 px, with a thin Meter), then the step, then sessions. "2 more" (40 px, aria-expanded) reveals the other open rows before any done one.</li><li>No Ask, no bell, no count: the nav's "Today 2" counts the open must and the Ask, as before. No red, no "behind", no countdown; a row still open on Sunday night looks as it did on Monday.</li><li>"until Sun" links to the roadmap's Now section. Bring links there too (it lists the cards and their due days); no row links to Review, which is the review quest's.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>932</b> · rail · two columns, beside the Quest ring</div>
+<div class="mk-scroll"><div class="frame f932" id="td932"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">Today</div><h1>Thursday, 28 January</h1></div>
+<nav class="tb-tabs tabs" aria-label="Today pages"><a class="tab-s" href="#" aria-current="page">Board</a><a class="tab-s" href="#">Weekly review</a><a class="tab-s" href="#">Rules</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page today-board">
+<div class="board">
+  <div class="c1">
+    <section class="card today-day o2" aria-label="Day ledger">
+  <div class="d-top">
+    <div class="seal" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="var(--light-glow)"/><circle cx="26" cy="26" r="21" fill="none" stroke="var(--light)" stroke-width="2"/><path d="M26.6 13.5c.5 2.6-.9 4.2-2.3 5.8-1.4 1.6-2.7 3.1-2.7 5.5a4.7 4.7 0 0 0 9.4 0c0-1.8-.8-3.2-1.6-4.3-.3 1.1-.9 2-1.7 2.4.5-3.1-.2-6.8-1.1-9.4z" fill="var(--light)"/></svg></div>
+    <div><div class="streak-line"><span class="streak-num">12</span><span class="streak-word">day streak</span></div><p class="streak-cap">Kept today.</p></div>
+  </div>
+  <div class="d-full">
+    <div class="d-full-h"><span class="t-eyebrow">Full day</span><span class="t-meta num">1 of 3</span><span class="aside">+0.5 MP when it settles</span></div>
+    <div class="rings"><div class="rg"><div class="pring" style="--p:50" role="img" aria-label="Musts 1 of 2"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">1/2</span></div></div><div class="lbl"><b>Musts</b><span class="num">1 of 2</span></div></div><div class="rg"><div class="pring" style="--p:40" role="img" aria-label="Quest 6 of 15"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">6</span></div></div><div class="lbl"><b>Quest</b><span class="num">6 of 15</span></div></div><div class="rg"><div class="pring closed" style="--p:100" role="img" aria-label="Life 1 of 1"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div><div class="lbl"><b>Life</b><span class="num">1 of 1</span></div></div></div>
+    <p class="full-note"><svg class="i"><use href="#i-clock"/></svg><span>A Full day also repairs a broken day before it, once a week.</span></p>
+  </div>
+  <div class="cells">
+    <div class="cell"><div class="v"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg><b>14.2</b></div><div class="k">life XP</div></div>
+    <div class="cell"><div class="v"><svg class="g c-pts" aria-label="review points"><use href="#c-pts"/></svg><b>9.0</b></div><div class="k">review pts</div></div>
+    <div class="cell"><div class="v">3h 10<small>/ 4h</small></div><div class="k">planned of capacity</div></div>
+  </div>
+</section>
+    <section class="card today-hero o3" aria-labelledby="nu-h-2">
+  <div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 6 min</span></div>
+  <h2 id="nu-h-2" class="t-display-m">Clear the review quest</h2>
+  <p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p>
+  <div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="focus-line"><svg class="sig"><use href="#s-know"/></svg><span>Focus today: <b>Trading</b> pays +32%</span></div>
+  <a class="btn btn-primary lg btn-block" href="#"><svg class="i"><use href="#i-study"/></svg>Start review <span class="kbd">R</span></a>
+</section>
+    <section class="card today-ask o4"><span class="dot" aria-hidden="true"></span><div class="txt"><b>Yesterday: 1 to record</b><span>Tick what you did before Wednesday is judged.</span></div><button class="btn btn-secondary">Record</button></section>
+  </div>
+  <div class="c2" data-tour="today-lanes">
+    <section class="today-lane lane-must o5" aria-labelledby="lane-must-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must-2">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div></div></section>
+    <section class="today-lane o6" aria-labelledby="lane-planned-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned-2">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section>
+    <section class="today-lane o7" aria-labelledby="lane-habits-2"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits-2">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Study Risk Management, Position Sizing"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Study Risk Management, Position Sizing</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section>
+
+  </div>
+  <div class="c3">
+    <div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h-2">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h-2">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section></div></div></div>
+    <section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section>
+    <section class="card today-close o11"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+    <div class="foot-note o11"><p>Life XP and review points are two ledgers. They are never added together.</p></div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<p class="mk-geo" id="geo-td932" style="max-width:932px">Measuring…</p>
+<ul class="mk-cap wide"><li>On the first screen the card shares the view with the DayLedger's Quest ring ("Quest 6 of 15") and "Next up · Quest". They stay apart by words and form: the card's heading is "Week quests · Milestone 2", every count carries its unit ("1 of 3 cards"), its meter is a thin Meter, never the review quest's SegmentStrip, and it never counts reviews.</li><li>The review quest keeps every word it has: the Quest ring, Next up · Quest, "Quest ring closed", Review's "Quest n of 15" and the tour's daily quest.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>1440</b> · sidebar · three columns</div>
+<div class="mk-scroll"><div class="frame f1440"><div class="app"><nav class="rail" aria-label="Sections">
+<button class="r-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span>Capture</button>
+<a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<span class="rail-grow"></span>
+<a href="#" aria-label="You, character level 14"><svg width="34" height="35" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg>You</a></nav><nav class="sidebar" aria-label="Sections">
+<a class="sb-char" href="#"><svg width="48" height="50" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg><div class="who"><b>Adept</b><span>of the Deep Archive</span><div class="meter thin" style="margin-top:6px"><i style="--v:.86"></i></div><span>86% to Practitioner</span></div></a>
+<button class="btn btn-primary btn-block" style="margin-top:4px"><svg class="i"><use href="#i-plus"/></svg>Capture</button>
+<div class="sb-sec"><a href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="n num">2</span></a><div class="sb-sub"><a href="#" aria-current="page">Board</a><a href="#">Weekly review</a><a href="#">Rules</a></div></div>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="n num">26</span></a></div>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-train"/></svg>Train</a></div>
+<div class="sb-sec"><a href="#"><svg class="i"><use href="#i-sheet"/></svg>You</a></div></nav><div class="col"><header class="topbar">
+<a class="crest-btn" href="#" aria-label="Character level 14, Adept of the Deep Archive. Open your sheet"><svg width="38" height="40" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest14"/></svg></a>
+<div class="tb-title"><div class="t-eyebrow">Today</div><h1>Thursday, 28 January</h1></div>
+<nav class="tb-tabs tabs" aria-label="Today pages"><a class="tab-s" href="#" aria-current="page">Board</a><a class="tab-s" href="#">Weekly review</a><a class="tab-s" href="#">Rules</a></nav>
+<button class="icon-btn" aria-label="Asks: 2 waiting" style="margin-left:auto"><svg class="i"><use href="#i-bell"/></svg><span class="badge num">2</span></button></header><main class="main"><div class="page today-board">
+<div class="board">
+  <div class="c1">
+    <section class="card today-day o2" aria-label="Day ledger">
+  <div class="d-top">
+    <div class="seal" aria-hidden="true"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="25" fill="var(--light-glow)"/><circle cx="26" cy="26" r="21" fill="none" stroke="var(--light)" stroke-width="2"/><path d="M26.6 13.5c.5 2.6-.9 4.2-2.3 5.8-1.4 1.6-2.7 3.1-2.7 5.5a4.7 4.7 0 0 0 9.4 0c0-1.8-.8-3.2-1.6-4.3-.3 1.1-.9 2-1.7 2.4.5-3.1-.2-6.8-1.1-9.4z" fill="var(--light)"/></svg></div>
+    <div><div class="streak-line"><span class="streak-num">12</span><span class="streak-word">day streak</span></div><p class="streak-cap">Kept today.</p></div>
+  </div>
+  <div class="d-full">
+    <div class="d-full-h"><span class="t-eyebrow">Full day</span><span class="t-meta num">1 of 3</span><span class="aside">+0.5 MP when it settles</span></div>
+    <div class="rings"><div class="rg"><div class="pring" style="--p:50" role="img" aria-label="Musts 1 of 2"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">1/2</span></div></div><div class="lbl"><b>Musts</b><span class="num">1 of 2</span></div></div><div class="rg"><div class="pring" style="--p:40" role="img" aria-label="Quest 6 of 15"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><span class="n">6</span></div></div><div class="lbl"><b>Quest</b><span class="num">6 of 15</span></div></div><div class="rg"><div class="pring closed" style="--p:100" role="img" aria-label="Life 1 of 1"><svg viewBox="0 0 36 36"><circle class="trk" cx="18" cy="18" r="15.9" pathLength="100"/><circle class="val" cx="18" cy="18" r="15.9" pathLength="100"/></svg><div class="ctr"><svg class="i"><use href="#i-check"/></svg></div></div><div class="lbl"><b>Life</b><span class="num">1 of 1</span></div></div></div>
+    <p class="full-note"><svg class="i"><use href="#i-clock"/></svg><span>A Full day also repairs a broken day before it, once a week.</span></p>
+  </div>
+  <div class="cells">
+    <div class="cell"><div class="v"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg><b>14.2</b></div><div class="k">life XP</div></div>
+    <div class="cell"><div class="v"><svg class="g c-pts" aria-label="review points"><use href="#c-pts"/></svg><b>9.0</b></div><div class="k">review pts</div></div>
+    <div class="cell"><div class="v">3h 10<small>/ 4h</small></div><div class="k">planned of capacity</div></div>
+  </div>
+</section>
+    <section class="card today-hero o3" aria-labelledby="nu-h-3">
+  <div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 6 min</span></div>
+  <h2 id="nu-h-3" class="t-display-m">Clear the review quest</h2>
+  <p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p>
+  <div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="focus-line"><svg class="sig"><use href="#s-know"/></svg><span>Focus today: <b>Trading</b> pays +32%</span></div>
+  <a class="btn btn-primary lg btn-block" href="#"><svg class="i"><use href="#i-study"/></svg>Start review <span class="kbd">R</span></a>
+</section>
+    <section class="card today-ask o4"><span class="dot" aria-hidden="true"></span><div class="txt"><b>Yesterday: 1 to record</b><span>Tick what you did before Wednesday is judged.</span></div><button class="btn btn-secondary">Record</button></section>
+  </div>
+  <div class="c2" data-tour="today-lanes">
+    <section class="today-lane lane-must o5" aria-labelledby="lane-must-3"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must-3">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div></div></section>
+    <section class="today-lane o6" aria-labelledby="lane-planned-3"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned-3">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section>
+    <section class="today-lane o7" aria-labelledby="lane-habits-3"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits-3">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Study Risk Management, Position Sizing"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Study Risk Management, Position Sizing</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section>
+
+  </div>
+  <div class="c3">
+    <div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h-3">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h-3">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section></div></div></div>
+    <section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section>
+    <section class="card today-close o11"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section>
+    <div class="foot-note o11"><p>Life XP and review points are two ledgers. They are never added together.</p></div>
+  </div>
+</div>
+</div></main><nav class="tabbar" aria-label="Sections">
+<a class="tab" href="#" aria-current="page"><svg class="i"><use href="#i-today"/></svg>Today<span class="badge num">2</span></a>
+<a class="tab" href="#"><svg class="i"><use href="#i-study"/></svg>Study<span class="badge num">26</span></a>
+<button class="tab tab-plus" aria-label="Capture"><span><svg class="i"><use href="#i-plus"/></svg></span></button>
+<a class="tab" href="#"><svg class="i"><use href="#i-train"/></svg>Train</a>
+<a class="tab" href="#" aria-label="You, character level 14"><svg width="24" height="25" viewBox="0 0 100 104" aria-hidden="true"><use href="#crest-plain"/></svg>You</a></nav></div></div></div></div>
+<ul class="mk-cap wide"><li>The third column: Goals, then the week quests card, then Inbox and Anytime, then Close the day.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec">
+<h2>The week quests card · states at 344</h2>
+<p>Each frame is the card (or a slice of the board) at 344, 312 px of content. Example data: the week of Mon 25 Jan 2027, frozen by the life cron at 04:15.</p>
+<div class="mk-row">
+<figure class="mk-fig">
+<div class="mk-tag"><b>A</b> · collapsed (as on the board)</div>
+<div id="cardA"><div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="today-goals" aria-labelledby="goals-h-4">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h-4">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div style="height:16px"></div><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div></div><p class="mk-geo" id="geo-card">Measuring…</p>
+<ul class="mk-cap"><li>F17 budgets about 290 px at most for the card at 344 (header 32, legend 18, rows of 64, 64 and 44, footer 36, gaps); the box above is measured by this page.</li><li>Each row has an accessible name, e.g. "Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app". Ordinary links and buttons in tab order: no shortcut, no tour step.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>B</b> · open: "2 more" revealed</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-line" aria-label="Backtest · 3 sessions × 45 min, 1 of 3 sessions, from your ticks. Shows it in Habits"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest <span>· 1 of 3 sessions · in Habits</span></span></button><button type="button" class="rm-quest-line done" aria-label="Study Risk Management, Position Sizing · 2 sessions × 30 min, 2 of 2 sessions, done, from your ticks. Shows it in Habits"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Study Risk Management, Position Sizing <span>· 2 of 2 sessions · done</span></span></button><button type="button" class="rm-quest-more" aria-expanded="true"><svg class="i"><use href="#i-down"/></svg>Show fewer</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>The open session row comes before the done one. A done row shows a check and "done"; no celebration beyond that (the tick already played its Mark).</li><li>Sessions and the step are buttons, not '#t-' links: they dispatch SEEK_TEMPLATE_EVENT and the board seeks the task (see F). They never carry data-template-id.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>C</b> · in context with M2's Must lane · after Duty launches</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="today-board"><div class="board"><section class="today-lane lane-must o5" aria-labelledby="lane-must-4"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-must-4">Must</h2><span class="lane-count num">1 of 2 kept</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-shape="diamond" data-state="done" aria-label="Undo Morning meds"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Morning meds</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-care"/></svg>Care</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>kept 07:40</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+2.7</span></span></div></div><div class="t-row"><div class="row"><button class="tick" data-shape="diamond" aria-label="Tick Submit timesheet"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Submit timesheet</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit due"><svg class="i"><use href="#i-clock"/></svg>due 17:00</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 8.3</span></span></div></div><div class="makeup"><div class="mh"><span class="chip owed num">−3.8 owed</span><span class="when">Evening stretch · Tuesday</span></div><p class="mu-text">Missed on Tuesday.</p><p class="mu-sub">Make it up before Fri 04:00 and its 12-day streak comes back.</p><div class="acts"><button class="btn btn-secondary">Make up · <span class="cur"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 3.2</span></button><button class="btn btn-quiet">Do minimum · 2 min · ≈ 1.1</button></div></div></div></section><section class="today-lane o6" aria-labelledby="lane-planned-4"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-planned-4">Planned</h2><span class="lane-count num">1 of 2</span></div><div class="card lane-body"><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Call the bank about the card"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Call the bank about the card</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-duty"/></svg>Duty</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 08:55</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.1</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Review the EUR/USD journal"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Review the EUR/USD journal</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit "><svg class="i"><use href="#i-clock"/></svg>30 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 6.0</span></span></div></div></div></section><section class="today-lane o7" aria-labelledby="lane-habits-4"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits-4">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Study Risk Management, Position Sizing"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Study Risk Management, Position Sizing</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section><div class="o8"><button type="button" class="card owed-sum"><svg class="sig"><use href="#s-duty"/></svg><b>Owed: 1</b><span class="chip owed num">−3.8 owed</span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></div><div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h-5">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h-5">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot"><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-line" aria-label="Backtest · 3 sessions × 45 min, 1 of 3 sessions, from your ticks. Shows it in Habits"><svg class="sig" aria-hidden="true"><use href="#s-craft"/></svg><span class="lbl">Backtest <span>· 1 of 3 sessions · in Habits</span></span></button><button type="button" class="rm-quest-line done" aria-label="Study Risk Management, Position Sizing · 2 sessions × 30 min, 2 of 2 sessions, done, from your ticks. Shows it in Habits"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Study Risk Management, Position Sizing <span>· 2 of 2 sessions · done</span></span></button><button type="button" class="rm-quest-more" aria-expanded="true"><svg class="i"><use href="#i-down"/></svg>Show fewer</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section></div></div></div></div></div>
+</div></div></div>
+<ul class="mk-cap"><li>M2 merged inert at 9b3d299 (DUTY_LAUNCH_DAY null), so today the Must lane carries no debts. Once Duty launches, a missed must's make-up card sits in the Must lane and the Owed row closes the lanes at .o8, both in M2's own owed tone.</li><li>The week quests card below them stays in ink: no --owed, no danger tone, no 'miss' segment. Week quests are never debt, and a missed one leaves Today at 04:00 on Monday; its result lives on the roadmap page.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>D</b> · compact: the evening, Close the day prominent</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="today-board"><div class="board"><div class="o9"><div class="o9-stack"><section class="today-goals" aria-labelledby="goals-h-6">
+  <div class="sec-h"><span class="lane-mark"></span><h2 id="goals-h-6">Goals</h2><span class="aside">2 open</span></div>
+  <div class="card">
+    <div class="goal"><div class="gh"><b>Risk and position sizing</b><span><svg class="sig"><use href="#s-craft"/></svg>Mid · by 7 Mar</span></div>
+      <div class="meter" role="meter" aria-valuenow="23" aria-valuemin="0" aria-valuemax="100" aria-label="Risk and position sizing: 23%"><i style="--v:.238"></i></div>
+      <div class="gf"><span class="num">23%</span><span>· tested by your reviews · slowest: cards at level 6+ · measured 09:12</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">6</span></span> × progress from 70%</span></div>
+      <div class="goal-chips"><span class="chip quiet">Roadmap · milestone 2 of 6</span></div></div>
+    <div class="goal"><div class="gh"><b>Thesis draft, chapter 2</b><span><svg class="sig"><use href="#s-craft"/></svg>Long · by Jun</span></div>
+      <div class="meter"><i style="--v:.4"></i></div>
+      <div class="gf"><span class="num">40%</span><span>· 2 of 5 steps</span><span>· pays <span class="cur"><svg class="g c-mp" aria-label="MP"><use href="#c-mp"/></svg><span class="num">20</span></span> × progress from 70%</span></div></div>
+  </div>
+</section><div class="rm-quests-slot" data-compact="1"><section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="card rm-quest"><button type="button" class="rm-quest-one" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-cal"/></svg><b>Week quests · Milestone 2</b><span class="n">1 of 5 done</span><svg class="i"><use href="#i-chev"/></svg></button></div></section></div></div></div><section class="card today-side-rows o10" aria-label="Inbox and Anytime">
+  <button type="button" class="collapsed"><svg class="i"><use href="#i-inbox"/></svg><b>Inbox</b><span>2 to sort</span><svg class="i"><use href="#i-chev"/></svg></button>
+  <button type="button" class="collapsed" aria-expanded="false"><svg class="sig"><use href="#s-craft"/></svg><b>Anytime</b><span>4 · 1 planned later</span><svg class="i"><use href="#i-chev"/></svg></button>
+</section><section class="card today-close o11" data-prominent="1"><button type="button" class="close-day"><span class="ic"><svg class="i"><use href="#i-moon"/></svg></span><span class="close-txt"><b>Close the day</b><span>3 still open: move it, or do a must's minimum.</span></span><svg class="i" style="width:16px;height:16px;color:var(--ink-2)"><use href="#i-chev"/></svg></button></section></div></div>
+</div></div></div>
+<ul class="mk-cap"><li>While Close the day is prominent the slot carries data-compact and the card is one line (about 44 px), "Week quests · Milestone 2 · 1 of 5 done", so Close the day isn't pushed down. Tapping it expands the card.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>E</b> · all done · and expanded</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="card rm-quest"><button type="button" class="rm-quest-one done" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><b>Week quests · Milestone 2</b><span class="n">all 5 done</span><svg class="i"><use href="#i-chev"/></svg></button></div></section><div style="height:16px"></div><section class="rm-quests-today"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="#">until Sun</a></span></div><div class="card rm-quest"><a class="rm-quest-row done" href="#"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">3 of 3 cards · done</span><div class="meter thin" aria-hidden="true"><i style="--v:1"></i></div></a><a class="rm-quest-row done" href="#"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">5 of 5 cards · done</span><div class="meter thin" aria-hidden="true"><i style="--v:1"></i></div></a><button type="button" class="rm-quest-line done" aria-label="Step: Set a maximum daily loss, done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· done</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>All done: one collapsed line with a check glyph, "Week quests · Milestone 2 · all 5 done". It can be expanded; nothing else plays (no Seal, no chime, no T1).</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>F</b> · tapping "Backtest" seeks its task</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<div class="today-board"><div class="board"><section class="today-lane o7" aria-labelledby="lane-habits-5"><div class="lane-h"><span class="lane-mark"></span><h2 id="lane-habits-5">Habits</h2><span class="lane-count num">2 of 4</span></div><div class="card lane-body"><div class="t-row" style="outline:2px solid var(--focus);outline-offset:-2px;border-radius:12px"><div class="row"><button class="tick" aria-label="Tick Backtest"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Backtest</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">45 min · 1 of 3 this week</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 9.1</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Study Risk Management, Position Sizing"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Study Risk Management, Position Sizing</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit">2 of 2 this week</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+6.2</span></span></div></div><div class="t-row"><div class="row done"><button class="tick" data-state="done" aria-label="Undo Read 20 pages"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Read 20 pages</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-craft"/></svg>Craft</span><span class="r-bit kept-at"><svg class="i"><use href="#i-check"/></svg>done 07:15</span></div></div><span class="price"><span class="pill paid"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>+3.4</span></span></div></div><div class="t-row"><div class="row"><button class="tick" aria-label="Tick Evening stretch"><span class="tick-ring"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></button><div class="r-main"><span class="r-title">Evening stretch</span><div class="r-meta"><span class="r-bit "><svg class="sig"><use href="#s-body"/></svg>Body</span><span class="r-bit">10 min</span></div></div><span class="price"><span class="pill"><svg class="g c-xp" aria-label="life XP"><use href="#c-xp"/></svg>≈ 2.6</span></span></div></div></div></section></div></div>
+</div></div></div>
+<ul class="mk-cap"><li>The session row's button dispatches SEEK_TEMPLATE_EVENT {templateId}; TodayBoard's listener runs its existing seek: it opens Anytime when the task is there, scrolls the row into view and flashes it (the outline here).</li><li>Progress refreshes with the board's own refresh after a tick: the Habits lane may show a tick a moment before the week quest row counts it. No optimistic copy.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>G</b> · writes off (a dev server sharing the database)</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="final-roadmap.html#now">until Sun · not recorded on this server</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · Add: counted by the app · sessions and steps: your ticks</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 3 cards in Risk Management or Position Sizing to level 6+, 1 of 3 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 3 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">1 of 3 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.3333"></i></div><p class="ev">1 comes due Tue, 2 Wed, 1 Sat</p></a><a class="rm-quest-row" href="#" aria-label="Add 5 cards to Risk Management or Position Sizing, 2 of 5 cards added, counted by the app"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add 5 cards to Risk Management or Position Sizing</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">counts toward Trading's weekly quota too</p></a><button type="button" class="rm-quest-line" aria-label="Step: Set a maximum daily loss, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Set a maximum daily loss <span>· in Anytime</span></span></button><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; new cards count once they reach level 6+.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>The aside adds "not recorded on this server". Nothing is frozen there: the live set is shown and may differ between renders, only on that server.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>H</b> · a practice-only plan (Body) · Thu 7 Jan</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="#">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Sessions: your ticks</p><button type="button" class="rm-quest-line" aria-label="Easy runs · 3 sessions × 45 min, 1 of 3 sessions, from your ticks. Shows it in Habits"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Easy runs <span>· 1 of 3 sessions · in Habits</span></span></button><button type="button" class="rm-quest-line" aria-label="Strength for knees and hips · 2 sessions × 30 min, 0 of 2 sessions, from your ticks. Shows it in Habits"><svg class="sig" aria-hidden="true"><use href="#s-body"/></svg><span class="lbl">Strength for knees and hips <span>· 0 of 2 sessions · in Habits</span></span></button><p class="rm-quest-foot">Week quests pay nothing. Session rows count toward Milestone 2 as you do them.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>No cards to hold, so no Bring or Add rows; the legend and the footer name only the kinds present (a per-kind footer).</li><li>Row labels are filled only with the user's own words (checked or edited at Start), the app's fixed templates and the user's Domain names, plus worked-out numbers. Nothing in Gemini's words reaches Today.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>I</b> · late in the window · Thu 25 Feb</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="rm-quests-today" aria-label="Week quests, Milestone 2"><div class="sec-h"><span class="lane-mark"></span><h2>Week quests · Milestone 2</h2><span class="aside"><a class="hit" href="#">until Sun</a></span></div><div class="card rm-quest"><p class="rm-quest-legend">Bring: tested by your reviews · sessions and steps: your ticks · checkpoint: you log it</p><a class="rm-quest-row" href="final-roadmap.html#now" aria-label="Bring 5 cards in Risk Management or Position Sizing to level 6+, 2 of 5 cards, tested by your reviews"><svg class="sig" aria-hidden="true"><use href="#s-know"/></svg><span class="lbl">Bring 5 cards in Risk Management or Position Sizing to level 6+</span><span class="cnt num">2 of 5 cards</span><div class="meter thin" aria-hidden="true"><i style="--v:.4"></i></div><p class="ev">4 come due Wed, 1 Thu, 2 Fri</p><p class="ev">1 card slipped back to level 5 on Thu</p></a><button type="button" class="rm-quest-line" aria-label="Step: Write the exit rule for a losing streak, 0 of 1 step, you tick it. Shows it in Anytime"><svg class="i" aria-hidden="true"><use href="#i-step"/></svg><span class="lbl">Step: Write the exit rule for a losing streak <span>· in Anytime</span></span></button><a class="rm-quest-line" href="final-roadmap.html#checkpoint" aria-label="Checkpoint: Size historical trades by hand, log your score, not logged yet, doesn't move your progress"><svg class="i" aria-hidden="true"><use href="#i-target"/></svg><span class="lbl">Checkpoint: Size historical trades by hand · log your score <span>· doesn't move your progress</span></span></a><button type="button" class="rm-quest-more" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg>2 more</button><p class="rm-quest-foot">Week quests pay nothing. Bring, session and step rows count toward Milestone 2 as you do them; a checkpoint score is for your judgement.</p></div></section>
+</div></div></div>
+<ul class="mk-cap"><li>Week 10 of 11: no Add row (a card written after Wed 10 Feb can't reach level 6 by 7 Mar), Bring has grown to 5 as cards come due, and the checkpoint row appears once 80% of the window has passed. It links to the roadmap's checkpoint and never moves progress.</li><li>Bring is net: a card that slipped offsets one that rose. The row stops reading done and says why in ink, never red.</li></ul>
+</figure>
+<figure class="mk-fig">
+<div class="mk-tag"><b>J</b> · when the card is absent</div>
+<div class="frame f344"><div class="main"><div class="page" style="padding-top:16px">
+<section class="card pad"><div class="t-eyebrow">No card on Today when</div><ul class="rm-basis" style="margin-top:6px"><li>there is no active roadmap, or it was archived (a reset of ideas or knowledge archives it);</li><li>no milestone is started (accepted but not started; Start is hidden while the goal seams are off);</li><li>the week is held (every day rest, sick or vacation): an empty set is frozen;</li><li>the milestone is past its due day (PAST_DUE): the roadmap page says "close or reschedule it", in ink;</li><li>the set is empty for another reason, or the read fails (a missing table included): the board renders as before.</li></ul></section>
+</div></div></div>
+<ul class="mk-cap"><li>There is no Suspense and no fallback: on any day after the Monday freeze the set is one cached indexed row, so the card loads with the board and nothing appears late or shifts.</li></ul>
+</figure>
+</div>
+</section>
+<section class="mk-sec">
+<h2>Two quests, never confused (Names, F17)</h2>
+
+<div class="mk-row">
+<figure class="mk-fig"><div class="card pad" style="max-width:932px">
+<table class="floor"><thead><tr><th></th><th>The daily review quest (unchanged)</th><th>Week quests (new)</th></tr></thead><tbody>
+<tr><td>Words</td><td>Quest ring "Quest 6 of 15" · "Next up · Quest" · "Clear the review quest" · Review's "Quest n of 15" · the tour's daily quest</td><td>"Week quests · Milestone 2" · "Past week quests" · "2 of 5 week quests done"; never "Quest" alone or first in a heading; never "Quest n of N"</td></tr>
+<tr><td>Counts</td><td>reviews, 15 a day (QUEST_CAP)</td><td>cards, sessions, a step, a score, each with its unit: "1 of 3 cards", "1 of 3 sessions"; never reviews</td></tr>
+<tr><td>Form</td><td>the SegmentStrip and a PromiseRing</td><td>a thin Meter on Bring and Add; plain lines for sessions and steps</td></tr>
+<tr><td>Goes to</td><td>/review</td><td>the roadmap's Now, /add, or the task on the board; never /review</td></tr>
+<tr><td>Pays</td><td>review points</td><td>nothing (Milestone 2 keeps its own stated pay)</td></tr>
+<tr><td>Code</td><td>questTargetOf, questOf, QuestState, QUEST_CAP</td><td>weekQuest*, WeekQuest*, questWeek*, questProgress, WEEK_QUEST_* (roadmap files never import review-facts, board-ui or full-day)</td></tr>
+</tbody></table></div></figure>
+</div>
+</section>
+<script>
+/* Mockup only: measures the week quests card, so the F17 geometry claims are checked, not assumed. */
+(function () {
+  function top(f, el) { return Math.round(el.getBoundingClientRect().top - f.getBoundingClientRect().top); }
+  function run() {
+    var a = document.getElementById('td344'), o = document.getElementById('geo-td344');
+    if (a && o) { var c = a.querySelector('.rm-quests-today'); var r = c.getBoundingClientRect();
+      o.textContent = 'Measured here at 344 px: the card starts ' + top(a, c) + ' px down and is ' + Math.round(r.height) + ' px tall, after Next up, the Ask, the Must lane, Planned, Habits and the goals.'; }
+    var b = document.getElementById('td932'), p = document.getElementById('geo-td932');
+    if (b && p) { var c2 = b.querySelector('.rm-quests-today'), ring = b.querySelector('.rings');
+      p.textContent = 'Measured here at 932 px: the card starts ' + top(b, c2) + ' px down in the right column; the DayLedger rings (Quest included) sit ' + top(b, ring) + ' px down in the left column.'; }
+    var cA = document.querySelector('#cardA .rm-quests-today'), g = document.getElementById('geo-card');
+    if (cA && g) { var h = Math.round(cA.getBoundingClientRect().height); g.textContent = 'Measured here: the collapsed card is ' + h + ' px tall at 344 (F17 budgets about 290 at most).'; }
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(run);
+  addEventListener('resize', run);
+})();
+</script>
+</body>
+</html>
