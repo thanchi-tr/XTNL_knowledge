@@ -119,6 +119,24 @@
   .rv-pill:hover:not(:disabled) { border-color: var(--line-ctl); }
   .rv-pill.placed { flex: 1; border-color: var(--line-ctl); background: var(--raised); }
 
+  /* a formula: symbols above, the answer drawn as maths, the text box */
+  .rv-expr { display: flex; flex-direction: column; gap: 8px; }
+  .rv-sym > summary { cursor: pointer; min-height: 32px; font: 500 13px var(--font-ui); color: var(--ink-2); }
+  .rv-sym[open] > summary { margin-bottom: 6px; }
+  .rv-sym .ltx-syms { max-height: 136px; overflow-y: auto; }
+  .rv-math { margin-top: 0; }
+  .rv-math .m-out { font-size: 17px; }
+  .rv-math .m-out.faded { opacity: .45; }
+
+  /* a diagram: the image with numbered markers, one label box per marker */
+  .rv-diagram { position: relative; margin: 0 auto; width: 100%; max-width: min(100%, 44dvh); border-radius: 12px; overflow: hidden; border: 1px solid var(--line-2); background: var(--sunken); }
+  .rv-diagram img { display: block; width: 100%; height: auto; }
+  .rv-diagram.missing { aspect-ratio: 4 / 5; }
+  .rv-diagram .miss { position: absolute; inset: auto 12px 12px; margin: 0; }
+  .rv-hot { position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--ink-0); color: var(--page); font: 700 13px var(--font-ui); box-shadow: 0 0 0 3px color-mix(in srgb, var(--page) 70%, transparent); }
+  .rv-judged { margin: 8px 0 0; }
+  .rv-hot-n { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--raised); border: 1px solid var(--line-ctl); font: 700 13px var(--font-ui); color: var(--ink-0); }
+
   /* ---------- the result panel: a bottom sheet on compact, a floating 600 card from 600 ---------- */
   .rv-panel {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: calc(var(--z-toast) + 5);

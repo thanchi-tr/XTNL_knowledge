@@ -96,10 +96,16 @@ function glyphHtml(snippet: LatexSnippet): string | null {
 
 interface Props {
   onInsert: (snippet: string) => void;
+  /** Only these groups (by label), in this order; all of them when omitted. Search still covers every symbol. */
+  groups?: readonly string[];
 }
 
-export function LatexPalette({ onInsert }: Props) {
-  const [openGroup, setOpenGroup] = useState(LATEX_GROUPS[0].label);
+export function LatexPalette({ onInsert, groups }: Props) {
+  const shownGroups = useMemo(
+    () => (groups ? groups.map((l) => LATEX_GROUPS.find((g) => g.label === l)).filter((g): g is (typeof LATEX_GROUPS)[number] => !!g) : LATEX_GROUPS),
+    [groups]
+  );
+  const [openGroup, setOpenGroup] = useState(shownGroups[0].label);
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState<string[]>(() => readRecents());
   const [hovered, setHovered] = useState<LatexSnippet | null>(null);
@@ -129,9 +135,9 @@ export function LatexPalette({ onInsert }: Props) {
 
   const showing: LatexSnippet[] =
     results ??
-    (openGroup === "Recent" ? recentSnippets : LATEX_GROUPS.find((g) => g.label === openGroup)?.snippets ?? []);
+    (openGroup === "Recent" ? recentSnippets : shownGroups.find((g) => g.label === openGroup)?.snippets ?? []);
 
-  const tabs = [...(recentSnippets.length > 0 ? ["Recent"] : []), ...LATEX_GROUPS.map((g) => g.label)];
+  const tabs = [...(recentSnippets.length > 0 ? ["Recent"] : []), ...shownGroups.map((g) => g.label)];
 
   return (
     <div>

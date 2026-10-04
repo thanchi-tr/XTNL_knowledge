@@ -120,6 +120,11 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   {result.trueFact.detail && <p>{result.trueFact.detail}</p>}
                 </div>
               </div>
+              {result.judged && (
+                <p className="t-meta ink-1 rv-judged">
+                  Accepted on meaning{result.judged.reason ? `: ${result.judged.reason}` : "."}
+                </p>
+              )}
               {advanced && (
                 <>
                   <div className="rv-pay">
@@ -161,6 +166,11 @@ export function ResultPanel({ open, card: cardNow, result: resultNow, answer: an
                   <span>The answer</span>
                   <b>{result.expected}</b>
                 </div>
+                {result.judged?.reason && (
+                  <p className="t-meta ink-1 rv-judged" style={{ marginTop: 6 }}>
+                    Checked on meaning: {result.judged.reason}
+                  </p>
+                )}
                 {result.explanation && result.explanation !== result.expected && (
                   <p className="t-meta ink-1" style={{ marginTop: 6 }}>
                     {result.explanation}

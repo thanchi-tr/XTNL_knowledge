@@ -435,8 +435,12 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const action = code(read("src/app/actions/review.ts"));
   const submit = action.slice(action.indexOf("export async function submitReview"));
   const toApply = submit.slice(0, submit.indexOf("await applyReviewResult("));
-  check("action: one read wave before grading and the write (a single Promise.all)", (toApply.match(/await /g) ?? []).length === 1 && /await Promise\.all\(\[/.test(toApply));
-  check("action: grading stays on the server; the answer returns only after it", /verifyAnswer\(idea\.questionType, input\.userAnswer, idea\.answer, \{ caseSensitive: idea\.answerCaseSensitive \}\)/.test(submit) && submit.indexOf("verifyAnswer(") < submit.indexOf("expected:"));
+  // The second await is grading: no I/O unless a plain SHORT answer missed and goes to the meaning judge (answer-judge.ts).
+  check(
+    "action: one read wave before grading and the write (a single Promise.all), then grading",
+    (toApply.match(/await /g) ?? []).length === 2 && /await Promise\.all\(\[/.test(toApply) && toApply.indexOf("await Promise.all([") < toApply.indexOf("await gradeReview(")
+  );
+  check("action: grading stays on the server; the answer returns only after it", /await gradeReview\(\s*\{ questionType: idea\.questionType, question: idea\.question, answer: idea\.answer, answerCaseSensitive: idea\.answerCaseSensitive, given: input\.userAnswer \}/.test(submit) && submit.indexOf("gradeReview(") < submit.indexOf("expected:"));
   check("action: L3's detectCelebrations runs after the write and cannot fail the answer", /detectCelebrations\(before, afterSnap/.test(submit) && /\.catch\(\(\) => \[\]\)/.test(submit));
 
   const route = [...walk("src/components/workspace"), ...walk("src/app/review")];

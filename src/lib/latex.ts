@@ -364,7 +364,7 @@ export function previewExpression(input: string): ExpressionPreview {
       const name = (n as unknown as { name: string }).name;
       if (!(name in math)) variables.add(name);
     });
-    return { ok: true, tex: node.toTex(), mathjs: source, variables: [...variables] };
+    return { ok: true, tex: node.toTex({ parenthesis: "auto", implicit: "hide" }), mathjs: source, variables: [...variables] };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Not a valid expression." };
   }

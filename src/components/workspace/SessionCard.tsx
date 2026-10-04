@@ -16,6 +16,7 @@ import type { QuestionType } from "@prisma/client";
 import type { ReviewAnswer } from "@/lib/verification";
 import { daysBetween, type DayKey } from "@/lib/life-day";
 import { MathText } from "@/components/math/MathText";
+import { ReviewFormulaField } from "@/components/math/ReviewFormulaField";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { Icon, Sigil } from "@/components/ui/Icon";
@@ -183,21 +184,51 @@ function TextAnswer({ formula, phase, onAnswer }: { formula: boolean; phase: Car
         if (v && phase === "ask") onAnswer(v, v);
       }}
     >
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={formula ? "e.g. sqrt(x^2 + y^2)" : "Your answer"}
-        aria-label={formula ? "Your formula" : "Your answer"}
-        className={cx("rv-input", formula && "mono")}
-        disabled={phase !== "ask"}
-        autoFocus
-        autoComplete="off"
-      />
+      {formula ? (
+        <ReviewFormulaField value={value} onChange={setValue} disabled={phase !== "ask"} />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Your answer"
+          aria-label="Your answer"
+          className="rv-input"
+          disabled={phase !== "ask"}
+          autoFocus
+          autoComplete="off"
+        />
+      )}
       <Button type="submit" variant="primary" size="lg" block kbd="Enter" disabled={phase !== "ask" || !value.trim()}>
         {phase === "pending" ? "Checking…" : "Check answer"}
       </Button>
     </form>
+  );
+}
+
+/**
+ * The diagram's image with a numbered marker on each hotspot (x and y are
+ * fractions of the image's width and height). If the image can't load, the
+ * markers stay on a blank frame and the card says which file is missing, so
+ * the labels can still be typed.
+ */
+function DiagramFigure({ diagram }: { diagram: DiagramQuestion }) {
+  const [failed, setFailed] = useState(false);
+  const pct = (v: number) => `${Math.min(100, Math.max(0, v * 100))}%`;
+  return (
+    <figure className={cx("rv-diagram", failed && "missing")}>
+      {!failed && (
+        // A plain img: the diagrams are local SVGs, which next/image would refuse to optimise.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={diagram.image} alt="The diagram to label" onError={() => setFailed(true)} />
+      )}
+      {diagram.hotspots.map((h, i) => (
+        <span key={h.id} className="rv-hot" style={{ left: pct(h.x), top: pct(h.y) }} aria-hidden="true">
+          {i + 1}
+        </span>
+      ))}
+      {failed && <figcaption className="miss t-meta">The image {diagram.image} is missing. The markers are where the labels go.</figcaption>}
+    </figure>
   );
 }
 
@@ -219,17 +250,18 @@ function DiagramAnswer({ question, phase, onAnswer }: { question: string; phase:
         if (phase === "ask") onAnswer(labels, answerText(labels));
       }}
     >
-      <p className="t-meta">No image renderer yet ({diagram.image}). Label each hotspot by its id.</p>
+      <DiagramFigure diagram={diagram} />
       {diagram.hotspots.map((h, i) => (
         <div key={h.id} className="row">
-          <span className="t-mono ink-2" style={{ width: 96, flex: "none" }}>
-            {h.id}
+          <span className="rv-hot-n" aria-hidden="true">
+            {i + 1}
           </span>
           <input
             type="text"
             value={labels[h.id] ?? ""}
             onChange={(e) => setLabels((prev) => ({ ...prev, [h.id]: e.target.value }))}
-            aria-label={`Label for ${h.id}`}
+            aria-label={`Label for marker ${i + 1}`}
+            placeholder={`Marker ${i + 1}`}
             className="rv-input"
             disabled={phase !== "ask"}
             autoFocus={i === 0}

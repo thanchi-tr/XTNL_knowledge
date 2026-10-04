@@ -2,6 +2,7 @@ import { create, all } from "mathjs";
 import type { QuestionType } from "@prisma/client";
 import { decodeStringArray, decodeNumericAnswer } from "./idea-payload";
 import { gradeShortAnswer, matchesText, type ShortGradeOptions } from "./short-answer";
+import { latexToMathjs } from "./latex";
 
 const math = create(all);
 
@@ -215,7 +216,9 @@ export function verifyAnswer(
     case "MULTI":
       return verifyMulti(String(userAnswer), correctAnswer);
     case "FORMULA":
-      return verifyFormula(String(userAnswer), correctAnswer);
+      // The review field accepts LaTeX as well as mathjs (frac-style LaTeX or a/b);
+      // the stored answer is already mathjs (AnswerExpressionField).
+      return verifyFormula(latexToMathjs(String(userAnswer)), correctAnswer);
     case "DIAGRAM":
       // DIAGRAM answers are a label map, not a string or a list.
       if (typeof userAnswer === "string" || Array.isArray(userAnswer)) return false;

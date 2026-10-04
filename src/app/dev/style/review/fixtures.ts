@@ -134,6 +134,7 @@ function pass(card: RunCard, combo: number, hist: HistoryRow[], opts: { domainLe
     },
     expected: FX_ANSWERS[card.id],
     explanation: null,
+    judged: null,
     combo: { before: combo, multiplier: payout.comboMultiplier, cap: COMBO_CAP, capped: combo >= COMBO_CAP, next: combo + 1, nextMultiplier: comboMultiplier(combo + 1) },
     trueFact: trueFactOf({
       correct: true,
@@ -161,6 +162,7 @@ function miss(card: RunCard, combo: number, hist: HistoryRow[]): SubmitReviewRes
     expected: FX_ANSWERS[card.id],
     explanation:
       "The median depends only on rank order, so the long tail moves it by at most a position. The mode is not defined for continuous data without binning.",
+    judged: null,
     combo: { before: combo, multiplier: 1, cap: COMBO_CAP, capped: false, next: 0, nextMultiplier: 1 },
     trueFact: trueFactOf({
       correct: false,
