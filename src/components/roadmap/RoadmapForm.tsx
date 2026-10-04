@@ -16,7 +16,7 @@
  *   privacy line from the pack's sections, the free-tier line).
  *
  * With a key: [Draft with Gemini] and [Build from my numbers]. Without one:
- * [Build from my numbers] and [Write it myself] with "Gemini isn't set up on
+ * [Build from my numbers] and [Write it myself] with NO_KEY_LINE (no key, or ROADMAP_GEMINI_LIVE off), ex-"Gemini isn't set up on
  * this server — the checks and measures still run." The unsent form survives
  * in guarded localStorage (never in the URL); an open DRAFT is edited, not
  * duplicated ("Continuing your draft from 3 Oct · Discard it").

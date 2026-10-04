@@ -138,6 +138,8 @@ import {
   REACH_CONFIRM_DAYS,
   ROADMAP_DRAFTS_PER_DAY,
   ROADMAP_GOALS_LIVE,
+  ROADMAP_GEMINI_LIVE,
+  GEMINI_DRAFTING_OFF,
   ROADMAP_MODEL,
   ROADMAP_PROMPT_VERSION,
   ROADMAP_REUSE_DAYS,
@@ -677,6 +679,13 @@ export interface RoadmapDeps extends RoadmapWriteOpts {
   makeId?: () => string;
   /** The Start gate; ROADMAP_GOALS_LIVE unless a check sets it. */
   goalsLive?: boolean;
+  /** The Gemini drafting gate; ROADMAP_GEMINI_LIVE unless a check sets it. */
+  geminiLive?: boolean;
+}
+
+/** Gemini drafting is offered only when the switch is on AND a key exists (rev 4 P0). */
+function geminiOffered(): boolean {
+  return ROADMAP_GEMINI_LIVE && hasGeminiKey();
 }
 
 // ═══ Copy the cores answer with (refusals in words) ═════════════════════════
@@ -1848,7 +1857,7 @@ export async function loadIntakeView(userId: string, now: Date, deps: RoadmapDep
   }));
   return {
     today,
-    hasKey: hasGeminiKey(),
+    hasKey: geminiOffered(),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     draft: draft ? { roadmapId: draft.id, intake: intakeOf(draft), savedDay: dayKeyOf(draft.updatedAt) } : null,
@@ -2274,6 +2283,7 @@ export async function claimDraftCore(
   deps: RoadmapDeps = {}
 ): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  if (!(deps.geminiLive ?? ROADMAP_GEMINI_LIVE)) return fail(GEMINI_DRAFTING_OFF);
   const e = envOf(deps);
   const today = todayKey(now);
   const first = await e.store.bundle(userId, roadmapId);
@@ -5508,7 +5518,7 @@ function emptyView(today: DayKey, deps: RoadmapDeps, e: Env): RoadmapView {
   return {
     state: "NONE",
     today,
-    hasKey: hasGeminiKey(),
+    hasKey: geminiOffered(),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
@@ -5607,7 +5617,7 @@ async function loadRoadmapViewUncached(userId: string, now: Date, deps: RoadmapD
   return {
     state,
     today,
-    hasKey: hasGeminiKey(),
+    hasKey: geminiOffered(),
     keyTier: GEMINI_KEY_TIER,
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
@@ -5766,7 +5776,7 @@ async function loadAimCardUncached(userId: string, now: Date, deps: RoadmapDeps)
   const base: AimCardView = {
     state: "EMPTY",
     roadmapId: null,
-    hasKey: hasGeminiKey(),
+    hasKey: geminiOffered(),
     writesOff: writesOff(deps),
     goalsLive: e.goalsLive,
     aim: null,

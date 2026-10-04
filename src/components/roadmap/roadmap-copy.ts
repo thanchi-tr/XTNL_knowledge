@@ -139,7 +139,7 @@ export const HEALTH_LINE = "Not medical advice — check health-related changes 
 /** For a draft with constraints. */
 export const CONSTRAINTS_LINE = "Constraints are shown to Gemini; the app doesn't check them.";
 /** The no-key path's line (there is never a disabled Draft button). */
-export const NO_KEY_LINE = "Gemini isn't set up on this server — the checks and measures still run.";
+export const NO_KEY_LINE = "The app builds this plan from your own numbers — the checks and measures all run.";
 /** Only with a key and GEMINI_KEY_TIER 'FREE' (equals roadmap-model's FREE_TIER_NOTE; roadmap-ui-check pins it). */
 export const FREE_TIER_LINE = "This server's Gemini key is on Google's free tier, so Google may use what drafting sends to improve its products.";
 /** The draft cap's one line (equals roadmap-model's DRAFT_CAP_LINE; roadmap-ui-check pins it). It claims nothing about the rows on screen. */

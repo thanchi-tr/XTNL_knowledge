@@ -843,6 +843,7 @@ function depsFor(w: FakeWorld, extra: Partial<RoadmapDeps> = {}): RoadmapDeps {
     },
     callModel: async () => ({ milestones: [] }),
     goalsLive: true,
+    geminiLive: true,
     ...extra,
   };
 }
@@ -965,6 +966,19 @@ async function main() {
     paidOn: "2026-03-03",
   });
   check("stated is only ever 0 or 6", [0, 15, 59, 60, 61, 90, 300].every((p) => [0, 6].includes(statedForMilestone({ practiceMinutesPerWeek: p, plannedTrackedMinutesPerWeek: 200, hasCards: true, lineagePaidOn: null }).stated)));
+
+  // ═══ rev 4 P0: Gemini drafting is off until the probe passes ══════════════
+  console.log("— Gemini drafting switch —");
+  {
+    const types = await import("../src/lib/roadmap-types");
+    check("ROADMAP_GEMINI_LIVE ships false (rev 4 P0)", types.ROADMAP_GEMINI_LIVE === false);
+    const w = world();
+    const id = await newDraft(w);
+    let called = 0;
+    const off = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { geminiLive: undefined, callModel: async () => (called++, REPLY) }));
+    check("with the switch off the claim refuses in words and never reaches the model", !off.ok && off.error === types.GEMINI_DRAFTING_OFF && called === 0);
+    check("…and writes no run", w.t.roadmapRun.length === 0);
+  }
 
   // ═══ F2: intake ════════════════════════════════════════════════════════════
   console.log("— intake —");

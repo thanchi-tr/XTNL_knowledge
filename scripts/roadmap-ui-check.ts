@@ -174,7 +174,7 @@ async function main() {
   check("CREDENTIAL_LINE", copy.CREDENTIAL_LINE === "The topics below are Gemini's guess, not the official syllabus.");
   check("HEALTH_LINE", copy.HEALTH_LINE === "Not medical advice — check health-related changes with a professional.");
   check("CONSTRAINTS_LINE", copy.CONSTRAINTS_LINE === "Constraints are shown to Gemini; the app doesn't check them.");
-  check("NO_KEY_LINE", copy.NO_KEY_LINE === "Gemini isn't set up on this server — the checks and measures still run.");
+  check("NO_KEY_LINE", copy.NO_KEY_LINE === "The app builds this plan from your own numbers — the checks and measures all run.");
   check("FREE_TIER_LINE", copy.FREE_TIER_LINE === "This server's Gemini key is on Google's free tier, so Google may use what drafting sends to improve its products.");
   const priv = copy.privacyLine(PACK_SECTIONS);
   check("privacy line: names every pack section", PACK_SECTIONS.every((s) => priv.includes(copy.PACK_SECTION_WORDS[s])), priv);

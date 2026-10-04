@@ -76,6 +76,17 @@ export type { RoadmapGoalEntry, RoadmapSeriesPoint };
  */
 export const ROADMAP_GOALS_LIVE = false;
 
+/**
+ * Gemini drafting is hidden (no "Draft with Gemini", no Gemini sentence)
+ * and refused by the claim while false. It turns on only when the keys-only
+ * probe passes roadmap-rev4.md F-R4-23's go/no-go gate; until then every
+ * plan is built from the user's numbers or written by hand (rev 4 P0).
+ */
+export const ROADMAP_GEMINI_LIVE = false;
+
+/** The claim's refusal while ROADMAP_GEMINI_LIVE is false. */
+export const GEMINI_DRAFTING_OFF = "Gemini drafting is off until its checks pass. Build from your numbers or write it yourself.";
+
 /** Every roadmap user action's refusal on a server with writes off (decision 13), the ROADMAP close included. */
 export const ROADMAP_WRITES_OFF = "Roadmap changes are recorded only on the live app";
 
