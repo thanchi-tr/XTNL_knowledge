@@ -13,6 +13,13 @@
  *   - the form's checks: "N of" out of range and duplicate parts are
  *     refused; the rule line and the display text;
  *   - cloze blanks and LIST items follow the same capitals rule;
+ *   - key words: "|word|" passes when the word or a dictionary synonym is
+ *     anywhere in the answer, inflected or one typo away; every key is
+ *     needed; "/" adds the author's own alternatives; the text around the
+ *     keys is only shown; no bars, no key word rule; key words in a list;
+ *     capitals; an unclosed or empty bar is refused; "\|" is a plain bar;
+ *   - the dictionary: every group has two or more members, none is one
+ *     letter or listed twice in its group, lookup is one hop; the stemmer;
  *   - the review action passes the idea's flag to the grader (source guard).
  */
 import { readFileSync } from "node:fs";
@@ -24,6 +31,7 @@ import {
   shortAnswerRule,
 } from "../src/lib/short-answer";
 import { verifyAnswer } from "../src/lib/verification";
+import { dictionaryGroups, stem, synonymsOf, words } from "../src/lib/synonyms";
 
 let failed = 0;
 function check(name: string, ok: boolean) {
@@ -95,6 +103,48 @@ check("cloze blanks: case sensitive when set", !verifyAnswer("CLOZE", ["paris"],
 check("LIST items: capitals don't matter by default", verifyAnswer("LIST", ["EMMA", "persuasion"], JSON.stringify(["Persuasion", "Emma"])));
 check("SHORT through the dispatch keeps the list syntax", verifyAnswer("SHORT", "Mindfulness Trading, Naked Forex", books));
 check("SHORT through the dispatch honours case sensitive", !verifyAnswer("SHORT", "co", "Co", { caseSensitive: true }));
+
+// ── key words ──
+check("keys: the word itself passes", pass("It is the mitochondria", "The |mitochondria| make ATP"));
+check("keys: the rest of the text isn't needed", pass("mitochondria", "The |mitochondria| make most of the cell's ATP"));
+check("keys: a dictionary synonym passes", pass("prices rose quickly", "Prices |increase|"));
+check("keys: another inflection of a synonym passes", pass("it is growing", "|increase|"));
+check("keys: a synonym phrase passes", pass("the price will go up", "|increase|"));
+check("keys: a missing key fails", !pass("prices stayed flat", "Prices |increase|"));
+check("keys: an unrelated word fails", !pass("decrease", "|increase|"));
+check("keys: a one-typo long word passes", pass("mitochondira", "|mitochondria|"));
+check("keys: every key is needed", !pass("fast", "|fast| and |cheap|") && pass("quick and inexpensive", "|fast| and |cheap|"));
+check("keys: the author's own alternatives", pass("its SQN", "|system quality number/SQN|") && pass("System Quality Number", "|SQN/system quality number|"));
+check("keys: abbreviation from the dictionary", pass("the system quality number", "|SQN|"));
+check("keys: UK and US spellings meet", pass("the colour", "|color|"));
+check("keys: hyphens are word breaks", pass("use a stop-loss", "|stop loss|"));
+check("keys: inside a word doesn't count", !pass("unfastened", "|fast|"));
+check("keys: case sensitive, the author's capitals must match", !pass("co", "|Co|", true) && pass("Co", "|Co|", true));
+check("keys: case sensitive, dictionary synonyms ignore capitals", pass("CO2", "|carbon dioxide|", true));
+check("keys: no bars, the rule doesn't apply (graded whole)", !pass("increase", "prices increase over time"));
+check("keys: \\| is a plain bar", parseShortAnswer("\\|x\\|").kind === "text" && pass("|x|", "\\|x\\|"));
+check("keys: parsed with the text as shown", JSON.stringify(parseShortAnswer("The |mitochondria/mitochondrion| make ATP")) === JSON.stringify({ kind: "keys", text: "The mitochondria / mitochondrion make ATP", keys: [["mitochondria", "mitochondrion"]] }));
+check("keys: display drops the bars", displayShortAnswer("The |mitochondria| make ATP") === "The mitochondria make ATP");
+check("keys in a list: each part by its key or a synonym", pass("quick, inexpensive", "[|fast|, |cheap|]") && !pass("quick", "[|fast|, |cheap|]"));
+check("keys in a list: display", displayShortAnswer("[|fast|, |cheap|]") === "fast, cheap (any order)");
+check("keys: an unclosed bar is refused", shortAnswerProblem("the |mitochondria") !== null);
+check("keys: an empty key is refused", shortAnswerProblem("the || cell") !== null && shortAnswerProblem("|/|") !== null);
+check("keys: a good key answer has no problem", shortAnswerProblem("The |mitochondria| make ATP") === null);
+check("keys: the rule names the key and its synonyms", /^Passes when the answer has "increase" \(or rise, rose, risen, grow, grew \+\d+ more\)\. Capitals don't matter\.$/.test(shortAnswerRule("Prices |increase|") ?? ""));
+check("keys: the rule says when no synonym is on file", (shortAnswerRule("|zygote|") ?? "").includes("no synonyms on file"));
+check("keys: the rule with two keys", (shortAnswerRule("|fast| and |cheap|") ?? "").includes('"fast" (or ') && (shortAnswerRule("|fast| and |cheap|") ?? "").includes(' and "cheap" (or '));
+check("keys through the dispatch", verifyAnswer("SHORT", "Mindfulness trading", "|mindfulness|"));
+
+// ── the dictionary ──
+const groups = dictionaryGroups();
+check("dictionary: more than 300 groups", groups.length > 300);
+check("dictionary: every group has two or more members", groups.every((g) => g.length >= 2));
+check("dictionary: no one-letter member (a digit is fine)", groups.every((g) => g.every((m) => m.replace(/\s/g, "").length > 1 || /^\d$/.test(m))));
+check("dictionary: no member twice in its group", groups.every((g) => new Set(g.map((m) => words(m).map((w) => w.stem).join(" "))).size === g.length));
+check("dictionary: lookup is one hop", synonymsOf("important").includes("essential") && !synonymsOf("important").includes("mandatory"));
+check("dictionary: lookup by an inflected form", synonymsOf("increasing").includes("rise"));
+check("stem: inflections meet", ["increase", "increases", "increased", "increasing"].every((w) => stem(w) === stem("increase")) && stem("stopped") === stem("stop") && stem("studies") === stem("study") && stem("quickly") === stem("quick"));
+check("stem: short words and numbers stay", stem("as") === "as" && stem("co2") === "co2");
 
 // ── source guards ──
 const review = readFileSync("src/app/actions/review.ts", "utf8");

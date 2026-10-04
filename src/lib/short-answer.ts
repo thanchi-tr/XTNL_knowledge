@@ -1,8 +1,9 @@
 import { compareTwoStrings } from "string-similarity";
+import { keyPresent, synonymsOf } from "./synonyms";
 
 /**
  * SHORT answers: how a typed answer is compared with the stored one, and the
- * list syntax an author can write in the answer field.
+ * syntax an author can write in the answer field.
  *
  * Plain answer — compared after normalising: Unicode form, curly quotes,
  * spacing and surrounding punctuation never matter; capitals don't either
@@ -15,6 +16,14 @@ import { compareTwoStrings } from "string-similarity";
  *   2 of [red, green, blue]        a list: any 2 of the parts
  *   \[citation needed]             a leading backslash keeps brackets literal
  *   [Smith\, J., Jones\, K.]       \, is a comma inside a part
+ *   the |mitochondria| make ATP    key words: passes when every |word| (or a
+ *                                  synonym of it, synonyms.ts) is in the
+ *                                  answer; the rest of the text is only shown
+ *   |SQN/system quality number|    the author's own alternatives, split by /
+ *   [|fast|, |cheap|]              a list part may be a key word
+ *   \|x\|                          \| is a plain bar
+ *
+ * Without a |…| the key word rule doesn't apply: the answer is graded whole.
  *
  * A list is graded on what the person typed as a whole: it is split on
  * commas, semicolons, slashes, "&", "+", line breaks and " and ", and each
@@ -28,6 +37,9 @@ export const SHORT_PASS_THRESHOLD = 0.85;
 
 export type ShortAnswerSpec =
   | { kind: "text"; text: string }
+  /** `text` is the answer as shown (bars dropped); each key lists its alternatives. */
+  | { kind: "keys"; text: string; keys: string[][] }
+  /** Parts as written (a part may hold |key words|). */
   | { kind: "list"; items: string[]; need: number };
 
 export interface ShortGradeOptions {
@@ -36,6 +48,61 @@ export interface ShortGradeOptions {
 }
 
 const LIST_PATTERN = /^(?:(\d+)\s+of\s+)?\[([\s\S]*)\]$/i;
+const BACKSLASH = "\\";
+
+interface Bars {
+  /** The text with the bars dropped, alternatives shown as "a / b", and `\|` as a bar. */
+  text: string;
+  keys: string[][];
+  /** A bar with no partner. */
+  unclosed: boolean;
+  /** A `||` or `|/|`: a key with no word in it. */
+  empty: boolean;
+}
+
+/** Reads the `|key word|` marks in a text. */
+function scanBars(src: string): Bars {
+  let text = "";
+  let key: string | null = null;
+  const keys: string[][] = [];
+  let empty = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === BACKSLASH && src[i + 1] === "|") {
+      if (key === null) text += "|";
+      else key += "|";
+      i++;
+    } else if (ch === "|") {
+      if (key === null) {
+        key = "";
+        continue;
+      }
+      const alts = key
+        .split("/")
+        .map((a) => a.trim())
+        .filter(Boolean);
+      if (alts.length === 0) empty = true;
+      else {
+        keys.push(alts);
+        text += alts.join(" / ");
+      }
+      key = null;
+    } else if (key === null) text += ch;
+    else key += ch;
+  }
+  const unclosed = key !== null;
+  if (key !== null) text += "|" + key;
+  return { text: text.replace(/\s+/g, " ").trim(), keys, unclosed, empty };
+}
+
+/** A list part as shown: its bars dropped. */
+const itemText = (item: string) => scanBars(item).text;
+
+/** A text that is not a list: key words when it has any bars, else one answer. */
+function textSpec(src: string): ShortAnswerSpec {
+  const bars = scanBars(src);
+  return bars.keys.length > 0 ? { kind: "keys", text: bars.text, keys: bars.keys } : { kind: "text", text: bars.text };
+}
 
 /**
  * Splits a list body on unescaped commas; `\,` stays a comma inside a part.
@@ -46,7 +113,7 @@ function splitItems(body: string): string[] {
   let cur = "";
   for (let i = 0; i < body.length; i++) {
     const ch = body[i];
-    if (ch === "\\" && body[i + 1] === ",") {
+    if (ch === BACKSLASH && body[i + 1] === ",") {
       cur += ",";
       i++;
     } else if (ch === ",") {
@@ -68,11 +135,10 @@ function splitItems(body: string): string[] {
  */
 export function parseShortAnswer(stored: string): ShortAnswerSpec {
   const raw = stored.trim();
-  if (raw.startsWith("\\[")) return { kind: "text", text: raw.slice(1) };
+  if (raw.startsWith(BACKSLASH + "[")) return textSpec(raw.slice(1));
   const m = LIST_PATTERN.exec(raw);
-  if (!m) return { kind: "text", text: raw };
-  const items = splitItems(m[2]);
-  if (items.length < 2) return { kind: "text", text: raw };
+  const items = m ? splitItems(m[2]) : [];
+  if (!m || items.length < 2) return textSpec(raw);
   const n = m[1] === undefined ? items.length : Number(m[1]);
   const need = Number.isInteger(n) && n >= 1 && n <= items.length ? n : items.length;
   return { kind: "list", items, need };
@@ -81,7 +147,10 @@ export function parseShortAnswer(stored: string): ShortAnswerSpec {
 /** Why an answer can't be saved as written, or null. For the add and edit forms. */
 export function shortAnswerProblem(stored: string): string | null {
   const raw = stored.trim();
-  if (raw.startsWith("\\[")) return null;
+  const bars = scanBars(raw);
+  if (bars.unclosed) return "A | has no partner: wrap a key word on both sides, like |word|. Type \\| for a plain bar.";
+  if (bars.empty) return "An empty |…| has no key word in it.";
+  if (raw.startsWith(BACKSLASH + "[")) return null;
   const m = LIST_PATTERN.exec(raw);
   if (!m) return null;
   const items = splitItems(m[2]);
@@ -94,11 +163,29 @@ export function shortAnswerProblem(stored: string): string | null {
   }
   const seen = new Set<string>();
   for (const item of items) {
-    const key = normalizeAnswer(item, false);
-    if (seen.has(key)) return `"${item}" is in the list twice.`;
+    const key = normalizeAnswer(itemText(item), false);
+    if (seen.has(key)) return `"${itemText(item)}" is in the list twice.`;
     seen.add(key);
   }
   return null;
+}
+
+const SHOWN_SYNONYMS = 5;
+
+/** `"fast" (or quick, rapid, swift…)`: a key word and what else passes for it. */
+export function describeKey(alts: readonly string[]): string {
+  const seen = new Set(alts.map((a) => a.toLowerCase()));
+  const extra = alts.slice(1);
+  for (const a of alts) {
+    for (const syn of synonymsOf(a)) {
+      if (seen.has(syn.toLowerCase())) continue;
+      seen.add(syn.toLowerCase());
+      extra.push(syn);
+    }
+  }
+  if (extra.length === 0) return `"${alts[0]}" (no synonyms on file; add your own as |${alts[0]}/other|)`;
+  const more = extra.length > SHOWN_SYNONYMS ? ` +${extra.length - SHOWN_SYNONYMS} more` : "";
+  return `"${alts[0]}" (or ${extra.slice(0, SHOWN_SYNONYMS).join(", ")}${more})`;
 }
 
 /** One line for the form: how this answer will be graded. */
@@ -106,15 +193,20 @@ export function shortAnswerRule(stored: string, caseSensitive = false): string |
   const spec = parseShortAnswer(stored);
   const caps = caseSensitive ? "Capitals must match." : "Capitals don't matter.";
   if (spec.kind === "text") return spec.text ? `Graded as one answer; small typos pass. ${caps}` : null;
+  if (spec.kind === "keys") {
+    const keyCaps = caseSensitive ? "Capitals must match your own key words." : caps;
+    return `Passes when the answer has ${spec.keys.map(describeKey).join(" and ")}. ${keyCaps}`;
+  }
   const which = spec.need === spec.items.length ? (spec.items.length === 2 ? "both parts" : `all ${spec.items.length} parts`) : `any ${spec.need} of the ${spec.items.length} parts`;
-  return `Graded as a list: ${which}, in any order. ${caps}`;
+  const keyed = spec.items.some((it) => scanBars(it).keys.length > 0) ? " Key words accept synonyms." : "";
+  return `Graded as a list: ${which}, in any order.${keyed} ${caps}`;
 }
 
 /** The stored answer as a person reads it (results, library). */
 export function displayShortAnswer(stored: string): string {
   const spec = parseShortAnswer(stored);
-  if (spec.kind === "text") return spec.text;
-  const list = spec.items.join(", ");
+  if (spec.kind !== "list") return spec.text;
+  const list = spec.items.map(itemText).join(", ");
   return spec.need === spec.items.length ? `${list} (any order)` : `any ${spec.need} of: ${list}`;
 }
 
@@ -177,34 +269,49 @@ function containsWords(hay: string, needle: string): boolean {
   }
 }
 
+/** Every key word (one of its alternatives, or a synonym of one) is in the text. */
+function keysIn(text: string, keys: readonly string[][], caseSensitive: boolean): boolean {
+  return keys.every((alts) => keyPresent(text, alts, caseSensitive));
+}
+
 /** How many of the list's parts the typed answer names, each part counted once. */
 export function countListMatches(typed: string, items: readonly string[], caseSensitive = false): number {
   const whole = normalizeAnswer(typed, caseSensitive);
-  const left = pieces(typed).map((p) => normalizeAnswer(p, caseSensitive));
+  // Raw for key words (they read capitals themselves), normalised for plain parts.
+  const left = pieces(typed).map((raw) => ({ raw, norm: normalizeAnswer(raw, caseSensitive) }));
   // Longer parts first, so "mindfulness trading" isn't claimed by a piece meant for "trading".
-  const wanted = items.map((it) => normalizeAnswer(it, caseSensitive)).sort((a, b) => b.length - a.length);
+  const wanted = items
+    .map((it) => {
+      const bars = scanBars(it);
+      return { text: normalizeAnswer(bars.text, caseSensitive), keys: bars.keys };
+    })
+    .sort((a, b) => b.text.length - a.text.length);
   let found = 0;
   for (const item of wanted) {
-    const idx = left.findIndex((p) => same(p, item, caseSensitive));
+    // A part with key words is found by them (or their synonyms); a plain part by its text.
+    const keyed = item.keys.length > 0;
+    const idx = left.findIndex((p) => (keyed ? keysIn(p.raw, item.keys, caseSensitive) : same(p.norm, item.text, caseSensitive)));
     if (idx !== -1) {
       left.splice(idx, 1);
       found++;
-    } else if (containsWords(whole, item)) {
+    } else if (keyed ? keysIn(typed, item.keys, caseSensitive) : containsWords(whole, item.text)) {
       found++;
     }
   }
   return found;
 }
 
-/** One typed answer against one expected text, no list syntax (a cloze blank, a LIST item). */
+/** One typed answer against one expected text, no syntax (a cloze blank, a LIST item). */
 export function matchesText(typed: string, expected: string, opts: ShortGradeOptions = {}): boolean {
   const cs = opts.caseSensitive === true;
   return same(normalizeAnswer(typed, cs), normalizeAnswer(expected, cs), cs);
 }
 
-/** The SHORT grader: the typed answer against the stored one, list syntax included. */
+/** The SHORT grader: the typed answer against the stored one, lists and key words included. */
 export function gradeShortAnswer(typed: string, stored: string, opts: ShortGradeOptions = {}): boolean {
+  const cs = opts.caseSensitive === true;
   const spec = parseShortAnswer(stored);
-  if (spec.kind === "list") return countListMatches(typed, spec.items, opts.caseSensitive === true) >= spec.need;
+  if (spec.kind === "list") return countListMatches(typed, spec.items, cs) >= spec.need;
+  if (spec.kind === "keys") return keysIn(typed, spec.keys, cs);
   return matchesText(typed, spec.text, opts);
 }
