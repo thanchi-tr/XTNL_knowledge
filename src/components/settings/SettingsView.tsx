@@ -7,8 +7,11 @@
  *              (L0's useMotionPref().setPref: html attributes, the localStorage
  *              mirror the pre-paint script reads, and L3's savePrefs for theme,
  *              motion and autoAdvance; sound and haptics stay per device)
- *   Days       Capacity (the Today tile warns past it); rest weekdays, time off
- *              and "accept a loss" arrive with rest days and debt (M2)
+ *   Days       Capacity (the Today tile warns past it); from Duty's launch day
+ *              Accept a loss (LifeSettings.debtWriteOff, actions/duty
+ *              setDebtWriteOff) and where time off is declared; standing rest
+ *              weekdays stay 'not yet' (m2-refit decision 14). Before the
+ *              launch day the rows say when they arrive.
  *   Keyboard shortcuts
  *              The same grouped list as the '?' sheet (shell/Shortcuts
  *              ShortcutList, read from src/lib/shortcuts.ts) · Replay the tour
@@ -23,7 +26,11 @@
  */
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { getResetPreview } from "@/app/actions/reset";
+import { setDebtWriteOff } from "@/app/actions/duty";
 import { setDailyCapacity } from "@/app/actions/tasks";
+import { REST_PER_WEEK, WRITE_OFF_MIN_DAYS } from "@/lib/duty-economy";
+import type { DayKey } from "@/lib/life-day";
+import { dutyPhaseOf, weekdayDateLabel } from "@/lib/rituals";
 import type { FieldFocus } from "@/lib/field-focus";
 import type { AutoAdvancePref, HapticsPref, MotionLevel, SoundPref, ThemePref } from "@/lib/celebration-types";
 import { startTour } from "@/lib/tour-contract";
@@ -37,6 +44,7 @@ import { useMotionPref } from "@/components/ui/MotionPrefs";
 import { Sheet } from "@/components/ui/Sheet";
 import { SectionHeader, Segmented, Skeleton } from "@/components/ui/Tabs";
 import { formatNumber } from "@/components/ui/format";
+import { AcceptLossRow } from "./DaysControls";
 import { CAPACITY_PRESETS, clampCapacity, formatCapacity } from "./settings-model";
 import "@/components/library/study.css";
 import "./settings.css";
@@ -45,6 +53,12 @@ export interface SettingsData {
   capacity: { minutes: number; set: boolean };
   focus: { fieldName: string; multiplier: number } | null;
   fields: FieldFocus[];
+  /**
+   * Duty (M2; optional, a compatible extension): today, the launch day
+   * (duty-economy dutyLaunchDay(), on the server) and LifeSettings.debtWriteOff.
+   * Absent: the Days rows say when they arrive, as before.
+   */
+  duty?: { today: DayKey; launchDay: DayKey | null; debtWriteOff: boolean };
 }
 
 function subscribeHash(cb: () => void) {
@@ -60,7 +74,7 @@ export function SettingsView({ data }: { data: SettingsData }) {
         <ShortcutsSection />
       </div>
       <div className="set-stack">
-        <DaysSection capacity={data.capacity} />
+        <DaysSection capacity={data.capacity} duty={data.duty ?? null} />
         <StudyDataSection data={data} />
       </div>
     </div>
@@ -198,8 +212,10 @@ function ShortcutsSection() {
 
 // ─── Days ───────────────────────────────────────────────────────────────────
 
-function DaysSection({ capacity }: { capacity: SettingsData["capacity"] }) {
+function DaysSection({ capacity, duty }: { capacity: SettingsData["capacity"]; duty: SettingsData["duty"] | null }) {
   const [open, setOpen] = useState(false);
+  const phase = duty ? dutyPhaseOf(duty.today, duty.launchDay) : "off";
+  const from = duty?.launchDay ? `From ${weekdayDateLabel(duty.launchDay)}` : null;
   return (
     <section aria-labelledby="set-days">
       <SectionHeader id="set-days" title="Days" />
@@ -217,12 +233,71 @@ function DaysSection({ capacity }: { capacity: SettingsData["capacity"] }) {
             {formatCapacity(capacity.minutes)}
           </Button>
         </div>
-        <LaterRow name="Rest weekdays" when="Arrives with rest days" note="A rest day is held: nothing is owed and the streak waits." />
-        <LaterRow name="Time off" when="Arrives with rest days" note="Rest tomorrow, sick today, or a vacation from tomorrow; never backdated." />
-        <LaterRow name="Accept a loss" when="Arrives with make-up cards" note="Write off debt older than 14 days. There is no debt to write off yet." />
+        {phase === "off" ? (
+          <>
+            <LaterRow name="Rest weekdays" when="Arrives with rest days" note="A rest day is held: nothing is owed and the streak waits." />
+            <LaterRow name="Time off" when="Arrives with rest days" note="Rest tomorrow, sick today, or a vacation from tomorrow; never backdated." />
+            <LaterRow name="Accept a loss" when="Arrives with make-up cards" note={`Write off debt ${WRITE_OFF_MIN_DAYS} days old or more. There is no debt to write off yet.`} />
+          </>
+        ) : (
+          <>
+            <LaterRow
+              name="Rest weekdays"
+              when="Not yet"
+              note={`Standing rest days come later. Until then, declare rest a day at a time, the day before (at most ${REST_PER_WEEK} a week).`}
+            />
+            <div className="set-row">
+              <div className="n">
+                <b>Time off</b>
+                <span>
+                  {phase === "live"
+                    ? "Rest tomorrow, sick today, or a vacation from tomorrow: Time off, beside Close the day on Today. Never backdated."
+                    : `Rest and vacation for days ${from?.toLowerCase() ?? "from the launch day"} can already be declared on Today. Never backdated.`}
+                </span>
+              </div>
+              <Button variant="quiet" href="/today">
+                Open Today
+              </Button>
+            </div>
+            {phase === "live" && duty ? <DebtWriteOffRow initial={duty.debtWriteOff} /> : <LaterRow name="Accept a loss" when={from ?? "Arrives with make-up cards"} note="Musts carry no debt yet, so there is nothing to write off." />}
+          </>
+        )}
       </div>
       <CapacitySheet open={open} onClose={() => setOpen(false)} capacity={capacity} />
     </section>
+  );
+}
+
+/** Accept a loss, live: the switch writes LifeSettings.debtWriteOff; a refusal is said once and the switch goes back. */
+function DebtWriteOffRow({ initial }: { initial: boolean }) {
+  const [on, setOn] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  function change(next: boolean) {
+    setError(null);
+    setOn(next);
+    start(async () => {
+      let res: Awaited<ReturnType<typeof setDebtWriteOff>>;
+      try {
+        res = await setDebtWriteOff(next, { refresh: true });
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      }
+      if (!res.ok) {
+        setOn(!next);
+        setError(res.error);
+      }
+    });
+  }
+  return (
+    <>
+      <AcceptLossRow checked={on} onChange={change} disabled={pending} />
+      {error && (
+        <p className="st-error" role="alert" style={{ padding: "0 4px 8px" }}>
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 

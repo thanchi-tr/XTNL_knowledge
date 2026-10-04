@@ -10,9 +10,15 @@
  *    snapshot the before one's object, and nothing could ever diff.
  * 2. FieldSnapshot rows (further down): one per Field per day, for the
  *    Dashboard's 7-days-ago ghost radar.
+ *
+ * M2 (lane B, F8, F11, F16): the streak part is streak.ts's own read and fold
+ * (readStreakFacts, dailyStreakOf: rest days through duty-rule heldDaysOf,
+ * freezes, the pending rule), the habits part reads with the settlement
+ * cursor and held days as the board does, and the ledger part reads a WEEK
+ * row's mark through life-tracks weekMarkOf and carries the full-day mints
+ * for the week Seal.
  */
 import { cache } from "react";
-import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { cached, invalidate, type CacheTag } from "./cache";
 import { bossFor, bossMasteryReward } from "./bosses";
@@ -33,7 +39,7 @@ import {
   type StreakPart,
   type TracksPart,
 } from "./celebration-detect";
-import { HABIT_WINDOW_DAYS, habitStrength, perDutyStreak } from "./habit";
+import { HABIT_WINDOW_DAYS, habitStrength, perDutyStreak, type StreakOptions } from "./habit";
 import { addDays, dateColumn, keyOfDateColumn, todayKey, weekKeyOf, type DayKey } from "./life-day";
 import {
   GOAL_DEPTH_CAP,
@@ -46,12 +52,14 @@ import {
   parseWeekRowKey,
   weekKeptMintKey,
 } from "./life-economy";
+import { dutyLaunchDay, fullDayMintKey, isDutyLaunched } from "./duty-economy";
+import { heldDaysOf } from "./duty-rule";
 import { loadLifeLedger } from "./life-tracks-server";
-import { lifeTracksView, notLaunchedView, type LifeTracksView } from "./life-tracks";
+import { lifeTracksView, notLaunchedView, weekMarkOf, type LifeTracksView } from "./life-tracks";
 import { TRACKS, type Track } from "./life-types";
 import { parseRule } from "./recurrence";
 import { getSkill, SKILL_POOL } from "./skill-pool";
-import { HELD_SOURCES, computeStreak, streakWindowStart } from "./streak-curve";
+import { dailyStreakOf, readStreakFacts } from "./streak";
 
 // ─── The progress snapshot (celebrations) ───────────────────────────────────
 
@@ -141,37 +149,15 @@ async function readMastered(userId: string): Promise<MasteredPart> {
   return { ideas };
 }
 
+/**
+ * streak.ts's one query and its one fold over a longer window (readStreakFacts,
+ * dailyStreakOf: the same CASE as streakUnitsOf, the same held days through
+ * duty-rule heldDaysOf, the same pending rule while Duty is live), so the
+ * milestones and the board can never disagree about a day.
+ */
 async function readStreak(userId: string, now: Date): Promise<StreakPart> {
-  const today = todayKey(now);
-  // streak.ts's one query over a longer window: the same CASE as streakUnitsOf.
-  const rows = await prisma.$queryRaw<{ day: Date; units: number; held: number }[]>`
-    SELECT "day",
-           SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END)::int AS units,
-           SUM(CASE WHEN "source" IN (${Prisma.join([...HELD_SOURCES])}) THEN 1 ELSE 0 END)::int AS held
-    FROM "ActivityEvent"
-    WHERE "userId" = ${userId} AND "day" >= ${streakWindowStart(today, STREAK_READ_DAYS)}::date
-    GROUP BY "day"
-  `;
-  const active = new Set<DayKey>();
-  const heldDays = new Set<DayKey>();
-  for (const r of rows) {
-    const key = keyOfDateColumn(new Date(r.day));
-    if (r.units > 0) active.add(key);
-    if (r.held > 0) heldDays.add(key);
-  }
-  const streak = computeStreak(active, heldDays, today, { windowDays: STREAK_READ_DAYS });
-  // Held days inside the current run (freezes arrive in M2; 0 until then).
-  let held = 0;
-  for (let i = 1; i < STREAK_READ_DAYS; i++) {
-    const key = addDays(today, -i);
-    if (active.has(key)) continue;
-    if (heldDays.has(key)) {
-      held += 1;
-      continue;
-    }
-    break;
-  }
-  return { today, current: streak.current, todayActive: active.has(today), held };
+  const streak = dailyStreakOf(await readStreakFacts(userId, now, STREAK_READ_DAYS));
+  return { today: todayKey(now), current: streak.current, todayActive: streak.last7Days[6] === true, held: streak.heldInRun };
 }
 
 async function readSkills(userId: string): Promise<SkillsPart> {
@@ -249,28 +235,36 @@ async function readBosses(userId: string): Promise<BossesPart> {
 }
 
 /**
- * Kept WEEK rows (each with the MP its kept-week mint paid) and PR rows, in
- * one query. A WEEK row's track is its stored column (activity.ts keeps it on
- * WEEK and MP_MINT rows), else the one in its dedupe key. A kept week's mint
- * shares its day (the week's Sunday), so the same window reads both.
+ * Kept WEEK rows (each with the MP its kept-week mint paid), PR rows and
+ * (M2) the full-day mints, in one query. A WEEK row's track is its stored
+ * column (activity.ts keeps it on WEEK and MP_MINT rows), else the one in its
+ * dedupe key. A kept week's mint shares its day (the week's Sunday) and a
+ * full day's mint is dated the full day, so the same window reads them all.
+ * A WEEK row's mark is read by life-tracks weekMarkOf (qty and receipt), never
+ * from its detail line: only a kept one is a moment.
  */
 async function readLedger(userId: string, now: Date): Promise<LedgerPart> {
   const since = dateColumn(addDays(todayKey(now), -LEDGER_READ_DAYS));
   const rows = await prisma.activityEvent.findMany({
     where: { userId, source: { in: ["WEEK", "PR", "MP_MINT"] }, day: { gte: since } },
-    select: { id: true, source: true, track: true, day: true, xp: true, qty: true, detail: true, dedupeKey: true },
+    select: { id: true, source: true, track: true, day: true, xp: true, qty: true, detail: true, dedupeKey: true, receipt: true },
   });
   const minted = new Map<string, number>();
   for (const r of rows) if (r.source === "MP_MINT" && r.dedupeKey) minted.set(r.dedupeKey, r.qty ?? 0);
   const weeks: LedgerRow[] = [];
   const prs: LedgerRow[] = [];
+  const fullDays: LedgerRow[] = [];
   for (const r of rows) {
-    if (r.source === "MP_MINT") continue;
     const day = keyOfDateColumn(r.day);
     const row: LedgerRow = { key: r.dedupeKey ?? r.id, track: r.track, day, xp: r.xp, qty: r.qty, detail: r.detail };
+    if (r.source === "MP_MINT") {
+      // A full day's mint ('mp:LIFE_FULL_DAY:<d>', qty 0 when trimmed): the week Seal states what it paid.
+      if (r.dedupeKey && r.dedupeKey === fullDayMintKey(day)) fullDays.push({ ...row, week: weekKeyOf(day), mp: round2(r.qty ?? 0) });
+      continue;
+    }
     if (r.source === "WEEK") {
-      // qty 1 = kept, 0 = not; a backfilled week ('backfill · …') counts for depth only and is never a moment.
-      if (!(r.qty != null && r.qty > 0) || isBackfillDetail(r.detail)) continue;
+      // Only a kept week is a moment (a held or not-kept one is qty 0); a backfilled week ('backfill · …') counts for depth only.
+      if (weekMarkOf({ qty: r.qty, receipt: r.receipt }) !== "kept" || isBackfillDetail(r.detail)) continue;
       const key = parseWeekRowKey(r.dedupeKey);
       const track = isTrack(r.track) ? r.track : (key?.track ?? null);
       const week = key?.weekKey ?? weekKeyOf(day);
@@ -278,17 +272,28 @@ async function readLedger(userId: string, now: Date): Promise<LedgerPart> {
       weeks.push({ ...row, track, week, ...(mp != null ? { mp: round2(mp) } : {}) });
     } else prs.push(row);
   }
-  return { weeks, prs };
+  return { weeks, prs, fullDays };
 }
 
+/**
+ * Habit strength and the per-duty run of each recurring template. Once a
+ * Duty launch day is set, the same round trip also reads the settlement
+ * cursor, the RestDay rows (duty-rule heldDaysOf) and the FREEZE_USE days,
+ * and the habit reads take them as the board's do (decision 15): an
+ * unsettled day reads pending while Duty is live, and a held day reads held
+ * (a compulsoryOnRest must is held by a freeze day only).
+ */
 async function readHabits(userId: string, now: Date, templateIds?: readonly string[]): Promise<HabitsPart> {
   const today = todayKey(now);
-  const since = dateColumn(addDays(today, -(HABIT_WINDOW_DAYS - 1)));
+  const sinceKey = addDays(today, -(HABIT_WINDOW_DAYS - 1));
+  const since = dateColumn(sinceKey);
   const ids = templateIds && templateIds.length ? [...templateIds] : null;
-  const [templates, instances] = await Promise.all([
+  const launch = dutyLaunchDay();
+  const restFrom = launch != null && today >= launch ? (sinceKey > launch ? sinceKey : launch) : null;
+  const [templates, instances, settings, restRows, freezeRows] = await Promise.all([
     prisma.taskTemplate.findMany({
       where: { userId, archivedAt: null, recurrence: { not: null }, ...(ids ? { id: { in: ids } } : {}) },
-      select: { id: true, title: true, recurrence: true, startDay: true },
+      select: { id: true, title: true, recurrence: true, startDay: true, compulsory: true, compulsoryOnRest: true },
     }),
     prisma.taskInstance.findMany({
       where: {
@@ -296,14 +301,32 @@ async function readHabits(userId: string, now: Date, templateIds?: readonly stri
         day: { gte: since },
         ...(ids ? { templateId: { in: ids } } : { template: { archivedAt: null, recurrence: { not: null } } }),
       },
-      select: { templateId: true, day: true, status: true },
+      select: { templateId: true, day: true, status: true, repaired: true },
     }),
+    launch != null ? prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true } }) : Promise.resolve(null),
+    restFrom
+      ? prisma.restDay.findMany({
+          where: { userId, day: { gte: dateColumn(restFrom), lte: dateColumn(today) } },
+          select: { day: true, kind: true, declaredAt: true, cancelledAt: true },
+        })
+      : Promise.resolve([] as { day: Date; kind: string; declaredAt: Date; cancelledAt: Date | null }[]),
+    restFrom
+      ? prisma.activityEvent.findMany({ where: { userId, source: "FREEZE_USE", day: { gte: dateColumn(restFrom), lte: dateColumn(today) } }, select: { day: true } })
+      : Promise.resolve([] as { day: Date }[]),
   ]);
-  const byTemplate = new Map<string, { day: DayKey; status: string }[]>();
+  const byTemplate = new Map<string, { day: DayKey; status: string; repaired: boolean }[]>();
   for (const i of instances) {
     const list = byTemplate.get(i.templateId) ?? [];
-    list.push({ day: keyOfDateColumn(i.day), status: i.status });
+    list.push({ day: keyOfDateColumn(i.day), status: i.status, repaired: i.repaired });
     byTemplate.set(i.templateId, list);
+  }
+  // M2: the cursor (only while Duty is live) and the held days; both inert before a launch day is set.
+  const settledThroughDay = isDutyLaunched(today, launch) && settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null;
+  const freezeDays = new Set<DayKey>(freezeRows.map((r) => keyOfDateColumn(r.day)));
+  const heldDays = new Set<DayKey>(freezeDays);
+  if (restFrom) {
+    const rest = restRows.map((r) => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt }));
+    for (const d of heldDaysOf(rest, restFrom, today)) heldDays.add(d);
   }
   const rows: HabitsPart["rows"] = [];
   for (const t of templates) {
@@ -311,7 +334,9 @@ async function readHabits(userId: string, now: Date, templateIds?: readonly stri
     if (!rule) continue;
     const start = keyOfDateColumn(t.startDay);
     const list = byTemplate.get(t.id) ?? [];
-    rows.push({ id: t.id, title: t.title, strength: habitStrength(rule, start, today, list), kept: perDutyStreak(rule, start, today, list).kept });
+    const opts: StreakOptions =
+      launch == null ? {} : { settledThroughDay, heldDays: t.compulsory && t.compulsoryOnRest ? freezeDays : heldDays };
+    rows.push({ id: t.id, title: t.title, strength: habitStrength(rule, start, today, list, opts), kept: perDutyStreak(rule, start, today, list, opts).kept });
   }
   return { rows };
 }

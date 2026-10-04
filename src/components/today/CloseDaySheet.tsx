@@ -23,18 +23,25 @@ export interface CloseReflection {
   onMood: (v: number) => void;
   restTomorrow: boolean;
   onRestTomorrow: (v: boolean) => void;
+  /** The switch, named by its day ('Rest Wednesday': between 00:00 and 04:00 'tomorrow' is ambiguous). Default 'Rest tomorrow'. */
+  restLabel?: string;
+  /** Why the switch is off limits (two rest days that week already); shown in place of its note. */
+  restDisabledReason?: string | null;
+  /** False hides the switch (no Duty launch day yet, or the day is before it). Default shown. */
+  showRest?: boolean;
 }
 
 /**
  * Close the day: Tomorrow / Anytime / Drop per open todo, "Do the minimum"
- * for an open must, Roll all, and (M2) a one-line note, a mood of 1–5
- * (never graded) and a Rest tomorrow switch.
+ * for an open must (or, without one, the honest line of what leaving it
+ * open costs, with no choices), Skip today for a habit, Roll all, and (M2)
+ * a one-line note, a mood of 1–5 (never graded) and a 'Rest <weekday>'
+ * switch.
  *
- * Presentational: the caller says which choices exist and what each does.
- * On Today it acts at once with the moves the server already accepts (a
- * one-off to tomorrow, a must's minimum) and leaves out the reflection,
- * which needs M2's storage; /dev/style/today renders the full M2 sheet from
- * fixtures. `chosen` marks a pending pick when the caller batches them.
+ * Presentational: the caller says which choices exist and what each does
+ * (board-ui.ts closeItemsOf). On Today it acts at once with the moves the
+ * server accepts; before Duty is live it leaves out the reflection.
+ * `chosen` marks a pending pick when the caller batches them.
  */
 export function CloseDaySheet({
   open,
@@ -85,20 +92,22 @@ export function CloseDaySheet({
                 <b>{it.title}</b>
                 <span>{it.meta}</span>
               </div>
-              <div className="opt" role="group" aria-label={`What to do with ${it.title}`}>
-                {it.choices.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="y-opt"
-                    aria-pressed={chosen ? chosen[it.key] === c.id : undefined}
-                    disabled={busy}
-                    onClick={() => onChoose(it.key, c.id)}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
+              {it.choices.length > 0 && (
+                <div className="opt" role="group" aria-label={`What to do with ${it.title}`}>
+                  {it.choices.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="y-opt"
+                      aria-pressed={chosen ? chosen[it.key] === c.id : undefined}
+                      disabled={busy}
+                      onClick={() => onChoose(it.key, c.id)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -131,14 +140,21 @@ export function CloseDaySheet({
               </button>
             ))}
           </div>
-          <div className="today-opt-card">
-            <HeldGlyph kind="rest" size={22} className="held" />
-            <div className="n">
-              Rest tomorrow
-              <span>Nothing is owed on a rest day. The day after gets the rested bonus.</span>
+          {reflection.showRest !== false && (
+            <div className="today-opt-card">
+              <HeldGlyph kind="rest" size={22} className="held" />
+              <div className="n">
+                {reflection.restLabel ?? "Rest tomorrow"}
+                <span>{reflection.restDisabledReason ?? "Declared the day before. Nothing is owed on a rest day, and the streak holds."}</span>
+              </div>
+              <Switch
+                checked={reflection.restTomorrow}
+                onChange={reflection.onRestTomorrow}
+                label={reflection.restLabel ?? "Rest tomorrow"}
+                disabled={!!reflection.restDisabledReason || busy}
+              />
             </div>
-            <Switch checked={reflection.restTomorrow} onChange={reflection.onRestTomorrow} label="Rest tomorrow" />
-          </div>
+          )}
         </>
       )}
     </Sheet>

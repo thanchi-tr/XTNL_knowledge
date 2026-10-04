@@ -786,7 +786,7 @@ model TaskInstance {
   day         DateTime     @db.Date
   /// "Again" completions use slot n + 1.
   slot        Int          @default(0)
-  /// DONE | DONE_LATE | DONE_MVV | MISSED | EXCUSED | SKIPPED | UNDONE | WRITTEN_OFF.
+  /// DONE | DONE_LATE | DONE_MVV | MISSED | EXCUSED | SKIPPED | UNDONE | WRITTEN_OFF | MADE_UP (M2: a late make-up; the debt is cleared, the occurrence still reads missed).
   status      String
   /// manual | record-yesterday | make-up | auto:reviews | auto:ideas | auto:steps | auto:workout.
   source      String       @default("manual")
@@ -805,6 +805,27 @@ model TaskInstance {
   @@unique([templateId, day, slot])
   @@index([userId, day])
   @@index([userId, debtOpen])
+  @@schema("public")
+}
+
+/// A declared rest, sick or vacation day (M2, migration life_duty). Read only
+/// through src/lib/duty-rule.ts heldDaysOf, which ignores a REST or VACATION
+/// row declared at or after its day started, a SICK row declared at or after
+/// its day ended, and any cancelled row. Every write upserts by (userId, day)
+/// and resets kind, declaredAt and cancelledAt, so a reused row is judged by
+/// its new declaration time.
+model RestDay {
+  id          String    @id @default(cuid())
+  userId      String
+  /// The life day held (life-day.ts dateColumn).
+  day         DateTime  @db.Date
+  /// REST | SICK | VACATION.
+  kind        String
+  declaredAt  DateTime  @default(now())
+  /// A future declaration can be cancelled before its day starts; the row is reused by the next declaration.
+  cancelledAt DateTime?
+
+  @@unique([userId, day])
   @@schema("public")
 }
 

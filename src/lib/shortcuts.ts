@@ -44,6 +44,7 @@ export type ShortcutId =
   | "go-train"
   | "go-you"
   | "go-week"
+  | "record-yesterday"
   | "capture-add"
   | "capture-add-next"
   | "idea-create"
@@ -61,8 +62,12 @@ export interface Shortcut {
   /** Where it takes you, for a navigation shortcut. */
   href?: string;
   /** The help sheet's group. */
-  group: "Capture" | "Go to" | "Study" | "Help";
+  group: ShortcutGroup;
 }
+
+/** The help sheet's groups, in the order it lists them. */
+export const SHORTCUT_GROUPS = ["Capture", "Today", "Go to", "Study", "Help"] as const;
+export type ShortcutGroup = (typeof SHORTCUT_GROUPS)[number];
 
 /** Two keys of a 'g' sequence must come within this long of each other. */
 export const SEQUENCE_MS = 1500;
@@ -75,6 +80,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "capture-add-next", keys: ["Shift+Enter"], label: "Add the line and type the next one", scope: "capture", group: "Capture" },
   { id: "idea-create", keys: ["Alt+Enter"], label: "Create the idea", scope: "idea-form", group: "Capture" },
   { id: "idea-blank", keys: ["Alt+B"], label: "Blank the selected words (cloze)", scope: "idea-form", group: "Capture" },
+
+  { id: "record-yesterday", keys: ["y"], label: "Record yesterday", scope: "global", href: "/today?sheet=yesterday", group: "Today" },
 
   { id: "go-today", keys: ["g t"], label: "Today", scope: "global", href: "/today", group: "Go to" },
   { id: "go-study", keys: ["g s"], label: "Study (review)", scope: "global", href: "/review", group: "Go to" },
@@ -361,6 +368,15 @@ export function decideShortcut(e: KeyEventLike, seq: SequenceState, env: Shortcu
 
 /** Opens the '?' help sheet from anywhere (Settings, the tour): the global handler listens. */
 export const SHORTCUT_HELP_EVENT = "xtnl:shortcuts:help";
+/**
+ * 'y' on /today: asks the board to open its Record yesterday sheet in place
+ * (the Today board listens). Anywhere else 'y' navigates to
+ * RECORD_YESTERDAY_HREF, which opens the same sheet on arrival.
+ */
+export const RECORD_YESTERDAY_EVENT = "xtnl:today:record-yesterday";
+/** The deep link that opens Record yesterday on Today (the 'y' shortcut, the bell's 'Yesterday' row). */
+export const RECORD_YESTERDAY_PARAM = "sheet";
+export const RECORD_YESTERDAY_HREF = `/today?${RECORD_YESTERDAY_PARAM}=yesterday`;
 /** Asks the library's search box to take focus ('/' while already on /library). */
 export const LIBRARY_SEARCH_EVENT = "xtnl:library:focus-search";
 /** '/' elsewhere navigates to /library?focus=search; the search box takes focus on arrival and drops the param. */

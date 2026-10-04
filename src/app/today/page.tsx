@@ -8,7 +8,7 @@ import { getDailyStreak } from "@/lib/streak";
 import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
 import { isLaunched } from "@/lib/life-economy";
-import { maybeJudgeWeeks } from "@/lib/life-weeks-server";
+import { maybeMaintainLife } from "@/lib/settlement";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
@@ -48,10 +48,13 @@ export default async function TodayPage() {
     });
   }
 
-  // Weeks closed since the last judge (M5): its own after(), never awaited by
-  // the render. maybeJudgeWeeks returns at once before launch, with writes
-  // off, or when the last closed week is already judged, and never throws.
-  after(() => maybeJudgeWeeks(userId));
+  // Life maintenance, its own after(), never awaited by the render (M2 F5,
+  // decision 4): daily settlement first (Duty's lazy, idempotent judging of
+  // days ≤ today − 2), then the M5 week judge, in one single-flight chain.
+  // maybeMaintainLife writes nothing before Duty's launch, with life writes
+  // off (lifeWritesEnabled, the shared database) or while the settlement
+  // cursor is null, returns at once when nothing is behind, and never throws.
+  after(() => maybeMaintainLife(userId));
 
   const readyBosses = bosses.filter((b) => b.availability.status === "ready").map((b) => b.archetype.name);
   const focus = feed?.notices.find((n) => n.id === "focus")?.title ?? null;

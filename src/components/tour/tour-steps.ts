@@ -2,7 +2,8 @@
  * The guided tour's steps, copy and start rule. Pure (scripts/tour-check.ts
  * imports it): no DOM, no React.
  *
- *   tourSteps({ keyboard, keyOf? })   the seven steps, in order
+ *   tourSteps({ keyboard, keyOf?, dutyLive? })   the seven steps, in order
+ *   TODAY_COPY / TODAY_DUTY_COPY      the Today step before and once Duty is live (M2)
  *   copyText(body)                    a step's body as plain text (the check's 160-char budget)
  *   sayKey(key)                       'g t' → ['g', 't'] said "g then t"; 'Shift+?' → '?'
  *   shouldAutoStart(input)            the first-run guard (seen · path · dialog · automation · ?notour)
@@ -43,7 +44,18 @@ export interface StepContext {
   keyboard: boolean;
   /** The key a shortcut is pressed with (the check swaps it to prove nothing is hard-coded). */
   keyOf?: (id: ShortcutId) => string;
+  /**
+   * Duty is live (duty-economy isDutyLaunched(today), from the caller): the
+   * Today step also says what a missed must costs and how it comes back.
+   * Absent or false: the pre-Duty copy, exactly.
+   */
+  dutyLive?: boolean;
 }
+
+/** The Today step before Duty is live. */
+export const TODAY_COPY = "Must, Planned and Habits. Ticking a task pays life XP, and its receipt shows how every number was worked out.";
+/** The Today step once Duty is live (m2-refit F15): the same lanes, plus the stake and the way back, within the 160-character budget. */
+export const TODAY_DUTY_COPY = "Must, Planned and Habits. A tick pays life XP; its receipt shows the sums. A must you miss is owed; make it up within two days and its streak comes back.";
 
 /** Wait this long on /today after hydration before the first-run tour starts by itself. */
 export const SETTLE_MS = 800;
@@ -80,7 +92,7 @@ export function copyText(body: readonly Seg[]): string {
 /** The phone's Shortcuts step: what the installed app's icon offers on a long-press, by what it does (no menu names). */
 export const PHONE_SHORTCUTS_COPY = "On a phone with the app installed, long-press its icon for a quick task, a review or a new idea.";
 
-export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0] }: StepContext): TourStep[] {
+export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0], dutyLive = false }: StepContext): TourStep[] {
   const k = (id: ShortcutId): Seg => sayKey(keyOf(id));
   const shortcuts: Seg[] = keyboard
     ? [k("capture-anywhere"), " captures from anywhere; ", k("capture"), " does too when you are not typing. ", k("go-today"), " opens Today, ", k("go-study"), " Study. Press ", k("help"), " for the full list."]
@@ -101,7 +113,7 @@ export function tourSteps({ keyboard, keyOf = (id) => shortcutOf(id).keys[0] }: 
     {
       id: "today",
       title: "Today",
-      body: ["Must, Planned and Habits. Ticking a task pays life XP, and its receipt shows how every number was worked out."],
+      body: [dutyLive ? TODAY_DUTY_COPY : TODAY_COPY],
       targets: ['[data-tour="today-lanes"]', ...navTargets("today")],
     },
     {

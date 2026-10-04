@@ -23,6 +23,14 @@
  *       percentage, the launch's folded dry run and silent judge
  *   §8b a close before launch: closeGoalCore refuses and reaches no database (every Prisma
  *       entry it could use is a spy that throws)
+ *   §9  M2 (lane B, m2-refit.md F11, F3, F6, F18): a pre-M2 week judges identically; the DUTY
+ *       gate and the split run; full-day mints after the kept tracks inside the cap; held weeks
+ *       and pro-rated floors (weekMarkOf, the streak bridge, pips); TARGET units and make-ups;
+ *       late deadline one-offs (a late minimum too: one rule with settlement); inbox musts; rule
+ *       history (un-flag, pending archive, 'Even on rest days', a TARGET's held days per day);
+ *       the gate as settledFor (the launch script's early cursor); a reset after launch
+ *   §9b the cheap check: maybeJudgeWeeks returns without a judge read while only a gated DUTY is
+ *       missing, and judges once settlement has passed the Sunday (Prisma entries are spies)
  *
  * §6 builds Prisma ops without running them (Prisma queries are lazy), so no
  * database is ever reached.
@@ -137,6 +145,8 @@ import {
   type GoalMintRow,
 } from "../src/lib/goals";
 import {
+  dutyGated,
+  isDutyWeek,
   judgeDayOf,
   lastJudgeableSunday,
   ledgerWithPlans,
@@ -144,9 +154,22 @@ import {
   weeksToJudge,
   type WeekInstance,
   type WeekJudgeState,
+  type WeekPlan,
   type WeekTaskRow,
   type WeekTemplate,
 } from "../src/lib/life-weeks";
+import {
+  HELD_PREFIX,
+  HELD_WEEK_MARK,
+  HELD_WEEK_REST_DAYS,
+  floorFactor,
+  heldWeekReceipt,
+  isHeldWeekReceipt,
+  keptFloorsOf,
+} from "../src/lib/life-economy";
+import { weekMarkOf } from "../src/lib/life-tracks";
+import { fullDayMintKey, newLifeSettingsDays } from "../src/lib/duty-economy";
+import { launchHasFinished, maybeJudgeWeeks } from "../src/lib/life-weeks-server";
 
 let failed = 0;
 let passed = 0;
@@ -299,6 +322,16 @@ console.log("\n§1c launch gates");
   check("writes on read: production", lifeWritesEnabled({ NODE_ENV: "production" }));
   check("writes on read: never in dev by default (shared database)", !lifeWritesEnabled({ NODE_ENV: "development" }) && !lifeWritesEnabled({}));
   check("writes on read: dev with XTNL_LIFE_JUDGE=1 only", lifeWritesEnabled({ NODE_ENV: "development", XTNL_LIFE_JUDGE: "1" }) && !lifeWritesEnabled({ NODE_ENV: "development", XTNL_LIFE_JUDGE: "true" }));
+  check(
+    "writes on read: never on a Vercel Preview build (NODE_ENV production, VERCEL_ENV preview: the shared live account)",
+    !lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "preview" }) && !lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "development" })
+  );
+  check(
+    "writes on read: Vercel production, or production with VERCEL_ENV unset, still writes; XTNL_LIFE_JUDGE=1 is explicit everywhere",
+    lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "production" }) &&
+      lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "" }) &&
+      lifeWritesEnabled({ NODE_ENV: "production", VERCEL_ENV: "preview", XTNL_LIFE_JUDGE: "1" })
+  );
 }
 
 // ── §1d judging days ──────────────────────────────────────────────────────
@@ -1258,10 +1291,502 @@ async function closeBeforeLaunch(): Promise<void> {
   }
 }
 
+// ── §9 M2: the judge learns held days, the DUTY gate and full days (F11) ───
+console.log("\n§9 M2 week judge");
+{
+  const LAUNCH = "2026-10-05"; // the life launch in these fixtures (Mon, W41)
+  const DUTY_DAY = "2026-10-12"; // DUTY_LAUNCH_DAY (Mon, W42)
+  const MON = DUTY_DAY;
+  const SUN = addDays(MON, 6);
+  const SAT = addDays(MON, 5);
+  const WED_AFTER = addDays(SUN, 3);
+  const WK = weekKeyOf(MON);
+  const day = (n: number): DayKey => addDays(MON, n);
+  let seq = 0;
+  const task = (track: Track, d: DayKey, rawXp: number, o: { category?: Category; minutes?: number; b?: number } = {}): WeekTaskRow => ({
+    id: `m2ev${++seq}`,
+    source: "TASK",
+    dedupeKey: null,
+    day: d,
+    track,
+    templateId: null,
+    rawXp,
+    receipt: { v: "life-1", factors: [{ key: "B", label: "band", value: o.b ?? 10 }], minutes: o.minutes ?? 15, raw: rawXp, kneeBefore: 0, xp: rawXp, track },
+    category: o.category ?? "OTHER",
+  });
+  const spread = (track: Track, offsets: number[], raw: number, o: Parameters<typeof task>[3] = {}) => offsets.map((d) => task(track, day(d), raw, o));
+  const must = (id: string, o: Partial<WeekTemplate> = {}): WeekTemplate => ({
+    id,
+    kind: "TASK",
+    recurrence: null,
+    startDay: addDays(MON, -30),
+    dueDay: null,
+    archivedDay: null,
+    compulsory: true,
+    compulsoryOnRest: false,
+    inbox: false,
+    dueKind: o.recurrence ? null : "DEADLINE",
+    ...o,
+  });
+  const daily = (id: string, o: Partial<WeekTemplate> = {}) => must(id, { kind: "HABIT", recurrence: "DAILY", dueKind: null, ...o });
+  const inst = (templateId: string, d: DayKey, status: InstanceStatus = "DONE", repaired = false): WeekInstance => ({ templateId, day: d, status, repaired });
+  const state = (o: Partial<WeekJudgeState> = {}): WeekJudgeState => ({
+    today: WED_AFTER,
+    launchDay: LAUNCH,
+    epochDay: MON,
+    judged: new Set<string>(),
+    rows: [],
+    templates: [],
+    instances: [],
+    mints: [],
+    heldDays: new Set<DayKey>(),
+    dutyLaunchDay: DUTY_DAY,
+    settledThroughDay: addDays(SUN, 2),
+    restDays: new Set<DayKey>(),
+    fullDays: [],
+    ...o,
+  });
+  const plan0 = (s: WeekJudgeState): WeekPlan | undefined => planWeeks(s)[0];
+  const verdict = (s: WeekJudgeState, track: Track) => plan0(s)?.tracks.find((t) => t.track === track);
+  const gym = (d: number) => task("BODY", day(d), 25, { category: "EXERCISE", minutes: 60, b: 20 });
+  const walk = (d: number) => task("BODY", day(d), 10, { category: "EXERCISE", minutes: 30, b: 10 });
+  const allKeptRows = [gym(0), gym(2), walk(4), ...spread("DUTY", [0, 1, 2, 3, 4], 6), ...spread("CRAFT", [0, 2, 4], 10), ...spread("CARE", [1, 3, 5], 10)];
+  const applyPlans = (s: WeekJudgeState, plans: readonly WeekPlan[]): WeekJudgeState => ({
+    ...s,
+    judged: new Set([...s.judged, ...plans.flatMap((p) => p.tracks.map((t) => weekRowKey(t.track, p.weekKey)))]),
+    mints: [...s.mints, ...plans.flatMap((p) => p.mints.map((m) => ({ day: m.day, qty: m.delta, reason: m.reason, key: m.dedupeKey })))],
+  });
+  const mintsText = (p: WeekPlan | undefined) => (p?.mints ?? []).map((m) => `${m.reason === "LIFE_FULL_DAY" ? `FULL:${m.day}` : m.track}:${m.delta}`).join(",");
+  const total = (plans: readonly WeekPlan[]) => round2(plans.reduce((s, p) => s + p.mints.reduce((t, m) => t + m.delta, 0), 0));
+  const trimmed = (plans: readonly WeekPlan[]) => plans.flatMap((p) => p.mints.filter((m) => m.why?.includes("trimmed")).map((m) => m.dedupeKey)).sort().join();
+
+  // A week judged before M2 judges identically: every M2 field present, nothing moves.
+  const M5MON = LAUNCH;
+  const m5 = (instances: WeekInstance[]): WeekJudgeState => ({
+    today: addDays(M5MON, 9),
+    launchDay: LAUNCH,
+    epochDay: M5MON,
+    judged: new Set(),
+    rows: [task("DUTY", M5MON, 12), task("DUTY", addDays(M5MON, 1), 12), task("DUTY", addDays(M5MON, 3), 12), task("CRAFT", M5MON, 40)],
+    templates: [
+      { id: "d", kind: "HABIT", recurrence: "DAILY", startDay: "2026-09-01", dueDay: null, archivedDay: null },
+      { id: "t", kind: "HABIT", recurrence: "TARGET:3/W", startDay: "2026-09-01", dueDay: null, archivedDay: null },
+      { id: "late", kind: "TASK", recurrence: null, startDay: "2026-09-01", dueDay: addDays(M5MON, 1), archivedDay: null },
+      { id: "inbox", kind: "HABIT", recurrence: "DOW:3", startDay: "2026-09-01", dueDay: null, archivedDay: null },
+    ],
+    instances,
+    mints: [],
+    heldDays: new Set(),
+  });
+  const decorate = (s: WeekJudgeState): WeekJudgeState => ({
+    ...s,
+    dutyLaunchDay: DUTY_DAY,
+    settledThroughDay: null,
+    restDays: new Set([addDays(M5MON, 2), addDays(M5MON, 4)]),
+    fullDays: [M5MON, addDays(M5MON, 1)],
+    templates: [
+      ...s.templates.map((t) => ({ ...t, compulsory: true, compulsoryOnRest: false, inbox: t.id === "inbox", dueKind: t.id === "late" ? "PLANNED" : null, pendingChange: null })),
+      { ...must("unflagged", { kind: "HABIT", recurrence: "DAILY", dueKind: null }), compulsory: false, pendingChange: { v: 1, prior: [{ throughDay: addDays(M5MON, 6), compulsory: true }] } },
+    ],
+    instances: s.instances.map((i) => ({ ...i, repaired: false })),
+    mints: s.mints.map((m) => ({ ...m, key: null })),
+  });
+  const keptAll = [0, 1, 2, 3, 4, 5, 6].flatMap((i) => [inst("d", addDays(M5MON, i))]).concat([inst("t", M5MON), inst("t", addDays(M5MON, 1)), inst("t", addDays(M5MON, 3)), inst("late", M5MON), inst("inbox", addDays(M5MON, 2))]);
+  const withMisses = [inst("d", M5MON), inst("d", addDays(M5MON, 1), "MISSED"), inst("t", M5MON), inst("late", addDays(M5MON, 3), "DONE_LATE")];
+  for (const [name, instances] of [["all kept", keptAll], ["with misses and a late deadline", withMisses]] as const) {
+    const plain = m5([...instances]);
+    const plainPlans = planWeeks(plain);
+    const decoratedPlans = planWeeks(decorate(plain));
+    check(`pre-M2 week (${name}): every M2 field present, the plan is identical`, plainPlans.length === 1 && JSON.stringify(plainPlans) === JSON.stringify(decoratedPlans), `${JSON.stringify(plainPlans[0]?.tracks)} vs ${JSON.stringify(decoratedPlans[0]?.tracks)}`);
+  }
+  const onlyLate = (o: Partial<WeekTemplate>, dueOffset: number, doneOffset: number): string => {
+    const s = m5([inst("late", addDays(M5MON, doneOffset), "DONE_LATE")]);
+    const t: WeekTemplate = { ...s.templates.find((x) => x.id === "late")!, dueDay: addDays(M5MON, dueOffset), ...o };
+    return planWeeks(decorate({ ...s, templates: [t], rows: [0, 1, 2, 3, 4].map((d) => task("DUTY", addDays(M5MON, d), 6)) }))[0].tracks.find((x) => x.track === "DUTY")!.detail;
+  };
+  eq("pre-M2: a deadline done two days late is still missed there (M5 rules, M2 fields present)", onlyLate({}, 1, 3), "Not kept · 1 must missed (Tue)");
+  const bare = m5([]);
+  const inboxPre = planWeeks(decorate({ ...bare, templates: bare.templates.filter((t) => t.id === "inbox") }))[0].tracks.find((x) => x.track === "DUTY")!.detail;
+  eq("pre-M2: an inbox must still counts there (decision 31 changes Duty weeks only)", inboxPre, "Not kept · 1 must missed (Wed)");
+  check("isDutyWeek: a Sunday on or after DUTY_LAUNCH_DAY; never with no launch day", isDutyWeek(SUN, DUTY_DAY) && !isDutyWeek(addDays(MON, -1), DUTY_DAY) && !isDutyWeek(SUN, null));
+
+  // The DUTY gate (decision 5) and the split run (F17 3c's fixture, here per track).
+  const fulls = [day(0), day(1), day(2), day(3)];
+  const behind = state({ rows: allKeptRows, settledThroughDay: SAT, fullDays: fulls });
+  const run1 = planWeeks(behind);
+  check(
+    "gate: on Wednesday with the cursor on Saturday, BODY, CRAFT and CARE are judged and DUTY waits",
+    run1.length === 1 && run1[0].tracks.map((t) => t.track).join() === "BODY,CRAFT,CARE" && run1[0].tracks.every((t) => t.kept),
+    JSON.stringify(run1.map((p) => p.tracks.map((t) => t.track)))
+  );
+  eq("gate: they mint 1.5 each, and no full day yet", mintsText(run1[0]), "BODY:1.5,CRAFT:1.5,CARE:1.5");
+  const after1 = applyPlans(behind, run1);
+  check("gate: re-planning while the cursor is behind plans nothing", planWeeks(after1).length === 0);
+  const gateBehind = { dutyLaunchDay: DUTY_DAY, settledThroughDay: SAT };
+  check("gate: weeksToJudge leaves a gated DUTY out, so nothing is left to judge", weeksToJudge(WED_AFTER, MON, after1.judged, 12, gateBehind).length === 0 && weeksToJudge(WED_AFTER, MON, after1.judged, 12).length === 1);
+  check(
+    "gate: dutyGated holds a Duty week until its Sunday is settled (a null cursor settles nothing; no launch day, no gate)",
+    dutyGated(SUN, WED_AFTER, gateBehind) &&
+      !dutyGated(SUN, WED_AFTER, { dutyLaunchDay: DUTY_DAY, settledThroughDay: SUN }) &&
+      dutyGated(SUN, WED_AFTER, { dutyLaunchDay: DUTY_DAY, settledThroughDay: null }) &&
+      !dutyGated(SUN, WED_AFTER, { dutyLaunchDay: null, settledThroughDay: null }) &&
+      !dutyGated(addDays(MON, -1), WED_AFTER, { dutyLaunchDay: DUTY_DAY, settledThroughDay: null })
+  );
+  const run2 = planWeeks({ ...after1, settledThroughDay: addDays(SUN, 2) });
+  check("gate: once settled through Sunday, DUTY is judged alone", run2.length === 1 && run2[0].tracks.map((t) => t.track).join() === "DUTY" && run2[0].tracks[0].kept);
+  eq("gate: DUTY mints 1.5, then the 4 full days at 0.5 in day order (8 in all)", mintsText(run2[0]), `DUTY:1.5,${fulls.map((d) => `FULL:${d}:0.5`).join(",")}`);
+  const fullMints = run2[0].mints.filter((m) => m.reason === "LIFE_FULL_DAY");
+  check(
+    "gate: a full-day mint is keyed mp:LIFE_FULL_DAY:<d>, dated its day, no track, why 'full day <d>'",
+    fullMints.every((m) => m.dedupeKey === fullDayMintKey(m.day) && m.track === null && m.why === `full day ${m.day}`),
+    JSON.stringify(fullMints[0])
+  );
+  const single = planWeeks(state({ rows: allKeptRows, fullDays: fulls }));
+  check(
+    "gate: two runs (BODY, CRAFT, CARE; then DUTY and the full days) total and trim exactly as one",
+    total(single) === total([...run1, ...run2]) && total(single) === LIFE_MP_WEEK_CAP && trimmed(single) === trimmed([...run1, ...run2]) && single[0].mints.every((m) => m.reason !== "LIFE_WEEK_KEPT" || m.delta === 1.5),
+    `${total(single)} vs ${total([...run1, ...run2])}`
+  );
+  check("gate: applying both runs, re-planning plans nothing", planWeeks(applyPlans({ ...after1, settledThroughDay: addDays(SUN, 2) }, run2)).length === 0);
+  check("gate: with no Duty launch day DUTY is judged on Wednesday as in M5, whatever the cursor", plan0(state({ rows: allKeptRows, dutyLaunchDay: null, settledThroughDay: null }))?.tracks.length === 4);
+  // The gate is duty-economy settledFor (the one settled-day rule, floor firstDutyDay(epochDay)): the launch
+  // script's early cursor (launch − 1, possibly set days before the launch) settles no Duty week.
+  const early = { dutyLaunchDay: DUTY_DAY, settledThroughDay: addDays(DUTY_DAY, -1) };
+  check(
+    "gate: the launch script's cursor (Duty launch − 1) holds the first Duty week; settled through its Sunday it opens (with or without the epoch)",
+    dutyGated(SUN, WED_AFTER, early) &&
+      dutyGated(SUN, WED_AFTER, { ...early, epochDay: LAUNCH }) &&
+      !dutyGated(SUN, WED_AFTER, { ...early, settledThroughDay: SUN, epochDay: LAUNCH })
+  );
+  check(
+    "gate: a reset epoch mid-week (cursor = epoch − 1) still holds DUTY until the Sunday settles",
+    dutyGated(SUN, WED_AFTER, { dutyLaunchDay: DUTY_DAY, settledThroughDay: day(1), epochDay: day(2) }) &&
+      weeksToJudge(WED_AFTER, day(2), new Set(), 12, { dutyLaunchDay: DUTY_DAY, settledThroughDay: day(1) })[0]?.missing.join() === "BODY,CRAFT,CARE"
+  );
+  check("gate: before the Duty launch (today < launch) nothing is gated, whatever the cursor", !dutyGated(SUN, addDays(DUTY_DAY, -1), { ...early, epochDay: LAUNCH }));
+
+  // Full days inside the cap (decision 6).
+  const seven = [0, 1, 2, 3, 4, 5, 6].map(day);
+  const perfect = plan0(state({ rows: allKeptRows, fullDays: seven }))!;
+  const fd = perfect.mints.filter((m) => m.reason === "LIFE_FULL_DAY");
+  check(
+    "cap: a perfect week mints the tracks 6.0, then 4 full days at 0.5 and 3 qty-0 rows 'trimmed by the weekly cap'",
+    perfect.mints.slice(0, 4).every((m) => m.reason === "LIFE_WEEK_KEPT" && m.delta === 1.5) &&
+      fd.length === 7 &&
+      fd.slice(0, 4).every((m) => m.delta === 0.5 && m.why === `full day ${m.day}`) &&
+      fd.slice(4).every((m) => m.delta === 0 && m.why === `full day ${m.day} · trimmed by the weekly cap`) &&
+      total([perfect]) === LIFE_MP_WEEK_CAP,
+    mintsText(perfect)
+  );
+  const shorts = [
+    { day: day(1), qty: 1, reason: "GOAL_SHORT", key: "mp:GOAL:a" },
+    { day: day(3), qty: 1, reason: "GOAL_SHORT", key: "mp:GOAL:b" },
+  ];
+  const withShorts = plan0(state({ rows: allKeptRows, fullDays: seven, mints: shorts }))!;
+  check(
+    "cap: two Shorts trim every full day and no kept track",
+    withShorts.mints.filter((m) => m.reason === "LIFE_WEEK_KEPT").every((m) => m.delta === 1.5) && withShorts.mints.filter((m) => m.reason === "LIFE_FULL_DAY").every((m) => m.delta === 0),
+    mintsText(withShorts)
+  );
+  const oneWritten = plan0(state({ rows: allKeptRows, fullDays: seven, mints: [{ day: day(0), qty: 0.5, reason: "LIFE_FULL_DAY", key: fullDayMintKey(day(0)) }] }))!;
+  check(
+    "cap: a full-day key already written is skipped and its 0.5 counts as used",
+    !oneWritten.mints.some((m) => m.dedupeKey === fullDayMintKey(day(0))) && oneWritten.mints.filter((m) => m.reason === "LIFE_FULL_DAY" && m.delta === 0.5).length === 3,
+    mintsText(oneWritten)
+  );
+  check("cap: no full-day mint in a run that does not write DUTY", !(plan0(state({ rows: allKeptRows, fullDays: seven, judged: new Set([weekRowKey("DUTY", WK)]) }))?.mints ?? []).some((m) => m.reason === "LIFE_FULL_DAY"));
+  check("cap: a backfill week mints nothing, full days included", plan0(state({ rows: allKeptRows, fullDays: seven, launchDay: addDays(SUN, 1) }))?.mints.length === 0);
+
+  // Held weeks and pro-rated floors (decision 20).
+  eq("floors: HELD_WEEK_REST_DAYS is 5", HELD_WEEK_REST_DAYS, 5);
+  const f0 = keptFloorsOf(0);
+  check("floors: no rest days are the M5 floors (3 days, 30 raw, 150 effort min, 5 completions)", f0.days === 3 && f0.raw === 30 && f0.effortMinutes === 150 && f0.dutyCompletions === 5 && f0.factor === 1);
+  const f2 = keptFloorsOf(2);
+  check("floors: 2 rest days pro-rate BODY effort to 107.1 min and DUTY's fallback completions to 4 (3 days, 21.4 raw)", f2.effortMinutes === 107.1 && f2.dutyCompletions === 4 && f2.days === 3 && f2.raw === 21.4, JSON.stringify(f2));
+  check("floors: f = (7 − rest)/7; 7 rest days still need a day of activity", floorFactor(2) === 5 / 7 && floorFactor(7) === 0 && keptFloorsOf(7).days === 1 && keptFloorsOf(5).days === 1 && keptFloorsOf(5).raw === 8.6);
+  const rest2 = new Set([day(5), day(6)]);
+  const body107 = verdict(state({ restDays: rest2, heldDays: rest2, rows: [0, 1, 2].map((d) => task("BODY", day(d), 10, { category: "EXERCISE", minutes: d === 0 ? 35 : 36, b: 10 })) }), "BODY")!;
+  eq("floors: 107 effort min with 2 rest days reads 'Not kept · 107 of 107.1 effort min'", body107.detail, "Not kept · 107 of 107.1 effort min");
+  const body108 = verdict(state({ restDays: rest2, heldDays: rest2, rows: [0, 1, 2].map((d) => task("BODY", day(d), 10, { category: "EXERCISE", minutes: 36, b: 10 })) }), "BODY")!;
+  eq("floors: 108 is Kept and names the rest days", body108.detail, "Kept · 3 days · 30.0 raw XP · 108 effort min · 2 rest days");
+  const duty4 = verdict(state({ restDays: rest2, heldDays: rest2, rows: spread("DUTY", [0, 0, 1, 2], 6) }), "DUTY")!;
+  eq("floors: DUTY with no musts keeps on 4 completions on 3 days with 24 raw", duty4.detail, "Kept · 3 days · 24.0 raw XP · 2 rest days");
+  const duty3 = verdict(state({ restDays: rest2, heldDays: rest2, rows: spread("DUTY", [0, 1, 2], 8) }), "DUTY")!;
+  eq("floors: 3 completions are not enough", duty3.detail, "Not kept · 3 of 4 completions");
+
+  const rest5 = new Set([0, 1, 2, 3, 4].map(day));
+  const p5 = plan0(state({ restDays: rest5, heldDays: rest5, rows: [task("CRAFT", day(5), 10)] }))!;
+  const craft5 = p5.tracks.find((t) => t.track === "CRAFT")!;
+  const care5 = p5.tracks.find((t) => t.track === "CARE")!;
+  check("held: a 5-rest-day week whose pro-rated floors are met is Kept (1 day, 8.6 raw)", craft5.kept && craft5.detail === "Kept · 1 day · 10.0 raw XP · 5 rest days" && !craft5.held, craft5.detail);
+  check(
+    "held: one whose floors are not met is 'Held · 5 rest days' (held, restDays 5, not kept)",
+    !care5.kept && care5.held === true && care5.restDays === 5 && care5.detail === `${HELD_PREFIX}5 rest days`,
+    JSON.stringify(care5)
+  );
+  check("held: a held track mints nothing; a kept one still does", !p5.mints.some((m) => m.track === "CARE") && p5.mints.some((m) => m.track === "CRAFT"));
+  const rest4 = new Set([0, 1, 2, 3].map(day));
+  const care4 = verdict(state({ restDays: rest4, heldDays: rest4 }), "CARE")!;
+  check("held: 4 rest days with the floors unmet is Not kept, with the pro-rated floors", !care4.kept && !care4.held && care4.detail === "Not kept · 0 of 2 days · 0.0 of 12.9 raw XP", care4.detail);
+  const excused = [0, 1, 2, 3, 4].map((i) => inst("dly", day(i), "EXCUSED"));
+  const missedSat = verdict(state({ restDays: rest5, heldDays: rest5, templates: [daily("dly")], instances: [...excused, inst("dly", day(5), "MISSED"), inst("dly", day(6))] }), "DUTY")!;
+  check("held: a missed must is never held, whatever the rest days", !missedSat.kept && !missedSat.held && missedSat.detail === "Not kept · 1 must missed (Sat)", missedSat.detail);
+  const heldDuty = verdict(state({ restDays: rest5, heldDays: rest5, templates: [daily("dly")], instances: [...excused, inst("dly", day(5)), inst("dly", day(6))] }), "DUTY")!;
+  check("held: DUTY with its musts kept or held but too little else is held", heldDuty.held === true && heldDuty.detail === "Held · 5 rest days", heldDuty.detail);
+
+  // weekMarkOf: the one reader of the mark; the streak bridge; the pips.
+  check("weekMarkOf: qty 1 kept; qty 0 with receipt mark 'held' held; qty 0 missed", weekMarkOf({ qty: 1 }) === "kept" && weekMarkOf({ qty: 0, receipt: heldWeekReceipt(5) }) === "held" && weekMarkOf({ qty: 0, receipt: null }) === "missed");
+  const heldInWordsOnly: LedgerWeek = { track: "CARE", weekKey: WK, sunday: SUN, kept: false, detail: `${HELD_PREFIX}5 rest days` };
+  check(
+    "weekMarkOf: never parses the detail line ('Held · 5 rest days' with no mark is missed); a LedgerWeek's held flag is the mark",
+    weekMarkOf(heldInWordsOnly) === "missed" && weekMarkOf({ qty: 0, receipt: { v: "x" } }) === "missed" && weekMarkOf({ kept: false, held: true }) === "held"
+  );
+  check("heldWeekReceipt / isHeldWeekReceipt", HELD_WEEK_MARK === "held" && isHeldWeekReceipt(heldWeekReceipt(5)) && heldWeekReceipt(5).restDays === 5 && !isHeldWeekReceipt({ factors: [] }) && !isHeldWeekReceipt(null));
+  const careWeek = (i: number, mark: "kept" | "held" | "missed"): LedgerWeek => ({
+    track: "CARE",
+    weekKey: weekKeyOf(addDays(LAUNCH, 7 * i)),
+    sunday: addDays(LAUNCH, 7 * i + 6),
+    kept: mark === "kept",
+    detail: mark === "held" ? "Held · 5 rest days" : mark === "kept" ? "Kept · 3 days · 30.0 raw XP" : "Not kept · 2 of 3 days",
+    ...(mark === "held" ? { held: true } : {}),
+  });
+  const bridged = { ...emptyLifeLedger(LAUNCH), xpByDay: [{ track: "CARE" as Track, day: LAUNCH, xp: 300 }], weeks: [careWeek(0, "kept"), careWeek(1, "held"), careWeek(2, "kept")] };
+  const careState = stateOfTrack(bridged, addDays(LAUNCH, 7 * 3 + 2), "CARE");
+  check("held: a held week bridges the kept streak and adds no kept week (kept, held, kept → streak 2, 2 kept)", careState.keptStreak === 2 && careState.keptWeeks === 2, `${careState.keptStreak} / ${careState.keptWeeks}`);
+  const broken = { ...bridged, weeks: [careWeek(0, "kept"), careWeek(1, "missed"), careWeek(2, "kept")] };
+  eq("  (a missed week in its place breaks it: streak 1)", stateOfTrack(broken, addDays(LAUNCH, 7 * 3 + 2), "CARE").keptStreak, 1);
+  const lastHeld = { ...bridged, weeks: [careWeek(0, "kept"), careWeek(1, "kept"), careWeek(2, "held")] };
+  eq("  (a held latest week keeps the run before it: streak 2)", stateOfTrack(lastHeld, addDays(LAUNCH, 7 * 3 + 2), "CARE").keptStreak, 2);
+  check("held: pips and the kept-week grid render 'held'", trackRowsView(bridged, addDays(LAUNCH, 7 * 3 + 2)).find((r) => r.track === "CARE")!.weeks.join() === "kept,held,kept" && keptWeekGrid({ ...bridged, weeks: TRACKS.flatMap((t) => [0, 1, 2].map((i) => ({ ...careWeek(i, i === 1 ? "held" : "kept"), track: t }))) }).rows[0].weeks.join() === "kept,held,kept");
+  const folded = ledgerWithPlans(emptyLifeLedger(MON), [p5]);
+  check("held: ledgerWithPlans carries the held mark", folded.weeks.find((w) => w.track === "CARE")?.held === true && folded.weeks.find((w) => w.track === "CRAFT")?.held === undefined);
+
+  // TARGET units and make-ups (decision 21, F6).
+  const tgt = must("tgt", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null });
+  const tgtRows = spread("DUTY", [0, 1, 2], 10);
+  const tgtKept = verdict(state({ templates: [tgt], instances: [inst("tgt", day(0)), inst("tgt", SUN, "DONE_LATE", true), inst("tgt", SUN, "DONE_LATE", true)], rows: tgtRows }), "DUTY")!;
+  check("target: a TARGET:3/W with 1 done and 2 made-up Sunday slots counts 3 kept", tgtKept.kept && tgtKept.detail === "Kept · 3 days · 30.0 raw XP · 3 musts kept", tgtKept.detail);
+  const tgtLate = verdict(state({ templates: [tgt], instances: [inst("tgt", day(0)), inst("tgt", SUN, "MADE_UP"), inst("tgt", SUN, "MADE_UP")], rows: tgtRows }), "DUTY")!;
+  check("target: made up too late (MADE_UP), the slots count nothing", !tgtLate.kept && tgtLate.detail === "Not kept · 2 musts missed (weekly target)", tgtLate.detail);
+  const dlyRows = spread("DUTY", [0, 1, 2, 3, 4, 5, 6], 5);
+  const dlyWith = (tue: WeekInstance) => [0, 2, 3, 4, 5, 6].map((i) => inst("dly", day(i))).concat([tue]);
+  const repairedTue = verdict(state({ templates: [daily("dly")], instances: dlyWith(inst("dly", day(1), "DONE_LATE", true)), rows: dlyRows }), "DUTY")!;
+  check("make-up: a repaired make-up of Tuesday keeps the Duty week", repairedTue.kept, repairedTue.detail);
+  const madeUpTue = verdict(state({ templates: [daily("dly")], instances: dlyWith(inst("dly", day(1), "MADE_UP")), rows: dlyRows }), "DUTY")!;
+  check("make-up: a late make-up (MADE_UP) breaks it", !madeUpTue.kept && madeUpTue.detail === "Not kept · 1 must missed (Tue)", madeUpTue.detail);
+
+  // A deadline due Sunday (decision 18): either path by Tuesday keeps it; Wednesday does not.
+  const dl = must("dl", { dueDay: SUN, dueKind: "DEADLINE" });
+  const dlv = (i: WeekInstance) => verdict(state({ today: addDays(SUN, 4), templates: [dl], instances: [i], rows: spread("DUTY", [0, 1, 2, 3, 4], 6) }), "DUTY")!;
+  check("deadline: ticked Monday (DONE_LATE on Sun + 1) keeps the Duty week", dlv(inst("dl", addDays(SUN, 1), "DONE_LATE")).kept);
+  check("deadline: ticked Tuesday before settlement (DONE_LATE on Sun + 2) keeps it", dlv(inst("dl", addDays(SUN, 2), "DONE_LATE")).kept);
+  check("deadline: made up Tuesday after settlement (its Sunday instance repaired) keeps it", dlv(inst("dl", SUN, "DONE_LATE", true)).kept);
+  const wedTick = dlv(inst("dl", addDays(SUN, 3), "DONE_LATE"));
+  check("deadline: ticked Wednesday (Sun + 3) is not kept", !wedTick.kept && wedTick.detail === "Not kept · 1 must missed (Sun)", wedTick.detail);
+  check("deadline: made up Wednesday (MADE_UP) is not kept", !dlv(inst("dl", SUN, "MADE_UP")).kept);
+  // A late minimum (DONE_MVV after the due day; settlement charges nothing for it): one rule with settlement,
+  // whichever done status recorded it by dueDay + 2 (decision 18; M2 review, lens 1 finding 2).
+  const mvvMon = dlv(inst("dl", addDays(SUN, 1), "DONE_MVV"));
+  check("deadline: its minimum done Monday (DONE_MVV on Sun + 1) holds it, as on time: the Duty week is kept", mvvMon.kept && mvvMon.detail === "Kept · 5 days · 30.0 raw XP · 1 must held", mvvMon.detail);
+  const mvvTue = dlv(inst("dl", addDays(SUN, 2), "DONE_MVV"));
+  check("deadline: its minimum done Tuesday (DONE_MVV on Sun + 2) holds it", mvvTue.kept && mvvTue.detail.endsWith("· 1 must held"), mvvTue.detail);
+  const mvvWed = dlv(inst("dl", addDays(SUN, 3), "DONE_MVV"));
+  check("deadline: its minimum done Wednesday (Sun + 3) is outside the window: not kept", !mvvWed.kept && mvvWed.detail === "Not kept · 1 must missed (Sun)", mvvWed.detail);
+  check("deadline: a DONE dated Monday (any done status) keeps it", dlv(inst("dl", addDays(SUN, 1), "DONE")).detail.endsWith("· 1 must kept"));
+  check("deadline: a non-done status after the due day (SKIPPED on Monday) decides nothing: missed", !dlv(inst("dl", addDays(SUN, 1), "SKIPPED")).kept);
+  check(
+    "deadline: the pre-M2 rules are unchanged for a late minimum (M5: done after its day is missed)",
+    planWeeks(
+      decorate({
+        ...m5([inst("late", addDays(M5MON, 2), "DONE_MVV")]),
+        templates: [{ id: "late", kind: "TASK", recurrence: null, startDay: "2026-09-01", dueDay: addDays(M5MON, 1), archivedDay: null }],
+        rows: [0, 1, 2, 3, 4].map((d) => task("DUTY", addDays(M5MON, d), 6)),
+      })
+    )[0].tracks.find((x) => x.track === "DUTY")!.detail === "Not kept · 1 must missed (Tue)"
+  );
+  check("deadline: a PLANNED one-off is never a must", verdict(state({ templates: [must("pl", { dueDay: day(2), dueKind: "PLANNED" })], rows: spread("DUTY", [0, 1, 2, 3, 4], 6) }), "DUTY")!.kept);
+
+  // Inbox musts (decision 31).
+  const inboxDuty = verdict(state({ templates: [daily("inb", { inbox: true })], rows: spread("DUTY", [0, 1, 2, 3, 4], 6) }), "DUTY")!;
+  check("inbox: an inbox must is not an occurrence in a Duty week", inboxDuty.kept && inboxDuty.detail === "Kept · 5 days · 30.0 raw XP", inboxDuty.detail);
+
+  // Rule history (decision 16, F3): an un-flag effective Thursday still owes Monday–Wednesday.
+  const THU = day(3);
+  const appliedUnflag = daily("uf", { compulsory: false, pendingChange: { v: 1, prior: [{ throughDay: day(2), compulsory: true }] } });
+  const pendingUnflag = daily("pu", { pendingChange: { v: 1, next: { effectiveDay: THU, compulsory: false } } });
+  for (const [name, t] of [["applied", appliedUnflag], ["pending", pendingUnflag]] as const) {
+    const v = verdict(state({ templates: [t], rows: spread("DUTY", [0, 1, 2, 3, 4], 10) }), "DUTY")!;
+    check(`un-flag (${name}) effective Thursday: the Monday–Wednesday misses still break that Duty week`, !v.kept && v.detail === "Not kept · 3 musts missed (Mon, Tue, Wed)", v.detail);
+    const done = verdict(state({ templates: [t], instances: [0, 1, 2].map((i) => inst(t.id, day(i))), rows: spread("DUTY", [0, 1, 2, 3, 4], 10) }), "DUTY")!;
+    check(`un-flag (${name}): Thursday–Sunday owe nothing`, done.kept && done.detail.endsWith("· 3 musts kept"), done.detail);
+  }
+  const pendingArchive = daily("pa", { pendingChange: { v: 1, next: { effectiveDay: THU, archive: true } } });
+  const archived = verdict(state({ templates: [pendingArchive], instances: [0, 1, 2].map((i) => inst("pa", day(i))), rows: spread("DUTY", [0, 1, 2, 3, 4], 10) }), "DUTY")!;
+  check("pending archive: its template counts no occurrence from its effective day", archived.kept && archived.detail.endsWith("· 3 musts kept"), archived.detail);
+  const reflagged = daily("rf", { pendingChange: { v: 1, prior: [{ throughDay: day(2), compulsory: false }] } });
+  const reflag = verdict(state({ templates: [reflagged], instances: [3, 4, 5, 6].map((i) => inst("rf", day(i))), rows: spread("DUTY", [0, 1, 2, 3, 4], 10) }), "DUTY")!;
+  check("strengthening: a must flagged on Thursday owes nothing before it", reflag.kept && reflag.detail.endsWith("· 4 musts kept"), reflag.detail);
+  const tgtFlagged = must("tf", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null, pendingChange: { v: 1, prior: [{ throughDay: day(2), compulsory: false }] } });
+  check("strengthening: a TARGET flagged mid-week is not judged that week", verdict(state({ templates: [tgtFlagged], rows: spread("DUTY", [0, 1, 2, 3, 4], 6) }), "DUTY")!.kept);
+
+  // 'Even on rest days' (decision 15): a rest day holds a must, not a compulsoryOnRest one; a freeze day holds both.
+  const tue = new Set([day(1)]);
+  const noTue = [0, 2, 3, 4, 5, 6].map((i) => inst("r", day(i)));
+  const restHeld = verdict(state({ restDays: tue, heldDays: tue, templates: [daily("r")], instances: noTue, rows: spread("DUTY", [0, 2, 3, 4, 5, 6], 6) }), "DUTY")!;
+  check("rest: a must with nothing on a rest day is held", restHeld.kept && restHeld.detail.includes("6 musts kept, 1 held"), restHeld.detail);
+  const onRest = verdict(state({ restDays: tue, heldDays: tue, templates: [daily("r", { compulsoryOnRest: true })], instances: noTue, rows: spread("DUTY", [0, 2, 3, 4, 5, 6], 6) }), "DUTY")!;
+  check("rest: a compulsoryOnRest must is owed on a rest day", !onRest.kept && onRest.detail === "Not kept · 1 must missed (Tue)", onRest.detail);
+  const onFreeze = verdict(state({ heldDays: tue, templates: [daily("r", { compulsoryOnRest: true })], instances: noTue, rows: spread("DUTY", [0, 2, 3, 4, 5, 6], 6) }), "DUTY")!;
+  check("rest: a freeze day holds it (and never pro-rates the floors)", onFreeze.kept && onFreeze.detail.includes("6 musts kept, 1 held") && !onFreeze.detail.includes("rest day"), onFreeze.detail);
+
+  // A TARGET's held days per day, under the rule in force on each (settlement-plan step 6's set; M2 review,
+  // lens 1 finding 3, probe C): 'Even on rest days' switched on Wednesday holds Monday and Tuesday's rest.
+  const monTue = new Set([day(0), day(1)]);
+  const tgtRest = (t: WeekTemplate) =>
+    verdict(state({ restDays: monTue, heldDays: monTue, templates: [t], instances: [inst(t.id, day(4))], rows: spread("DUTY", [2, 3, 4], 10) }), "DUTY")!;
+  const onFromWed = tgtRest(must("tr", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null, compulsoryOnRest: true, pendingChange: { v: 1, prior: [{ throughDay: day(1), compulsoryOnRest: false }] } }));
+  check(
+    "target: 'Even on rest days' from Wednesday: Monday and Tuesday's rest still hold (1 kept, 2 held), as settlement charges nothing",
+    onFromWed.kept && onFromWed.detail === "Kept · 3 days · 30.0 raw XP · 1 must kept, 2 held · 2 rest days",
+    onFromWed.detail
+  );
+  const offFromWed = tgtRest(must("tr", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null, compulsoryOnRest: false, pendingChange: { v: 1, prior: [{ throughDay: day(1), compulsoryOnRest: true }] } }));
+  check(
+    "target: 'Even on rest days' until Tuesday: Monday and Tuesday's rest hold nothing (2 missed), as settlement charges 2",
+    !offFromWed.kept && offFromWed.detail === "Not kept · 2 musts missed (weekly target)",
+    offFromWed.detail
+  );
+  const plainRest = tgtRest(must("tr", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null }));
+  check("target: with no rule history a rest day holds a unit (1 kept, 2 held)", plainRest.kept && plainRest.detail.includes("1 must kept, 2 held"), plainRest.detail);
+  const restOnlyAllWeek = tgtRest(must("tr", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null, compulsoryOnRest: true }));
+  check("target: 'Even on rest days' all week: rest holds nothing (2 missed)", !restOnlyAllWeek.kept && restOnlyAllWeek.detail === "Not kept · 2 musts missed (weekly target)", restOnlyAllWeek.detail);
+  // Probe B: a TARGET made a must on Thursday (a mid-week unarchive or an inbox clarify) is not this week's must,
+  // and settlement (lane A) skips the period the same way.
+  const tgtLateMust = verdict(
+    state({ templates: [must("tb", { kind: "HABIT", recurrence: "TARGET:3/W", dueKind: null, pendingChange: { v: 1, prior: [{ throughDay: day(2), compulsory: false }] } })], instances: [inst("tb", day(5))], rows: spread("DUTY", [0, 1, 2, 3, 4], 12) }),
+    "DUTY"
+  )!;
+  eq("target: compulsory only from Thursday, one done Saturday: not judged that week (no musts part)", tgtLateMust.detail, "Kept · 5 days · 60.0 raw XP");
+
+  // A reset after launch (F18): the cursor starts at epochDay − 1; DUTY follows settlement from the epoch.
+  const resetDay = day(2);
+  const fresh = newLifeSettingsDays(resetDay, DUTY_DAY);
+  eq("reset: newLifeSettingsDays sets the cursor to epochDay − 1", fresh.settledThroughDay, day(1));
+  const resetState = (cursor: DayKey | null) =>
+    state({
+      epochDay: resetDay,
+      settledThroughDay: cursor,
+      templates: [daily("rs", { startDay: addDays(MON, -40) })],
+      instances: [2, 3, 4, 5, 6].map((i) => inst("rs", day(i))),
+      rows: [...spread("DUTY", [2, 3, 4, 5, 6], 6), ...spread("CRAFT", [2, 3, 4], 10)],
+    });
+  const resetRun = planWeeks(resetState(fresh.settledThroughDay));
+  check("reset: the judge still judges BODY, CRAFT and CARE from the new epoch while DUTY waits", resetRun.length === 1 && resetRun[0].tracks.map((t) => t.track).join() === "BODY,CRAFT,CARE" && resetRun[0].tracks.find((t) => t.track === "CRAFT")!.kept);
+  const resetDuty = verdict(resetState(addDays(SUN, 2)), "DUTY")!;
+  check("reset: once settled, DUTY's musts count from the epoch only (Wed–Sun)", resetDuty.kept && resetDuty.detail === "Kept · 5 days · 30.0 raw XP · 5 musts kept", resetDuty.detail);
+
+  // The server half: what the judge reads and writes (source, comments stripped).
+  const strip = (p: string) => readFileSync(join(__dirname, "..", p), "utf8").replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const srv = strip("src/lib/life-weeks-server.ts");
+  check(
+    "server: templates with a pendingChange are read with their rule columns; instances carry repaired; one-offs through Sunday + 2",
+    /pendingChange: \{ not: Prisma\.DbNull \}/.test(srv) && /dueKind: true,\s*pendingChange: true/.test(srv) && /repaired: true/.test(srv) && /addDays\(to, MAKEUP_RESTORE_DAYS\)/.test(srv)
+  );
+  check("server: rest days come only through heldDaysOf; FREEZE_USE and FULL_DAY days beside them", /heldDaysOf\(rest, dutyFrom, to\)/.test(srv) && /source: \{ in: \["FREEZE_USE", "FULL_DAY"\] \}/.test(srv));
+  check("server: a held WEEK row writes receipt {mark: 'held', restDays}", /t\.held \? \{ receipt: heldWeekReceipt\(t\.restDays \?\? 0\)/.test(srv));
+  check("server: the cheap check is weeksToJudge over the cached ledger with the gate", /weeksToJudge\(today, ledger\.epochDay, judged, 1, gate\)\.length === 0\) return;/.test(srv) && /settledThroughDay: ledger\.settledThroughDay \?\? null/.test(srv));
+  check("server: both gates carry the epoch (settledFor's floor)", /settledThroughDay: ledger\.settledThroughDay \?\? null, epochDay: ledger\.epochDay \}/.test(srv) && /settledThroughDay: settings\.settledThroughDay \? keyOfDateColumn\(settings\.settledThroughDay\) : null,\s*epochDay,/.test(srv));
+  check(
+    "server: launchHasFinished is exported for the daily cron (judgeClosedWeeks skips the M5 launch marker)",
+    /export async function launchHasFinished\(userId: string, launchDay: DayKey \| null\): Promise<boolean> \{\s*if \(launchDay == null\) return false;/.test(srv)
+  );
+  check("server: the ledger read takes the WEEK receipt and the cursor", /receipt: true \}/.test(strip("src/lib/life-tracks-server.ts")) && /settledThroughDay: true/.test(strip("src/lib/life-tracks-server.ts")));
+}
+
+// ── §9b the cheap check reads nothing while only a gated DUTY is missing ───
+// Every Prisma entry maybeJudgeWeeks could reach is a spy: the cached ledger read answers from a
+// fixture; anything the judge itself would read is recorded and refused.
+async function cheapCheck(): Promise<void> {
+  console.log("\n§9b the cheap check");
+  const db = prisma as unknown as Record<string, unknown>;
+  const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "taskTemplate", "taskInstance", "activityEvent", "masteryLedgerEntry", "lifeSettings", "restDay"] as const;
+  const saved = ENTRIES.map((k) => [k, db[k]] as const);
+  const env = { judge: process.env.XTNL_LIFE_JUDGE, duty: process.env.XTNL_DUTY_LAUNCH_DAY };
+  const quiet = console.error;
+  const calls: string[] = [];
+  const MON = "2026-10-12";
+  const SUN = "2026-10-18";
+  const now = new Date("2026-10-21T02:00:00Z"); // Wed 21 Oct, 13:00 in Sydney
+  let cursor: Date | null = null;
+  const weekRow = (track: Track) => ({ track, dedupeKey: weekRowKey(track, weekKeyOf(MON)), day: new Date(`${SUN}T00:00:00Z`), qty: 1, detail: "Kept · 3 days · 30.0 raw XP", receipt: null });
+  const refuse = (name: string) => () => {
+    calls.push(name);
+    throw new Error(`judge read: ${name}`);
+  };
+  db.$queryRaw = () => Promise.resolve([]);
+  db.$executeRaw = refuse("$executeRaw");
+  db.$transaction = refuse("$transaction");
+  db.taskTemplate = new Proxy({}, { get: (_t, m) => refuse(`taskTemplate.${String(m)}`) });
+  db.taskInstance = new Proxy({}, { get: (_t, m) => refuse(`taskInstance.${String(m)}`) });
+  db.restDay = new Proxy({}, { get: (_t, m) => refuse(`restDay.${String(m)}`) });
+  db.masteryLedgerEntry = {
+    findFirst: () => {
+      calls.push("launchHasFinished");
+      return Promise.resolve({ id: "grace" });
+    },
+  };
+  db.lifeSettings = {
+    findUnique: () => {
+      calls.push("lifeSettings");
+      return Promise.resolve({ epochDay: new Date(`${MON}T00:00:00Z`), settledThroughDay: cursor });
+    },
+  };
+  db.activityEvent = {
+    groupBy: () => Promise.resolve([]),
+    findMany: (args: { where?: { source?: unknown } }) => {
+      if (args.where?.source === "WEEK") return Promise.resolve((["BODY", "CRAFT", "CARE"] as Track[]).map(weekRow));
+      if (args.where?.source === "MP_MINT") return Promise.resolve([]);
+      return refuse("activityEvent.findMany")();
+    },
+  };
+  process.env.XTNL_LIFE_JUDGE = "1";
+  process.env.XTNL_DUTY_LAUNCH_DAY = MON;
+  console.error = () => {};
+  try {
+    cursor = new Date("2026-10-17T00:00:00Z"); // settled through Saturday: W42's DUTY is gated
+    calls.length = 0;
+    await maybeJudgeWeeks("cheap-gated", now);
+    check(
+      "cheap check: only DUTY missing and gated (cursor on Saturday): one cached ledger read, no launch-marker read, no judge read",
+      calls.join() === "lifeSettings",
+      calls.join()
+    );
+    calls.length = 0;
+    const noLaunch = await launchHasFinished("cheap-none", null);
+    check("launchHasFinished: no launch day is false, with no read", noLaunch === false && calls.length === 0, calls.join());
+    cursor = new Date("2026-10-20T00:00:00Z"); // settled through Tuesday: the gate opens
+    calls.length = 0;
+    await maybeJudgeWeeks("cheap-open", now);
+    check(
+      "cheap check: once settled through Sunday it goes on to judge (launch marker, then the judge's own fresh read)",
+      calls[0] === "lifeSettings" && calls.includes("launchHasFinished") && calls.filter((c) => c === "lifeSettings").length === 2 && calls.some((c) => c.startsWith("taskTemplate.")),
+      calls.join()
+    );
+  } finally {
+    console.error = quiet;
+    for (const [k, v] of saved) db[k] = v;
+    if (env.judge === undefined) delete process.env.XTNL_LIFE_JUDGE;
+    else process.env.XTNL_LIFE_JUDGE = env.judge;
+    if (env.duty === undefined) delete process.env.XTNL_DUTY_LAUNCH_DAY;
+    else process.env.XTNL_DUTY_LAUNCH_DAY = env.duty;
+  }
+}
+
 // ── lane A appends §2b and §4–§7 above this line ─────────────────────────
 
 closeBeforeLaunch()
-  .catch((err) => check("§8b ran", false, String(err)))
+  .then(cheapCheck)
+  .catch((err) => check("§8b and §9b ran", false, String(err)))
   .finally(() => {
     console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} pass`);
     process.exit(failed ? 1 : 0);

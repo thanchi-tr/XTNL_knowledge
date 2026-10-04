@@ -12,17 +12,50 @@
  * will refuse, and never shows a number it cannot stand behind.
  */
 import { selfRatingOpen, selfRatingOpensOn } from "../../lib/life-grade";
-import { LIFE_TZ, addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../../lib/life-day";
+import { LIFE_TZ, addDays, dayEndOf, dayKeyOf, dayStartOf, daysBetween, weekStartKeyOf, zonedToInstant, type DayKey } from "../../lib/life-day";
 import { minutesFor } from "../../lib/review-facts";
 import { GOAL_RULES, round2, statedGoalMp } from "../../lib/life-economy";
 import { goalPercent, statedPayoutCopy, type GoalPayout } from "../../lib/goals";
-import { TRACK_LABEL } from "../../lib/life-grade";
+import { TRACK_LABEL, debtFor } from "../../lib/life-grade";
+import {
+  MISS_PROMPT_RUN,
+  REST_PER_WEEK,
+  SICK_EVERY_DAYS,
+  VACATION_DAYS_PER_365,
+  VACATION_MAX_DAYS,
+  VACATION_MIN_DAYS,
+  akrasiaEffectiveDay,
+  type RestKind,
+} from "../../lib/duty-economy";
+import { classifyChange, type PendingNext, type RuleState } from "../../lib/duty-rule";
+import {
+  dayLabel,
+  fullWeekday,
+  makeUpCopy,
+  owedViewOf,
+  type DeclaredDay,
+  type DutyBoard,
+  type OwedCard,
+  type OwedView,
+  type RestBanner,
+  type SettledNotice,
+} from "../../lib/duty-view";
+import { FULL_DAY_MP } from "../../lib/full-day";
+import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF, RECORD_YESTERDAY_PARAM } from "../../lib/shortcuts";
+import { OWED_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID } from "../shell/shell-types";
 import {
   UNDO_WINDOW_MS,
+  asksToday,
   dayName,
+  dutyFloorOf,
+  isSettledOn,
+  isUnsettledDutyDay,
   moveBlockOf,
   placementOf,
   ruleOf,
+  ruledTemplateOn,
+  shortDate,
+  weekdayName,
   type BoardData,
   type BoardRow,
   type BoardTemplate,
@@ -231,8 +264,10 @@ export function upcomingOf(d: BoardData, onToday: ReadonlySet<string>): Upcoming
     if (list) list.push(i);
     else byTpl.set(i.templateId, [i]);
   }
-  for (const t of d.templates) {
-    if (onToday.has(t.id) || !ruleOf(t)) continue;
+  for (const raw of d.templates) {
+    // The rule as it stands today: a pending archive in force has left (M2).
+    const t = ruledTemplateOn(raw, d.today);
+    if (!t || onToday.has(t.id) || !ruleOf(t)) continue;
     const p = placementOf(t, { today: d.today, yesterday: d.yesterday, instances: byTpl.get(t.id) ?? [], lastDone: d.stats[t.id]?.lastDone ?? null });
     const next = p.upcomingDay;
     if (p.place.lane !== "upcoming" || !next || next <= d.today) continue;
@@ -316,9 +351,13 @@ export function splitTodayLane<R extends { template: { recurrence: string | null
   return { planned, habits };
 }
 
-/** "n of m kept" for a lane: done (the minimum included) against every row that still asks. */
-export function laneTally(rows: readonly Pick<BoardRow, "state">[]): { kept: number; total: number } {
-  const counted = rows.filter((r) => r.state !== "skipped");
+/**
+ * "n of m kept" for a lane: done (the minimum included) against every row
+ * that still asks (today-board.ts asksToday): a skipped row no longer asks,
+ * nor does a row a rest day holds while it is undone (M2).
+ */
+export function laneTally(rows: readonly Pick<BoardRow, "state" | "heldToday">[]): { kept: number; total: number } {
+  const counted = rows.filter(asksToday);
   return { kept: counted.filter((r) => r.state === "done").length, total: counted.length };
 }
 
@@ -344,7 +383,8 @@ export function nextUpOf(input: {
 }): NextUp {
   const { quest } = input;
   if (!quest.met) return { kind: "quest", cards: quest.cap, dueAtOpen: quest.target, reviews: quest.reviews, dueNow: quest.dueNow };
-  const open = input.must.filter((r) => r.state === "open");
+  // A must a rest day holds owes nothing today: never next up (M2).
+  const open = input.must.filter((r) => r.state === "open" && !r.heldToday);
   if (open.length > 0) {
     const since = (r: BoardRow) => r.carriedFrom ?? r.template.dueDay ?? r.day;
     const oldest = [...open].sort(
@@ -417,6 +457,20 @@ export interface TodayAsk {
   clock?: boolean;
 }
 
+/** The bell's Duty notices (shell-types.ts, F15): never a Today Ask (decision 27). */
+export const DUTY_FEED_IDS: ReadonlySet<string> = new Set([OWED_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID]);
+/** The weekly review's feed notice (F14), shown on Today as an Ask while its window is open. */
+export const WEEK_REVIEW_NOTICE = WEEK_REVIEW_NOTICE_ID;
+export const WEEK_REVIEW_HREF = "/today/week?view=run";
+/** Asks shown before 'n more' (F12: two at most). */
+export const ASKS_VISIBLE = 2;
+
+/** The Asks on screen: two at most, then 'n more' until expanded. */
+export function asksShown<A>(asks: readonly A[], expanded: boolean): { shown: A[]; more: number } {
+  if (expanded || asks.length <= ASKS_VISIBLE) return { shown: [...asks], more: 0 };
+  return { shown: asks.slice(0, ASKS_VISIBLE), more: asks.length - ASKS_VISIBLE };
+}
+
 /**
  * The Asks cards on Today. Yesterday's open occurrences come first (they
  * expire at the day edge); then the feed's notices that the board does not
@@ -441,6 +495,14 @@ export function todayAsksOf(input: { yesterdayOpen: number; recordBy: string; no
     });
   }
   for (const n of input.notices) {
+    // Debt is never an Ask (M2): owed lives in the Must lane and the Owed row,
+    // and yesterday's open musts in the Yesterday Ask above.
+    if (DUTY_FEED_IDS.has(n.id)) continue;
+    // The weekly review (M2, F14): its own Ask while its window is open.
+    if (n.id === WEEK_REVIEW_NOTICE) {
+      out.push({ id: n.id, title: n.title, detail: n.detail, action: n.action ?? "Start", href: n.href ?? WEEK_REVIEW_HREF, tone: "ask" });
+      continue;
+    }
     const penalty = n.group === "Active effects" && n.tone === "bad";
     if (n.id !== "overdue" && n.id !== "quota" && !penalty) continue;
     out.push({
@@ -638,4 +700,577 @@ export function goalRescheduleError(day: string, today: DayKey): string | null {
 /** 'Run a marathon is now due 15 Oct. Nothing else changed.' */
 export function goalRescheduledNotice(title: string, day: DayKey, today: DayKey): string {
   return `${title} is now due ${dayName(day, today)}. Nothing else changed.`;
+}
+
+// ═══ M2: Duty on Today (lane D: F3 UI, F10 strip, F12, F13 sheet) ═════════
+// The board never opens on red: debt lives only inside the Must lane (one
+// card, or one collapsed summary) and in the Owed row at the foot of the
+// lanes. Before launch (duty absent, or not live) every helper here answers
+// with the pre-M2 board's own behaviour.
+
+/**
+ * /today?sheet=yesterday opens Record yesterday, and the 'y' shortcut on
+ * /today fires RECORD_YESTERDAY_EVENT: both names are lib/shortcuts.ts's (the
+ * one registry), read here so the board answers exactly what the key sends.
+ */
+export const SHEET_PARAM = RECORD_YESTERDAY_PARAM;
+export const YESTERDAY_SHEET = "yesterday";
+export { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF };
+
+/** Device-local keys (localStorage, every access in try/catch): a settled notice seen or dismissed, a miss prompt put off. */
+export const settledKey = (day: DayKey): string => `settled:${day}`;
+export const missPromptKey = (templateId: string, lastMissDay: DayKey | null | undefined): string => `miss-prompt:${templateId}:${lastMissDay ?? "none"}`;
+
+/** Each declaration's held glyph (ui/Icon HeldKind). */
+export const HELD_GLYPH: Record<RestKind, "rest" | "sick" | "away"> = { REST: "rest", SICK: "sick", VACATION: "away" };
+const REST_WORD: Record<RestKind, string> = { REST: "Rest", SICK: "Sick", VACATION: "Vacation" };
+
+/** 'Fri 04:00': when day d settles on its own (04:00 on d + 2). */
+export function settlesAtLabel(day: DayKey): string {
+  return `${weekdayName(addDays(day, 2))} 04:00`;
+}
+
+/** 'Yesterday' / 'Tuesday' within a week / '15 Sep'. */
+function whenName(day: DayKey, today: DayKey): string {
+  const gap = daysBetween(day, today);
+  if (gap === 1) return "Yesterday";
+  if (gap > 1 && gap < 7) return fullWeekday(day);
+  return shortDate(day);
+}
+
+const xp1 = (v: number): string => {
+  const r = Math.round(v * 10) / 10;
+  return (Object.is(r, -0) ? 0 : r).toFixed(1);
+};
+
+// ── The Must lane ─────────────────────────────────────────────────────────
+
+export interface LaneChip {
+  tone: "held" | "quiet";
+  text: string;
+  held?: "rest" | "sick" | "away";
+  icon?: "clock";
+}
+
+export interface MustLaneView {
+  /** Must rows or debts: the lane renders. */
+  show: boolean;
+  /** 'n of m kept' for today's musts only; null when only debts are left. */
+  count: string | null;
+  /** The header's chips: 'Rest · nothing owed' on a held day, 'Musts carry stakes from Mon 12 Oct' before launch. Never owed. */
+  chips: LaneChip[];
+  /** The debts after today's musts: one card, or one collapsed summary. */
+  owed: OwedView;
+}
+
+export function mustLaneOf(p: {
+  must: readonly BoardRow[];
+  owed: readonly OwedCard[];
+  restToday: RestKind | null;
+  live: boolean;
+  launchDay: DayKey | null;
+  today: DayKey;
+}): MustLaneView {
+  const tally = laneTally(p.must);
+  const chips: LaneChip[] = [];
+  if (p.live && p.restToday) {
+    const stillOwed = p.must.filter((r) => r.template.compulsory && r.template.compulsoryOnRest && r.state === "open").length;
+    chips.push({
+      tone: "held",
+      held: HELD_GLYPH[p.restToday],
+      text: stillOwed > 0 ? `${REST_WORD[p.restToday]} · ${stillOwed} must${stillOwed === 1 ? "" : "s"} still owed` : `${REST_WORD[p.restToday]} · nothing owed`,
+    });
+  }
+  if (!p.live && p.launchDay && p.launchDay > p.today) chips.push({ tone: "held", icon: "clock", text: `Musts carry stakes from ${dayLabel(p.launchDay)}` });
+  // Held musts are not asked today: with only those left, no '0 of 0' under the held chip.
+  const allHeld = tally.total === 0 && p.must.some((r) => r.heldToday);
+  return {
+    show: p.must.length + p.owed.length > 0,
+    count: p.must.length > 0 && !allHeld ? `${tally.kept} of ${tally.total} kept` : null,
+    chips,
+    owed: owedViewOf(p.owed),
+  };
+}
+
+/** What one MakeUpCard says (components/today/m2/MakeUpCard.tsx MakeUp). */
+export interface MakeUpView {
+  id: string;
+  owed: number;
+  /** 'Stretch · Tuesday', 'Stretch (archived) · 15 Sep'. */
+  when: string;
+  text: string;
+  /** The restore window, in words true when read. */
+  window: string;
+  makeUpPrice: number;
+  minimum: { label: string; price: number } | null;
+}
+
+/** The window line: 'Within Tue 04:00 it brings back 12 days.' or why a make-up now only clears the debt. */
+export function makeUpWindowOf(card: OwedCard, today: DayKey): string {
+  const by = `${weekdayName(addDays(card.restoreBy, 1))} 04:00`;
+  if (card.restoresToday) {
+    const n = card.restoresStreak;
+    // restoresStreak is in the rule's own unit (occurrences, weeks or months), so the line names no unit.
+    return n != null && n > 0 ? `Within ${by} it brings back its streak of ${n}.` : `Made up within ${by}, it counts as kept.`;
+  }
+  if (today <= card.restoreBy) return "Its streak was already repaired this week, so a make-up now clears the debt only.";
+  return "Past the two-day window: a make-up clears the debt; the streak stays as it is.";
+}
+
+export function makeUpViewOf(card: OwedCard, today: DayKey): MakeUpView {
+  return {
+    id: card.instanceId,
+    owed: card.debtXp,
+    when: `${card.title}${card.archived ? " (archived)" : ""} · ${whenName(card.day, today)}`,
+    text: makeUpCopy(card, today),
+    window: makeUpWindowOf(card, today),
+    makeUpPrice: card.makeUpXp,
+    minimum: card.mvv && card.minimumXp != null ? { label: card.mvv, price: card.minimumXp } : null,
+  };
+}
+
+/** The collapsed summary of 2+ debts: '−15.1 owed · 3 musts · since Tuesday', one plain sentence, the soonest window. */
+export function owedSummaryOf(cards: readonly OwedCard[], today: DayKey): { when: string; text: string; sub: string } {
+  const oldest = cards.reduce<OwedCard | null>((a, c) => (!a || c.day < a.day ? c : a), null);
+  const soonest = cards.filter((c) => c.restoresToday).sort((a, b) => a.restoreBy.localeCompare(b.restoreBy))[0];
+  return {
+    when: `${cards.length} musts${oldest ? ` · since ${whenName(oldest.day, today)}` : ""}`,
+    text: "Each one clears in full when it is made up.",
+    sub: soonest ? `${soonest.title}: ${makeUpWindowOf(soonest, today)}` : "Making them up clears the debt; no streak comes back now.",
+  };
+}
+
+/** The Owed row's sum, true minus: 'Owed: 2 · −12.5'. */
+export function owedTotalOf(cards: readonly Pick<OwedCard, "debtXp">[]): number {
+  return Math.round(cards.reduce((s, c) => s + c.debtXp, 0) * 10) / 10;
+}
+
+/** What a resolved card says until the next refresh, from the make-up's own answer. */
+export function madeUpLineOf(v: { xp: number; debtXp: number; restored: boolean; status: string }): string {
+  const back = v.restored ? (v.status === "DONE_MVV" ? "its streak holds" : "its streak is back") : "its streak stays as it was";
+  return `Repaid ${xp1(v.debtXp)} and paid ${xp1(v.xp)} exactly; ${back}.`;
+}
+
+// ── The miss prompt (F6): one at most, under its template's card ──────────
+
+export function missPromptOf(owed: readonly OwedCard[], dismissed: (key: string) => boolean, live: boolean): OwedCard | null {
+  if (!live) return null;
+  const candidates = owed.filter(
+    (c) => (c.missRun ?? 0) >= MISS_PROMPT_RUN && !c.archived && (c.compulsory !== false || !c.mvv) && !dismissed(missPromptKey(c.templateId, c.lastMissDay))
+  );
+  candidates.sort((a, b) => (b.missRun ?? 0) - (a.missRun ?? 0) || a.day.localeCompare(b.day) || a.templateId.localeCompare(b.templateId));
+  return candidates[0] ?? null;
+}
+
+export interface MissPromptCopy {
+  title: string;
+  detail: string;
+  /** No minimum version yet: offer to add one (immediate). */
+  addMinimum: boolean;
+  /** 'Stop it being a must · from Thu 8 Oct' (deferred), or without the date when immediate; null when it is no must. */
+  stop: string | null;
+}
+
+export function missPromptCopyOf(card: OwedCard, ctx: { today: DayKey; nowMs: number; live: boolean }): MissPromptCopy {
+  const n = card.missRun ?? 0;
+  const change = ruleChangeOf({ compulsory: card.compulsory !== false, compulsoryOnRest: false, createdAt: card.createdAt ?? new Date(0).toISOString() }, { compulsory: false }, ctx);
+  return {
+    title: `${card.title} was missed ${n} times in a row.`,
+    detail: card.mvv ? "It may be the wrong size for now. It can stop being a must; a must changes after seven days." : "A smaller version you will do keeps it going, or it can stop being a must.",
+    addMinimum: !card.mvv,
+    stop: card.compulsory === false ? null : change.effectiveDay ? `Stop it being a must · from ${dayLabel(change.effectiveDay)}` : "Stop it being a must",
+  };
+}
+
+// ── The akrasia horizon in the drawer (F3) ────────────────────────────────
+
+/**
+ * When a rule change would take effect, as duty-rule.ts classifyChange
+ * decides it on the server: immediate before launch, inside the 60-minute
+ * typo grace or for a strengthening; otherwise deferred to today + 7.
+ */
+export function ruleChangeOf(
+  t: { compulsory: boolean; compulsoryOnRest?: boolean; createdAt: string },
+  after: Partial<RuleState>,
+  ctx: { today: DayKey; nowMs: number; live: boolean }
+): { effect: "immediate" | "deferred"; effectiveDay: DayKey | null } {
+  const created = new Date(t.createdAt);
+  const effect = classifyChange({ compulsory: t.compulsory, compulsoryOnRest: !!t.compulsoryOnRest }, after, {
+    createdAt: Number.isFinite(created.getTime()) ? created : new Date(0),
+    now: new Date(ctx.nowMs),
+    launched: ctx.live,
+  });
+  return { effect, effectiveDay: effect === "deferred" ? akrasiaEffectiveDay(ctx.today) : null };
+}
+
+/** The drawer's pending line: 'Pending: archived on Thu 8 Oct'. */
+export function pendingLineOf(next: PendingNext): string {
+  if (next.archive) return `Pending: archived on ${dayLabel(next.effectiveDay)}`;
+  if (next.compulsory === false) return `Pending: not a must from ${dayLabel(next.effectiveDay)}`;
+  return `Pending: not on rest days from ${dayLabel(next.effectiveDay)}`;
+}
+
+/** The row's meta while a weakening pends: 'must · ends Thu 8 Oct'. */
+export function pendingMetaOf(next: PendingNext): string {
+  if (next.archive) return `must · ends ${dayLabel(next.effectiveDay)}`;
+  if (next.compulsory === false) return `must until ${dayLabel(addDays(next.effectiveDay, -1))}`;
+  return `even on rest days until ${dayLabel(addDays(next.effectiveDay, -1))}`;
+}
+
+/** What a deferred weakening's answer says on the board ('Stretch leaves Today on Thu 8 Oct …'). */
+export function deferredNoticeOf(title: string, kind: "archive" | "unflag" | "rest-off", effectiveDay: DayKey): string {
+  const day = dayLabel(effectiveDay);
+  const keep = "A must takes seven days to weaken; Keep it in its drawer cancels.";
+  if (kind === "archive") return `${title} leaves Today on ${day}. ${keep}`;
+  if (kind === "unflag") return `${title} stops being a must on ${day}. ${keep}`;
+  return `${title} stops counting on rest days from ${day}. ${keep}`;
+}
+
+// ── The .o1 notice slot: one card at most ─────────────────────────────────
+
+/**
+ * Which Duty card holds .o1: the settled notice until it is dismissed on
+ * this device, else the rest banner. Never both; neither hides the
+ * Record-yesterday Ask (.o4).
+ */
+export function o1CardOf(p: { settled: SettledNotice | null; settledDismissed: boolean; banner: RestBanner | null }): "settled" | "rest" | null {
+  if (p.settled && !p.settledDismissed) return "settled";
+  if (p.banner) return "rest";
+  return null;
+}
+
+// ── Record yesterday (decision 24) ────────────────────────────────────────
+
+export interface YesterdaySheetView {
+  title: string;
+  description: string;
+  /** 'Tick only what you did on Wednesday. …' (live, while yesterday is open). */
+  honesty: string | null;
+  /** The sticky footer: [Settle Wednesday now], when it settles on its own, and that it locks the day. */
+  settle: { label: string; until: string; lock: string } | null;
+  /** 'Use a freeze for Wed': only for an open yesterday with no activity and a freeze banked (or already used). */
+  freeze: { label: string; sub: string; checked: boolean; disabled: boolean } | null;
+}
+
+/**
+ * Record yesterday's words. Settled (duty-economy.ts settledFor, the
+ * server's own rule): 'Wednesday is settled'. A day settlement will never
+ * judge — no cursor yet, or before the first Duty day (the launch Monday's
+ * Sunday) — is the pre-M2 sheet: recordable, with no Settle and no freeze.
+ * Otherwise the honesty line, the Settle footer and the freeze switch; once
+ * a freeze covers it, nothing more is recorded on it (decision 12).
+ */
+export function yesterdaySheetOf(p: { yesterday: DayKey; recordBy: string; duty: DutyBoard | null | undefined; yesterdayActive: boolean }): YesterdaySheetView {
+  const base = `Anything you tick pays at the full rate, ${p.recordBy}.`;
+  const duty = p.duty;
+  const preM2: YesterdaySheetView = { title: "Record yesterday", description: base, honesty: null, settle: null, freeze: null };
+  if (!duty?.live) return preM2;
+  const W = fullWeekday(p.yesterday);
+  if (isSettledOn(duty, p.yesterday)) return { title: `Record ${W}`, description: `${W} is settled. Anything missed is made up from its card.`, honesty: null, settle: null, freeze: null };
+  if (!isUnsettledDutyDay(duty, p.yesterday)) return preM2;
+  const banked = duty.freezes.banked;
+  const used = !!duty.freezes.usedYesterday;
+  const offer = duty.rest.yesterday == null && (used || (!p.yesterdayActive && banked >= 1));
+  return {
+    title: `Record ${W}`,
+    description: used ? `A freeze covers ${W}, so nothing more is recorded on it.` : base,
+    honesty: used ? null : `Tick only what you did on ${W}. Doing it now? Settle ${W} first: its make-up pays ×0.85 and brings its streak back.`,
+    settle: { label: `Settle ${W} now`, until: `Or leave it: it settles on its own at ${settlesAtLabel(p.yesterday)}.`, lock: `Settling locks ${W}.` },
+    freeze: offer
+      ? {
+          label: `Use a freeze for ${weekdayName(p.yesterday)}`,
+          sub: used ? `Used. It covers all of ${W}'s musts.` : `Covers all of ${W}'s musts · ${Math.max(0, banked - 1)} left after`,
+          checked: used,
+          disabled: used,
+        }
+      : null,
+  };
+}
+
+/** Yesterday counts as active for the freeze switch: the streak saw activity, or the board has a live tick on it now. */
+export function yesterdayActiveOf(streak: { last7Days: readonly boolean[] }, data: Pick<BoardData, "ledger">): boolean {
+  const y = streak.last7Days.length >= 2 ? streak.last7Days[streak.last7Days.length - 2] : false;
+  const l = data.ledger.yesterday;
+  return !!y || l.completions.length > 0 || l.reviews > 0 || l.ideas > 0;
+}
+
+// ── The Day ledger (F8 states, F10 copy) ──────────────────────────────────
+
+/**
+ * The DailyStreak fields the Day ledger reads: streak-curve's base plus the
+ * M2 fields lib/streak.ts DailyStreak adds (lane B, F8), under lane B's own
+ * names. Optional here so a pre-M2 streak still reads (absent: no break said).
+ */
+export interface StreakDutyFields {
+  current: number;
+  last7Days: readonly boolean[];
+  held7Days: readonly boolean[];
+  bankedFreezes: number;
+  /** The judged day with nothing in it that ended the last run (lib/streak.ts DailyStreak.endedOn). */
+  endedOn?: DayKey | null;
+  /** That run's length in active days, 0 with no endedOn (lib/streak.ts DailyStreak.endedAfter). */
+  endedAfter?: number;
+  freezeWillCover?: boolean;
+}
+
+/** When a judged break ended the run, inside a sentence: 'yesterday', 'Tuesday' within the week, else 'on Tue 15 Sep'. */
+function endedWhenOf(day: DayKey, today: DayKey): string {
+  const gap = daysBetween(day, today);
+  if (gap <= 0) return "today";
+  if (gap === 1) return "yesterday";
+  if (gap < 7) return fullWeekday(day);
+  return `on ${dayLabel(day)}`;
+}
+
+export interface DayLedgerDuty {
+  settles: boolean;
+  freezes: { banked: number } | null;
+  /** Hollow flame: a judged break ended the streak (never a red 0). */
+  broken: boolean;
+  /** Replaces the streak caption when set. */
+  caption: string | null;
+  /** A held chip under the caption: 'A freeze will cover Wed'. */
+  heldNote: string | null;
+  /** The Full-day note under the rings. */
+  fullNote: string | null;
+  /** The aside beside 'n of 3'. */
+  aside: string | null;
+}
+
+/** What the Full-day strip says once Duty is live (F10). */
+export const FULL_DAY_PAY_LINE = `up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed)`;
+
+export function dayLedgerDutyOf(p: {
+  duty: DutyBoard | null | undefined;
+  streak: StreakDutyFields;
+  kept: boolean;
+  full: boolean;
+  today: DayKey;
+  yesterdayActive: boolean;
+}): DayLedgerDuty {
+  const duty = p.duty;
+  if (!duty?.live) {
+    return { settles: false, freezes: p.streak.bankedFreezes > 0 ? { banked: p.streak.bankedFreezes } : null, broken: false, caption: null, heldNote: null, fullNote: null, aside: null };
+  }
+  const yesterday = addDays(p.today, -1);
+  const W = fullWeekday(yesterday);
+  const n = p.streak.held7Days.length;
+  const heldY = !!p.streak.held7Days[n - 2] || duty.rest.yesterday != null || !!duty.freezes.usedYesterday;
+  const before = !!p.streak.last7Days[n - 3] || !!p.streak.held7Days[n - 3];
+  // Settlement has still to judge yesterday (never a pre-Duty day: settledFor's floor).
+  const open = isUnsettledDutyDay(duty, yesterday);
+  const floor = dutyFloorOf(duty);
+  const willCover = duty.freezes.willCover || (open && !!p.streak.freezeWillCover);
+  let caption: string | null = null;
+  let heldNote: string | null = null;
+  let broken = false;
+  if (open && !p.yesterdayActive && !heldY) {
+    if (willCover) heldNote = `A freeze will cover ${weekdayName(yesterday)}`;
+    else if (before) caption = `${W} had nothing yet; record it by ${settlesAtLabel(yesterday)} or the streak ends.`;
+  }
+  if (!p.kept && p.streak.current === 0 && p.streak.endedOn) {
+    broken = true;
+    const run = p.streak.endedAfter;
+    caption = `Ended ${endedWhenOf(p.streak.endedOn, p.today)}${run && run > 0 ? ` at ${run} day${run === 1 ? "" : "s"}` : ""}. Any tick or review starts a new one.`;
+  }
+  // A Full day today repairs yesterday (settlement step 9): yesterday neither
+  // active nor held, the day before active or held, on or after launch, and
+  // no repair dated in (today − 8, yesterday). Said only when the board knows
+  // the last repair (DutyBoard.lastRepairDay): an honest number or none.
+  const last = duty.lastRepairDay;
+  const repairKnown = last !== undefined;
+  const repairedRecently = last != null && last > addDays(p.today, -8) && last < yesterday;
+  const repairable = repairKnown && !p.yesterdayActive && !heldY && !willCover && before && floor != null && yesterday >= floor && !repairedRecently;
+  const fullNote = repairable
+    ? `A Full day today repairs ${W} · once a week.`
+    : p.full
+      ? `Full day. Up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed).`
+      : `A Full day pays ${FULL_DAY_PAY_LINE}.`;
+  const banked = duty.freezes.banked;
+  return { settles: true, freezes: banked > 0 ? { banked } : null, broken, caption, heldNote, fullNote, aside: FULL_DAY_PAY_LINE };
+}
+
+/**
+ * The board data the Full-day rings read, with today's held musts counted
+ * as excused: settlement writes EXCUSED for them (decision 15), so the live
+ * ring agrees with what settlement will record.
+ */
+export function withHeldExcused(data: BoardData, must: readonly BoardRow[]): BoardData {
+  const held = must.filter((r) => r.heldToday && r.state === "open" && r.day === data.today);
+  if (held.length === 0) return data;
+  return {
+    ...data,
+    instances: [
+      ...data.instances,
+      ...held.map((r) => ({ id: `held:${r.key}`, templateId: r.template.id, day: data.today, slot: r.slot, status: "EXCUSED" as const, source: "manual" as const, xpPaid: 0 })),
+    ],
+  };
+}
+
+// ── Close the day (F13) ───────────────────────────────────────────────────
+
+/** One open item in Close the day and the moves the server accepts for it. `roll`: 'Roll all' moves it (PLANNED only, never late). */
+export interface CloseChoiceItem {
+  key: string;
+  title: string;
+  meta: string;
+  choices: { id: "minimum" | "tomorrow" | "anytime" | "drop" | "skip"; label: string }[];
+  roll?: boolean;
+}
+
+/**
+ * What Close the day lists. Before launch, exactly the pre-M2 sheet: a
+ * must's minimum and a one-off's Tomorrow. Once Duty is live: every open
+ * must (its minimum, or the honest line of what leaving it open costs),
+ * Tomorrow / Anytime / Drop for a non-must one-off, and Skip today for a
+ * non-must habit. Held musts (a rest day) owe nothing and are not listed.
+ */
+export function closeItemsOf(p: { must: readonly BoardRow[]; todayRows: readonly BoardRow[]; today: DayKey; live: boolean }): CloseChoiceItem[] {
+  const out: CloseChoiceItem[] = [];
+  for (const r of p.must) {
+    if (r.state !== "open" || r.day !== p.today || r.heldToday) continue;
+    if (r.template.mvv) {
+      out.push({ key: r.key, title: r.template.title, meta: `Must${r.dueLabel ? ` · ${r.dueLabel}` : ""} · still open`, choices: [{ id: "minimum", label: `Do the minimum · ${r.template.mvv}` }] });
+    } else if (p.live && !r.auto) {
+      out.push({
+        key: r.key,
+        title: r.template.title,
+        meta: `Left open, ${fullWeekday(p.today)} is judged ${settlesAtLabel(p.today)}: −${xp1(debtFor(r.template))} owed, made up at ×0.85`,
+        choices: [],
+      });
+    }
+  }
+  const { planned, habits } = splitTodayLane(p.todayRows);
+  for (const r of planned) {
+    if (r.state !== "open" || r.template.compulsory || r.day !== p.today) continue;
+    const offer = tomorrowOffer(r.template, p.today);
+    const deadline = r.template.dueKind === "DEADLINE";
+    const meta = deadline ? `${r.dueLabel ?? "deadline"} · keeps its deadline` : "Planned · carries forward, never late";
+    if (!p.live) {
+      if (offer.show) out.push({ key: r.key, title: r.template.title, meta, choices: [{ id: "tomorrow", label: "Tomorrow" }], roll: !deadline });
+      continue;
+    }
+    const choices: CloseChoiceItem["choices"] = [];
+    if (offer.show) choices.push({ id: "tomorrow", label: "Tomorrow" });
+    if (!deadline) choices.push({ id: "anytime", label: "Anytime" });
+    choices.push({ id: "drop", label: "Drop" });
+    out.push({ key: r.key, title: r.template.title, meta, choices, roll: offer.show && !deadline });
+  }
+  if (p.live) {
+    for (const r of habits) {
+      if (r.state !== "open" || r.template.compulsory || r.heldToday || r.auto || r.day !== p.today) continue;
+      out.push({ key: r.key, title: r.template.title, meta: "Habit · a skip holds its streak, 0 XP", choices: [{ id: "skip", label: "Skip today" }] });
+    }
+  }
+  return out;
+}
+
+/** The keys 'Roll all to tomorrow' moves: PLANNED one-offs only, so it never makes anything late. */
+export function rollAllKeysOf(items: readonly CloseChoiceItem[]): string[] {
+  return items.filter((i) => i.roll && i.choices.some((c) => c.id === "tomorrow")).map((i) => i.key);
+}
+
+// ── Time off (F9 controls, F13 switch) ────────────────────────────────────
+
+export interface RestOptionView {
+  kind: "rest" | "sick" | "away";
+  title: string;
+  meta: string;
+  action: string;
+  disabledReason: string | null;
+  /** The day the action declares (rest: tomorrow; sick: today); null for a vacation (a range). */
+  day: DayKey | null;
+}
+
+function restCapReason(day: DayKey, declared: readonly DeclaredDay[]): string | null {
+  const from = weekStartKeyOf(day);
+  const to = addDays(from, 6);
+  const n = declared.filter((x) => x.kind === "REST" && x.day >= from && x.day <= to && x.day !== day).length;
+  return n >= REST_PER_WEEK ? `Two rest days that week already (Mon ${shortDate(from)} – Sun ${shortDate(to)}).` : null;
+}
+
+/**
+ * RestControls' three options, with the reason one is not on offer now (the
+ * server checks the same rules and says the same). Nothing before Duty has a
+ * launch day; nothing for a day before it (decision 2).
+ */
+export function restOptionsOf(p: { today: DayKey; launchDay: DayKey | null; declared: readonly DeclaredDay[] }): RestOptionView[] {
+  const tomorrow = addDays(p.today, 1);
+  const on = (d: DayKey) => p.declared.find((x) => x.day === d) ?? null;
+  const notYet = (d: DayKey): string | null => (!p.launchDay ? "Time off arrives with Duty." : d < p.launchDay ? `Time off counts from ${dayLabel(p.launchDay)}.` : null);
+
+  const tomorrowHeld = on(tomorrow);
+  const rest: RestOptionView = {
+    kind: "rest",
+    title: `Rest ${fullWeekday(tomorrow)}`,
+    meta: `Declared the day before · ${REST_PER_WEEK} a week`,
+    action: "Rest",
+    disabledReason: notYet(tomorrow) ?? (tomorrowHeld ? `${fullWeekday(tomorrow)} is already ${REST_WORD[tomorrowHeld.kind].toLowerCase()}.` : restCapReason(tomorrow, p.declared)),
+    day: tomorrow,
+  };
+  const lastSick = [...p.declared].filter((x) => x.kind === "SICK" && x.day < p.today && x.day > addDays(p.today, -SICK_EVERY_DAYS)).sort((a, b) => b.day.localeCompare(a.day))[0];
+  const todayHeld = on(p.today);
+  const sick: RestOptionView = {
+    kind: "sick",
+    title: "Sick today",
+    meta: `Same day is fine · once per ${SICK_EVERY_DAYS} days`,
+    action: "Sick",
+    disabledReason:
+      notYet(p.today) ??
+      (todayHeld
+        ? `Today is already ${REST_WORD[todayHeld.kind].toLowerCase()}.`
+        : lastSick
+          ? `Sick used on ${shortDate(lastSick.day)}; next from ${shortDate(addDays(lastSick.day, SICK_EVERY_DAYS))}.`
+          : null),
+    day: p.today,
+  };
+  const away: RestOptionView = {
+    kind: "away",
+    title: "Vacation",
+    meta: `${VACATION_MIN_DAYS} to ${VACATION_MAX_DAYS} days from tomorrow · ${VACATION_DAYS_PER_365} a year`,
+    action: "Plan",
+    disabledReason: !p.launchDay ? "Time off arrives with Duty." : null,
+    day: null,
+  };
+  return [rest, sick, away];
+}
+
+/** Why a vacation range cannot be sent, or null (the server also checks the yearly budget). */
+export function vacationRangeError(from: string, to: string, p: { today: DayKey; launchDay: DayKey | null }): string | null {
+  const key = /^\d{4}-\d{2}-\d{2}$/;
+  if (!key.test(from) || !key.test(to)) return "Pick both days.";
+  if (from <= p.today) return "A vacation starts tomorrow at the earliest.";
+  if (p.launchDay && from < p.launchDay) return `Time off counts from ${dayLabel(p.launchDay)}.`;
+  if (to < from) return "The last day comes after the first.";
+  const n = daysBetween(from, to) + 1;
+  if (n < VACATION_MIN_DAYS) return `A vacation is at least ${VACATION_MIN_DAYS} days; for fewer, declare rest days.`;
+  if (n > VACATION_MAX_DAYS) return `A vacation is at most ${VACATION_MAX_DAYS} days.`;
+  return null;
+}
+
+/** Close the day's 'Rest <weekday>' switch (named: between 00:00 and 04:00 'tomorrow' is ambiguous). Null: not offered. */
+export function restSwitchOf(p: {
+  today: DayKey;
+  launchDay: DayKey | null;
+  declared: readonly DeclaredDay[];
+}): { label: string; day: DayKey; checked: boolean; disabledReason: string | null } | null {
+  const tomorrow = addDays(p.today, 1);
+  if (!p.launchDay || tomorrow < p.launchDay) return null;
+  const label = `Rest ${fullWeekday(tomorrow)}`;
+  const held = p.declared.find((x) => x.day === tomorrow) ?? null;
+  if (held && held.kind !== "REST") return { label, day: tomorrow, checked: false, disabledReason: `${fullWeekday(tomorrow)} is already ${REST_WORD[held.kind].toLowerCase()}.` };
+  if (held) return { label, day: tomorrow, checked: true, disabledReason: null };
+  return { label, day: tomorrow, checked: false, disabledReason: restCapReason(tomorrow, p.declared) };
+}
+
+/** Future declarations a Cancel can still take back (days after today), grouped into runs: 'Rest Thu 8 Oct', 'Vacation Mon 12 Oct – Sun 18 Oct'. */
+export function cancellableOf(declared: readonly DeclaredDay[], today: DayKey): { from: DayKey; to: DayKey; kind: RestKind; label: string }[] {
+  const future = declared.filter((x) => x.day > today).sort((a, b) => a.day.localeCompare(b.day));
+  const runs: { from: DayKey; to: DayKey; kind: RestKind }[] = [];
+  for (const x of future) {
+    const last = runs[runs.length - 1];
+    if (last && last.kind === "VACATION" && x.kind === "VACATION" && addDays(last.to, 1) === x.day) last.to = x.day;
+    else runs.push({ from: x.day, to: x.day, kind: x.kind });
+  }
+  return runs.map((r) => ({ ...r, label: r.from === r.to ? `${REST_WORD[r.kind]} ${dayLabel(r.from)}` : `${REST_WORD[r.kind]} ${dayLabel(r.from)} – ${dayLabel(r.to)}` }));
 }

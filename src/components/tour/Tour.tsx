@@ -38,6 +38,8 @@ import { Button } from "@/components/ui/Button";
 import { pushEscapeLayer, trapTab } from "@/components/capture/layers";
 import { SHELL_CAPTURE_EVENT } from "@/components/shell/capture-bridge";
 import { DUR, motionLevel, play } from "@/lib/motion";
+import { isDutyLaunched } from "@/lib/duty-economy";
+import { todayKey } from "@/lib/life-day";
 import { TOUR_START_EVENT } from "@/lib/tour-contract";
 import { cardMaxHeight, cardWidth, placeCard, type Box } from "./tour-position";
 import {
@@ -156,7 +158,7 @@ function Body({ body }: { body: readonly Seg[] }) {
 
 export function Tour() {
   const pathname = usePathname();
-  const [run, setRun] = useState<{ index: number; keyboard: boolean } | null>(null);
+  const [run, setRun] = useState<{ index: number; keyboard: boolean; dutyLive: boolean } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -168,7 +170,11 @@ export function Tour() {
   const bodyId = `${uid}-tour-body`;
 
   const keyboard = run?.keyboard ?? true;
-  const steps = useMemo(() => tourSteps({ keyboard }), [keyboard]);
+  // Whether Duty is live is read when a run starts, on the client (the tour never renders on the
+  // server, so nothing can mismatch). The browser sees the code constant DUTY_LAUNCH_DAY only
+  // (XTNL_DUTY_LAUNCH_DAY is a server variable), which is what production reads too.
+  const dutyLive = run?.dutyLive ?? false;
+  const steps = useMemo(() => tourSteps({ keyboard, dutyLive }), [keyboard, dutyLive]);
   const index = run ? Math.min(run.index, steps.length - 1) : 0;
   const step = run ? steps[index] : null;
   const last = index === steps.length - 1;
@@ -177,7 +183,7 @@ export function Tour() {
   const start = useCallback(() => {
     if (!openRef.current) openerRef.current = document.activeElement;
     setAnnouncement("");
-    setRun({ index: 0, keyboard: keyboardDevice() });
+    setRun({ index: 0, keyboard: keyboardDevice(), dutyLive: isDutyLaunched(todayKey()) });
   }, []);
 
   const finish = useCallback(() => {

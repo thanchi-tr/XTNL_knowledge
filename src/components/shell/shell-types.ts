@@ -7,7 +7,7 @@
  * and no badges until the data arrives.
  */
 import type { Material } from "@/lib/materials";
-import type { Notice } from "@/lib/notifications";
+import type { Notice, NotificationFeed } from "@/lib/notifications";
 import type { TrackEdges } from "@/components/ui/Crest";
 import { characterLevel } from "@/lib/character";
 import { TRACKS } from "@/lib/life-types";
@@ -41,6 +41,12 @@ export interface ShellAsk {
   /** One action label ("Review", "Sort"); the row itself is the action. */
   action?: string;
   group: string;
+  /**
+   * M2 (decision 27; a compatible extension): false for a row the bell lists
+   * but never counts ('Yesterday: 2 musts open', 'Weekly review'). Absent
+   * reads as counted, as before.
+   */
+  counted?: boolean;
 }
 
 export interface ShellData {
@@ -48,8 +54,22 @@ export interface ShellData {
   /** Ink counts that ask something of you. 0 renders nothing. */
   badges: { today: number; study: number; train: number };
   asks: { count: number; items: ShellAsk[] };
-  /** M2 debt: the separate owed pill. Zero until debt exists. */
+  /** M2 debt: the separate owed pill (the Sidebar's 'n owed', ≥ 1280 px): open debts. Zero until debt exists. */
   owed: { count: number };
+}
+
+/** The feed's notice ids the shell treats specially (notifications.ts writes them through rituals.ts). */
+export const OWED_NOTICE_ID = "owed";
+export const YESTERDAY_MUSTS_NOTICE_ID = "yesterday-musts";
+export const WEEK_REVIEW_NOTICE_ID = "week-review";
+
+/** Info notices the bell lists but never counts (decision 27; the weekly review, F14). */
+export const LISTED_ONLY_NOTICE_IDS: readonly string[] = [YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID];
+
+/** ShellData.owed from the feed's counts: the open debts (0 when the read failed or nothing is owed). */
+export function owedOf(feed: Pick<NotificationFeed, "counts"> | null | undefined): ShellData["owed"] {
+  const n = feed?.counts.owed?.count ?? 0;
+  return { count: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0 };
 }
 
 /** "86% to Practitioner at 15" when the next level is a new title, else "86% to level 15". */
@@ -99,12 +119,14 @@ export const EFFECTS_GROUP = "Active effects";
 /**
  * Colour grammar for an Ask's diamond. Colour only reports kept / owed / held:
  *   a debuff in effect → owed (a penalty is the only owed diamond, never a due date);
+ *   Duty's open debt ('Owed: 2 · −12.5 XP', id 'owed', M2) → owed;
  *   a boon in effect → held;
  *   the quota met → kept (the one notice that reports something kept);
  *   background info → quiet;
  *   everything that asks (due, past grace, the focus line, an encounter ready) → ink.
  */
 export function toneOf(n: Pick<Notice, "group" | "tone"> & { id?: string }): AskTone {
+  if (n.id === OWED_NOTICE_ID) return "owed";
   if (n.group === EFFECTS_GROUP) return n.tone === "bad" ? "owed" : "held";
   if (n.id === "quota-met") return "kept";
   if (n.tone === "info") return "quiet";
@@ -121,10 +143,17 @@ export function asksOfYou(n: Pick<Notice, "id" | "group" | "tone">): boolean {
   return n.tone === "warn" || n.tone === "bad" || n.id === "bosses";
 }
 
+/** An info notice the bell lists without counting it (LISTED_ONLY_NOTICE_IDS). */
+export function listedOnly(n: Pick<Notice, "id" | "group" | "tone">): boolean {
+  return n.group !== EFFECTS_GROUP && n.tone === "info" && LISTED_ONLY_NOTICE_IDS.includes(n.id);
+}
+
 /**
- * The bell sheet's rows: the notices that ask (counted), then the effects in
- * play (listed, not counted). Good-news and info notices (the focus line, the
- * quota met, cards due with nothing late) stay on Today, not in the bell.
+ * The bell sheet's rows: the notices that ask (counted), then Duty's listed
+ * info rows (yesterday's open musts, the weekly review: counted: false), then
+ * the effects in play (listed, not counted). Other good-news and info notices
+ * (the focus line, the quota met, cards due with nothing late) stay on Today,
+ * not in the bell.
  */
 export function asksFromNotices(notices: Notice[]): ShellAsk[] {
   const toAsk = (n: Notice): ShellAsk => ({
@@ -136,10 +165,33 @@ export function asksFromNotices(notices: Notice[]): ShellAsk[] {
     action: n.action,
     group: n.group,
   });
-  return [...notices.filter(asksOfYou).map(toAsk), ...notices.filter((n) => n.group === EFFECTS_GROUP).map(toAsk)];
+  return [
+    ...notices.filter(asksOfYou).map(toAsk),
+    ...notices.filter(listedOnly).map((n) => ({ ...toAsk(n), counted: false })),
+    ...notices.filter((n) => n.group === EFFECTS_GROUP).map(toAsk),
+  ];
 }
 
-/** The bell's count: exactly the rows that ask (so the badge and the sheet agree). */
-export function askCount(items: readonly Pick<ShellAsk, "group">[]): number {
-  return items.filter((a) => a.group !== EFFECTS_GROUP).length;
+/** The bell's count: exactly the rows that ask (so the badge and the sheet agree); an effect or a listed-only row never counts. */
+export function askCount(items: readonly Pick<ShellAsk, "group" | "counted">[]): number {
+  return items.filter((a) => a.group !== EFFECTS_GROUP && a.counted !== false).length;
+}
+
+/**
+ * The bell sheet's three sections, in order (M2; a compatible addition):
+ * `asking` is exactly askCount's rows (the card the badge counts), `listed`
+ * the rows listed but never counted (yesterday's open musts, the weekly
+ * review), shown under their own quiet heading, and `effects` the boons and
+ * debuffs in play. Every item lands in exactly one section.
+ */
+export function askSectionsOf<T extends Pick<ShellAsk, "group" | "counted">>(items: readonly T[]): { asking: T[]; listed: T[]; effects: T[] } {
+  const asking: T[] = [];
+  const listed: T[] = [];
+  const effects: T[] = [];
+  for (const a of items) {
+    if (a.group === EFFECTS_GROUP) effects.push(a);
+    else if (a.counted === false) listed.push(a);
+    else asking.push(a);
+  }
+  return { asking, listed, effects };
 }

@@ -9,7 +9,8 @@ import { PricePill } from "@/components/ui/PricePill";
 import { Tick, type TickState } from "@/components/ui/Tick";
 import { cx } from "@/components/ui/cx";
 import { TRACK_LABEL, TRACK_SIGIL, fmtMinutes, fmtXp } from "./format";
-import { hhmmOf, tickNameOf } from "./board-ui";
+import { hhmmOf, pendingMetaOf, tickNameOf } from "./board-ui";
+import type { RestKind } from "@/lib/duty-economy";
 
 interface Props {
   row: BoardRow;
@@ -34,6 +35,8 @@ interface Props {
   onMinimum?: (from: Element | null) => void;
   /** Just captured (the board found it after a capture or a '#t-<id>' link): outlined for a moment, and said. */
   justAdded?: boolean;
+  /** M2: today's declaration (rest, sick, vacation), so a held row says so and an 'Even on rest days' must keeps 'must'. */
+  restToday?: RestKind | null;
   /** The drawer, when open. */
   children?: ReactNode;
 }
@@ -85,7 +88,7 @@ export function TaskRow(props: Props) {
               {props.justAdded && <span className="sr-only">, just added</span>}
             </span>
             <span className="r-meta">
-              {done ? <DoneMeta row={row} paidXp={paid?.xp ?? null} study={study} /> : <OpenMeta row={row} />}
+              {done ? <DoneMeta row={row} paidXp={paid?.xp ?? null} study={study} /> : <OpenMeta row={row} restToday={props.restToday ?? null} />}
             </span>
           </button>
           {(minimum || (done && undoable)) && (
@@ -126,18 +129,28 @@ export function TaskRow(props: Props) {
   );
 }
 
+const HELD_WORD: Record<RestKind, string> = { REST: "rest day", SICK: "sick day", VACATION: "vacation" };
+
 /** The one meta line of an open row: track sigil, rung or length, streak, goal, due with its clock. */
-function OpenMeta({ row }: { row: BoardRow }) {
+function OpenMeta({ row, restToday }: { row: BoardRow; restToday: RestKind | null }) {
   const t = row.template;
   const bits: string[] = [TRACK_LABEL[t.track]];
   if (row.strength != null) bits.push(habitLine(row.strength));
   else if (!row.auto) bits.push(fmtMinutes(row.estMinutes));
   // A run that reaches the edge of the history read is a floor, and says so.
-  if (row.streak && row.streak.days > 0) bits.push(`${Math.round(row.streak.days)} day${Math.round(row.streak.days) === 1 ? "" : "s"}${row.streak.capped ? "+" : ""}`);
+  // M2: '12 days · repaired' after a restoring make-up, '12 days · held' after the minimum or an excused day.
+  if (row.streak && row.streak.days > 0) {
+    const n = Math.round(row.streak.days);
+    bits.push(`${n} day${n === 1 ? "" : "s"}${row.streak.capped ? "+" : ""}${row.streakNote ? ` · ${row.streakNote}` : ""}`);
+  }
   if (row.progress) bits.push(row.progress.label);
   if (row.ruleLabel && row.strength == null) bits.push(row.ruleLabel);
   if (row.parentTitle) bits.push(`goal: ${row.parentTitle}`);
-  if (t.compulsory && row.lane !== "must") bits.push("must");
+  // M2: a weakening still pending keeps the row, and says until when ('must · ends Thu 8 Oct').
+  if (row.pendingNext) bits.push(pendingMetaOf(row.pendingNext));
+  else if (t.compulsory && row.lane !== "must") bits.push("must");
+  if (row.heldToday && restToday) bits.push(`${HELD_WORD[restToday]} · ${t.compulsory ? "nothing owed" : "streak holds"}`);
+  else if (restToday && t.compulsory && t.compulsoryOnRest && row.lane === "must") bits.push("must · even on rest days");
   if (t.intrinsic) bits.push("#play");
   if (t.sizing) bits.push("sizing…");
   if (row.state === "skipped") bits.push("skipped today");

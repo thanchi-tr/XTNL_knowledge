@@ -14,13 +14,20 @@ import { SegmentStrip, type Segment } from "@/components/ui/Meter";
 import { formatAmount } from "@/components/ui/format";
 
 /**
- * M2-READY: the Monday weekly review as a runner (focus mode: no shell, max
- * 560, exit top-left, progress on top, actions in the thumb zone) with five
- * skippable steps — Last week, Inbox to zero, Goals check-in, Owed, Next
- * week — ending on the WEEK CARD. Presentational: the caller owns the step
- * and every number (fixtures on /dev/style/today until M2 lands).
+ * The weekly review as a runner (focus mode: no shell, max 560, exit
+ * top-left, progress on top, actions in the thumb zone) with five skippable
+ * steps — The week, Inbox to zero, Goals check-in, Owed, Next week — ending
+ * on the WEEK CARD when the reviewed week is judged (m2-refit.md F14).
+ * Presentational: the caller owns the step and every number. The live
+ * wiring is components/home/WeekReview.tsx (/today/week?view=run); the
+ * fixtures are on /dev/style/today.
+ *
+ * The review covers rituals.ts reviewedWeek(today): Saturday and Sunday the
+ * week being finished, Monday to Wednesday the week just ended. Its first
+ * step states only what settlement has judged, never a verdict the M5 judge
+ * has not written.
  */
-export const WEEK_STEPS = ["Last week", "Inbox", "Goals", "Owed", "Next week"] as const;
+export const WEEK_STEPS = ["The week", "Inbox", "Goals", "Owed", "Next week"] as const;
 
 export function WeekRunner({
   step,
@@ -101,9 +108,12 @@ export function WeekTrack({ track, name, detail, kept, held }: { track: TrackSig
 
 /**
  * The WEEK CARD, which IS the week's Tier 2 Seal (one per week, not one per
- * track): "3 of 4 tracks kept", the track chips, the exact MP paid (1.5 per
- * kept track) and What moved. It renders in the runner with no button of
- * its own; L3's presenter merges it rather than stacking a second Seal.
+ * track): "3 of 4 tracks kept" ("· 1 held" when a track's week was held),
+ * the track chips (kept, held with its hatch, or quiet), the exact MP paid
+ * (1.5 per kept track) and What moved. It renders in the runner with no
+ * button of its own; L3's presenter merges it rather than stacking a second
+ * Seal. A held week is never shown as 'not kept': it bridges the kept-week
+ * streak (life-tracks weekMarkOf).
  */
 export function WeekCard({
   eyebrow,
@@ -120,7 +130,8 @@ export function WeekCard({
   eyebrow: string;
   kept: number;
   total: number;
-  tracks: { track: TrackSigil; name: string; kept: boolean }[];
+  /** held (M2, optional): the track's week was held (life-tracks weekMarkOf), not missed. */
+  tracks: { track: TrackSigil; name: string; kept: boolean; held?: boolean }[];
   /** Exact MP paid for the kept tracks. */
   mp: number;
   /** "1.5 per kept track · Duty's kept-week streak is 9." */
@@ -130,19 +141,25 @@ export function WeekCard({
   /** Play the card sweep (the T2 visual; Still shows it settled). */
   sweep?: boolean;
 }) {
+  const held = tracks.filter((t) => !t.kept && t.held).length;
+  const heading = `${kept} of ${total} tracks kept${held > 0 ? ` · ${held} held` : ""}`;
   return (
     <div className={`card weekcard${sweep ? " sweep go" : ""}`} aria-labelledby="weekcard-h">
-      <Medallion material={material} numeral={kept} label={`${kept} of ${total} tracks kept`} />
+      <Medallion material={material} numeral={kept} label={heading} />
       <p className="t-eyebrow">{eyebrow}</p>
-      <h2 id="weekcard-h">
-        {kept} of {total} tracks kept
-      </h2>
+      <h2 id="weekcard-h">{heading}</h2>
       <div className="kw">
-        {tracks.map((t) => (
-          <Chip key={t.name} tone={t.kept ? "kept" : "quiet"} sigil={t.track}>
-            {t.name}
-          </Chip>
-        ))}
+        {tracks.map((t) =>
+          !t.kept && t.held ? (
+            <Chip key={t.name} tone="held" held="rest" sigil={t.track}>
+              {t.name} · held
+            </Chip>
+          ) : (
+            <Chip key={t.name} tone={t.kept ? "kept" : "quiet"} sigil={t.track}>
+              {t.name}
+            </Chip>
+          )
+        )}
       </div>
       <p className="t-meta">
         Paid{" "}

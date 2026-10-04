@@ -23,12 +23,28 @@ import { nextDue, occurrencesBetween, parseRule, periodOf, type Rule, type RuleL
  *
  * Today and yesterday are never judged: either can still be recorded
  * (RECORD_WINDOW_DAYS), so an open occurrence there is pending, not a miss.
+ *
+ * FROZEN CONTRACT (M5; extended compatibly by M2 lane 0, m2-refit.md F1 and
+ * docs/life-plan/m2-contracts.md). M2 additions:
+ *   - MADE_UP breaks (a late make-up clears the debt, never the occurrence);
+ *   - targetUnits(rule, period, instances, heldDays): a TARGET's units, with
+ *     each make-up slot its own unit (decision 21), shared by perDutyStreak,
+ *     habitStrength, life-weeks.ts and the settlement plan;
+ *   - StreakOptions.settledThroughDay / heldDays: with the settlement cursor
+ *     an unsettled day reads pending (never missed), and a held day with no
+ *     instance reads held (decision 15). Both absent: M1/M5 behaviour.
  */
 
 /** What a TaskInstance contributes: its life day and status. */
 export interface InstanceLike {
   day: DayKey;
   status: string;
+  /**
+   * M2: TaskInstance.repaired, a make-up inside the restore window. A
+   * repaired or DONE_LATE instance of a recurring template is a make-up
+   * slot, which targetUnits counts as its own unit. Absent reads false.
+   */
+  repaired?: boolean;
 }
 
 export interface StreakOptions {
@@ -36,6 +52,19 @@ export interface StreakOptions {
   since?: DayKey;
   /** Days before today that can still be recorded. Default RECORD_WINDOW_DAYS. */
   recordWindowDays?: number;
+  /**
+   * M2: LifeSettings.settledThroughDay. When set, an expected day after it
+   * with no instance reads pending, never missed, whatever its age (the
+   * board must not show a break settlement has not judged). Null or absent:
+   * no cursor rule (before Duty launches), the record window alone decides.
+   */
+  settledThroughDay?: DayKey | null;
+  /**
+   * M2: days that hold this template (duty-rule.ts heldDaysOf, plus freeze
+   * days). An expected day in it with no instance reads held. For a
+   * compulsoryOnRest must, pass only the freeze days. Absent: none.
+   */
+  heldDays?: ReadonlySet<DayKey>;
 }
 
 /**
@@ -64,12 +93,12 @@ export type Outcome = "kept" | "held" | "missed" | "pending";
 
 const KEEPS = new Set(["DONE", "DONE_LATE"]);
 const HOLDS = new Set(["DONE_MVV", "SKIPPED", "EXCUSED"]);
-const BREAKS = new Set(["MISSED", "WRITTEN_OFF"]);
+const BREAKS = new Set(["MISSED", "WRITTEN_OFF", "MADE_UP"]);
 
 /**
  * One day's instances read together: any kept slot keeps the day; an UNDONE
  * row is as if absent. kept: DONE, DONE_LATE; held: DONE_MVV, SKIPPED,
- * EXCUSED; missed: MISSED, WRITTEN_OFF; null when nothing counts. The habits
+ * EXCUSED; missed: MISSED, WRITTEN_OFF, MADE_UP (M2); null when nothing counts. The habits
  * and the week judge (life-weeks.ts, DUTY's occurrences) share this one rule.
  */
 export function instanceOutcome(statuses: readonly string[] | undefined): Exclude<Outcome, "pending"> | null {
@@ -111,12 +140,75 @@ export function outcomesOf(
   instances: readonly InstanceLike[],
   opts: StreakOptions = {}
 ): { day: DayKey; outcome: Outcome }[] {
-  const window = opts.recordWindowDays ?? RECORD_WINDOW_DAYS;
   const days = byDay(instances);
   return occurrencesBetween(rule, startDay, windowStart(startDay, today, opts.since), today).map((day) => {
     const o = instanceOutcome(days.get(day));
-    return { day, outcome: o ?? (daysBetween(day, today) <= window ? "pending" : "missed") };
+    return { day, outcome: o ?? (opts.heldDays?.has(day) ? "held" : isPending(day, today, opts) ? "pending" : "missed") };
   });
+}
+
+/**
+ * Whether a day with nothing recorded is still open: inside the record
+ * window, or (M2) after the settlement cursor when one is given.
+ */
+function isPending(day: DayKey, today: DayKey, opts: StreakOptions): boolean {
+  if (daysBetween(day, today) <= (opts.recordWindowDays ?? RECORD_WINDOW_DAYS)) return true;
+  return opts.settledThroughDay != null && day > opts.settledThroughDay;
+}
+
+/** A TARGET's standing over one period (or the part of it counted so far). */
+export interface TargetUnits {
+  /** min(n, distinct kept days + kept make-up slots). */
+  kept: number;
+  /** min(n - kept, distinct held days (held instances or heldDays, on days not kept) + held make-up slots). */
+  held: number;
+  /** n - kept - held. */
+  short: number;
+}
+
+/** A make-up slot: repaired, or a recurring template's DONE_LATE (which only a make-up writes). */
+function isMakeUpSlot(i: InstanceLike): boolean {
+  return i.repaired === true || i.status === "DONE_LATE";
+}
+
+/**
+ * The units a TARGET period holds (m2-refit.md decision 21). Ordinary
+ * instances count distinct days, so two ticks on one day are one; each
+ * make-up slot (settlement writes one MISSED slot per unit short, on the
+ * period's last day) counts as its own unit once it is made up inside the
+ * restore window. A MADE_UP slot counts nothing. `heldDays` in the period
+ * hold a day that has no kept instance. Counts days in [period.start,
+ * period.end] only: pass end = today for a period still running. A rule
+ * that is not a TARGET counts against n = 1.
+ */
+export function targetUnits(
+  rule: RuleLike,
+  period: { start: DayKey; end: DayKey },
+  instances: readonly InstanceLike[],
+  heldDays: ReadonlySet<DayKey> = new Set()
+): TargetUnits {
+  const r = toRule(rule);
+  const n = r?.kind === "TARGET" ? r.n : 1;
+  const keptDays = new Set<DayKey>();
+  const heldDaySet = new Set<DayKey>();
+  let keptSlots = 0;
+  let heldSlots = 0;
+  for (const i of instances) {
+    if (i.day < period.start || i.day > period.end) continue;
+    const makeUp = isMakeUpSlot(i);
+    if (KEEPS.has(i.status)) {
+      if (makeUp) keptSlots += 1;
+      else keptDays.add(i.day);
+    } else if (HOLDS.has(i.status)) {
+      if (makeUp) heldSlots += 1;
+      else heldDaySet.add(i.day);
+    }
+  }
+  for (const d of heldDays) if (d >= period.start && d <= period.end) heldDaySet.add(d);
+  for (const d of keptDays) heldDaySet.delete(d);
+  const kept = Math.min(n, keptDays.size + keptSlots);
+  const held = Math.min(n - kept, heldDaySet.size + heldSlots);
+  return { kept, held, short: n - kept - held };
 }
 
 interface PeriodOutcome {
@@ -134,24 +226,16 @@ interface PeriodOutcome {
   outcome: "met" | "open" | "unjudged" | "held" | "missed";
 }
 
-/** A TARGET's periods in the window, oldest first. Distinct days count, held days excuse a shortfall. */
+/** A TARGET's periods in the window, oldest first. Units from targetUnits; held days excuse a shortfall. */
 function periodsOf(rule: Rule & { kind: "TARGET" }, startDay: DayKey, today: DayKey, instances: readonly InstanceLike[], opts: StreakOptions): PeriodOutcome[] {
-  const window = opts.recordWindowDays ?? RECORD_WINDOW_DAYS;
-  const days = byDay(instances);
   const from = windowStart(startDay, today, opts.since);
   const out: PeriodOutcome[] = [];
   let p = periodOf(rule, from);
   while (p.start <= today) {
-    let kept = 0;
-    let held = 0;
-    for (let d = p.start; d <= p.end && d <= today; d = addDays(d, 1)) {
-      const o = instanceOutcome(days.get(d));
-      if (o === "kept") kept += 1;
-      else if (o === "held") held += 1;
-    }
+    const { kept, held } = targetUnits(rule, { start: p.start, end: p.end < today ? p.end : today }, instances, opts.heldDays);
     let outcome: PeriodOutcome["outcome"];
     if (kept >= rule.n) outcome = "met";
-    else if (daysBetween(p.end, today) <= window) outcome = "open";
+    else if (isPending(p.end, today, opts)) outcome = "open";
     else if (p.start < startDay || p.start < from) outcome = "unjudged";
     else if (kept + held >= rule.n) outcome = "held";
     else outcome = "missed";

@@ -46,6 +46,14 @@
  *   Launch and gates
  *     LIFE_LAUNCH_DAY (null until the lead sets it) · LIFE_LAUNCH_DAY_ENV · LIFE_JUDGE_ENV · LifeEnv
  *     isDayKey(x) · lifeLaunchDay(env?) · isLaunched(today, launchDay?) · lifeWritesEnabled(env?)
+ *
+ * Added by M2 lane B (compatible; m2-refit.md decisions 5, 6, 20 and F11):
+ *   Held weeks and pro-rated floors
+ *     HELD_WEEK_REST_DAYS 5 · HELD_PREFIX 'Held · ' (display only) · HELD_WEEK_MARK 'held'
+ *     HeldWeekReceipt {mark: 'held', restDays} · heldWeekReceipt(restDays) · isHeldWeekReceipt(x)
+ *     floorFactor(restDays) = (7 − restDays)/7 · KeptFloors · keptFloorsOf(restDays)
+ *   Full days: LIFE_MP.FULL_DAY is minted by the week judge in the run that writes the DUTY
+ *     WEEK row, after the kept tracks and inside LIFE_MP_WEEK_CAP (decision 6).
  */
 import type { Band, Category, Horizon, KrMetric, Track } from "./life-types";
 import type { DayKey } from "./life-day";
@@ -165,6 +173,77 @@ export const DUTY_MIN_OCCURRENCES = 3;
 /** DUTY with 0–2 occurrences (none missed): at least this many Duty completions on ≥ 3 days, raw ≥ 30. */
 export const DUTY_FALLBACK_COMPLETIONS = 5;
 
+// ── Held weeks and pro-rated floors (M2) ──────────────────────────────────
+
+/**
+ * A track whose pro-rated floors are not met is 'held' instead of 'not kept'
+ * when the week has at least this many declared rest, sick or vacation days
+ * (m2-refit.md decision 20). A met week is always Kept, never downgraded.
+ */
+export const HELD_WEEK_REST_DAYS = 5;
+/** The display line of a held week: 'Held · 5 rest days'. Display only: readers use the receipt mark. */
+export const HELD_PREFIX = "Held · ";
+/** The WEEK row's receipt mark for a held week (life-tracks.ts weekMarkOf reads it). */
+export const HELD_WEEK_MARK = "held";
+
+/** A held WEEK row's receipt: structural, so no reader parses the detail line. qty stays 0. */
+export interface HeldWeekReceipt {
+  mark: typeof HELD_WEEK_MARK;
+  restDays: number;
+}
+
+export function heldWeekReceipt(restDays: number): HeldWeekReceipt {
+  return { mark: HELD_WEEK_MARK, restDays: Math.max(0, Math.floor(restDays)) };
+}
+
+/** True for a WEEK receipt that marks the week held. */
+export function isHeldWeekReceipt(x: unknown): x is HeldWeekReceipt {
+  return !!x && typeof x === "object" && !Array.isArray(x) && (x as { mark?: unknown }).mark === HELD_WEEK_MARK;
+}
+
+/** The share of a week the floors ask for: (7 − rest days)/7, rest days clamped to 0..7. Freeze days never pro-rate. */
+export function floorFactor(restDays: number): number {
+  const r = Math.min(7, Math.max(0, Math.floor(Number.isFinite(restDays) ? restDays : 0)));
+  return (7 - r) / 7;
+}
+
+/** A week's kept-week floors after pro-rating by its rest days. */
+export interface KeptFloors {
+  restDays: number;
+  /** (7 − restDays)/7. */
+  factor: number;
+  /** max(1, ceil(3 × f)): a track with no day of activity is never kept. */
+  days: number;
+  /** 30 × f, to one decimal (the rule and the reason line read the same number). */
+  raw: number;
+  /** BODY: 150 × f effort minutes, to one decimal. */
+  effortMinutes: number;
+  /** DUTY with 0–2 musts: ceil(5 × f) completions. */
+  dutyCompletions: number;
+}
+
+const round1 = (x: number): number => Math.round(x * 10 + 1e-7) / 10;
+
+/**
+ * The floors a week with `restDays` declared rest days must meet (decision
+ * 20): days ceil(3f) (at least 1), raw 30f, BODY effort 150f, DUTY's
+ * fallback completions ceil(5f). With no rest days they are exactly the M5
+ * floors (3, 30, 150, 5). 2 rest days: 3 days, 21.4 raw, 107.1 effort min,
+ * 4 completions.
+ */
+export function keptFloorsOf(restDays: number): KeptFloors {
+  const factor = floorFactor(restDays);
+  const r = Math.round(7 - factor * 7);
+  return {
+    restDays: r,
+    factor,
+    days: Math.max(1, Math.ceil(KEPT_MIN_DAYS * factor - 1e-9)),
+    raw: round1(KEPT_MIN_RAW * factor),
+    effortMinutes: round1(BODY_EFFORT_MINUTES * factor),
+    dutyCompletions: Math.ceil(DUTY_FALLBACK_COMPLETIONS * factor - 1e-9),
+  };
+}
+
 // ── Judging ───────────────────────────────────────────────────────────────
 
 /** Week W is judged from Wednesday 04:00 after its Sunday: the Sunday on or before today − 3. */
@@ -214,7 +293,12 @@ export const RESERVED_MP_REASONS: readonly ReservedMpReason[] = ["LIFE_PR"];
 /** A zero-delta MasteryLedgerEntry reason that resets decay's idle clock (the launch writes one). */
 export const DECAY_GRACE_REASON = "DECAY_GRACE";
 
-/** What each life outcome pays. FULL_DAY is minted from M2's settlement, through the same cap. */
+/**
+ * What each life outcome pays. FULL_DAY (M2) is recorded by settlement (a
+ * FULL_DAY row, no MP) and minted by the week judge in the run that writes
+ * the week's DUTY WEEK row, after the kept tracks, through the same cap
+ * (m2-refit.md decision 6).
+ */
 export const LIFE_MP: Readonly<{ WEEK_KEPT: number; FULL_DAY: number; GOAL_SHORT: number; GOAL_MID: number; GOAL_LONG: number }> = {
   WEEK_KEPT: 1.5,
   FULL_DAY: 0.5,
@@ -226,15 +310,20 @@ export const LIFE_MP: Readonly<{ WEEK_KEPT: number; FULL_DAY: number; GOAL_SHORT
 /**
  * Capped MP per life week (Monday–Sunday, by the mint's day). In M5 the most
  * a week can pay is 4 × 1.5 + 2 × 1 = 8, so nothing is trimmed until M2 adds
- * full days.
+ * full days. With them the most is 4 × 1.5 + 2 × 1 + 7 × 0.5 = 11.5: full
+ * days are minted last, so they are what the cap trims (never a kept track).
  */
 export const LIFE_MP_WEEK_CAP = 8;
 
 /**
  * The reasons that share LIFE_MP_WEEK_CAP. Trim order inside a week: Short
  * goals at close (they come first in time), then kept tracks in TRACKS order
- * (BODY, DUTY, CRAFT, CARE) at judgement, then full days (M2). MID and LONG
- * goals are limited by their own windows, not by this cap.
+ * (BODY, DUTY, CRAFT, CARE) at judgement, then full days (M2, in day order,
+ * in the run that writes DUTY). When settlement holds DUTY back (decision 5),
+ * BODY, CRAFT and CARE mint first and DUTY plus the full days in a later
+ * run: at most 2 Shorts a week, so 2 + 4 × 1.5 = 8 and no kept track is ever
+ * trimmed either way. MID and LONG goals are limited by their own windows,
+ * not by this cap.
  */
 export const CAPPED_REASONS: readonly LifeMpReason[] = ["LIFE_WEEK_KEPT", "GOAL_SHORT", "LIFE_FULL_DAY"];
 
@@ -435,6 +524,8 @@ export interface LifeEnv {
   NODE_ENV?: string;
   XTNL_LIFE_LAUNCH_DAY?: string;
   XTNL_LIFE_JUDGE?: string;
+  /** Vercel's 'production' | 'preview' | 'development'. A Preview build is NODE_ENV production too. */
+  VERCEL_ENV?: string;
 }
 
 /**
@@ -449,6 +540,7 @@ function readEnv(env?: LifeEnv): LifeEnv {
     NODE_ENV: process.env.NODE_ENV,
     XTNL_LIFE_LAUNCH_DAY: process.env.XTNL_LIFE_LAUNCH_DAY,
     XTNL_LIFE_JUDGE: process.env.XTNL_LIFE_JUDGE,
+    VERCEL_ENV: process.env.VERCEL_ENV,
   };
 }
 
@@ -480,11 +572,16 @@ export function isLaunched(today: DayKey, launchDay: DayKey | null = lifeLaunchD
 }
 
 /**
- * May a page read write WEEK and MP rows? Production, or XTNL_LIFE_JUDGE=1.
- * Dev and prod share one database, so a local dev server never judges by
- * default. (The launch script and an explicit force bypass this.)
+ * May a page read write WEEK and MP rows (and settle, M2)? Production, or
+ * XTNL_LIFE_JUDGE=1. Dev and prod share one database, so a local dev server
+ * never judges by default. (The launch script and an explicit force bypass
+ * this.) A Vercel Preview build is NODE_ENV production too but must never
+ * judge or settle the shared live account with its branch's launch
+ * constants: when VERCEL_ENV is set, only 'production' writes. Unset (Vercel
+ * system variables not exposed, or not on Vercel) keeps the NODE_ENV rule.
  */
 export function lifeWritesEnabled(env?: LifeEnv): boolean {
   const e = readEnv(env);
-  return e.NODE_ENV === "production" || e.XTNL_LIFE_JUDGE === "1";
+  if (e.XTNL_LIFE_JUDGE === "1") return true;
+  return e.NODE_ENV === "production" && (e.VERCEL_ENV == null || e.VERCEL_ENV === "" || e.VERCEL_ENV === "production");
 }

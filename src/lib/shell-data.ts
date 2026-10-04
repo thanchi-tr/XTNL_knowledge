@@ -17,6 +17,9 @@
  * launched (loadLifeTracks; before launch every track is 0 and nothing
  * changes), the crest edges are each track's level ÷ depth cap, and the
  * title's epithet reads scores that include life (loadProgression).
+ *
+ * M2: owed.count is the open debts (the feed's counts.owed, read with the
+ * bell's rows), so the Sidebar's pill and the bell's 'Owed' row agree.
  */
 import { ALL_TAGS, cached } from "./cache";
 import { loadLifeTracks } from "./life-tracks-server";
@@ -26,7 +29,7 @@ import { loadFieldLevels } from "./queries";
 import { loadProgression } from "./skill-effects";
 import { getSkill } from "./skill-pool";
 import { TITLE_BANDS, computeTitle } from "./titles";
-import { askCount, asksFromNotices, characterLevelOf, trackLevelsOf, type ShellData } from "../components/shell/shell-types";
+import { askCount, asksFromNotices, characterLevelOf, owedOf, trackLevelsOf, type ShellData } from "../components/shell/shell-types";
 
 async function build(userId: string): Promise<ShellData> {
   const [progression, fields, feed, life] = await Promise.all([
@@ -63,10 +66,11 @@ async function build(userId: string): Promise<ShellData> {
     badges: {
       today: today ? today.musts + today.due : 0,
       study: feed?.counts.due ?? 0,
-      train: 0, // M4
+      train: 0, // M4 is dropped: no Train badge
     },
     asks: askOf(feed?.notices ?? null),
-    owed: { count: 0 }, // M2
+    // M2: open debts, from the feed's own read (the Sidebar's 'n owed' pill; TabBar and Rail stay ink-only).
+    owed: owedOf(feed),
   };
 }
 

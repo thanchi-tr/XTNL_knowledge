@@ -113,6 +113,11 @@ export const NEVER_STREAK_SOURCES: ReadonlySet<ActivitySource> = new Set<Activit
   "UNDO",
   "WEEK",
   "MP_MINT",
+  // M2 (m2-refit.md decision 32): rows written after the fact or as bookkeeping. REPAIR still holds through HELD_SOURCES.
+  "DEBT_REPAID",
+  "DEBT_WRITTEN_OFF",
+  "FULL_DAY",
+  "REPAIR",
 ]);
 
 /**
@@ -171,6 +176,19 @@ export interface DailyStreak {
   bankedFreezes: number;
   /** True when the streak runs to the edge of the window read, so `current` is a floor. */
   capped?: boolean;
+  /*
+   * M2 (F8). streak.ts getDailyStreak always sets these four (its DailyStreak
+   * makes them required); they are optional here so computeStreak and the
+   * browser read the same type, and client code typed with this one sees them.
+   */
+  /** The judged day with nothing in it that ended the last run, while no run is alive (current 0); null otherwise. */
+  endedOn?: DayKey | null;
+  /** That run's length in active days ('Ended Tuesday at 23 days'); 0 with no endedOn. The one name for it. */
+  endedAfter?: number;
+  /** An unsettled empty yesterday that settlement's automatic freeze will cover (a freeze banked, a run to carry). Display only. */
+  freezeWillCover?: boolean;
+  /** Held days (rest, freeze, repair) inside the current run. */
+  heldInRun?: number;
 }
 
 /** The oldest life day the daily streak reads, for a window ending today. */

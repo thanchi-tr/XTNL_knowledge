@@ -24,7 +24,7 @@ import {
   weekdayOf,
   zonedToInstant,
 } from "../src/lib/life-day";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { dueCutoff, isDue, daysUntilDue, formatDue } from "../src/lib/due";
 import { formatExpiry, formatDay } from "../src/lib/format-date";
@@ -244,9 +244,10 @@ for (const tz of [SYD, BNE]) {
       /COALESCE\(e\."templateId", i\."templateId"\)/.test(doublePay)
   );
 
-  // npm run life:check runs every pure life check, and the backfill has its script.
+  // npm run life:check runs every pure life check (M2 appends settlement, Duty, the Duty
+  // actions and the rituals after character-check), and the backfill has its script.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
-  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character"].map((n) => `scripts/${n}-check.ts`);
+  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "settle", "duty", "duty-actions", "rituals"].map((n) => `scripts/${n}-check.ts`);
   const lifeCheck = scripts["life:check"] ?? "";
   check(
     "package.json life:check chains every life check with &&, and each exists",
@@ -257,6 +258,81 @@ for (const tz of [SYD, BNE]) {
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
+  for (const [name, file] of [["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"]] as const) {
+    check(`package.json ${name} runs scripts/${file}-check.ts on its own too`, scripts[name] === `tsx scripts/${file}-check.ts`, scripts[name] ?? "missing");
+  }
+
+  // M2 decision 1: every LifeSettings create goes through newLifeSettingsData, so a row
+  // made after the Duty launch (the first write after a 'life' reset, the backfill, a
+  // first capacity or 'Accept a loss' setting) starts its cursor at today − 1 and a reset
+  // never switches Duty off. Check fixtures (scripts/*-check.ts) are not create sites.
+  {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(resolve(ROOT, dir))) {
+        const rel = `${dir}/${name}`;
+        if (statSync(resolve(ROOT, rel)).isDirectory()) walk(rel);
+        else if (/\.(ts|tsx|mjs)$/.test(name) && !/-check\.ts$/.test(name)) files.push(rel);
+      }
+    };
+    walk("src");
+    walk("scripts");
+    const sites: { file: string; ok: boolean }[] = [];
+    for (const f of files) {
+      const src = code(read(f));
+      for (const m of src.matchAll(/lifeSettings\.(create|upsert|createMany)\s*\(/g)) {
+        // The call's argument, up to its balanced closing paren.
+        let depth = 0;
+        let end = m.index + m[0].length - 1;
+        for (; end < src.length; end++) {
+          if (src[end] === "(") depth++;
+          else if (src[end] === ")" && --depth === 0) break;
+        }
+        const arg = src.slice(m.index, end + 1);
+        const create = m[1] === "upsert" ? arg.slice(arg.search(/\bcreate\s*:/)) : arg;
+        sites.push({ file: f, ok: /\.\.\.newLifeSettingsData\(/.test(create) });
+      }
+    }
+    const bad = sites.filter((s) => !s.ok).map((s) => s.file);
+    check(
+      "every LifeSettings create in src/ and scripts/ spreads newLifeSettingsData (M2 decision 1)",
+      sites.length >= 4 && bad.length === 0,
+      bad.length ? bad.join(", ") : `${sites.length} sites`
+    );
+    check(
+      "backfill-activity.ts: its LifeSettings create spreads newLifeSettingsData, never a bare epochDay",
+      sites.some((s) => s.file === "scripts/backfill-activity.ts" && s.ok) && !/create:\s*\{\s*userId,\s*epochDay:/.test(code(read("scripts/backfill-activity.ts")))
+    );
+  }
+
+  // M2 F20: duty-rehearse.ts writes, so it may only ever reach the local rehearsal database.
+  // Read, never run here: it refuses any other DATABASE_URL/DIRECT_URL before Prisma loads.
+  {
+    const src = code(read("scripts/duty-rehearse.ts"));
+    const staticImports = [...src.matchAll(/^import [^;]*? from "([^"]+)";/gm)].map((m) => m[1]);
+    check(
+      "duty-rehearse: its static imports are pure (life-day, duty-economy); Prisma and the cores load only after the guard",
+      staticImports.length > 0 && staticImports.every((p) => p === "../src/lib/life-day" || p === "../src/lib/duty-economy"),
+      staticImports.join(", ")
+    );
+    check("duty-rehearse: loads no .env (dotenv) of its own", !/dotenv/.test(src));
+    check(
+      "duty-rehearse: refuses any DATABASE_URL or DIRECT_URL that is not localhost/127.0.0.1 port 55432",
+      /LOCAL_HOSTS = new Set\(\["localhost", "127\.0\.0\.1"\]\)/.test(src) &&
+        /LOCAL_PORT = "55432"/.test(src) &&
+        /!LOCAL_HOSTS\.has\(u\.hostname\) \|\| u\.port !== LOCAL_PORT/.test(src) &&
+        /localUrlProblem\("DATABASE_URL"\), localUrlProblem\("DIRECT_URL"\)/.test(src) &&
+        /process\.exit\(2\)/.test(src)
+    );
+    const main = src.slice(src.indexOf("async function main()"));
+    check("duty-rehearse: main runs the guard before loading any module", main.indexOf("guard();") >= 0 && main.indexOf("guard();") < main.indexOf("await loadModules()"));
+    check(
+      "duty-rehearse: and the launch script's own guard (launchTargetOf: rehearsal only) before its first query",
+      /target\.kind !== "rehearsal"/.test(main) && main.indexOf("launchTargetOf(") >= 0 && main.indexOf("launchTargetOf(") < main.indexOf("$queryRaw")
+    );
+    check("duty-rehearse: deletes only rows of its own tagged users", /if \(!prefix\.startsWith\(TAG\)\) throw/.test(src) && /const TAG = "rehearse-duty:"/.test(src) && /userId: \{ startsWith: prefix \}/.test(src));
+    check("duty-rehearse: writes on read only through XTNL_LIFE_JUDGE in its own process, never NODE_ENV=production", /process\.env\.XTNL_LIFE_JUDGE = "1"/.test(src) && /NODE_ENV === "production"/.test(src));
+  }
 
   // Reduced motion and the shell are gated repo-wide by scripts/shell-check.ts
   // (every keyframe and loop), since the redesign retired AppNav and the list.

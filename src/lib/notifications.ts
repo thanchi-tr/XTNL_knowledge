@@ -11,7 +11,9 @@ import { BOON_META } from "./boon-meta";
 import { DEBUFF_META } from "./debuff-meta";
 import { formatExpiry } from "./format-date";
 import { loadTodayCounts, type TodayCounts } from "./tasks";
-import { DAY_START_HOUR, LIFE_TZ } from "./life-day";
+import { DAY_START_HOUR, LIFE_TZ, todayKey } from "./life-day";
+import { isDutyLaunched, weekReviewKey } from "./duty-economy";
+import { dutyNoticesOf, owedFromLine, reviewedWeek, type OwedTotals } from "./rituals";
 
 /**
  * From this local hour an open compulsory item turns from a note into a
@@ -85,11 +87,49 @@ export interface NotificationFeed {
     overdue: number;
     /** Today's open musts, due todos and inbox; null when that read failed. */
     today: TodayCounts | null;
+    /**
+     * M2 (a compatible extension): open debts and their total, the Sidebar's
+     * owed pill and the bell's 'Owed' row; null when that read failed.
+     */
+    owed?: OwedTotals | null;
   };
 }
 
+/** The life day's open debts: count and Σ debtXp (positive). Null when the read fails: a missing line, never a missing bell. */
+async function loadOwed(userId: string): Promise<OwedTotals | null> {
+  try {
+    const agg = await prisma.taskInstance.aggregate({ where: { userId, debtOpen: true }, _count: { _all: true }, _sum: { debtXp: true } });
+    return { count: agg._count._all, debt: Math.max(0, agg._sum.debtXp ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the weekly review's marker is missing for the week a review today
+ * covers. False when there is no such week, when Duty is not live, or when
+ * the read fails (the bell never nags on a guess).
+ */
+async function loadReviewDue(userId: string, weekKey: string | null): Promise<boolean> {
+  if (!weekKey) return false;
+  try {
+    const marker = await prisma.activityEvent.findUnique({
+      where: { userId_dedupeKey: { userId, dedupeKey: weekReviewKey(weekKey) } },
+      select: { id: true },
+    });
+    return marker === null;
+  } catch {
+    return false;
+  }
+}
+
 async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
-  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today] = await Promise.all([
+  // Duty (M2) is live from its launch day only; before it, its rows are left out (owed aside: an
+  // open debt is shown whenever one exists, so a rolled-back launch never hides it).
+  const lifeDay = todayKey(now);
+  const dutyLive = isDutyLaunched(lifeDay);
+  const review = dutyLive ? reviewedWeek(lifeDay) : null;
+  const [dueCount, overdueCount, quotas, bosses, boons, debuffs, today, owed, reviewDue] = await Promise.all([
     // `dueCutoff`, not `now`: the bubble and the review queue have to agree
     // about what is due, or the badge sends you to an empty page.
     prisma.idea.count({ where: { isArchived: false, dueDate: { lte: dueCutoff(now) } } }),
@@ -101,6 +141,8 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     // The same cached count the nav's Today button reads. A failure here is a
     // missing line, not a missing bubble.
     loadTodayCounts(userId, now).catch((): TodayCounts | null => null),
+    loadOwed(userId),
+    loadReviewDue(userId, review?.weekKey ?? null),
   ]);
 
   const progression = await loadProgression(userId);
@@ -148,12 +190,29 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
       tone: evening ? "warn" : "info",
       title: `${today.musts} must${today.musts === 1 ? "" : "s"} today`,
       detail: evening
-        ? "Still open this evening. The minimum version counts if time is short."
+        ? dutyLive
+          ? `Still open this evening. The minimum version counts if time is short; left open, it is owed from ${owedFromLine(lifeDay)}.`
+          : "Still open this evening. The minimum version counts if time is short."
         : `Compulsory items due today. The day runs until ${DAY_EDGE}.`,
       href: "/today",
       action: "Open Today",
     });
   }
+
+  // ── Duty (M2, decision 27) ───────────────────────────
+  // 'Owed: 2 · −12.5 XP' is the one counted Duty row (warn, the owed diamond).
+  // Yesterday's open musts and the weekly review are info: listed in the
+  // bell, never counted (shell-types LISTED_ONLY_NOTICE_IDS), and Today's
+  // Asks never repeat the first two.
+  notices.push(
+    ...dutyNoticesOf({
+      today: lifeDay,
+      live: dutyLive,
+      owed,
+      yesterdayMusts: today?.yesterdayMusts ?? 0,
+      reviewDue: review && reviewDue ? review : null,
+    })
+  );
 
   if (today && today.inbox > 0) {
     notices.push({
@@ -255,7 +314,7 @@ async function buildFeed(userId: string, now: Date): Promise<NotificationFeed> {
     notices,
     actionable,
     hasPenalty: debuffs.length > 0,
-    counts: { due: dueCount, overdue: overdueCount, today },
+    counts: { due: dueCount, overdue: overdueCount, today, owed },
   };
 }
 

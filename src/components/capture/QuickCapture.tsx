@@ -271,7 +271,15 @@ function settleUnsent(
   return [...rest, { ...base, state: "failed", attempts: 0, nextAt: 0, error, ...(failure?.code ? { code: failure.code } : {}) }];
 }
 
-export function QuickCapture() {
+/**
+ * dutyLaunchDay (M2, optional): the server's Duty launch day, for the Must
+ * chip's stake. The browser sees only the code constant DUTY_LAUNCH_DAY; a
+ * rehearsal server's XTNL_DUTY_LAUNCH_DAY reaches the chip only through this
+ * prop, from a server component that has it (the root layout, with
+ * dutyLaunchDay()). Absent: CaptureChips reads the constant itself, the same
+ * value in production.
+ */
+export function QuickCapture({ dutyLaunchDay }: { dutyLaunchDay?: DayKey | null } = {}) {
   const pathname = usePathname();
   const onToday = pathname === "/today";
   /** The Train page shows the weight card: a weigh-in saved there refreshes it. */
@@ -1827,6 +1835,7 @@ export function QuickCapture() {
         weighIn={weighIn ? weightChipLabel(weighIn, weightUnit, day) : null}
         onKeepAsText={keepLineAsText}
         weightRange={weightOut ? (mustBlocked ? weightRangeBlocked(weightOut) : weightRangeNote(weightOut)) : null}
+        duty={dutyLaunchDay === undefined ? undefined : { today: day, launchDay: dutyLaunchDay }}
       />
     );
 

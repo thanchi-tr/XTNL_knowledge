@@ -29,7 +29,14 @@
  *   - The character counts track levels only when BOTH snapshots carry them
  *     (LevelsPart.tracks): a stale or pre-launch read never invents a level.
  *   - Every amount is what was paid (a goal's decision row, a week's mints),
- *     never what was promised.
+ *     never what was promised. M2: the week Seal also states the full days
+ *     the judge minted with the week's DUTY row ('+1.0 MP from 2 full days.',
+ *     LedgerPart.fullDays); a debt that lowers a level plays nothing, and a
+ *     level re-reached after debt never replays (its key is persisted). A
+ *     week judged in two runs (the DUTY gate: BODY, CRAFT and CARE on
+ *     Wednesday, DUTY once its Sunday is settled) plays a second Seal keyed
+ *     'week:<W>+DUTY' ('4 of 4 tracks kept', rolled from 3, with DUTY's MP and
+ *     the full days), since the first run's Seal claimed 'week:<W>'.
  *   - Every T2/T3 passes honestyProblem(): an exact number plus What moved or a cause.
  */
 import {
@@ -139,7 +146,7 @@ export interface StreakPart {
   today: DayKey;
   current: number;
   todayActive: boolean;
-  /** Held days (freeze, repair) inside the current run. 0 until M2. */
+  /** Held days (a freeze, a repair or a declared rest, sick or vacation day) inside the current run. 0 until M2. */
   held: number;
 }
 export interface SkillsPart {
@@ -193,12 +200,19 @@ export interface LedgerRow {
   xp: number;
   qty: number | null;
   detail: string | null;
-  /** Kept WEEK rows: the MP its 'mp:LIFE_WEEK_KEPT:<track>:<week>' row paid (absent: none read). */
+  /** Kept WEEK rows: the MP its 'mp:LIFE_WEEK_KEPT:<track>:<week>' row paid (absent: none read). Full-day rows: what it paid. */
   mp?: number;
 }
 export interface LedgerPart {
   weeks: LedgerRow[];
   prs: LedgerRow[];
+  /**
+   * M2: the full-day mints ('mp:LIFE_FULL_DAY:<d>', day d, week its life
+   * week, mp what it paid; 0 when the cap trimmed it). The week judge mints
+   * them with the week's DUTY row, so the week Seal states them. Optional:
+   * older snapshots parse.
+   */
+  fullDays?: LedgerRow[];
 }
 export interface HabitRow {
   id: string;
@@ -567,11 +581,12 @@ function detectStreak(b: StreakPart, a: StreakPart): CelebrationDraft[] {
   if (crossed.length) {
     const m = crossed[crossed.length - 1];
     const next = STREAK_MILESTONES.find((x) => x > m);
+    // Held days bridge the run without counting in it (M2: a freeze, a repair or a declared rest day).
     const lines =
       a.held === 0 && a.todayActive
         ? [`Every day since ${longDay(addDays(a.today, -(a.current - 1)))} had at least one real deed.`]
         : a.held > 0
-          ? [`${plural(a.held, "freeze")} held ${a.held === 1 ? "one of them" : `${a.held} of them`}.`]
+          ? [`${plural(a.held, "held day")} (rest, a freeze or a repair) carried it along the way.`]
           : undefined;
     out.push(
       draft(
@@ -758,8 +773,31 @@ function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
     const wk = w.week ?? weekKeyOf(w.day);
     byWeek.set(wk, [...(byWeek.get(wk) ?? []), w]);
   }
+  // M2: full-day mints new in this diff, by life week (only what they paid; a trimmed one paid 0).
+  const hadFullDays = new Set((b.fullDays ?? []).map((f) => f.key));
+  const fullByWeek = new Map<string, LedgerRow[]>();
+  for (const f of a.fullDays ?? []) {
+    if (hadFullDays.has(f.key) || !(typeof f.mp === "number" && f.mp > 0)) continue;
+    const wk = f.week ?? weekKeyOf(f.day);
+    fullByWeek.set(wk, [...(fullByWeek.get(wk) ?? []), f]);
+  }
+  // A week's kept tracks already in the before snapshot (M2's split run: BODY, CRAFT and CARE are judged on
+  // Wednesday, DUTY once settlement has settled the Sunday): their Seal already claimed 'week:<W>'.
+  const earlierKept = new Map<string, string[]>();
+  for (const w of b.weeks) {
+    if (isBackfillDetail(w.detail) || !(w.qty != null && w.qty > 0)) continue;
+    const wk = w.week ?? weekKeyOf(w.day);
+    earlierKept.set(wk, [...(earlierKept.get(wk) ?? []), trackLabel(weekTrackOf(w))]);
+  }
   for (const [wk, rows] of [...byWeek.entries()].sort(([x], [y]) => (x < y ? -1 : 1))) {
     const tracks = [...new Set(rows.map((r) => trackLabel(weekTrackOf(r))))];
+    // The second run of a split week plays its own Seal ('week:<W>+DUTY'), so DUTY and the full days the same
+    // run paid are stated: 'week:<W>' was claimed by the first run, and replaying it would show the first
+    // run's Seal or nothing. Its count is the week's total: '4 of 4 tracks kept', from 3.
+    const earlier = [...new Set(earlierKept.get(wk) ?? [])].filter((t) => !tracks.includes(t));
+    const codes = TRACKS.filter((t) => rows.some((r) => weekTrackOf(r) === t));
+    const sealKey = earlier.length > 0 ? `week:${wk}+${(codes.length ? codes : tracks).join("+")}` : `week:${wk}`;
+    const keptInWeek = earlier.length + tracks.length;
     // What the week's kept-track mints paid (a track trimmed to nothing by the cap has no mint).
     const mp = round2(rows.reduce((s, r) => s + (typeof r.mp === "number" && r.mp > 0 ? r.mp : 0), 0));
     const full = round2(rows.length * LIFE_MP.WEEK_KEPT);
@@ -769,17 +807,26 @@ function detectLedger(b: LedgerPart, a: LedgerPart): CelebrationDraft[] {
         : mp + 1e-9 >= full
           ? `+${fmtMp(LIFE_MP.WEEK_KEPT)} MP for each kept track.`
           : `+${fmtMp(mp)} MP, trimmed by the life week's cap of ${fmtMp(LIFE_MP_WEEK_CAP)}.`;
+    // The week's full days, paid by the same judge after the kept tracks: '+1.0 MP from 2 full days.'
+    const fullDays = fullByWeek.get(wk) ?? [];
+    const fullMp = round2(fullDays.reduce((s, f) => s + (f.mp ?? 0), 0));
+    const fullLine = fullMp > 0 ? `+${fmt(fullMp)} MP from ${plural(fullDays.length, "full day")}.` : null;
+    const paid = round2(mp + fullMp);
     out.push(
       draft(
         "week-kept",
-        `week:${wk}`,
+        sealKey,
         {
           eyebrow: "Kept week",
-          title: `${tracks.length} of 4 tracks kept`,
-          lines: [`${listOf(tracks)} ${tracks.length === 1 ? "was" : "were"} kept the week of ${longDay(weekStartKeyOf(rows[0].day))}.`, ...(mpLine ? [mpLine] : [])],
-          amounts: mp > 0 ? [{ kind: "mp", value: mp, label: "MP" }] : undefined,
-          numeral: { from: null, to: tracks.length },
-          material: tracks.length >= 4 ? "gold" : tracks.length >= 3 ? "silver" : "bronze",
+          title: `${keptInWeek} of 4 tracks kept`,
+          lines: [
+            `${listOf(tracks)} ${tracks.length === 1 ? "was" : "were"} ${earlier.length > 0 ? "also " : ""}kept the week of ${longDay(weekStartKeyOf(rows[0].day))}.`,
+            ...(mpLine ? [mpLine] : []),
+            ...(fullLine ? [fullLine] : []),
+          ],
+          amounts: paid > 0 ? [{ kind: "mp", value: paid, label: "MP" }] : undefined,
+          numeral: { from: earlier.length > 0 ? earlier.length : null, to: keptInWeek },
+          material: keptInWeek >= 4 ? "gold" : keptInWeek >= 3 ? "silver" : "bronze",
           href: "/today/week",
         },
         tracks.map((t) => ({ label: `${t} track`, value: "kept" })),

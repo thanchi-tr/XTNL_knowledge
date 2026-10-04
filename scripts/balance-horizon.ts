@@ -17,6 +17,15 @@
  * streak-curve, attributes, skill-pool, skill-gates), never restated here;
  * only the model (the basket, the personas and the bounds asserted) lives
  * here. It exits 1 on any failed assertion and runs no query.
+ *
+ * M2 (docs/life-plan/m2-refit.md F17) adds the full days to the weekly cap:
+ * 3b the capped reasons at their most (4 × 1.5 + 2 × 1 + 7 × 0.5 = 11.5)
+ * exceed the cap, and a planWeeks fixture shows the judge mints full days
+ * last, so the cap trims them and never a kept track, with Shorts trimming
+ * them first; 3c with settlement holding DUTY back (BODY, CRAFT and CARE in
+ * one run, DUTY and the full days in a later one) every mint and the trimmed
+ * set equal a single run's; 3d a held week mints nothing. Assertions 1 and 2
+ * already price the full cap, so full days inside it change neither.
  */
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
@@ -41,6 +50,9 @@ import { streakBonusPercent } from "../src/lib/streak-curve";
 import { ATTRIBUTES, computeAttributeScores, emptyComposition, type FieldContribution } from "../src/lib/attributes";
 import { meetsRequirements } from "../src/lib/skill-gates";
 import { TRACKS, type Band, type Horizon, type Track } from "../src/lib/life-types";
+import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
+import { planWeeks, type WeekJudgeState, type WeekPlan, type WeekTaskRow } from "../src/lib/life-weeks";
+import { weekRowKey } from "../src/lib/life-economy";
 
 /** A committed player: reviews daily, never misses, adds steadily. */
 const REVIEWS_PER_DAY = 25;
@@ -297,6 +309,68 @@ function lifeMpEarned(plan: PacePlan, week: number): number {
 const fmt = (x: number, dp = 2) => x.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const fmt0 = (x: number) => Math.round(x).toLocaleString("en-GB");
 
+// ── LIFE: M2's full days inside the weekly cap (m2-refit.md decisions 5 and 6, F17) ──
+
+/** A Duty week of the model: Monday 12 Oct 2026, its Duty launch day, judged the Wednesday after. */
+const CAP_MONDAY: DayKey = "2026-10-12";
+const CAP_SUNDAY: DayKey = addDays(CAP_MONDAY, 6);
+
+/**
+ * A week of planWeeks' input where every track is kept and every day is a
+ * full day (7 FULL_DAY rows), with `shorts` Short goals already paid in the
+ * week. `settled` false: settlement has only reached Saturday (decision 5's
+ * gate holds DUTY and the full days back).
+ */
+function capWeek(shorts: number, settled: boolean, restDays: readonly DayKey[] = []): WeekJudgeState {
+  let id = 0;
+  const row = (track: Track, d: number): WeekTaskRow => ({
+    id: `cap${++id}`,
+    source: "TASK",
+    dedupeKey: null,
+    day: addDays(CAP_MONDAY, d),
+    track,
+    templateId: null,
+    rawXp: 12,
+    // BODY: 60 minutes of DEMANDING exercise (B 20, weight 2) on each day, so its effort floor is met.
+    receipt: { v: "life-1", factors: [{ key: "B", label: "band", value: 20 }], minutes: 60, raw: 12, kneeBefore: 0, xp: 12, track },
+    category: track === "BODY" ? "EXERCISE" : "OTHER",
+  });
+  return {
+    today: addDays(CAP_SUNDAY, 3),
+    launchDay: CAP_MONDAY,
+    epochDay: CAP_MONDAY,
+    judged: new Set<string>(),
+    rows: TRACKS.flatMap((t) => [0, 1, 2, 3, 4].map((d) => row(t, d))),
+    templates: [],
+    instances: [],
+    mints: Array.from({ length: shorts }, (_, i) => ({ day: addDays(CAP_MONDAY, i), qty: GOAL_RULES.SHORT.stated, reason: "GOAL_SHORT", key: `mp:GOAL:short${i}` })),
+    heldDays: new Set(restDays),
+    restDays: new Set(restDays),
+    dutyLaunchDay: CAP_MONDAY,
+    settledThroughDay: settled ? addDays(CAP_SUNDAY, 2) : addDays(CAP_SUNDAY, -1),
+    fullDays: [0, 1, 2, 3, 4, 5, 6].map((d) => addDays(CAP_MONDAY, d)),
+  };
+}
+
+/** The state once `plans` are written: their WEEK keys judged and their mints read back. */
+function withPlans(s: WeekJudgeState, plans: readonly WeekPlan[], settled: boolean): WeekJudgeState {
+  return {
+    ...s,
+    settledThroughDay: settled ? addDays(CAP_SUNDAY, 2) : s.settledThroughDay,
+    judged: new Set([...s.judged, ...plans.flatMap((p) => p.tracks.map((t) => weekRowKey(t.track, p.weekKey)))]),
+    mints: [...s.mints, ...plans.flatMap((p) => p.mints.map((m) => ({ day: m.day, qty: m.delta, reason: m.reason, key: m.dedupeKey })))],
+  };
+}
+
+const mintsOf = (plans: readonly WeekPlan[]) => plans.flatMap((p) => p.mints);
+const paidOf = (plans: readonly WeekPlan[]) => Math.round(mintsOf(plans).reduce((s, m) => s + m.delta, 0) * 100) / 100;
+/** Every mint key with what it paid, sorted: equal maps mean the same totals and the same trimmed set. */
+const ledgerOf = (plans: readonly WeekPlan[]) =>
+  mintsOf(plans)
+    .map((m) => `${m.dedupeKey}=${m.delta}`)
+    .sort()
+    .join(",");
+
 /** Prints the LIFE block; returns the number of failed assertions. */
 function lifeBlock(pool: number, knowledgePerDay: number): number {
   let failures = 0;
@@ -396,6 +470,61 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
     "3. M5's most in one life week fills the weekly cap exactly",
     fills,
     `${TRACKS.length} × ${LIFE_MP.WEEK_KEPT} + ${GOAL_RULES.SHORT.maxPaying} × ${GOAL_RULES.SHORT.stated} = ${reachable} ${fills ? "=" : "≠"} cap ${LIFE_MP_WEEK_CAP}`,
+  );
+
+  // 3b (M2). With full days the capped reasons can ask for more than the cap: the judge mints them
+  // last, so the cap trims full days and never a kept track, and Shorts (paid first) trim full days.
+  const m2Most = TRACKS.length * LIFE_MP.WEEK_KEPT + GOAL_RULES.SHORT.maxPaying * GOAL_RULES.SHORT.stated + 7 * LIFE_MP.FULL_DAY;
+  const byShorts = [0, 1, 2].map((shorts) => {
+    const plans = planWeeks(capWeek(shorts, true));
+    const mints = mintsOf(plans);
+    const tracks = mints.filter((m) => m.reason === "LIFE_WEEK_KEPT");
+    const full = mints.filter((m) => m.reason === "LIFE_FULL_DAY");
+    const lastTrack = mints.findIndex((m, i) => m.reason === "LIFE_WEEK_KEPT" && !mints.slice(i + 1).some((x) => x.reason === "LIFE_WEEK_KEPT"));
+    return {
+      shorts,
+      tracksWhole: tracks.length === TRACKS.length && tracks.every((m) => m.delta === LIFE_MP.WEEK_KEPT),
+      fullPaid: full.filter((m) => m.delta > 0).length,
+      fullRows: full.length,
+      lastFirst: full.every((m) => mints.indexOf(m) > lastTrack),
+      used: Math.round((shorts * GOAL_RULES.SHORT.stated + paidOf(plans)) * 100) / 100,
+    };
+  });
+  const expectedFull = (shorts: number) => Math.max(0, Math.min(7, Math.floor((LIFE_MP_WEEK_CAP - shorts * GOAL_RULES.SHORT.stated - TRACKS.length * LIFE_MP.WEEK_KEPT) / LIFE_MP.FULL_DAY + 1e-9)));
+  const ok3b =
+    m2Most > LIFE_MP_WEEK_CAP &&
+    byShorts.every((r) => r.tracksWhole && r.lastFirst && r.fullRows === 7 && r.fullPaid === expectedFull(r.shorts) && r.used === LIFE_MP_WEEK_CAP);
+  check(
+    "3b. M2's capped reasons exceed the cap; full days are minted last, so they are what it trims",
+    ok3b,
+    `${TRACKS.length} × ${LIFE_MP.WEEK_KEPT} + ${GOAL_RULES.SHORT.maxPaying} × ${GOAL_RULES.SHORT.stated} + 7 × ${LIFE_MP.FULL_DAY} = ${m2Most} > cap ${LIFE_MP_WEEK_CAP}; ` +
+      byShorts.map((r) => `${r.shorts} Shorts → tracks ${r.tracksWhole ? "4 × 1.5" : "TRIMMED"}, full days paid ${r.fullPaid} of 7${r.lastFirst ? "" : " BEFORE a track"}, week ${fmt(r.used, 1)}`).join(" · "),
+  );
+
+  // 3c (M2). Settlement holds DUTY back (decision 5): BODY, CRAFT and CARE mint on Wednesday, DUTY and
+  // the full days in a later run. The totals and the trimmed set must equal a single run's.
+  const splits = [0, 1, 2].map((shorts) => {
+    const single = planWeeks(capWeek(shorts, true));
+    const first = capWeek(shorts, false);
+    const run1 = planWeeks(first);
+    const run2 = planWeeks(withPlans(first, run1, true));
+    const tracks1 = run1.flatMap((p) => p.tracks.map((t) => t.track)).join();
+    const tracks2 = run2.flatMap((p) => p.tracks.map((t) => t.track)).join();
+    return { shorts, same: ledgerOf(single) === ledgerOf([...run1, ...run2]), gated: tracks1 === "BODY,CRAFT,CARE" && tracks2 === "DUTY", total: paidOf([...run1, ...run2]), single: paidOf(single) };
+  });
+  check(
+    "3c. split runs (BODY, CRAFT, CARE; then DUTY and the full days) total and trim exactly as one",
+    splits.every((r) => r.same && r.gated),
+    splits.map((r) => `${r.shorts} Shorts: split ${fmt(r.total, 1)} ${r.same ? "=" : "≠"} single ${fmt(r.single, 1)}${r.gated ? "" : " (the gate did not split the run)"}`).join(" · "),
+  );
+
+  // Held weeks (decision 20) mint nothing: pro-rated floors add no MP beyond kept weeks.
+  const heldWeek = planWeeks({ ...capWeek(0, true, [0, 1, 2, 3, 4, 5].map((d) => addDays(CAP_MONDAY, d))), rows: [], fullDays: [] });
+  const heldTracks = heldWeek.flatMap((p) => p.tracks);
+  check(
+    "3d. a held week mints nothing",
+    heldTracks.length === TRACKS.length && heldTracks.every((t) => t.held && !t.kept) && mintsOf(heldWeek).length === 0 && weekKeyOf(CAP_MONDAY) === heldWeek[0]?.weekKey,
+    `6 rest days, nothing done: ${heldTracks.map((t) => `${t.track} ${t.held ? "held" : t.kept ? "kept" : "not kept"}`).join(", ")}; ${mintsOf(heldWeek).length} mints`,
   );
 
   check(

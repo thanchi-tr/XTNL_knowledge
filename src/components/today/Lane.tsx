@@ -20,6 +20,7 @@ export function Lane({
   bodyRef,
   className,
   note,
+  badge,
   children,
 }: {
   id: string;
@@ -35,6 +36,8 @@ export function Lane({
   className?: string;
   /** A line above the rows ("Board clear."). */
   note?: ReactNode;
+  /** Chips under the header (M2: 'Rest · nothing owed', 'Musts carry stakes from Mon 12 Oct'). Never owed-toned. */
+  badge?: ReactNode;
   children?: ReactNode;
 }) {
   const hid = `lane-${id}`;
@@ -50,6 +53,7 @@ export function Lane({
         )}
         {count != null && <span className="lane-count num">{count}</span>}
       </div>
+      {badge && <div className="lane-chips">{badge}</div>}
       <div ref={bodyRef} className="card lane-body">
         {note}
         {children}

@@ -661,6 +661,7 @@ The list lives in `src/lib/shortcuts.ts`; this table is generated from it.
 | Capture | `Shift+Enter` | Add the line and type the next one | In the capture sheet |
 | Capture | `Alt+Enter` | Create the idea | On New idea |
 | Capture | `Alt+B` | Blank the selected words (cloze) | On New idea |
+| Today | `y` | Record yesterday | Any page, not while typing |
 | Go to | `g` then `t` | Today | Any page, not while typing |
 | Go to | `g` then `s` | Study (review) | Any page, not while typing |
 | Go to | `g` then `l` | Library | Any page, not while typing |
@@ -687,7 +688,7 @@ See `.env.example`:
 | `DIRECT_URL` | Migrations/seeding — Supabase direct connection (port `5432`) |
 | `GEMINI_API_KEY` | `gemini-embedding-2` / `gemini-3.5-flash-lite` calls (Phase 2+) |
 | `DEFAULT_USER_ID` | This is a single-tenant personal instance — `UnlockedSkill` is still keyed by `userId` for forward-compatibility, but nothing else in the schema is user-scoped yet |
-| `CRON_SECRET` | Optional. Gates `/api/cron/degrade` — required in production, unset is fine for local dev (Phase 3+) |
+| `CRON_SECRET` | Gates both crons — required in production. `/api/cron/degrade` skips the check when it is unset (local dev only); `/api/cron/life` (Duty settlement, then the week judge) never does: unset or wrong, it answers 401 and writes nothing |
 
 ## Commands
 

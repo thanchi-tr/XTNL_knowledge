@@ -1,23 +1,25 @@
 "use client";
 
 import "../today.css";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { CurrencyGlyph, HeldGlyph, Icon, Sigil, type HeldKind, type IconName, type TrackSigil } from "@/components/ui/Icon";
 import { AskCard } from "../AskCard";
 
 /**
- * M2-READY notice cards (presentational; fixtures on /dev/style/today until
- * M2 lands). They are the Asks model: the same derived feed opens from the
- * bell as a sheet; on Today these replace the Asks when relevant.
+ * M2 notice cards (presentational; fixtures on /dev/style/today, and on
+ * Today YesterdaySettled and RestBannerCard in the .o1 slot, one at most,
+ * from BoardData.duty). They are the Asks model: the same derived feed opens
+ * from the bell as a sheet. WelcomeBack waits (decision 33).
  *
  *   WelcomeBack        return after ≥ 3 days away: which freezes held which
  *                      days, the streak line with the best kept, the owed
  *                      total as ONE collapsed summary, what is still
  *                      recordable, and the quest capped at 15.
  *   YesterdaySettled   a deferred outcome, shown when first SEEN: kept,
- *                      Full day +0.5 MP, freeze earned, repaired.
+ *                      Full day (up to +0.5 MP when the week is judged),
+ *                      freeze earned, repaired.
  *   RepairAsk          a broken streak that a Full day can repair (≤ 1 per 7 days).
  *
  * Every line is a true sentence with its number; no guilt copy, no mascot.
@@ -92,6 +94,7 @@ export function YesterdaySettled({
   note,
   onOk,
   rulesHref = "/today/rules",
+  sectionRef,
 }: {
   /** "Wednesday was a Full day." */
   title: string;
@@ -100,9 +103,11 @@ export function YesterdaySettled({
   note: string;
   onOk: () => void;
   rulesHref?: string;
+  /** The card, for its Tier 1 burst when first seen. */
+  sectionRef?: RefObject<HTMLElement | null>;
 }) {
   return (
-    <section className="card today-notice" aria-labelledby="st-h">
+    <section ref={sectionRef} className="card today-notice" aria-labelledby="st-h">
       <p className="t-eyebrow">Yesterday settled</p>
       <h2 id="st-h">{title}</h2>
       <div className="chips">
@@ -127,4 +132,37 @@ export function YesterdaySettled({
 
 export function RepairAsk({ title, detail, onRecord }: { title: string; detail: string; onRecord: () => void }) {
   return <AskCard title={title} detail={detail} action="Record" onAction={onRecord} />;
+}
+
+/**
+ * The rest banner (M2, .o1): a held glyph plus words ("Rest day. Nothing is
+ * owed today."), and a quiet Cancel only for a day that has not started.
+ * Held is a state in time, never a penalty: no owed tone.
+ */
+export function RestBannerCard({
+  held,
+  text,
+  cancelLabel,
+  onCancel,
+  busy,
+}: {
+  held: HeldKind;
+  text: string;
+  cancelLabel?: string;
+  onCancel?: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <section role="status" className="card today-note today-rest">
+      <span className="rest-txt">
+        <HeldGlyph kind={held} size={20} className="held-glyph" />
+        <span>{text}</span>
+      </span>
+      {onCancel && (
+        <Button variant="quiet" onClick={onCancel} disabled={busy}>
+          {cancelLabel ?? "Cancel"}
+        </Button>
+      )}
+    </section>
+  );
 }

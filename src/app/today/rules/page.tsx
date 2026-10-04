@@ -2,7 +2,30 @@ import "./rules.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { DAY_START_HOUR, todayKey } from "@/lib/life-day";
+import { DAY_START_HOUR, keyOfDateColumn, todayKey, type DayKey } from "@/lib/life-day";
+import { cached } from "@/lib/cache";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/user";
+import {
+  AKRASIA_DAYS,
+  FREEZE_EARN_ACTIVE_DAYS,
+  FREEZE_MAX,
+  FREEZE_START_BALANCE,
+  MAKEUP_RESTORE_DAYS,
+  MAKEUP_RESTORE_EVERY_DAYS,
+  REPAIR_EVERY_DAYS,
+  REST_PER_WEEK,
+  SETTLE_LAG_DAYS,
+  SICK_EVERY_DAYS,
+  TYPO_GRACE_MIN,
+  VACATION_BUDGET_SPAN_DAYS,
+  VACATION_DAYS_PER_365,
+  VACATION_MAX_DAYS,
+  VACATION_MIN_DAYS,
+  WRITE_OFF_MIN_DAYS,
+  dutyLaunchDay,
+} from "@/lib/duty-economy";
+import { dutyPhaseOf, dutySettledLine, preLaunchNotice } from "@/lib/rituals";
 import {
   BODY_EFFORT_MINUTES,
   CAPPED_REASONS,
@@ -13,6 +36,7 @@ import {
   GOAL_DEPTH,
   GOAL_DEPTH_CAP,
   GOAL_RULES,
+  HELD_WEEK_REST_DAYS,
   KEPT_MIN_DAYS,
   KEPT_MIN_RAW,
   LIFE_MP,
@@ -26,6 +50,7 @@ import {
   WEEK_JUDGE_MAX_WEEKS,
   depthCap,
   isLaunched,
+  keptFloorsOf,
   lifeLaunchDay,
   trackDepth,
   xpForLevel,
@@ -60,7 +85,6 @@ import {
   KNEE_CAP,
   KNEE_CAP_AT_RAW,
   KNEE_FULL_RATE,
-  KNEE_RECONCILE_TOLERANCE,
   KNEE_SCALE,
   PAY_MODE_FACTOR,
   RAW_WORST_CASE,
@@ -81,6 +105,7 @@ import {
   TRACK_LABEL,
   UNDO_WINDOW_MINUTES,
   consistencyFactor,
+  debtFor,
   describeReceipt,
   effortFactor,
   introVolumeFactor,
@@ -96,9 +121,10 @@ import { BANDS, CATEGORIES, DURATION_BANDS, TRACKS, type PayMode, type PriceInpu
 export const metadata: Metadata = { title: "How a day is judged" };
 
 /**
- * The page reads no data of its own — every number on it comes from the
- * modules that pay — but the shell around it does (the loadout bar and the
- * notices query the database on every route). Rendered statically, those
+ * Every number on the page comes from the modules that pay. Its only read
+ * is Duty's settlement cursor, once Duty is live, for 'Duty is settled
+ * through <day>' when settlement lags. The shell around it reads on every
+ * route too (the loadout bar and the notices): rendered statically, those
  * would be baked in at build time and read the database during the build,
  * so this page renders per request like every other.
  */
@@ -177,14 +203,23 @@ const MODE_WORDS: Record<PayMode, string> = {
 
 const WEEKDAY_AFTER_SUNDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/** What each life MP reason pays, in words built from the constants. */
-const MP_ROWS: { reason: LifeMpReason; amount: number; per: string; note?: string }[] = [
-  { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged" },
-  { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "at 100%" },
-  { reason: "GOAL_MID", amount: GOAL_RULES.MID.stated, per: "× progress" },
-  { reason: "GOAL_LONG", amount: GOAL_RULES.LONG.stated, per: "× progress" },
-  { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
-];
+/**
+ * What each life MP reason pays, in words built from the constants. Once
+ * Duty is live a Full day is recorded by settlement and paid by the week
+ * judge after the kept tracks (decision 6); before, the row says where its
+ * payment comes from.
+ */
+function mpRows(dutyLive: boolean): { reason: LifeMpReason; amount: number; per: string; note?: string }[] {
+  return [
+    { reason: "LIFE_WEEK_KEPT", amount: LIFE_MP.WEEK_KEPT, per: "dated the week's Sunday, paid once the week is judged" },
+    { reason: "GOAL_SHORT", amount: GOAL_RULES.SHORT.stated, per: "at 100%" },
+    { reason: "GOAL_MID", amount: GOAL_RULES.MID.stated, per: "× progress" },
+    { reason: "GOAL_LONG", amount: GOAL_RULES.LONG.stated, per: "× progress" },
+    dutyLive
+      ? { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "up to this per Full day", note: "paid when the week is judged, after the kept tracks" }
+      : { reason: "LIFE_FULL_DAY", amount: LIFE_MP.FULL_DAY, per: "per Full day", note: "pays from daily settlement" },
+  ];
+}
 
 /** How the reasons that share the weekly cap read in a sentence. */
 const CAPPED_WORDS: Record<LifeMpReason, string> = {
@@ -214,6 +249,7 @@ function bonusFullAt(): number {
 function TracksRules() {
   const launchDay = lifeLaunchDay();
   const today = todayKey();
+  const dutyLive = dutyPhaseOf(today, dutyLaunchDay()) === "live";
   const inForce = isLaunched(today, launchDay);
   const edge = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
   const judgeDay = WEEKDAY_AFTER_SUNDAY[WEEK_JUDGE_LAG_DAYS % WEEKDAY_AFTER_SUNDAY.length];
@@ -270,7 +306,7 @@ function TracksRules() {
       <div className="rules-scroll">
         <table className="rules-table">
           <tbody>
-            {MP_ROWS.map((r) => (
+            {mpRows(dutyLive).map((r) => (
               <tr key={r.reason}>
                 <td className="b">{LIFE_MP_REASON_LABEL[r.reason]}</td>
                 <td className="num">
@@ -373,13 +409,138 @@ const EXAMPLES: { name: string; input: Partial<PriceInput>; rawBefore?: number }
   { name: "A 30-minute Standard task after 90 raw already today", input: {}, rawBefore: 90 },
 ];
 
-export default function RulesPage() {
+/** Duty's examples, priced live by the functions that charge and pay (scripts/duty-check.ts holds the same goldens). */
+const DUTY_EXAMPLES: { name: string; task: Pick<PriceInput, "band" | "machineMinutes" | "estMinutes">; mode: PayMode }[] = [
+  { name: "Dishes — daily, Intro, 15 min", task: { band: "INTRO", machineMinutes: 15, estMinutes: 15 }, mode: "FULL" },
+  { name: "Stretch 15m — its minimum version", task: { band: "STANDARD", machineMinutes: 30, estMinutes: 15 }, mode: "MVV" },
+  { name: "Write a thesis chapter — Severe, 240 min", task: { band: "SEVERE", machineMinutes: 240, estMinutes: 240 }, mode: "FULL" },
+];
+
+/** LifeSettings.settledThroughDay, cached with the life tags settlement invalidates. Null on any failure: the line is then simply absent. */
+async function loadDutyCursor(userId: string): Promise<DayKey | null> {
+  try {
+    return await cached(`dutyCursor:${userId}`, ["life", "activity"], async () => {
+      const row = await prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true } });
+      return row?.settledThroughDay ? keyOfDateColumn(row.settledThroughDay) : null;
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Duty (m2-refit.md): the compulsory contract, its forgiveness and the
+ * akrasia horizon. In force from the launch day only; every number is read
+ * from duty-economy.ts and life-grade.ts, and every example is priced live.
+ */
+function DutyRules({ edge }: { edge: string }) {
+  // Two rest days, the example the judge's own check holds (character-check §5).
+  const floors = keptFloorsOf(2);
+  const makeUp = (t: (typeof DUTY_EXAMPLES)[number]) =>
+    priceTask({ ...EXAMPLE_BASE, ...t.task, recurring: true, timing: "MAKE_UP", streakDays: 0, mode: t.mode }, { rawBefore: 0 }, "DUTY");
+  return (
+    <>
+      <Card title="Duty: musts, debt and make-ups" sub="A must kept pays as any task; a must missed is owed" wide>
+        <Formula>
+          debt = min({DEBT_CAP}, B × E(estimate))
+        </Formula>
+        <ul className="rules-bullets">
+          <li>
+            A day is settled at {edge}, {SETTLE_LAG_DAYS} days after it began, once the whole next day has been there to record
+            it. A must still open then is owed: its debt is Duty XP taken away, dated the missed day. It never grows, and has no streak, repeat
+            or knee factor. At most {DEBT_OPEN_PER_TEMPLATE} debts stay open per task and {DEBT_OPEN_TOTAL_CAP} XP in total;
+            past that a miss is recorded with no debt.
+          </li>
+          <li>
+            Making it up repays the debt in full and pays the task at × {f2(TIMING_FACTOR.MAKE_UP)}, with no streak bonus; its
+            minimum version pays × {f2(PAY_MODE_FACTOR.MVV)} on top. Made up within {MAKEUP_RESTORE_DAYS} days of the missed
+            day, its streak comes back, once per {MAKEUP_RESTORE_EVERY_DAYS} days per task; later, the debt is repaid and the
+            streak stays broken. A make-up can be undone for {UNDO_WINDOW_MINUTES} minutes on the same day.
+          </li>
+          <li>
+            A deadline task done late counts as kept when it is done within {MAKEUP_RESTORE_DAYS} days of its due day. Once its
+            due day is settled with it open, it is made up from its card.
+          </li>
+          <li>
+            A missed must breaks its own streak, its consistency bonus and the Duty week. It never breaks the daily streak on a
+            day you did other things. Settling a day locks it: nothing on it can be ticked or undone after.
+          </li>
+          <li>An Inbox item is never owed until it is clarified. A study must met by the day&apos;s reviews is never owed.</li>
+          <li>
+            With Accept a loss on (Settings › Days), a debt {WRITE_OFF_MIN_DAYS} days old or more can be written off. The miss
+            stays on the ledger.
+          </li>
+        </ul>
+        <ul className="rules-examples">
+          {DUTY_EXAMPLES.map((ex) => {
+            const debt = debtFor({ ...ex.task, bandOverride: 0 });
+            const r = makeUp(ex);
+            return (
+              <li key={ex.name}>
+                <p className="ink-0">{ex.name}</p>
+                <p className="t-mono ink-2">
+                  missed owes <b className="ink-0">−{f1(debt)}</b> · made up {ex.mode === "MVV" ? "at its minimum " : ""}pays{" "}
+                  <b className="ink-0">{f1(r.xp)}</b> ({describeReceipt(r)})
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+
+      <Card title="Freezes, rest and repair" sub="Held days owe nothing and hold every streak">
+        <p>
+          A freeze is earned on a settled day with activity once {FREEZE_EARN_ACTIVE_DAYS} active days have built up since the last
+          one. At most {FREEZE_MAX} are banked, starting from {FREEZE_START_BALANCE}. A day with nothing on it spends one by itself
+          when that keeps a live streak or covers a must; it excuses every must that day. On Today, an unsettled yesterday with
+          nothing on it can spend one by hand.
+        </p>
+        <ul className="rules-bullets">
+          <li>Rest: declared before the day starts, at most {REST_PER_WEEK} a week.</li>
+          <li>Sick: declared the same day, once per {SICK_EVERY_DAYS} days.</li>
+          <li>
+            Vacation: {VACATION_MIN_DAYS} to {VACATION_MAX_DAYS} days in a row, from tomorrow, at most {VACATION_DAYS_PER_365} days
+            in any {VACATION_BUDGET_SPAN_DAYS}. A cancelled day is given back.
+          </li>
+          <li>A must marked Even on rest days stays owed on rest, sick and vacation days; only a freeze covers it.</li>
+          <li>A Full day straight after a broken day repairs it, once every {REPAIR_EVERY_DAYS} days.</li>
+        </ul>
+        <p>
+          Rest, sick and vacation days pro-rate a week&apos;s floors by the days left: with {floors.restDays} of them a track
+          needs {floors.days} days and {f1(floors.raw)} raw XP, {TRACK_LABEL.BODY} {f1(floors.effortMinutes)} effort minutes and{" "}
+          {TRACK_LABEL.DUTY}&apos;s fallback {floors.dutyCompletions} completions. A week whose pro-rated floors are not met is
+          held, not missed, when {HELD_WEEK_REST_DAYS} or more of its days were rest: it bridges the kept-week streak and pays
+          nothing. Freeze days never pro-rate.
+        </p>
+      </Card>
+
+      <Card title="Changing a must" sub={`Easier takes ${AKRASIA_DAYS} days; stronger is immediate`}>
+        <p>
+          Making a must easier (no longer a must, Even on rest days off, or archiving or dropping it) takes effect{" "}
+          {AKRASIA_DAYS} days later; until then every day is judged as before. Within {TYPO_GRACE_MIN} minutes of capturing
+          it, any change is immediate; after that a must can&apos;t go back to being an idea until it is no longer a must, and
+          a deadline must is never put off past its day. Making it stronger, or cancelling a pending change, is immediate
+          from today and never reaches back.
+        </p>
+      </Card>
+    </>
+  );
+}
+
+export default async function RulesPage() {
   const effortSamples = [5, 10, 15, 20, 30, 60, 120, 240];
   const streakSamples = [0, 7, 14, 30, CONSISTENCY_CAP_DAYS];
   const kneeSamples = [50, 100, 150, 200, 300, 500, Math.round(KNEE_CAP_AT_RAW)];
   // The curve's coefficient, read back from the curve itself (C at one day is 1 + rate / 100).
   const streakRate = Math.round((consistencyFactor(1) - 1) * 1000) / 10;
   const edge = `${String(DAY_START_HOUR).padStart(2, "0")}:00`;
+  // Duty (decisions 1, 5, 30): the pre-Duty rules until its launch day, an honest notice while it is
+  // ahead, and its rules in force from it, with 'settled through' when settlement lags.
+  const today = todayKey();
+  const dutyLaunch = dutyLaunchDay();
+  const dutyLive = dutyPhaseOf(today, dutyLaunch) === "live";
+  const stakesAhead = preLaunchNotice(today, dutyLaunch);
+  const settledLine = dutyLive ? dutySettledLine(await loadDutyCursor(getCurrentUserId()), today) : null;
 
   return (
     <div className="page today-rules cq-main">
@@ -392,6 +553,12 @@ export default function RulesPage() {
         <p className="t-mono ink-2">
           formula {FORMULA_VERSION} · sizing prompt v{SIZING_PROMPT_VERSION}
         </p>
+        {stakesAhead && (
+          <p className="t-body">
+            {stakesAhead}. Until then nothing is owed; rest and vacation for days from then can already be declared.
+          </p>
+        )}
+        {settledLine && <p className="t-meta">{settledLine}. Later days are settled as soon as it catches up.</p>}
       </div>
 
       <div className="rules-grid">
@@ -400,6 +567,7 @@ export default function RulesPage() {
             <li>
               A life day runs from {edge} to {edge}. Any tick or any review keeps the day streak; an empty day ends it only
               once the whole next day has passed.
+              {dutyLive && " A rest, sick or vacation day, a spent freeze and a repaired day hold it instead."}
             </li>
             <li>
               Yesterday stays open until today ends: anything done yesterday can be ticked today at the full rate. A tick can
@@ -409,15 +577,32 @@ export default function RulesPage() {
               Life XP and review points are two ledgers and are never added together. Reviews pay review points and no life
               XP; a study task (&apos;review 20&apos;) is paid by the reviews, never twice.
             </li>
-            <li>
-              A Full day is every must done or excused (the minimum counts), the review quest met (nothing due, the queue
-              clear, or {QUEST_CAP} reviews, however many are due), and one life deed. Today counts it now; its +{FULL_DAY_MP}{" "}
-              MP arrives with daily settlement.
-            </li>
-            <li>
-              Not yet in force (they arrive with daily settlement): rest, sick and vacation days that hold the streak, banked
-              freezes, owed musts and their make-ups, and a Full day repairing the broken day before it once a week.
-            </li>
+            {dutyLive ? (
+              <>
+                <li>
+                  A Full day is every must due that day done or excused (the minimum counts), the review quest met (as many
+                  reviews as the day opened with due, up to {QUEST_CAP}; with no day-open record, {QUEST_CAP} reviews), and one
+                  life deed. Settlement records it; up to +{FULL_DAY_MP} MP is paid when the week is judged, after the kept
+                  tracks.
+                </li>
+                <li>
+                  Each day is settled at {edge}, {SETTLE_LAG_DAYS} days after it began: a must still open then is owed (Duty,
+                  below). Record yesterday on Today can settle yesterday early; that locks it.
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  A Full day is every must done or excused (the minimum counts), the review quest met (as many reviews as the
+                  day opened with due, up to {QUEST_CAP}; nothing due counts as met), and one life deed. Today counts it now;
+                  up to +{FULL_DAY_MP} MP for it arrives with daily settlement.
+                </li>
+                <li>
+                  Not yet in force (they arrive with daily settlement): rest, sick and vacation days that hold the streak,
+                  banked freezes, owed musts and their make-ups, and a Full day repairing the broken day before it once a week.
+                </li>
+              </>
+            )}
           </ol>
         </Card>
 
@@ -544,8 +729,8 @@ export default function RulesPage() {
           <p>
             R_before is the raw total already earned today, so a day always pays g(ΣR) in whatever order its tasks are done.
             The day stops growing at {KNEE_CAP} (about {Math.round(KNEE_CAP_AT_RAW)} raw), which is also the most a forged day
-            could pay. Two completions landing at the same instant can leave the day a little off g(ΣR); once daily settlement
-            arrives, any drift above {KNEE_RECONCILE_TOLERANCE} is corrected by an adjustment row.
+            could pay. Two completions landing at the same instant can leave the day a little off g(ΣR); that drift is not
+            corrected yet.
           </p>
         </Card>
 
@@ -631,18 +816,22 @@ export default function RulesPage() {
 
         <TracksRules />
 
-        <Card title="Not yet in force" sub="Arrives with compulsory duties; nothing is charged today">
-          <p>
-            A missed compulsory occurrence will owe min({DEBT_CAP}, B × E(estimate)) — no streak, repeat or knee — and never
-            grows. At most {DEBT_OPEN_PER_TEMPLATE} open per task and {DEBT_OPEN_TOTAL_CAP} in total; past that a miss is
-            recorded with no debt. Making it up repays it in full.
-          </p>
-          <p>
-            <Link href="/today" className="link">
-              Back to Today
-            </Link>
-          </p>
-        </Card>
+        {dutyLive ? (
+          <DutyRules edge={edge} />
+        ) : (
+          <Card title="Not yet in force" sub="Arrives with compulsory duties; nothing is charged today">
+            <p>
+              A missed compulsory occurrence will owe min({DEBT_CAP}, B × E(estimate)) — no streak, repeat or knee — and never
+              grows. At most {DEBT_OPEN_PER_TEMPLATE} open per task and {DEBT_OPEN_TOTAL_CAP} in total; past that a miss is
+              recorded with no debt. Making it up repays it in full.
+            </p>
+            <p>
+              <Link href="/today" className="link">
+                Back to Today
+              </Link>
+            </p>
+          </Card>
+        )}
       </div>
     </div>
   );

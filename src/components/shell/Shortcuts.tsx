@@ -16,6 +16,9 @@
  * The rule of what runs is pure (shortcuts.ts decideShortcut): never while
  * typing, with a dialog or sheet open, on a held key, mid-composition, or on
  * a key something else handled; during a review session only '?'.
+ *
+ * 'y' (Record yesterday): on /today it asks the board to open its sheet
+ * (RECORD_YESTERDAY_EVENT); anywhere else it goes to /today?sheet=yesterday.
  */
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -27,10 +30,13 @@ import {
   LIBRARY_SEARCH_HREF,
   MAC_NOTE,
   MODAL_OPEN_SELECTOR,
+  RECORD_YESTERDAY_EVENT,
+  RECORD_YESTERDAY_HREF,
   SCOPE_NOTE,
   SEQUENCE_IDLE,
   SEQUENCE_MS,
   SHORTCUTS,
+  SHORTCUT_GROUPS,
   SHORTCUT_HELP_EVENT,
   STANDARD_KEYS,
   decideShortcut,
@@ -47,7 +53,7 @@ import "./shortcuts.css";
 /** A running review session: its runner owns the keys. */
 export const REVIEW_SESSION_SELECTOR = "[data-review-session]";
 
-const GROUPS: readonly Shortcut["group"][] = ["Capture", "Go to", "Study", "Help"];
+const GROUPS: readonly Shortcut["group"][] = SHORTCUT_GROUPS;
 
 /** Spoken names for keys a screen reader would read badly. */
 const SPOKEN: Record<string, string> = { "→": "Right arrow", "?": "question mark", ",": "comma", "/": "slash" };
@@ -207,6 +213,12 @@ export function Shortcuts() {
       if (s.id === "search") {
         if (pathRef.current === "/library") window.dispatchEvent(new Event(LIBRARY_SEARCH_EVENT));
         else router.push(LIBRARY_SEARCH_HREF);
+        return;
+      }
+      if (s.id === "record-yesterday") {
+        // On Today the board opens its sheet in place; elsewhere the deep link opens it on arrival.
+        if (pathRef.current === "/today") window.dispatchEvent(new Event(RECORD_YESTERDAY_EVENT));
+        else router.push(RECORD_YESTERDAY_HREF);
         return;
       }
       if (s.href) router.push(s.href);

@@ -81,7 +81,9 @@ export type InstanceStatus =
   | "EXCUSED"
   | "SKIPPED"
   | "UNDONE"
-  | "WRITTEN_OFF";
+  | "WRITTEN_OFF"
+  /** M2: a make-up outside the restore window or budget. The debt is cleared; the occurrence still reads missed (habit.ts BREAKS). */
+  | "MADE_UP";
 
 export type InstanceSource =
   | "manual"

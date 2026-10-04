@@ -5,7 +5,8 @@ import { getCurrentUserId } from "@/lib/user";
 import { invalidateAll } from "@/lib/cache";
 import { domainLevel, fieldLevel } from "@/lib/xp";
 import { KNOWLEDGE_SOURCES } from "@/lib/activity";
-import type { ResetScope, ResetResult } from "@/lib/reset-scopes";
+import { lifeResetOrder, type LifeResetTable, type ResetScope, type ResetResult } from "@/lib/reset-scopes";
+import { isMissingRestDayTable } from "@/lib/rest-rules";
 import { confirmsPhrase, resetSpecOf } from "@/components/settings/settings-model";
 
 /**
@@ -25,26 +26,60 @@ import { confirmsPhrase, resetSpecOf } from "@/components/settings/settings-mode
  * Typing the scope's name cannot happen by accident.
  */
 
+/** One life table's delete for this user, by the key reset-scopes.ts LIFE_RESET_ORDER names it. */
+function lifeDeleteOp(table: LifeResetTable, userId: string) {
+  switch (table) {
+    case "taskInstances":
+      return prisma.taskInstance.deleteMany({ where: { userId } });
+    case "tasks":
+      return prisma.taskTemplate.deleteMany({ where: { userId } });
+    case "restDays":
+      return prisma.restDay.deleteMany({ where: { userId } });
+    case "activityEvents":
+      return prisma.activityEvent.deleteMany({ where: { userId } });
+    case "lifeSettings":
+      return prisma.lifeSettings.deleteMany({ where: { userId } });
+  }
+}
+
 /**
  * Every life table's rows for this user, deleted together and in foreign-key
- * order: instances before the templates they reference (the templates' own
- * goal tree sets its links to null as it goes), then the ledger, then the
- * settings. RestDay, Workout, HrBucket, StepInterval and IngestLog join this
- * list with the migrations that create them.
+ * order (reset-scopes.ts LIFE_RESET_ORDER): instances before the templates
+ * they reference (the templates' own goal tree sets its links to null as it
+ * goes), then the declared rest days (M2), the ledger, and the settings.
+ * The settlement cursor goes with the settings; the next LifeSettings row
+ * is created through newLifeSettingsData, so after Duty's launch settlement
+ * resumes from the new epoch with no launch script run (M2 F18).
+ *
+ * Before the life_duty migration is applied the RestDay table does not
+ * exist: the whole array rolls back on it (P2021 / 42P01), and the reset runs
+ * again without it, so a deploy that lands first never half-resets.
  */
 async function deleteLifeRows(userId: string): Promise<Record<string, number>> {
-  const [taskInstances, tasks, activityEvents, lifeSettings] = await prisma.$transaction([
-    prisma.taskInstance.deleteMany({ where: { userId } }),
-    prisma.taskTemplate.deleteMany({ where: { userId } }),
-    prisma.activityEvent.deleteMany({ where: { userId } }),
-    prisma.lifeSettings.deleteMany({ where: { userId } }),
-  ]);
-  return {
-    taskInstances: taskInstances.count,
-    tasks: tasks.count,
-    activityEvents: activityEvents.count,
-    lifeSettings: lifeSettings.count,
+  const run = async (tables: readonly LifeResetTable[]) => {
+    const results = await prisma.$transaction(tables.map((table) => lifeDeleteOp(table, userId)));
+    const deleted: Record<string, number> = {};
+    tables.forEach((table, i) => {
+      deleted[table] = results[i].count;
+    });
+    return deleted;
   };
+  try {
+    return await run(lifeResetOrder(true));
+  } catch (err) {
+    if (!isMissingRestDayTable(err)) throw err;
+    return { ...(await run(lifeResetOrder(false))), restDays: 0 };
+  }
+}
+
+/** RestDay's row count for the danger zone; 0 while its table does not exist yet (life_duty not applied). */
+async function countRestDays(userId: string): Promise<number> {
+  try {
+    return await prisma.restDay.count({ where: { userId } });
+  } catch (err) {
+    if (isMissingRestDayTable(err)) return 0;
+    throw err;
+  }
 }
 
 /**
@@ -82,6 +117,11 @@ export async function resetKnowledgeBase(scope: ResetScope, confirmation: string
 
   const deleted: Record<string, number> = {};
 
+  // 'Everything' empties the life tables first: they are the one
+  // transaction here, so if it fails nothing else has been deleted yet.
+  // Their ledger delete takes the knowledge rows with it.
+  if (scope === "everything") Object.assign(deleted, await deleteLifeRows(userId));
+
   // ── Ideas, always ───────────────────────────────────────────────────
   // IdeaEnrichment cascades from Idea, so it is counted before the delete
   // rather than deleted separately.
@@ -90,9 +130,11 @@ export async function resetKnowledgeBase(scope: ResetScope, confirmation: string
   // The knowledge side's rows in the life ledger go with the ideas they
   // record: reviews, new ideas, attestations, boss fights, the pre-ledger
   // streak days. Tasks and their XP are not knowledge and stay.
-  deleted.knowledgeEvents = (
-    await prisma.activityEvent.deleteMany({ where: { userId, source: { in: KNOWLEDGE_SOURCES } } })
-  ).count;
+  if (scope !== "everything") {
+    deleted.knowledgeEvents = (
+      await prisma.activityEvent.deleteMany({ where: { userId, source: { in: KNOWLEDGE_SOURCES } } })
+    ).count;
+  }
 
   if (scope === "ideas") {
     // Points and levels are derived from Ideas, so with none left they must
@@ -164,7 +206,6 @@ export async function resetKnowledgeBase(scope: ResetScope, confirmation: string
   // account" kept its passive currency and its emblem upgrades.
   deleted.capitalEntries = (await prisma.capitalLedgerEntry.deleteMany({ where: { userId } })).count;
   deleted.augments = (await prisma.emblemAugment.deleteMany({ where: { userId } })).count;
-  Object.assign(deleted, await deleteLifeRows(userId));
 
   invalidateAll();
   return { ok: true, value: { scope, deleted, preserved: {} } };
@@ -186,6 +227,7 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     tasks,
     taskInstances,
     activityEvents,
+    restDays,
   ] = await Promise.all([
     prisma.idea.count(),
     prisma.ideaEnrichment.count(),
@@ -199,6 +241,8 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     prisma.taskTemplate.count({ where: { userId } }),
     prisma.taskInstance.count({ where: { userId } }),
     prisma.activityEvent.count({ where: { userId } }),
+    // M2: declared rest, sick and vacation days (the 'life' scope deletes them); 0 before life_duty is applied.
+    countRestDays(userId),
   ]);
   return {
     ideas,
@@ -213,5 +257,6 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     tasks,
     taskInstances,
     activityEvents,
+    restDays,
   };
 }

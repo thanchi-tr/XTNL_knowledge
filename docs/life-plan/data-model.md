@@ -15,9 +15,9 @@ model LifeSettings {
   userId            String    @unique
   epochDay          DateTime  @db.Date   // first life day; nothing earlier pays XP
   dailyCapacityMin  Int       @default(240)
-  restWeekdays      Int[]     @default([]) // 1=Mon..7=Sun, used from M2
-  settledThroughDay DateTime? @db.Date   // M2 settlement cursor
-  debtWriteOff      Boolean   @default(false) // M2 'accept the loss' switch (user decision)
+  restWeekdays      Int[]     @default([]) // 1=Mon..7=Sun; unused: standing rest weekdays are deferred (m2-refit decision 14)
+  settledThroughDay DateTime? @db.Date   // M2 settlement cursor: the last life day judged. Null until the launch script sets it (firstDutyDay − 1); a row created after launch starts at epochDay − 1 (duty-economy newLifeSettingsData)
+  debtWriteOff      Boolean   @default(false) // M2 'accept the loss' switch (user decision); one writer: actions/duty.ts setDebtWriteOff → lib/duty.ts setDebtWriteOffCore (actions/rituals.ts setDebtWriteOff only delegates)
   hrMax             Int?
   birthYear         Int?
   activityMap       Json?     // M4: unmapped source code -> kind
@@ -106,8 +106,8 @@ model TaskTemplate {             // the frozen grade plus the rule
   aiGradedAt         DateTime?
   gradeCopiedFrom    String?
   gradeFrozenAt      DateTime?
-  pendingChange      Json?     // M2 akrasia horizon
-  pendingChangeAt    DateTime?
+  pendingChange      Json?     // M2 rule over time: PendingChange v1 (below)
+  pendingChangeAt    DateTime? // dayStartOf(next.effectiveDay) while a weakening pends
   captureSource      String    @default("quick") // quick | share | api | form
   sortOrder          Float     @default(0)
   completedAt        DateTime? // for a goal: when it was closed (M5)
@@ -128,7 +128,7 @@ model TaskInstance {             // materialised only when acted on or judged
   template    TaskTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
   day         DateTime  @db.Date
   slot        Int       @default(0) // 'Again' completions use slot n+1
-  status      String    // DONE | DONE_LATE | DONE_MVV | MISSED | EXCUSED | SKIPPED | UNDONE | WRITTEN_OFF
+  status      String    // DONE | DONE_LATE | DONE_MVV | MISSED | EXCUSED | SKIPPED | UNDONE | WRITTEN_OFF | MADE_UP (M2: a late make-up; the debt is cleared, the occurrence still reads missed)
   source      String    @default("manual") // manual | record-yesterday | make-up | auto:reviews | auto:ideas | auto:steps | auto:workout
   completedAt DateTime?
   minutes     Int?
@@ -137,7 +137,7 @@ model TaskInstance {             // materialised only when acted on or judged
   debtXp      Float     @default(0)
   debtOpen    Boolean   @default(false)
   repaired    Boolean   @default(false)
-  judgedAt    DateTime?
+  judgedAt    DateTime? // M2: set on the instances settlement creates or excuses
   workoutId   String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -176,20 +176,31 @@ SQL for life_core. It is hand-authored, drafted with migrate diff, and carries t
 - ALTER TABLE "public"."TaskTemplate" ADD CONSTRAINT "TaskTemplate_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "public"."TaskTemplate"("id") ON DELETE SET NULL ON UPDATE CASCADE. This is an FK on the new table only.
 - ALTER TABLE "public"."TaskInstance" ADD CONSTRAINT "TaskInstance_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "public"."TaskTemplate"("id") ON DELETE RESTRICT ON UPDATE CASCADE.
 
-=== MIGRATION 2: prisma/migrations/20261019000000_life_duty (ships with M2) ===
+=== MIGRATION 2: prisma/migrations/20261021000000_life_duty (ships with M2) ===
+The name sorts after every applied migration (the last is 20261020000000_answer_case_sensitive; the old plan's 20261019000000 would sort before an applied one). Additive only: the RestDay table and nothing else. Standing rest weekdays were deferred (the user's answer 4), so LifeSettings gains no column. Every other column M2 uses shipped in life_core.
 model RestDay {
   id          String    @id @default(cuid())
   userId      String
-  day         DateTime  @db.Date
+  day         DateTime  @db.Date  // the life day held (life-day.ts dateColumn)
   kind        String    // REST | SICK | VACATION
   declaredAt  DateTime  @default(now())
   cancelledAt DateTime? // a future declaration can be cancelled before its day starts; the row is reused
-  @@unique([userId, day])
+  @@unique([userId, day]) // also serves as the userId index
   @@schema("public")
 }
-SQL: CREATE TABLE "public"."RestDay" ("id" TEXT NOT NULL, "userId" TEXT NOT NULL, "day" DATE NOT NULL, "kind" TEXT NOT NULL, "declaredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "cancelledAt" TIMESTAMP(3), PK); CREATE UNIQUE INDEX "RestDay_userId_day_key" ON "public"."RestDay"("userId","day").
+SQL: CREATE TABLE "public"."RestDay" ("id" TEXT NOT NULL, "userId" TEXT NOT NULL, "day" DATE NOT NULL, "kind" TEXT NOT NULL, "declaredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "cancelledAt" TIMESTAMP(3), CONSTRAINT "RestDay_pkey" PRIMARY KEY ("id")); CREATE UNIQUE INDEX "RestDay_userId_day_key" ON "public"."RestDay"("userId","day").
+- Every write upserts by (userId, day) and sets kind, declaredAt = now and cancelledAt = null, so a reused row is judged by its new declaration time.
+- It is read only through duty-rule.ts heldDaysOf (validRestDays), which ignores a cancelled row, a REST or VACATION row declared at or after its day started (dayStartOf) and a SICK row declared at or after its day ended (dayEndOf). Settlement, streak.ts and snapshot.ts, the week judge and the board all call it, so they agree about a day.
+- The code that reads RestDay deploys only after the migration is applied (the PROCEDURE below; the lead only).
 
-=== MIGRATION 3: prisma/migrations/20261109000000_life_body (ships with M4) ===
+TaskTemplate.pendingChange (M2, Json, no migration): PendingChange v1, the rule over time (duty-rule.ts; m2-refit decision 16):
+  { v: 1,
+    next?:  { effectiveDay: 'YYYY-MM-DD', compulsory?: false, compulsoryOnRest?: false, archive?: true },  // one pending weakening, in force from effectiveDay = today + 7
+    prior?: [ { throughDay: 'YYYY-MM-DD', compulsory?: boolean, compulsoryOnRest?: boolean }, … ] }     // earlier values, each in force through its throughDay, ordered by throughDay
+- A field's value on day d is the one recorded by the earliest prior segment with throughDay ≥ d that sets it, then next (when d ≥ effectiveDay), then the column (ruleOn). A pending archive is invisible before its effectiveDay and archives from it.
+- A strengthening ('Even on rest days' on, a clarified Inbox must) appends a prior segment with the old values through today − 1. Settlement applies next after settling effectiveDay − 1: it writes the columns (archivedAt = dayStartOf(effectiveDay) for an archive), appends the prior segment of the old values through effectiveDay − 1 and clears next. A segment is dropped once the DUTY WEEK row of the week holding its throughDay exists. Null (Prisma.DbNull) when nothing is left.
+
+=== MIGRATION 3: prisma/migrations/20261109000000_life_body (not planned: the user dropped M3 and M4; kept for the record) ===
 model Workout {
   id              String    @id @default(cuid())
   userId          String
@@ -279,6 +290,7 @@ LEDGER VOCABULARY (ActivityEvent.source → sink):
 - TASK → TRACK, or NONE when it pays 0 (#play, study-linked, auto-completed by a workout).
 - UNDO → TRACK, negating the row it undoes.
 - GOAL_PROGRESS, REFLECTION, FULL_DAY, REPAIR, FREEZE_EARN, FREEZE_USE, DEBT_WRITTEN_OFF → NONE.
+- REFLECTION (M2): Close the day's note and mood (qty = mood 1–5 or null, detail = the one-line note, key 'reflection:<d>:<nonce>'; a later save supersedes, append-only), and the weekly review's done marker (detail 'week review', key 'week-review:<YYYY-Www>' of rituals.ts reviewedWeek, dated the day it was done). xp 0, never graded, never for the streak.
 - WEEK → NONE (M5). The week judge writes one row per track per judged week:
   - track set; day = the judged week's Sunday; occurredAt = when it was judged;
   - qty 1 when kept, 0 when not;
@@ -297,7 +309,12 @@ LEDGER VOCABULARY (ActivityEvent.source → sink):
   - A close that pays 0 takes the lock but needs no guard: other writes can only raise the counts it was refused on.
 - GOAL_PROGRESS: the Today board sums it by (templateId, day) (phase B, goalDays), so a goal is measured as of min(today, due day). Goal +1 and linking an Inbox step to a goal refuse a closed goal ('That goal is closed or no longer exists.').
 - WEEK and MP_MINT never count for the streak (NEVER_STREAK_SOURCES), so a WEEK row dated Sunday never makes Sunday active after the fact.
-- DEBT → TRACK DUTY (negative). DEBT_REPAID → TRACK DUTY (positive).
+- DEBT → TRACK DUTY (negative), dated the missed day: xp −debt, rawXp NULL, compositionKey 'debt', countsForStreak false, templateId and sourceId = the instance.
+- DEBT_REPAID → TRACK DUTY, dated the make-up day: positive for a repayment ('repaid:…'), negative for a make-up's undo ('unrepaid:<repaidRowId>', never an UNDO row). rawXp NULL, compositionKey 'debt', countsForStreak false. rawXp NULL keeps both out of the knee base and the judge's raw reads. readLifeLedger groups by compositionKey and borrows some template's composition for the 'debt' group; that is harmless only because the group nets ≤ 0 and life-tracks.ts skips groups whose sum is ≤ 0, so any future positive bookkeeping row (a knee ADJUST) must carry templateId NULL.
+- DEBT_WRITTEN_OFF → NONE ('Accept the loss'): qty = the debt written off; the DEBT row stays.
+- FREEZE_EARN, FREEZE_USE → NONE ('freeze-earn:<d>', 'freeze-use:<d>', one key for the automatic and the manual spend). The balance is count(FREEZE_EARN) − count(FREEZE_USE) over all history, at most 2; it is derived, never stored.
+- FULL_DAY → NONE, qty 1, detail the rings' line ('fullday:<d>'); its MP is the week judge's 'mp:LIFE_FULL_DAY:<d>' mint (qty 0 allowed when trimmed). REPAIR → NONE, dated the repaired day d − 1 ('repair:<d − 1>'); it holds that day through HELD_SOURCES.
+- Streak flags (streak-curve.ts): NEVER_STREAK_SOURCES = STEPS, DAY_OPEN, DEBT, ADJUST, FREEZE_EARN, FREEZE_USE, REFLECTION, UNDO, WEEK, MP_MINT and (M2) DEBT_REPAID, DEBT_WRITTEN_OFF, FULL_DAY, REPAIR. HELD_SOURCES = FREEZE_USE, REPAIR; declared rest days hold through RestDay. Every row settlement writes carries countsForStreak false: a row written after the fact must never make a past day active.
 - ADJUST → TRACK. The detail names the cause: KNEE_RECONCILE, RPE_RATED, HR_LATE, MERGE or TEST_REVERSAL.
 - WORKOUT and PR → TRACK BODY.
 Invariant: DOMAIN rows only record points srs.ts or ideas.ts already credited to Domain.totalPoints. Life levels read ONLY SUM(xp) WHERE sink='TRACK'.
@@ -306,16 +323,30 @@ Invariant: DOMAIN rows only record points srs.ts or ideas.ts already credited to
   - readLifeLedger is the same five reads, uncached and ungated. Only scripts/life-launch.ts uses it, so its dry run can read the real ledger before the launch day.
   - The celebration snapshot's life parts are built from loadLifeLedger directly (lifeTracksView), never through the React-cached loadLifeTracks. A before and an after snapshot that share one Date would otherwise get the same memoised view.
 - The week judge, src/lib/life-weeks-server.ts, reads TASK and UNDO rows (sink TRACK) for its floors only, never for levels. It reads in two round trips:
-  1. LifeSettings.epochDay and every WEEK dedupe key;
-  2. then, in one Promise.all over exactly the planned weeks' days, the TASK and UNDO rows, the compulsory templates, their instances and the MP_MINT rows.
+  1. LifeSettings.epochDay (and, from M2, settledThroughDay for the DUTY gate) and every WEEK dedupe key;
+  2. then, in one Promise.all over exactly the planned weeks' days, the TASK and UNDO rows, the compulsory templates and (M2) every template with a pendingChange, their instances (one-offs through Sunday + 2), the RestDay rows, the FREEZE_USE and FULL_DAY rows, and the MP_MINT rows.
+- Settlement (M2), src/lib/settlement.ts, is the second ledger writer. Pure planning in settlement-plan.ts; two reads (LifeSettings, then one Promise.all of the state); then one $transaction array per chunk of up to 7 days (14 days a run at most, oldest first), with no interactive transactions:
+  1. lifeLockOp, pg_advisory_xact_lock(hashtext('life-complete:<user>')), the lock every completion takes. Settlement never mints, so it never takes life-mint and never nests locks with goal closes or the judge.
+  2. one guard statement (SQLSTATE 22012, then re-read and re-plan, up to 3 tries): the cursor is still chunkStart − 1, the FREEZE_* count is what was read, and for an early settle yesterday's TASK/UNDO count is what was read;
+  3. the instance creates (createMany, no skipDuplicates, so a conflict rolls back), one guarded updateMany per moved UNDONE instance (filtered on status 'UNDONE', also asserted in the guard), the events (createMany), one updateMany per template whose pending change takes effect (a compare-and-set: it lands only while pendingChange still equals the value read, so a user's cancel in between wins; it clears pendingChangeAt when no next is left), and the cursor. Both updateMany kinds are rare, so a common chunk is 3 to 5 statements; they replace the planned UPDATE … FROM (VALUES …) so no untested raw SQL runs against the shared database.
+  Instances settlement creates (EXCUSED, MISSED, the study-must DONE) have the id 'stl_<tpl>_<yyyymmdd>_<slot>', source 'manual' (the column default) and judgedAt set; judgedAt is what marks them as settlement's.
+  A P2002 or the guard means another run won: it re-reads. Writes happen only where Duty is launched, the cursor is set, and lifeWritesEnabled() (production, or XTNL_LIFE_JUDGE=1); the cron refuses without a matching CRON_SECRET. After commit it invalidates 'life', 'activity' and 'progress'.
+- A settled day is locked for completions: a separate guard statement in the completion array raises SQLSTATE 22003 (a smallint cast overflow, never retried, unlike 22012) when the day is settled. Settled is duty-economy.ts settledFor(day, cursor, firstDutyDay), the one rule every check uses: day ≤ settledThroughDay and, when a launch day is set, day ≥ GREATEST(launch, epochDay). A day before the first judged day is never locked, so the launch script's cursor (firstDutyDay − 1, possibly set days early) locks no pre-launch tick.
 - Goal closes write only NONE rows, never a TRACK row.
 - Audit query: 0 TRACK rows share a sourceId with any REVIEW or IDEA_CREATE row.
 
 Dedupe keys:
-- 'task:<tpl>:<day>:<slot>:<attempt>' (attempt = UNDO count on that slot)
-- 'undo:<eventId>'
-- 'debt:<tpl>:<day>:<slot>', 'repaid:<tpl>:<day>:<slot>'
-- 'freeze-earn:<day>', 'freeze-use:<day>', 'repair:<day>', 'fullday:<day>', 'knee:<day>:<n>', 'dayopen:<day>'
+- 'task:<tpl>:<day>:<slot>:<attempt>' (attempt = UNDO count on that slot). A make-up's TASK row keeps the missed day d in its key (taskEventInput keyDay) while the row is dated the make-up day.
+- 'undo:<eventId>' (TASK rows only)
+- M2 (builders in src/lib/duty-economy.ts):
+  - 'debt:<tpl>:<d>:<slot>'
+  - 'repaid:<tpl>:<d>:<slot>:<n>' (n = the 'unrepaid:' rows on that slot) and 'unrepaid:<repaidRowId>' (a negative DEBT_REPAID, a make-up's undo)
+  - 'writeoff:<tpl>:<d>:<slot>'
+  - 'freeze-earn:<d>', 'freeze-use:<d>' (one key for the manual and the automatic spend)
+  - 'repair:<d − 1>' (dated the repaired day)
+  - 'fullday:<d>' and the week judge's 'mp:LIFE_FULL_DAY:<d>' (qty 0 allowed)
+  - 'reflection:<d>:<nonce>' (a later save supersedes) and 'week-review:<YYYY-Www>'
+- 'knee:<day>:<n>' is reserved for the deferred knee reconcile; 'dayopen:<day>'
 - 'workout:<id>', 'wk-adjust:<id>:<n>', 'pr:<metric>:<workoutId>'
 - 'week:<TRACK>:<YYYY-Www>', one per track per judged week, backfill included
 - 'mp:<reason>:<scope>':
@@ -343,7 +374,7 @@ MASTERY LEDGER (M5):
 CACHE:
 - CacheTag gains 'life' (templates, settings, workouts, tracks) and 'activity' (streak, board, day totals). Both go into ALL_TAGS.
 - Every write invalidates 'activity'. TRACK writes and template/settings writes also invalidate 'life'. Reviews invalidate 'activity' only, so the progression cache stays warm.
-- The notifications key (notifications.ts:181) adds both tags.
+- The notifications key (notifications.ts) adds both tags. From M2 the feed also reads the open debts (one aggregate over debtOpen instances: the bell's 'Owed' row and ShellData.owed.count) and the weekly review's marker, under the same key.
 - M5:
   - loadProgression's tags become ['fields','progress','life'], because life rows join the attribute scores. A tick recomputes progression once; its inner loaders stay warm.
   - loadProgressRates adds 'life'.
@@ -353,7 +384,7 @@ CACHE:
   - The week judge and goal closes invalidate 'life', 'progress' and 'activity' after commit. TRACK writes already invalidate 'life'.
 
 RESET (reset-scopes.ts plus actions/reset.ts):
-- New scope 'life', phrase 'DELETE LIFE'. It deletes in FK order: TaskInstance, TaskTemplate, RestDay, ActivityEvent, Workout, HrBucket, StepInterval, IngestLog, LifeSettings.
+- New scope 'life', phrase 'DELETE LIFE'. It deletes in FK order: TaskInstance, TaskTemplate, RestDay, ActivityEvent, LifeSettings (M2; Workout, HrBucket, StepInterval and IngestLog left the plan with M4). getResetPreview counts RestDay. The next LifeSettings create goes through newLifeSettingsData: after Duty's launch the cursor starts at the new epoch − 1, so settlement resumes from the new epoch with no launch script run, and the week judge (whose launch marker is a MasteryLedgerEntry, untouched by the life scope) keeps judging.
 - 'ideas' and 'knowledge' also delete knowledge-source events (REVIEW, IDEA_CREATE, ATTESTATION, BOSS, LEGACY_DAY, DAY_OPEN).
 - 'everything' deletes every life table plus CapitalLedgerEntry and EmblemAugment, which it misses today.
 - getResetPreview counts them.

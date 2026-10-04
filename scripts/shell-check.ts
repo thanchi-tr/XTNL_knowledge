@@ -12,7 +12,25 @@ import { runInNewContext } from "node:vm";
 import { DEV_STYLE_PAGES, SECTIONS, activeSub, longDate, sectionOf, titleFor } from "../src/components/shell/nav";
 import { PREPAINT_SCRIPT } from "../src/components/shell/prepaint";
 import { SHELL_CAPTURE_EVENT } from "../src/components/shell/capture-bridge";
-import { EFFECTS_GROUP, askCount, asksFromNotices, asksOfYou, characterLevelOf, levelCaption, toneOf, trackLevelsOf } from "../src/components/shell/shell-types";
+import {
+  EFFECTS_GROUP,
+  LISTED_ONLY_NOTICE_IDS,
+  OWED_NOTICE_ID,
+  WEEK_REVIEW_NOTICE_ID,
+  YESTERDAY_MUSTS_NOTICE_ID,
+  askCount,
+  askSectionsOf,
+  asksFromNotices,
+  asksOfYou,
+  characterLevelOf,
+  levelCaption,
+  listedOnly,
+  owedOf,
+  toneOf,
+  trackLevelsOf,
+} from "../src/components/shell/shell-types";
+import { dutyNoticesOf, owedNotice, reviewedWeek, weekReviewNotice, yesterdayMustsNotice } from "../src/lib/rituals";
+import { RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
 import { ATTRIBUTES, computeAttributeScores, emptyComposition, sourcesFor, type Composition, type FieldContribution } from "../src/lib/attributes";
 import { characterRaw } from "../src/lib/character";
 import { depthCap, trackDepth, xpForLevel } from "../src/lib/life-economy";
@@ -345,6 +363,55 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   );
   check("shell: crest edges only once launched (null before)", /tracks: launched \? \(life\?\.edges \?\? null\) : null/.test(shellData));
   check("shell: the title reads the new level and the progression scores (life included)", /computeTitle\(level, progression\.scores, ultimateCount\)/.test(shellData));
+}
+
+// ── M2: Duty in the shell (m2-refit decision 27, F15) ───────────────────────
+{
+  eq("owed: the notice ids", [OWED_NOTICE_ID, YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID, [...LISTED_ONLY_NOTICE_IDS]], ["owed", "yesterday-musts", "week-review", ["yesterday-musts", "week-review"]]);
+  const owed = owedNotice({ count: 2, debt: 12.5 });
+  check("owed: 'Owed: 2 · −12.5 XP', tone warn (counted), to Today", owed?.title === "Owed: 2 · −12.5 XP" && owed.tone === "warn" && owed.group === "Due" && owed.href === "/today", JSON.stringify(owed));
+  eq("owed: toneOf('owed') is the owed diamond, whatever its tone", [toneOf({ id: "owed", group: "Due", tone: "warn" }), toneOf({ id: "owed", group: "Due", tone: "info" })], ["owed", "owed"]);
+  check("owed: a due date is never owed-toned (the Owed row is the only owed Due row)", toneOf({ id: "musts", group: "Due", tone: "warn" }) === "ask" && toneOf({ id: "overdue", group: "Due", tone: "bad" }) === "ask");
+  check("owed: no notice at 0 (or with no read)", owedNotice({ count: 0, debt: 0 }) === null && owedNotice(null) === null);
+  check("owed: a debt is never rounded up to a whole number in the title", owedNotice({ count: 1, debt: 4.25 })?.title === "Owed: 1 · −4.3 XP" && owedNotice({ count: 3, debt: 20 })?.title === "Owed: 3 · −20 XP");
+  const y = yesterdayMustsNotice(2, "2026-10-14");
+  check("yesterday: 'Yesterday: 2 musts open', tone info, the Record-yesterday deep link", y?.title === "Yesterday: 2 musts open" && y.tone === "info" && y.href === RECORD_YESTERDAY_HREF, JSON.stringify(y));
+  check("yesterday: it says when the day settles (Tue's open musts are owed from Thu 04:00)", /by Thu 04:00/.test(y?.detail ?? ""), y?.detail);
+  check("yesterday: absent at 0 musts", yesterdayMustsNotice(0, "2026-10-14") === null);
+  eq("yesterday: one must reads singular", yesterdayMustsNotice(1, "2026-10-14")?.title, "Yesterday: 1 must open");
+  // ShellData.owed.count from fixtures (the feed's own read).
+  eq("shell owed: count from the feed's counts.owed", [owedOf({ counts: { due: 0, overdue: 0, today: null, owed: { count: 3, debt: 15.1 } } }), owedOf({ counts: { due: 0, overdue: 0, today: null, owed: null } }), owedOf(null)], [{ count: 3 }, { count: 0 }, { count: 0 }]);
+  const shellData = read("src/lib/shell-data.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  check("shell owed: shell-data reads owed through owedOf(feed), not a fixed 0", /owed: owedOf\(feed\)/.test(shellData) && !/owed: \{ count: 0 \}/.test(shellData));
+  check("shell owed: the Train badge stays 0 (no Train milestone)", /train: 0/.test(shellData));
+
+  // The bell: the owed row counts; yesterday's musts and the weekly review are listed, never counted.
+  const live = dutyNoticesOf({ today: "2026-10-17", live: true, owed: { count: 2, debt: 12.5 }, yesterdayMusts: 2, reviewDue: reviewedWeek("2026-10-17") });
+  eq("bell: Duty's rows in order (owed, yesterday, weekly review)", live.map((n) => n.id), ["owed", "yesterday-musts", "week-review"]);
+  const rows = asksFromNotices(live);
+  eq("bell: owed is listed and counted; the two info rows are listed with counted: false", rows.map((r) => [r.id, r.counted !== false, r.tone]), [["owed", true, "owed"], ["yesterday-musts", false, "quiet"], ["week-review", false, "quiet"]]);
+  eq("bell: the counted total ignores the listed rows", askCount(rows), 1);
+  check("bell: listedOnly is info and named only", listedOnly(yesterdayMustsNotice(2, "2026-10-14")!) && !listedOnly({ id: "yesterday-musts", group: "Due", tone: "warn" }) && !listedOnly({ id: "focus", group: "Due", tone: "info" }));
+  const mixed = asksFromNotices([...live, { id: "overdue", group: "Due", tone: "bad", title: "3 past grace", detail: "" }, { id: "boon-x", group: "Active effects", tone: "good", title: "Boon", detail: "" }]);
+  eq("bell: asks, then the listed rows, then the effects", mixed.map((r) => r.id), ["owed", "overdue", "yesterday-musts", "week-review", "boon-x"]);
+  eq("bell: count = owed + overdue, never a listed row or an effect", askCount(mixed), 2);
+  eq("bell: a row with no counted field still counts (the frozen shape, before M2)", askCount([{ group: "Due" }, { group: "Due", counted: false }, { group: EFFECTS_GROUP }]), 1);
+  // The sheet's sections: the counted card holds exactly askCount's rows; the listed rows get their own heading.
+  const sections = askSectionsOf(mixed);
+  eq("bell sections: asking, listed, effects", [sections.asking.map((r) => r.id), sections.listed.map((r) => r.id), sections.effects.map((r) => r.id)], [["owed", "overdue"], ["yesterday-musts", "week-review"], ["boon-x"]]);
+  check("bell sections: the counted card is exactly the badge's count, and every row lands once", sections.asking.length === askCount(mixed) && sections.asking.length + sections.listed.length + sections.effects.length === mixed.length);
+  const off = dutyNoticesOf({ today: "2026-10-05", live: false, owed: { count: 1, debt: 4.2 }, yesterdayMusts: 2, reviewDue: reviewedWeek("2026-10-05") });
+  eq("bell before Duty is live: only an open debt shows (a rolled-back launch never hides one)", off.map((n) => n.id), ["owed"]);
+  check("bell: no Duty row on a quiet live day", dutyNoticesOf({ today: "2026-10-15", live: true, owed: { count: 0, debt: 0 }, yesterdayMusts: 0, reviewDue: null }).length === 0);
+  const review = weekReviewNotice(reviewedWeek("2026-10-17")!);
+  check("weekly review: info, to the runner, naming its week", review.tone === "info" && review.href === "/today/week?view=run" && /week of 12 Oct/.test(review.detail), JSON.stringify(review));
+
+  // notifications.ts: one read for the owed totals and one for the review marker, both failing to 'no line'.
+  const feedSrc = read("src/lib/notifications.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  check("feed: the owed totals are one aggregate over debtOpen instances", /taskInstance\.aggregate\(\{ where: \{ userId, debtOpen: true \}/.test(feedSrc));
+  check("feed: Duty's rows come from rituals dutyNoticesOf, gated by isDutyLaunched(today)", /dutyNoticesOf\(/.test(feedSrc) && /isDutyLaunched\(lifeDay\)/.test(feedSrc));
+  check("feed: the evening musts line says when an open must is owed, only once Duty is live", /dutyLive\s*\?\s*`Still open this evening\. The minimum version counts if time is short; left open, it is owed from \$\{owedFromLine\(lifeDay\)\}\.`/.test(feedSrc));
+  check("feed: counts.owed is returned beside today", /counts: \{ due: dueCount, overdue: overdueCount, today, owed \}/.test(feedSrc));
 }
 
 // ── the attribute seam (m5-refit F7; character-check §3b lives here, lane B) ─

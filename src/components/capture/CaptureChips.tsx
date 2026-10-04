@@ -6,10 +6,22 @@ import { ATTRIBUTE_META } from "@/lib/attributes";
 import { formatMinutes, formatXp, matchParentGoal } from "@/lib/capture-parse";
 import { BAND_META, TRACK_LABEL, priceTask } from "@/lib/life-grade";
 import { sizeLexically } from "@/lib/life-lexicon";
+import { dutyLaunchDay } from "@/lib/duty-economy";
+import { todayKey } from "@/lib/life-day";
 import type { CaptureToken, ParsedCapture, PayMode, Sizing } from "@/lib/life-types";
 import { CurrencyGlyph, Icon, type IconName } from "@/components/ui/Icon";
 import type { CaptureActiveTitle } from "@/app/actions/capture";
-import { MUST_WARNING, MUST_WARNING_BEFORE, duplicateNote, ideaChipLabel, insertChipLabel, type Insert } from "./capture-ui";
+import {
+  MUST_WARNING,
+  MUST_WARNING_BEFORE,
+  duplicateNote,
+  ideaChipLabel,
+  inboxMustNote,
+  insertChipLabel,
+  mustStakeLabel,
+  type DutyStakeContext,
+  type Insert,
+} from "./capture-ui";
 
 /**
  * What the line was understood as, one chip per token, plus the grade it
@@ -32,6 +44,12 @@ import { MUST_WARNING, MUST_WARNING_BEFORE, duplicateNote, ideaChipLabel, insert
  * Under the chips: the quiet duplicate note ('Already on your board'), and
  * a Must with no day to be judged on — the warning and its four fix chips,
  * which the first Enter stops on (QuickCapture's block-once gate).
+ *
+ * M2: a line that will be a must says its stake on the Must chip once Duty
+ * is live ('Must · ≈ −4.2 if missed', debtFor on the lexical grade) or, with
+ * a launch day ahead, when stakes start ('Must · stakes from Mon 12 Oct');
+ * a must bound for the Inbox ('!' and '?') says it is 'A must once you
+ * clarify it' (capture-ui mustStakeLabel, inboxMustNote).
  *
  * A weigh-in line ('weight 72.4', weight-capture.ts) shows one chip and
  * nothing else — 'Weight · 72.4 kg · today', no price, no feeds: a reading
@@ -76,6 +94,13 @@ interface Props {
   onKeepAsText?: () => void;
   /** A weigh-in-shaped line whose number is out of range: what the sheet says under the chips, or null. */
   weightRange?: string | null;
+  /**
+   * M2: today and the Duty launch day, for the Must chip's stake. Absent:
+   * read here from this browser's clock and the code's launch day (a
+   * rehearsal server's XTNL_DUTY_LAUNCH_DAY is not visible in the browser,
+   * so a caller with the server's value passes it).
+   */
+  duty?: DutyStakeContext;
 }
 
 interface Grade {
@@ -159,6 +184,7 @@ export function CaptureChips({
   weighIn = null,
   onKeepAsText,
   weightRange = null,
+  duty,
 }: Props) {
   const grade = useMemo(() => gradeOf(parsed, rawBefore), [parsed, rawBefore]);
   const parent = useMemo(
@@ -202,6 +228,13 @@ export function CaptureChips({
   const track = parsed.track ?? grade?.sizing.track ?? null;
   const hasFeeds = !!grade && !!track && feeds.length > 0;
   const showFeeds = hasFeeds && (!compact || feedsOpen);
+  // The chips render only while a line is typed (client-side), so reading the clock here is safe.
+  const stake = mustStakeLabel(
+    parsed,
+    grade ? { band: grade.sizing.band, machineMinutes: grade.sizing.machineMinutes, estMinutes: grade.minutes } : null,
+    duty ?? { today: todayKey(), launchDay: dutyLaunchDay() }
+  );
+  const inboxMust = inboxMustNote(parsed);
 
   return (
     <div className="capture-chips">
@@ -209,7 +242,7 @@ export function CaptureChips({
         <ul className="capture-chip-row" aria-label="How the line was read">
           {parsed.tokens.map((t) => {
             const words = text.slice(t.start, t.end);
-            let label = t.label;
+            let label = t.field === "compulsory" && stake ? stake : t.label;
             let miss = false;
             if (t.field === "parent" && parsed.parentHint && goals) {
               // The goal it will attach to, or an honest miss: the server
@@ -293,6 +326,12 @@ export function CaptureChips({
       {duplicate && (
         <p className="capture-note" role="note">
           {duplicateNote(duplicate)}
+        </p>
+      )}
+
+      {inboxMust && (
+        <p className="capture-note" role="note">
+          {inboxMust}
         </p>
       )}
 

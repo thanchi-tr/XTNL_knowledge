@@ -5,6 +5,10 @@
     {
       "path": "/api/cron/degrade",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/life",
+      "schedule": "15 18 * * *"
     }
   ]
 }

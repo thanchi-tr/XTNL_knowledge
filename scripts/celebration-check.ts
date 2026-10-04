@@ -30,6 +30,12 @@
  *       CeremonyBackdrop, the Cataclysm never on a replay, and the words sit
  *       above the Cataclysm's z-index;
  *       an in-panel Seal says itself once per id when asked (announce).
+ *   - Duty (M2 F16, F11): a debt that lowers a Duty level plays nothing; a
+ *     level re-reached after debt replays no Seal; a settle-cause pair with
+ *     only DEBT rows stores nothing; the week Seal states the full days the
+ *     judge paid ('+1.0 MP from 2 full days.'); a held week is never a moment;
+ *     a split week (the DUTY gate) plays a second Seal 'week:<W>+DUTY' that states
+ *     DUTY and its full days, once.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -774,11 +780,123 @@ function life() {
   check("celebrations: CAUSE_WORD has the launch ('life tracks joining your character'), read without an article", /launch: "life tracks joining your character"/.test(celebrations) && /NO_ARTICLE = new Set\(\["launch"\]\)/.test(celebrations));
 }
 
+// ── 13. Duty (M2 refit F16, F11): debt, settlement and the full days on the Seal ─────
+async function duty() {
+  const W = "2026-W42";
+  const levels = (tracks: Record<string, number>): LevelsPart => ({ fields: [{ id: "f0", name: "F0", level: 3 }], domains: [], ultimates: 0, tracks });
+  const T = (duty: number) => ({ BODY: 3, DUTY: duty, CRAFT: 2, CARE: 1 });
+  const settleSnap = (dutyLevel: number, extra: Partial<ProgressData> = {}): ProgressData => ({
+    parts: partsOf("settle"),
+    streak: { today: "2026-10-21", current: 12, todayActive: true, held: 0 },
+    ledger: { weeks: [], prs: [], fullDays: [] },
+    habits: { rows: [{ id: "tpl-meds", title: "Meds", strength: 0.5, kept: 6 }] },
+    goals: { done: [] },
+    tracks: { levels: T(dutyLevel) },
+    levels: levels(T(dutyLevel)),
+    ...extra,
+  });
+
+  // A debt that lowers a Duty level plays nothing (only an upward move celebrates).
+  const lowered = diffProgress(settleSnap(5), settleSnap(4));
+  check("duty: a debt that lowers the Duty level (5 → 4) plays nothing", lowered.length === 0, keys(lowered).join());
+  // Settlement writes DEBT rows (and MISSED instances): the habit can only fall, the streak never moves.
+  const debtOnly = diffProgress(
+    settleSnap(5),
+    settleSnap(4, { habits: { rows: [{ id: "tpl-meds", title: "Meds", strength: 0.47, kept: 0 }] } })
+  );
+  const store = new MemoryStore();
+  const stored = await persistDrafts(store, "duty-u", debtOnly, new Date(1_000));
+  check("duty: a settle-cause snapshot pair with only DEBT rows yields no stored event", debtOnly.length === 0 && stored.length === 0 && store.rows.length === 0, keys(debtOnly).join());
+
+  // Re-reaching a level after debt replays no Seal: the key is persisted, as for every level.
+  const up = (from: number, to: number) => diffProgress({ parts: ["tracks"], tracks: { levels: T(from) } }, { parts: ["tracks"], tracks: { levels: T(to) } });
+  const first = await persistDrafts(store, "duty-u", up(4, 5), new Date(2_000));
+  check("duty: Duty 4 → 5 is one track-level Seal", first.length === 1 && first[0].dedupeKey === "track:DUTY:5", first.map((e) => e.dedupeKey).join());
+  store.ack("duty-u", first.map((e) => e.id));
+  const down = await persistDrafts(store, "duty-u", up(5, 4), new Date(3_000));
+  const reached = await persistDrafts(store, "duty-u", up(4, 5), new Date(4_000));
+  check("duty: after a debt drops it to 4, re-reaching 5 replays no Seal", down.length === 0 && reached.length === 0, reached.map((e) => e.dedupeKey).join());
+
+  // The week Seal states what the judge paid the week's full days: '+1.0 MP from 2 full days.'
+  const week = (track: string, mp?: number): LedgerRow => ({ key: `week:${track}:${W}`, week: W, track, day: "2026-10-18", xp: 0, qty: 1, detail: "Kept · 3 days · 30.0 raw XP", ...(mp != null ? { mp } : {}) });
+  const full = (d: string, mp: number): LedgerRow => ({ key: `mp:LIFE_FULL_DAY:${d}`, week: W, track: null, day: d, xp: 0, qty: mp, detail: "LIFE_FULL_DAY · full day", mp });
+  const before: ProgressData = { parts: ["ledger"], ledger: { weeks: [], prs: [], fullDays: [] } };
+  const after: ProgressData = {
+    parts: ["ledger"],
+    ledger: { weeks: [week("BODY", 1.5), week("DUTY", 1.5)], prs: [], fullDays: [full("2026-10-12", 0.5), full("2026-10-13", 0.5), full("2026-10-14", 0)] },
+  };
+  const seal = diffProgress(before, after);
+  check(
+    "seal: the week Seal adds '+1.0 MP from 2 full days.' (a trimmed qty-0 day is not counted) and states 4 MP paid",
+    seal.length === 1 && (seal[0].facts.lines ?? []).includes("+1.0 MP from 2 full days.") && seal[0].facts.amounts?.[0]?.value === 4 && (seal[0].facts.lines ?? []).includes("+1.5 MP for each kept track."),
+    JSON.stringify(seal[0]?.facts)
+  );
+  check("seal: honest (number and why)", seal.every((d) => honestyProblem(draftToEvent(d, "x")) === null));
+  const old = diffProgress({ parts: ["ledger"], ledger: { weeks: [], prs: [] } }, { parts: ["ledger"], ledger: { weeks: [week("BODY", 1.5)], prs: [] } });
+  check("seal: a snapshot without fullDays (stored before M2) still parses and adds no line", old.length === 1 && (old[0].facts.lines ?? []).length === 2);
+  const seen = diffProgress(after, { ...after, ledger: { ...after.ledger!, weeks: [...after.ledger!.weeks, week("CARE", 1.5)] } });
+  check("seal: full days already in the before snapshot are not stated again", seen.length === 1 && !(seen[0].facts.lines ?? []).some((l) => l.includes("full day")), JSON.stringify(seen[0]?.facts.lines));
+  const heldOnly = diffProgress(before, { parts: ["ledger"], ledger: { weeks: [{ ...week("CARE"), qty: 0, detail: "Held · 5 rest days" }], prs: [], fullDays: [] } });
+  check("seal: a held week (qty 0) is never a moment", heldOnly.length === 0);
+
+  // A split week (the DUTY gate): BODY, CRAFT and CARE on Wednesday, then DUTY and the full days once the
+  // Sunday is settled. The second run plays its own Seal: run 1's claimed 'week:<W>'.
+  const run1After: ProgressData = { parts: ["ledger"], ledger: { weeks: [week("BODY", 1.5), week("CRAFT", 1.5), week("CARE", 1.5)], prs: [], fullDays: [] } };
+  const run2After: ProgressData = {
+    parts: ["ledger"],
+    ledger: { weeks: [...run1After.ledger!.weeks, week("DUTY", 1.5)], prs: [], fullDays: [full("2026-10-12", 0.5), full("2026-10-13", 0.5)] },
+  };
+  const split1 = diffProgress(before, run1After);
+  const split2 = diffProgress(run1After, run2After);
+  check("split: run 1 is the usual 'week:<W>' Seal (3 of 4)", split1.length === 1 && split1[0].dedupeKey === `week:${W}` && split1[0].facts.title === "3 of 4 tracks kept", keys(split1).join());
+  check(
+    "split: run 2 plays 'week:<W>+DUTY': '4 of 4 tracks kept' rolled from 3, Duty 'also kept', its 1.5 MP and the 2 full days (2.5 MP), gold",
+    split2.length === 1 &&
+      split2[0].dedupeKey === `week:${W}+DUTY` &&
+      split2[0].facts.title === "4 of 4 tracks kept" &&
+      split2[0].facts.numeral?.from === 3 &&
+      split2[0].facts.numeral?.to === 4 &&
+      (split2[0].facts.lines ?? [])[0] === "Duty was also kept the week of 12 October." &&
+      (split2[0].facts.lines ?? []).includes("+1.5 MP for each kept track.") &&
+      (split2[0].facts.lines ?? []).includes("+1.0 MP from 2 full days.") &&
+      split2[0].facts.amounts?.[0]?.value === 2.5 &&
+      split2[0].facts.material === "gold" &&
+      split2[0].claims.includes(`week:DUTY:${W}`) &&
+      split2[0].what.map((w) => w.label).join() === "Duty track",
+    JSON.stringify({ k: split2[0]?.dedupeKey, f: split2[0]?.facts })
+  );
+  check("split: honest (number and why)", split2.every((d) => honestyProblem(draftToEvent(d, "x")) === null));
+  const splitStore = new MemoryStore();
+  const played1 = await persistDrafts(splitStore, "split-u", split1, new Date(10_000));
+  splitStore.ack("split-u", played1.map((e) => e.id));
+  const played2 = await persistDrafts(splitStore, "split-u", split2, new Date(20_000));
+  const replay2 = await persistDrafts(splitStore, "split-u", split2, new Date(30_000));
+  check(
+    "split: after run 1's Seal was shown, run 2's Seal still plays once (and only once)",
+    played1.length === 1 && played2.length === 1 && played2[0].dedupeKey === `week:${W}+DUTY` && played2[0].facts.title === "4 of 4 tracks kept" && replay2.length === 1 && replay2[0].id === played2[0].id,
+    `${played2.map((e) => e.dedupeKey).join()} | ${replay2.map((e) => e.dedupeKey).join()}`
+  );
+  splitStore.ack("split-u", played2.map((e) => e.id));
+  check("split: once shown, never again", (await persistDrafts(splitStore, "split-u", split2, new Date(40_000))).length === 0);
+  const oneRun = diffProgress(before, run2After);
+  check("split: a week judged in one run keeps the one 'week:<W>' Seal (4 of 4, no roll)", oneRun.length === 1 && oneRun[0].dedupeKey === `week:${W}` && oneRun[0].facts.title === "4 of 4 tracks kept" && oneRun[0].facts.numeral?.from === null, keys(oneRun).join());
+
+  // The streak milestone names what held its gaps, now that rest days hold too.
+  const s = (current: number, held: number) => ({ parts: ["streak"], streak: { today: "2026-10-21", current, todayActive: true, held } }) as ProgressData;
+  const thirty = diffProgress(s(29, 2), s(30, 2));
+  check("streak: held days in the run are named as rest, a freeze or a repair", (thirty[0]?.facts.lines ?? [])[0] === "2 held days (rest, a freeze or a repair) carried it along the way.", (thirty[0]?.facts.lines ?? []).join(" / "));
+
+  // The server half: the ledger part reads the WEEK mark structurally and collects the full-day mints.
+  const snap = read(join(ROOT, "src/lib/snapshot.ts"));
+  check("snapshot: WEEK rows are read through weekMarkOf (qty and receipt), and full-day mints are collected", /weekMarkOf\(\{ qty: r\.qty, receipt: r\.receipt \}\) !== "kept"/.test(snap) && /fullDayMintKey\(day\)/.test(snap) && /return \{ weeks, prs, fullDays \}/.test(snap));
+}
+
 (async () => {
   await persistence();
   queue();
   input();
   life();
+  await duty();
   await classNames();
   await channel();
   shellChunk();

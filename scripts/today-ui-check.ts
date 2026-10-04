@@ -33,14 +33,19 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { addDays, dayEndOf, dayKeyOf, dayStartOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
 import { parseCapture, shiftReverted, type KeyLike } from "../src/lib/capture-parse";
-import { BAND_OVERRIDE_COOLDOWN_DAYS, selfRatingOpen, selfRatingOpensOn } from "../src/lib/life-grade";
+import { BAND_OVERRIDE_COOLDOWN_DAYS, debtFor, selfRatingOpen, selfRatingOpensOn } from "../src/lib/life-grade";
 import { normTitleOf } from "../src/lib/life-lexicon";
 import { parseRule } from "../src/lib/recurrence";
 import {
   UNDO_WINDOW_MS,
+  asksToday,
+  boardStreakOptionsOf,
   buildBoard,
   canUndo,
+  isSettledOn,
+  isUnsettledDutyDay,
   moveBlockOf,
+  onRestMustsIn,
   questOf,
   statsFor,
   withMoments,
@@ -188,6 +193,46 @@ import {
   type DaySnapshot,
 } from "../src/components/today/board-ui";
 import { createLayerStack, wrapFocus, type EscapeKeyLike } from "../src/components/capture/layers";
+import {
+  FULL_DAY_PAY_LINE,
+  HELD_GLYPH,
+  RECORD_YESTERDAY_EVENT,
+  RECORD_YESTERDAY_HREF,
+  WEEK_REVIEW_NOTICE,
+  asksShown,
+  cancellableOf,
+  closeItemsOf,
+  dayLedgerDutyOf,
+  deferredNoticeOf,
+  madeUpLineOf,
+  makeUpViewOf,
+  makeUpWindowOf,
+  missPromptCopyOf,
+  missPromptKey,
+  missPromptOf,
+  mustLaneOf,
+  o1CardOf,
+  owedSummaryOf,
+  owedTotalOf,
+  pendingLineOf,
+  pendingMetaOf,
+  restOptionsOf,
+  restSwitchOf,
+  rollAllKeysOf,
+  ruleChangeOf,
+  settledKey,
+  vacationRangeError,
+  withHeldExcused,
+  yesterdayActiveOf,
+  yesterdaySheetOf,
+  type StreakDutyFields,
+} from "../src/components/today/board-ui";
+import { declaredAheadOf, makeUpCopy, owedViewOf, restBannerOf, restStateOf, settledNoticeOf, type DutyBoard, type OwedCard, type SettledFact } from "../src/lib/duty-view";
+import { WRITTEN_OFF_SUB, WRITTEN_OFF_TEXT, makeUpWordsOf } from "../src/components/today/m2/makeup-words";
+// Type-only (erased): the server streak the board is typed with, so the Day ledger reads lane B's own field names.
+import type { DailyStreak as ServerDailyStreak } from "../src/lib/streak";
+import { settledFor } from "../src/lib/duty-economy";
+import { MissPrompt } from "../src/components/today/MissPrompt";
 import {
   GOAL_CLOSE_FINAL,
   carriedFigure,
@@ -554,14 +599,17 @@ const row = (state: BoardRow["state"], paid: PaidRecord | null = null) => ({ sta
   check("full day: a backlog is capped at 15 (never '3 of 142')", backlog.target === QUEST_CAP && backlog.caption === "3 of 15" && !backlog.met, backlog.caption);
   check("full day: 15 reviews meet the quest whatever is still due", questRingOf({ reviews: 15, target: 142, dueNow: 127 }).met);
   check("full day: a small queue is its own target", questRingOf({ reviews: 5, target: 5, dueNow: 0 }).caption === "5 of 5");
+  // M2 decision 7: "queue clear" is no clause any more (a live dueNow cannot be rebuilt at d + 2).
   const cleared = questRingOf({ reviews: 3, target: 5, dueNow: 0 });
-  check("full day: a clear queue meets the quest, honestly worded", cleared.met && cleared.caption === "3 of 5 · queue clear" && cleared.value === cleared.target, cleared.caption);
+  check("full day: a clear queue alone no longer meets the quest (decision 7)", !cleared.met && cleared.caption === "3 of 5", cleared.caption);
+  const noOpen = questRingOf({ reviews: 14, target: null });
+  check("full day: with no DAY_OPEN row the quest needs 15 reviews", !noOpen.met && noOpen.caption === "14 of 15" && questRingOf({ reviews: 15, target: null }).met, noOpen.caption);
   const questFromBoard = questOf({ dayOpenQty: 40, reviews: 7, dueNow: 33, reviewXp: 20 });
   check("full day: the quest ring agrees with questOf's target", questRingOf({ reviews: questFromBoard.progress, target: questFromBoard.target, dueNow: questFromBoard.dueNow }).caption === "7 of 15");
 
   check("full day: no life deed yet", !lifeRingOf(0).met && lifeRingOf(0).caption === "0 of 1");
   check("full day: two deeds still read 1 of 1", lifeRingOf(2).met && lifeRingOf(2).caption === "1 of 1");
-  check("full day: a workout (M4) is a life deed", lifeRingOf(0, 1).met);
+  check("full day: no deed, no Life ring (workouts went with M4)", !lifeRingOf(0).met && lifeRingOf(1).met);
 
   const full = fullDayOf({ musts: { kept: 2, total: 2 }, quest: { reviews: 15, target: 30, dueNow: 15 }, lifeDeeds: 1 });
   check("full day: all three rings make a Full day", full.full && full.met === 3);
@@ -1185,7 +1233,11 @@ function cssValue(css: string, selector: string, prop: string, media?: string): 
   check("wiring: the Close and Reschedule sheets are the kit's Sheet", read("src/components/today/GoalSheets.tsx").split("<Sheet").length === 3);
   const page = code(read("src/app/today/page.tsx"));
   check("page: launched is isLaunched(today)", page.includes("launched={isLaunched(day)}") && page.includes('from "@/lib/life-economy"'));
-  check("page: the week judge runs in its own after(), never awaited by the render", /after\(\(\) => maybeJudgeWeeks\(userId\)\);/.test(page) && page.includes('from "@/lib/life-weeks-server"'));
+  // M2 (F5, F12): settlement then the week judge, in one single-flight chain (maybeMaintainLife), replaces the bare judge.
+  check(
+    "page: settlement and the week judge run in maybeMaintainLife's own after(), never awaited by the render",
+    /after\(\(\) => maybeMaintainLife\(userId\)\);/.test(page) && page.includes('from "@/lib/settlement"') && !page.includes("maybeJudgeWeeks")
+  );
 
   // Targets and type.
   const css = read("src/components/today/today.css").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -2094,6 +2146,505 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
     body
   );
   check("a11y: no generated '·' on the toast line's children (a ::before would join the link)", !/capture-toast-line[^{]*::before/.test(css));
+}
+
+// ═══ M2: Duty on Today (lane D: F3 UI, F10 strip, F12, F13 sheet) ═════════
+// The board never opens on red: debt only inside the Must lane (one card or
+// one collapsed summary) and the Owed row; one .o1 card at most; no row shows
+// a break settlement has not judged; before launch, the pre-M2 board exactly.
+
+{
+  const LAUNCH: DayKey = "2026-09-28"; // a Monday before TODAY, so these fixtures are live
+  const dutyOf = (p: Partial<DutyBoard> = {}): DutyBoard => ({
+    live: true,
+    launchDay: LAUNCH,
+    cursor: addDays(TODAY, -2),
+    owed: [],
+    rest: { yesterday: null, today: null, tomorrow: null, vacationUntil: null },
+    freezes: { banked: 0, willCover: false },
+    pending: {},
+    settled: [],
+    ...p,
+  });
+  const owedCard = (p: Partial<OwedCard> & { instanceId: string; templateId: string; title: string; day: DayKey }): OwedCard => ({
+    archived: false,
+    slot: 0,
+    debtXp: 4.2,
+    restoreBy: addDays(p.day, 2),
+    restoresToday: true,
+    restoresStreak: 12,
+    mvv: null,
+    makeUpXp: 3.5,
+    minimumXp: null,
+    studyLinked: false,
+    canWriteOff: false,
+    ...p,
+  });
+  const TUE = addDays(TODAY, -2);
+  const MON = addDays(TODAY, -3);
+  const stretch = owedCard({ instanceId: "o1", templateId: "s", title: "Stretch", day: TUE });
+  const dishes = owedCard({ instanceId: "o2", templateId: "d", title: "Dishes", day: MON, debtXp: 8.3 });
+
+  // owedViewOf: 0 → none, 1 → inline, 2+ → summary.
+  check("owed view: no debt, no card", owedViewOf([]).kind === "none");
+  const one = owedViewOf([stretch]);
+  check("owed view: one debt is one inline MakeUpCard", one.kind === "inline" && one.card.instanceId === "o1");
+  const two = owedViewOf([stretch, dishes]);
+  check(
+    "owed view: two or more collapse into one summary, oldest first, with the true total",
+    two.kind === "summary" && two.count === 2 && two.totalDebt === 12.5 && two.cards[0].instanceId === "o2",
+    JSON.stringify(two.kind === "summary" ? { n: two.count, t: two.totalDebt } : two)
+  );
+  check("owed row: 'Owed: 2 · −12.5' sums the open debts", owedTotalOf([stretch, dishes]) === 12.5 && owedTotalOf([]) === 0);
+
+  // Asks: never the owed or the yesterday-musts notice; the weekly review is one; two visible, then 'n more'.
+  const duty = todayAsksOf({
+    yesterdayOpen: 1,
+    recordBy: "record by 04:00 tomorrow",
+    notices: [
+      { id: "owed", group: "Due", tone: "warn", title: "Owed: 2 · −12.5 XP", detail: "" },
+      { id: "yesterday-musts", group: "Due", tone: "info", title: "Yesterday: 2 musts open", detail: "" },
+      { id: WEEK_REVIEW_NOTICE, group: "Due", tone: "info", title: "Weekly review", detail: "The week of 28 Sep, while it is open" },
+    ],
+  });
+  check("asks: todayAsksOf ignores the owed and the record notices; the weekly review is an Ask", duty.map((a) => a.id).join(",") === `yesterday,${WEEK_REVIEW_NOTICE}`, duty.map((a) => a.id).join(","));
+  check("asks: nothing Duty brings is owed-toned", duty.every((a) => a.tone === "ask") && duty[1].href === "/today/week?view=run");
+  const four = ["a", "b", "c", "d"];
+  check(
+    "asks: two visible at most, then 'n more'",
+    asksShown(four, false).shown.length === 2 && asksShown(four, false).more === 2 && asksShown(four, true).more === 0 && asksShown(four.slice(0, 2), false).more === 0
+  );
+
+  // Next up never selects a make-up: debts are not Must rows.
+  const owing = buildBoard(board(TODAY, [], [], { duty: dutyOf({ owed: [stretch, dishes] }) }));
+  const nu = nextUpOf({ quest: { reviews: 15, target: 15, dueNow: 0, met: true, cap: 15 }, must: owing.must });
+  check("next up: never a make-up", nu.kind === "clear" && owing.owed.length === 2 && owing.must.length === 0, nu.kind);
+
+  // The Must lane: renders with debts only; its chips are held or quiet, never owed.
+  const lane = mustLaneOf({ must: [], owed: [stretch], restToday: null, live: true, launchDay: LAUNCH, today: TODAY });
+  check("must lane: renders with debts only, and no 'n of m kept' for no musts", lane.show && lane.count === null && lane.owed.kind === "inline");
+  check("must lane: nothing owed, no musts, no lane", !mustLaneOf({ must: [], owed: [], restToday: null, live: true, launchDay: LAUNCH, today: TODAY }).show);
+  const rest = mustLaneOf({ must: [], owed: [stretch], restToday: "REST", live: true, launchDay: LAUNCH, today: TODAY });
+  check("must lane: a rest day adds the held chip 'Rest · nothing owed'", rest.chips.length === 1 && rest.chips[0].tone === "held" && rest.chips[0].held === "rest" && rest.chips[0].text === "Rest · nothing owed");
+  const ahead = mustLaneOf({ must: [], owed: [], restToday: null, live: false, launchDay: "2026-10-12", today: TODAY });
+  check("must lane: before launch with a launch day set, 'Musts carry stakes from Mon 12 Oct' (held, quiet)", ahead.chips[0]?.text === "Musts carry stakes from Mon 12 Oct" && ahead.chips[0].tone === "held");
+  check("must lane: no launch day, no chip (the pre-M2 lane)", mustLaneOf({ must: [], owed: [], restToday: null, live: false, launchDay: null, today: TODAY }).chips.length === 0);
+
+  // The make-up card's words: never blaming, the true minus, the window true when read.
+  const priced = { ...stretch, template: { ...tpl({ id: "s", title: "Stretch", recurrence: "DAILY", estMinutes: 10, machineMinutes: 10 }) } };
+  check("make-up copy: what is open and what makes it right, no blame", makeUpCopy(priced, TODAY) === "Tuesday's Stretch is still open. 10 min makes it right.", makeUpCopy(priced, TODAY));
+  check("make-up copy: a study must says a make-up pays 0 and clears it", makeUpCopy({ ...stretch, studyLinked: true }, TODAY).endsWith("A make-up pays 0 and clears it."));
+  const v = makeUpViewOf({ ...stretch, mvv: "5 min", minimumXp: 1.1 }, TODAY);
+  check("make-up card: '−4.2 owed' is the debt, 'Stretch · Tuesday' when, the minimum priced", v.owed === 4.2 && v.when === "Stretch · Tuesday" && v.minimum?.label === "5 min" && v.minimum.price === 1.1 && v.makeUpPrice === 3.5);
+  check("make-up card: within the window it says what comes back, and by when", makeUpWindowOf(stretch, TODAY) === "Within Fri 04:00 it brings back its streak of 12.", makeUpWindowOf(stretch, TODAY));
+  check("make-up card: the restore budget spent, it says so", makeUpWindowOf({ ...stretch, restoresToday: false }, TODAY).startsWith("Its streak was already repaired this week"));
+  check("make-up card: past the window, it clears the debt only", makeUpWindowOf({ ...dishes, day: addDays(TODAY, -5), restoreBy: addDays(TODAY, -3), restoresToday: false }, TODAY).startsWith("Past the two-day window"));
+  check("make-up card: a retired template reads '(archived)'", makeUpViewOf({ ...stretch, archived: true }, TODAY).when === "Stretch (archived) · Tuesday");
+  check("make-up: the resolved line says what was repaid and paid", madeUpLineOf({ xp: 3.5, debtXp: 4.2, restored: true, status: "DONE_LATE" }) === "Repaid 4.2 and paid 3.5 exactly; its streak is back.");
+  // M2 review: 'Accept the loss' resolves as written off — a quiet chip and its own words, never 'Repaid' or 'Made up'.
+  const wo = makeUpWordsOf({ text: "t", window: "w", resolved: { repaid: "r", minimum: "m" } }, "written-off");
+  const woOwn = makeUpWordsOf({ text: "t", window: "w", resolved: { repaid: "r", minimum: "m", writtenOff: "Its −4.2 stays in Duty XP; nothing more is owed." } }, "written-off");
+  check(
+    "make-up card: a write-off reads 'Written off. The miss stays on the ledger.' with a quiet chip, never Repaid",
+    wo.chip === "written-off" && wo.text === WRITTEN_OFF_TEXT && wo.text === "Written off. The miss stays on the ledger." && wo.sub === WRITTEN_OFF_SUB && woOwn.sub === "Its −4.2 stays in Duty XP; nothing more is owed." && !/Repaid|Made up/.test(`${wo.text} ${wo.sub}`)
+  );
+  check(
+    "make-up card: open, repaid and minimum keep their words",
+    makeUpWordsOf({ text: "t", window: "w" }, "open").text === "t" &&
+      makeUpWordsOf({ text: "t", window: "w" }, "open").sub === "w" &&
+      makeUpWordsOf({ text: "t", window: "w", resolved: { repaid: "r", minimum: "m" } }, "repaid").text === "Made up. Nothing owed." &&
+      makeUpWordsOf({ text: "t", window: "w", resolved: { repaid: "r", minimum: "m" } }, "minimum").sub === "m"
+  );
+  check("owed summary: '2 musts · since Monday', and the soonest window", owedSummaryOf([stretch, dishes], TODAY).when === "2 musts · since Monday" && owedSummaryOf([stretch, dishes], TODAY).sub.startsWith("Dishes: Within"));
+
+  // One .o1 card at most: the settled notice until dismissed, else the rest banner.
+  const settledRows: SettledFact[] = [
+    { source: "DEBT", day: TUE, xp: -4.2, qty: null, templateId: "s", dedupeKey: `debt:s:${TUE}:0` },
+    { source: "FULL_DAY", day: TUE, xp: 0, qty: 1, templateId: null, dedupeKey: `fullday:${TUE}` },
+    { source: "REPAIR", day: MON, xp: 0, qty: 1, templateId: null, dedupeKey: `repair:${MON}` },
+    { source: "FREEZE_EARN", day: TUE, xp: 0, qty: 1, templateId: null, dedupeKey: `freeze-earn:${TUE}` },
+  ];
+  const notice = settledNoticeOf(settledRows, TUE, TODAY);
+  const banner = restBannerOf({ yesterday: null, today: "REST", tomorrow: null, vacationUntil: null }, TODAY);
+  check(
+    "o1: one card at most (the settled notice first, then the rest banner)",
+    o1CardOf({ settled: notice, settledDismissed: false, banner }) === "settled" &&
+      o1CardOf({ settled: notice, settledDismissed: true, banner }) === "rest" &&
+      o1CardOf({ settled: null, settledDismissed: false, banner: null }) === null
+  );
+
+  // settledNoticeOf: once per d, only while today ≤ d + 2, never an owed chip.
+  check("settled: the latest settled day, while today ≤ d + 2", notice?.day === TUE && settledNoticeOf(settledRows, TUE, addDays(TUE, 3)) === null && settledNoticeOf(settledRows, TUE, addDays(TUE, 1))?.day === TUE);
+  check("settled: never an owed chip (the debt is a quiet line pointing to the Must lane)", !!notice && notice.chips.every((c) => c.tone === "kept" || c.tone === "held" || c.tone === "quiet") && notice.chips.some((c) => c.tone === "quiet" && c.text.includes("Must lane")));
+  check("settled: a Full day, the day it repaired, and a freeze earned", !!notice && notice.fullDay && notice.repairedDay === MON && notice.title === "Tuesday was a Full day." && notice.chips.some((c) => c.text === "Freeze earned"));
+  check("settled: nothing to say, no notice; no cursor, no notice", settledNoticeOf([], TUE, TODAY) === null && settledNoticeOf(settledRows, null, TODAY) === null);
+  check("settled: dismissed per device under 'settled:<d>'", settledKey(TUE) === `settled:${TUE}`);
+  check("settled: an early settle says the day is locked", settledNoticeOf(settledRows.map((r) => ({ ...r, day: WED })), WED, TODAY)?.note?.includes("locked") === true);
+  // M2 review: on d + 2 an early settle and the 04:00 one look alike, so the note claims neither; the Full-day chip says 'up to'.
+  check("settled: on d + 2 the note is neutral (never 'Judged at 04:00 today')", notice?.note === "Settled; nothing else changed.", notice?.note ?? "");
+  check(
+    "settled: the Full-day chip says 'up to +0.5 MP' (the weekly cap can trim it to 0)",
+    !!notice && notice.chips.some((c) => c.text === "Full day · up to +0.5 MP when the week is judged") && !notice.chips.some((c) => c.text.includes("· MP when"))
+  );
+  // M2 review blocker: the launch cursor (firstDutyDay − 1) is no settled day, so it says nothing (settledFor's floor).
+  check(
+    "settled: a cursor below the floor (the launch cursor) gives no notice; at or above it, the notice",
+    settledNoticeOf(settledRows, TUE, TODAY, { floor: addDays(TUE, 1) }) === null && settledNoticeOf(settledRows, TUE, TODAY, { floor: TUE })?.day === TUE
+  );
+
+  // The rest banner: a held glyph and words; Cancel only for a day not started; 'Even on rest days' musts still owed.
+  check("rest banner: words plus the held glyph, and nothing to cancel once the day started", banner?.text === "Rest day. Nothing is owed today." && banner.kind === "REST" && HELD_GLYPH[banner.kind] === "rest" && banner.cancelDay === null);
+  const owedOnRest = restBannerOf({ yesterday: null, today: "REST", tomorrow: null, vacationUntil: null }, TODAY, { stillOwed: 1 });
+  check("rest banner: an 'Even on rest days' must is still owed, and it says so", !!owedOnRest && owedOnRest.text.includes("still owed") && !owedOnRest.text.includes("Nothing is owed"));
+  const away = restBannerOf({ yesterday: null, today: "VACATION", tomorrow: "VACATION", vacationUntil: addDays(TODAY, 4) }, TODAY);
+  check("rest banner: a vacation says until when, and can end after today", away?.text.startsWith("Vacation until Mon 5 Oct.") === true && away?.cancelDay === addDays(TODAY, 1) && away?.cancelTo === addDays(TODAY, 4), away?.text);
+  const restTomorrow = restBannerOf({ yesterday: null, today: null, tomorrow: "REST", vacationUntil: null }, TODAY);
+  check("rest banner: a rest declared for tomorrow can be cancelled", restTomorrow?.text === "Rest tomorrow (Fri 2 Oct). Nothing will be owed." && restTomorrow.cancelDay === addDays(TODAY, 1));
+  const awayNext = restBannerOf({ yesterday: null, today: null, tomorrow: "VACATION", vacationUntil: null, vacationFromTomorrowUntil: addDays(TODAY, 5) }, TODAY);
+  const awayUnknown = restBannerOf({ yesterday: null, today: null, tomorrow: "VACATION", vacationUntil: null }, TODAY);
+  check(
+    "rest banner: a vacation from tomorrow names its last day, and never a made-up one",
+    awayNext?.text === "Vacation from tomorrow until Tue 6 Oct. Nothing will be owed." && awayNext.cancelTo === addDays(TODAY, 5) && awayUnknown?.text === "Vacation from tomorrow. Nothing will be owed." && awayUnknown.cancelDay === null,
+    `${awayNext?.text} | ${awayUnknown?.text}`
+  );
+  check("rest banner: nothing declared, no banner", restBannerOf({ yesterday: "REST", today: null, tomorrow: null, vacationUntil: null }, TODAY) === null);
+  // M2 review: a banner for tomorrow never says 'Nothing will be owed' while an 'Even on rest days' must is due then.
+  const restTomorrowOwed = restBannerOf({ yesterday: null, today: null, tomorrow: "REST", vacationUntil: null }, TODAY, { stillOwedTomorrow: 1 });
+  const awayNextOwed = restBannerOf({ yesterday: null, today: null, tomorrow: "VACATION", vacationUntil: null, vacationFromTomorrowUntil: addDays(TODAY, 5) }, TODAY, { stillOwedTomorrow: 2 });
+  check(
+    "rest banner: tomorrow's 'Even on rest days' musts stay owed, and it says so (rest and vacation)",
+    restTomorrowOwed?.text === "Rest tomorrow (Fri 2 Oct). Only your 'Even on rest days' must will be owed." &&
+      awayNextOwed?.text === "Vacation from tomorrow until Tue 6 Oct. Only your 'Even on rest days' musts will be owed." &&
+      !restTomorrowOwed.text.includes("Nothing will be owed"),
+    `${restTomorrowOwed?.text} | ${awayNextOwed?.text}`
+  );
+  check(
+    "rest banner: the declared days a tomorrow banner speaks for (tomorrow, or the vacation's run; none when today is held)",
+    JSON.stringify(declaredAheadOf({ yesterday: null, today: null, tomorrow: "REST", vacationUntil: null }, TODAY)) === JSON.stringify({ from: addDays(TODAY, 1), to: addDays(TODAY, 1) }) &&
+      JSON.stringify(declaredAheadOf({ yesterday: null, today: null, tomorrow: "VACATION", vacationUntil: null, vacationFromTomorrowUntil: addDays(TODAY, 5) }, TODAY)) ===
+        JSON.stringify({ from: addDays(TODAY, 1), to: addDays(TODAY, 5) }) &&
+      declaredAheadOf({ yesterday: null, today: "REST", tomorrow: "REST", vacationUntil: null }, TODAY) === null &&
+      declaredAheadOf({ yesterday: null, today: null, tomorrow: null, vacationUntil: null }, TODAY) === null
+  );
+  {
+    const FRI = addDays(TODAY, 1);
+    const medsDaily = tpl({ id: "medsD", title: "Meds", recurrence: "DAILY", compulsory: true, compulsoryOnRest: true });
+    const gymDaily = tpl({ id: "gymD", title: "Gym", recurrence: "DAILY", compulsory: true });
+    const monOnly = tpl({ id: "monO", title: "Bins", recurrence: "DOW:1", compulsory: true, compulsoryOnRest: true });
+    const runTarget = tpl({ id: "runT", title: "Run", recurrence: "TARGET:3/W", compulsory: true, compulsoryOnRest: true });
+    const restOffSoon = tpl({ id: "roS", title: "Stretch", recurrence: "DAILY", compulsory: true, compulsoryOnRest: true, pendingChange: { v: 1, next: { effectiveDay: FRI, compulsoryOnRest: false } } });
+    const inboxMust = tpl({ id: "inbM", title: "Pills?", recurrence: "DAILY", compulsory: true, compulsoryOnRest: true, inbox: true });
+    check(
+      "rest banner: onRestMustsIn counts the 'Even on rest days' musts due on the declared days (a TARGET one too), never a plain must, an inbox item, or one whose 'Even on rest days' ends first",
+      onRestMustsIn([medsDaily, gymDaily, inboxMust, restOffSoon], FRI, FRI) === 1 &&
+        onRestMustsIn([monOnly], FRI, FRI) === 0 &&
+        onRestMustsIn([monOnly], FRI, addDays(FRI, 4)) === 1 &&
+        onRestMustsIn([runTarget], FRI, FRI) === 1 &&
+        onRestMustsIn([gymDaily], FRI, addDays(FRI, 6)) === 0,
+      [onRestMustsIn([medsDaily, gymDaily, inboxMust, restOffSoon], FRI, FRI), onRestMustsIn([monOnly], FRI, addDays(FRI, 4)), onRestMustsIn([runTarget], FRI, FRI)].join(",")
+    );
+  }
+  const restRows = [
+    { day: addDays(TODAY, 1), kind: "REST", declaredAt: new Date(at(TODAY, 9)), cancelledAt: null },
+    { day: addDays(TODAY, 2), kind: "REST", declaredAt: new Date(at(addDays(TODAY, 2), 9)), cancelledAt: null },
+  ];
+  const rs = restStateOf(restRows, TODAY);
+  check("rest state: a REST declared after its day started never counts (heldDaysOf's rule)", rs.rest.tomorrow === "REST" && rs.declared.length === 1);
+
+  // Rest day d, opened at d + 2 before settlement: no row shows a broken streak.
+  const walk = tpl({ id: "walk", title: "Walk", recurrence: "DAILY", startDay: addDays(TODAY, -20) });
+  const walkRule = parseRule("DAILY")!;
+  const hist: BoardInstance[] = [];
+  for (let n = 20; n >= 3; n--) {
+    const day = addDays(TODAY, -n);
+    if (day !== TUE) hist.push({ id: `w${n}`, templateId: "walk", day, slot: 0, status: "DONE", source: "manual", xpPaid: 1 });
+  }
+  const restOn = TUE;
+  const histRest = hist;
+  const cursor = addDays(restOn, -1);
+  const bare = statsFor(walk, walkRule, histRest, TODAY);
+  const held = statsFor(walk, walkRule, histRest, TODAY, boardStreakOptionsOf(walk, { live: true, cursor, restDays: new Set([restOn]), freezeDays: new Set() }));
+  check("rest day d at d + 2, before settlement: the read without the cursor would show a break; the board's reads hold it", bare.streak.before.days === 0 && held.streak.before.days > 0, `${bare.streak.before.days} / ${held.streak.before.days}`);
+  const unsettled = statsFor(walk, walkRule, histRest, TODAY, boardStreakOptionsOf(walk, { live: true, cursor, restDays: new Set(), freezeDays: new Set() }));
+  check("an unsettled day with nothing recorded reads pending, never a break", unsettled.streak.before.days > 0);
+  check("before launch, the habit reads take no options (M1/M5 behaviour)", Object.keys(boardStreakOptionsOf(walk, { live: false, cursor, restDays: new Set([restOn]), freezeDays: new Set() })).length === 0);
+  const meds = tpl({ id: "meds", title: "Meds", recurrence: "DAILY", compulsory: true, compulsoryOnRest: true });
+  const medsOpts = boardStreakOptionsOf(meds, { live: true, cursor, restDays: new Set([restOn]), freezeDays: new Set([addDays(TODAY, -5)]) });
+  check("an 'Even on rest days' must is held by freeze days only", !!medsOpts.heldDays && !medsOpts.heldDays.has(restOn) && medsOpts.heldDays.has(addDays(TODAY, -5)));
+
+  // Record yesterday: the freeze switch is hidden for an active yesterday.
+  const dutyY = dutyOf({ freezes: { banked: 1, willCover: true } });
+  const idle = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyY, yesterdayActive: false });
+  const busy = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyY, yesterdayActive: true });
+  check("record yesterday: the freeze switch for an idle yesterday with a freeze banked", idle.freeze?.label === "Use a freeze for Wed" && idle.freeze.sub === "Covers all of Wednesday's musts · 0 left after" && !idle.freeze.checked);
+  check("record yesterday: the freeze switch is hidden for an active yesterday", busy.freeze === null);
+  check("record yesterday: no freeze banked, no switch", yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf(), yesterdayActive: false }).freeze === null);
+  check("record yesterday: a freeze already used shows on, and stays on", yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ freezes: { banked: 0, willCover: true, usedYesterday: true } }), yesterdayActive: false }).freeze?.checked === true);
+  check(
+    "record yesterday: titled by its day, with the honesty line and the sticky Settle footer",
+    idle.title === "Record Wednesday" &&
+      idle.honesty === "Tick only what you did on Wednesday. Doing it now? Settle Wednesday first: its make-up pays ×0.85 and brings its streak back." &&
+      idle.settle?.label === "Settle Wednesday now" &&
+      idle.settle.until === "Or leave it: it settles on its own at Fri 04:00." &&
+      idle.settle.lock === "Settling locks Wednesday."
+  );
+  const early = yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ cursor: WED, freezes: { banked: 1, willCover: false } }), yesterdayActive: false });
+  check("record yesterday: settled early, no footer and no switch", early.settle === null && early.freeze === null && early.honesty === null);
+  const pre = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyOf({ live: false, launchDay: null, cursor: null }), yesterdayActive: false });
+  check("record yesterday: before launch, the pre-M2 sheet exactly", pre.title === "Record yesterday" && pre.description === "Anything you tick pays at the full rate, record by 04:00 tomorrow." && !pre.honesty && !pre.settle && !pre.freeze);
+  check("record yesterday: settled early, it says '<Day> is settled' (settledFor holds)", early.description === "Wednesday is settled. Anything missed is made up from its card.", early.description);
+  // M2 review: the 'is settled' line only when settledFor is true.
+  const sameAsPre = (v: ReturnType<typeof yesterdaySheetOf>) => v.title === "Record yesterday" && v.description === "Anything you tick pays at the full rate, record by 04:00 tomorrow." && !v.honesty && !v.settle && !v.freeze;
+  const noCursor = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyOf({ cursor: null, freezes: { banked: 1, willCover: false } }), yesterdayActive: false });
+  check("record yesterday: Duty live with no cursor yet — never 'settled'; the pre-M2 sheet, no Settle, no freeze", sameAsPre(noCursor), JSON.stringify(noCursor));
+  // The launch Monday: the launch script set the cursor to firstDutyDay − 1 = Sunday, a day Duty never judges.
+  const LAUNCH_MON: DayKey = "2026-10-12";
+  const SUN: DayKey = "2026-10-11";
+  const launchDay = yesterdaySheetOf({
+    yesterday: SUN,
+    recordBy: "record by 04:00 tomorrow",
+    duty: dutyOf({ launchDay: LAUNCH_MON, floor: LAUNCH_MON, cursor: SUN, freezes: { banked: 1, willCover: false } }),
+    yesterdayActive: false,
+  });
+  check("record yesterday: on the launch Monday the pre-Duty Sunday is recordable (the pre-M2 sheet), never 'Sunday is settled'", sameAsPre(launchDay), JSON.stringify(launchDay));
+  const launchNoFloor = yesterdaySheetOf({ yesterday: SUN, recordBy: "record by 04:00 tomorrow", duty: dutyOf({ launchDay: LAUNCH_MON, cursor: SUN }), yesterdayActive: false });
+  check("record yesterday: without DutyBoard.floor the launch day is the floor (its lower bound), same answer", sameAsPre(launchNoFloor));
+  // After a post-launch reset: epochDay = today, cursor = today − 1 (newLifeSettingsDays), floor = the epoch.
+  const reset = yesterdaySheetOf({ yesterday: WED, recordBy: "record by 04:00 tomorrow", duty: dutyOf({ floor: TODAY, cursor: WED }), yesterdayActive: false });
+  check("record yesterday: the day before a reset's epoch is below the floor — recordable, never 'settled'", sameAsPre(reset), JSON.stringify(reset));
+  check(
+    "settledFor is the board's rule: below the floor never settled; a null floor (no launch day) keeps the cursor-only lock",
+    !isSettledOn(dutyOf({ launchDay: LAUNCH_MON, floor: LAUNCH_MON, cursor: SUN }), SUN) &&
+      isSettledOn(dutyOf({ cursor: WED }), WED) &&
+      isSettledOn(dutyOf({ launchDay: null, floor: null, cursor: WED, live: false }), WED) === settledFor(WED, WED, null) &&
+      !isSettledOn(null, WED) &&
+      !isUnsettledDutyDay(dutyOf({ launchDay: LAUNCH_MON, floor: LAUNCH_MON, cursor: SUN }), SUN) &&
+      isUnsettledDutyDay(dutyOf(), WED) &&
+      !isUnsettledDutyDay(dutyOf({ live: false }), WED)
+  );
+  // Before launch the script may already have set the cursor (Sun 11 Oct) while today is Thu 8 Oct: nothing before it is locked.
+  check(
+    "pre-launch with the cursor set ahead: no pre-launch day is settled (ticks on today and yesterday stay open)",
+    !isSettledOn(dutyOf({ live: false, launchDay: LAUNCH_MON, floor: LAUNCH_MON, cursor: SUN }), "2026-10-07") && !isSettledOn(dutyOf({ live: false, launchDay: LAUNCH_MON, floor: LAUNCH_MON, cursor: SUN }), "2026-10-08")
+  );
+  // M2 review (decision 12): once a freeze covers yesterday, nothing more is recorded on it.
+  const frozen = yesterdaySheetOf({ yesterday: WED, recordBy: "", duty: dutyOf({ freezes: { banked: 0, willCover: true, usedYesterday: true } }), yesterdayActive: false });
+  check(
+    "record yesterday: a freeze used, no honesty line to tick by, and it says the freeze covers the day",
+    frozen.honesty === null && frozen.description === "A freeze covers Wednesday, so nothing more is recorded on it." && frozen.freeze?.checked === true && !!frozen.settle,
+    frozen.description
+  );
+  check("record yesterday: its deep link and the 'y' event", RECORD_YESTERDAY_HREF === "/today?sheet=yesterday" && RECORD_YESTERDAY_EVENT === "xtnl:today:record-yesterday");
+  check("record yesterday: activity is the streak's own, or a live tick on yesterday", yesterdayActiveOf({ last7Days: [false, false, false, false, false, true, false] }, { ledger: { today: ledger(TODAY), yesterday: ledger(WED) } }) && !yesterdayActiveOf({ last7Days: [true, true, true, true, true, false, true] }, { ledger: { today: ledger(TODAY), yesterday: ledger(WED) } }));
+
+  // The miss prompt: three in a row; 'Not now' hides it until the next miss; one at most.
+  const gym = owedCard({ instanceId: "g1", templateId: "gym", title: "Gym", day: TUE, missRun: 3, lastMissDay: TUE, compulsory: true, createdAt: "2026-06-01T00:00:00.000Z" });
+  const putOff = new Set<string>();
+  check("miss prompt: after three misses in a row", missPromptOf([gym], (k) => putOff.has(k), true)?.instanceId === "g1");
+  putOff.add(missPromptKey("gym", TUE));
+  check(
+    "miss prompt: 'Not now' hides it until the next miss",
+    missPromptOf([gym], (k) => putOff.has(k), true) === null && missPromptOf([{ ...gym, instanceId: "g2", day: WED, lastMissDay: WED, missRun: 4 }], (k) => putOff.has(k), true)?.instanceId === "g2"
+  );
+  check(
+    "miss prompt: not at two, not before launch, one at most",
+    missPromptOf([{ ...gym, missRun: 2 }], () => false, true) === null &&
+      missPromptOf([gym], () => false, false) === null &&
+      missPromptOf([gym, { ...gym, instanceId: "x1", templateId: "other", missRun: 5 }], () => false, true)?.templateId === "other"
+  );
+  const copyOld = missPromptCopyOf(gym, { today: TODAY, nowMs: at(TODAY, 9), live: true });
+  check("miss prompt: 'Add a minimum version', and 'Stop it being a must · from Thu 8 Oct' (seven days)", copyOld.addMinimum && copyOld.stop === "Stop it being a must · from Thu 8 Oct", copyOld.stop ?? "");
+  const fresh = missPromptCopyOf({ ...gym, createdAt: new Date(at(TODAY, 9) - 10 * 60_000).toISOString() }, { today: TODAY, nowMs: at(TODAY, 9), live: true });
+  check("miss prompt: inside the 60-minute typo grace it stops at once", fresh.stop === "Stop it being a must");
+  const mp = renderToStaticMarkup(createElement(MissPrompt, { copy: copyOld, onAddMinimum: () => {}, onStop: () => {}, onNotNow: () => {} }));
+  check("miss prompt: renders its three answers (Add a minimum version, Stop, Not now)", mp.includes("Add a minimum version") && mp.includes("Stop it being a must · from Thu 8 Oct") && mp.includes("Not now"));
+
+  // The akrasia horizon in the drawer (F3): a must's archive keeps the row; un-flag deferred; on immediate.
+  const old = { compulsory: true, compulsoryOnRest: true, createdAt: "2026-06-01T00:00:00.000Z" };
+  const ctx = { today: TODAY, nowMs: at(TODAY, 9), live: true };
+  check("drawer: a must's archive is deferred to today + 7 (the row stays)", ruleChangeOf(old, { archived: true }, ctx).effectiveDay === addDays(TODAY, 7));
+  check("drawer: 'Not a must' deferred; 'Even on rest days' on immediate, off deferred", ruleChangeOf(old, { compulsory: false }, ctx).effect === "deferred" && ruleChangeOf({ ...old, compulsoryOnRest: false }, { compulsoryOnRest: true }, ctx).effect === "immediate" && ruleChangeOf(old, { compulsoryOnRest: false }, ctx).effect === "deferred");
+  check("drawer: before launch every edit is immediate", ruleChangeOf(old, { archived: true }, { ...ctx, live: false }).effect === "immediate");
+  check("drawer: the pending line and the row's meta", pendingLineOf({ effectiveDay: "2026-10-08", archive: true }) === "Pending: archived on Thu 8 Oct" && pendingMetaOf({ effectiveDay: "2026-10-08", archive: true }) === "must · ends Thu 8 Oct");
+  check("drawer: a deferred answer says when, and how to keep it", deferredNoticeOf("Stretch", "archive", "2026-10-08") === "Stretch leaves Today on Thu 8 Oct. A must takes seven days to weaken; Keep it in its drawer cancels.");
+
+  // The Day ledger: F8's freeze and streak states, F10's copy.
+  const streakOf = (p: Partial<StreakDutyFields> = {}): StreakDutyFields => ({
+    current: 5,
+    last7Days: [true, true, true, true, true, false, false],
+    held7Days: [false, false, false, false, false, false, false],
+    bankedFreezes: 0,
+    ...p,
+  });
+  const pre2 = dayLedgerDutyOf({ duty: null, streak: streakOf({ bankedFreezes: 1 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("day ledger: before launch, the pre-M2 tile exactly", !pre2.settles && pre2.freezes?.banked === 1 && !pre2.caption && !pre2.heldNote && !pre2.fullNote && !pre2.broken);
+  const cover = dayLedgerDutyOf({ duty: dutyOf({ freezes: { banked: 2, willCover: true } }), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("day ledger: 'A freeze will cover Wed' and the real balance", cover.heldNote === "A freeze will cover Wed" && cover.freezes?.banked === 2 && cover.settles);
+  const warn = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("day ledger: without a freeze, when yesterday must be recorded by", warn.caption === "Wednesday had nothing yet; record it by Fri 04:00 or the streak ends." && warn.heldNote === null, warn.caption ?? "");
+  const ended = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf({ current: 0, endedOn: TUE, endedAfter: 23 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("day ledger: once judged and broken, the hollow flame and 'Ended Tuesday at 23 days', never a red 0", ended.broken && ended.caption === "Ended Tuesday at 23 days. Any tick or review starts a new one.");
+  // M2 review: the run length is lane B's endedAfter, and a break past the week is dated, not a bare weekday.
+  const endedOld = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf({ current: 0, endedOn: "2026-09-15", endedAfter: 9 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  const endedY = dayLedgerDutyOf({ duty: dutyOf(), streak: streakOf({ current: 0, endedOn: WED, endedAfter: 1 }), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check(
+    "day ledger: 'Ended on Tue 15 Sep at 9 days' past the week, 'Ended yesterday at 1 day'",
+    endedOld.caption === "Ended on Tue 15 Sep at 9 days. Any tick or review starts a new one." && endedY.caption === "Ended yesterday at 1 day. Any tick or review starts a new one.",
+    `${endedOld.caption} | ${endedY.caption}`
+  );
+  // The board is typed with lib/streak.ts DailyStreak: its M2 fields fit the ledger's, by lane B's names (a compile-time check).
+  const serverStreak: ServerDailyStreak = { current: 0, last7Days: [], held7Days: [], bankedFreezes: 0, endedOn: TUE, endedAfter: 23, freezeWillCover: false, heldInRun: 0 };
+  const asLedger: StreakDutyFields = serverStreak;
+  check("day ledger: the server's DailyStreak is read as it is (endedAfter, not a field lane B never writes)", asLedger.endedAfter === 23);
+  // Launch Monday: yesterday (Sunday) is below the floor — no 'record it by … or the streak ends', no repair hint for it.
+  const launchLedger = dayLedgerDutyOf({
+    duty: dutyOf({ launchDay: "2026-10-12", floor: "2026-10-12", cursor: "2026-10-11", lastRepairDay: null }),
+    streak: streakOf(),
+    kept: false,
+    full: false,
+    today: "2026-10-12",
+    yesterdayActive: false,
+  });
+  check("day ledger: on the launch Monday the pre-Duty Sunday gets no Duty warning and no repair hint", launchLedger.caption === null && launchLedger.heldNote === null && !launchLedger.fullNote?.includes("repairs"), JSON.stringify(launchLedger));
+  check("day ledger: the Full-day pay line (F10)", warn.aside === "up to +0.5 MP, paid when the week is judged (Wed)" && FULL_DAY_PAY_LINE === warn.aside);
+  const repair = dayLedgerDutyOf({ duty: dutyOf({ lastRepairDay: null }), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false });
+  check("day ledger: the repair hint, once a week, only when the last repair is known", repair.fullNote === "A Full day today repairs Wednesday · once a week." && warn.fullNote !== repair.fullNote);
+  check("day ledger: no repair hint inside seven days of the last", dayLedgerDutyOf({ duty: dutyOf({ lastRepairDay: addDays(TODAY, -4) }), streak: streakOf(), kept: false, full: false, today: TODAY, yesterdayActive: false }).fullNote !== repair.fullNote);
+
+  // Close the day (F13): every open must; Tomorrow / Anytime / Drop; Skip today; Roll all never makes anything late.
+  const cMvv = tpl({ id: "cm", title: "Pushups", recurrence: "DAILY", compulsory: true, mvv: "10 pushups" });
+  const cBare = tpl({ id: "cb", title: "Timesheet", recurrence: "DAILY", compulsory: true });
+  const plan = tpl({ id: "pl", title: "Call mum", dueKind: "PLANNED", dueDay: TODAY });
+  const dl = tpl({ id: "dl", title: "Send invoice", dueKind: "DEADLINE", dueDay: TODAY });
+  const hab = tpl({ id: "hb", title: "Read", recurrence: "DAILY" });
+  const cd = board(TODAY, [cMvv, cBare, plan, dl, hab]);
+  const cb = buildBoard(cd);
+  const live = closeItemsOf({ must: cb.must, todayRows: cb.todayRows, today: TODAY, live: true });
+  const byId = (id: string) => live.find((i) => i.key.startsWith(`${id}:`));
+  check("close: a must with a minimum offers it", byId("cm")?.choices.map((c) => c.id).join() === "minimum");
+  check(
+    "close: a must without one is listed with the honest line and no choice",
+    byId("cb")?.choices.length === 0 && byId("cb")?.meta === `Left open, Thursday is judged Sat 04:00: −${debtFor(cBare).toFixed(1)} owed, made up at ×0.85`,
+    byId("cb")?.meta
+  );
+  check("close: a planned one-off gets Tomorrow, Anytime and Drop", byId("pl")?.choices.map((c) => c.id).join() === "tomorrow,anytime,drop");
+  check("close: a deadline keeps it (no Anytime) and Roll all skips it", byId("dl")?.choices.map((c) => c.id).join() === "tomorrow,drop" && !byId("dl")?.roll);
+  check("close: a habit gets Skip today", byId("hb")?.choices.map((c) => c.id).join() === "skip");
+  check("close: 'Roll all' moves PLANNED one-offs only, so it never makes an item late", rollAllKeysOf(live).join() === `pl:${TODAY}`);
+  const preClose = closeItemsOf({ must: cb.must, todayRows: cb.todayRows, today: TODAY, live: false });
+  check("close: before launch, the pre-M2 list exactly (a must's minimum, a one-off's Tomorrow)", preClose.map((i) => `${i.key.split(":")[0]}:${i.choices.map((c) => c.id).join("+")}`).join() === "cm:minimum,dl:tomorrow,pl:tomorrow");
+  const restDay = buildBoard({ ...cd, duty: dutyOf({ rest: { yesterday: null, today: "REST", tomorrow: null, vacationUntil: null } }) });
+  check("close: on a rest day a held must is not listed (nothing is owed)", !closeItemsOf({ must: restDay.must, todayRows: restDay.todayRows, today: TODAY, live: true }).some((i) => i.key.startsWith("cb:")));
+  // M2 review: a held row owes nothing today — not an open must for the bell or the nav badge, not tallied, never next up.
+  check(
+    "rest day: held musts and habits are not counted open (counts.musts / counts.due feed the bell and the nav badge)",
+    cb.counts.musts === 2 && restDay.counts.musts === 0 && cb.counts.due === 3 && restDay.counts.due === 2,
+    JSON.stringify({ plain: cb.counts, rest: restDay.counts })
+  );
+  check("rest day: the Must lane never reads '0 of 2 kept' under 'Rest · nothing owed'", (() => {
+    const lane = mustLaneOf({ must: restDay.must, owed: [], restToday: "REST", live: true, launchDay: LAUNCH, today: TODAY });
+    return laneTally(restDay.must).total === 0 && lane.count === null && lane.chips[0]?.text === "Rest · nothing owed" && mustLaneOf({ must: cb.must, owed: [], restToday: null, live: true, launchDay: LAUNCH, today: TODAY }).count === "0 of 2 kept";
+  })());
+  check(
+    "rest day: a held must done anyway is kept in the tally; a held open one is not asked (asksToday)",
+    laneTally([{ state: "done", heldToday: true }, { state: "open", heldToday: true }, { state: "open" }]).kept === 1 &&
+      laneTally([{ state: "done", heldToday: true }, { state: "open", heldToday: true }, { state: "open" }]).total === 2 &&
+      !asksToday({ state: "open", heldToday: true }) &&
+      asksToday({ state: "done", heldToday: true }) &&
+      !asksToday({ state: "skipped" })
+  );
+  check("rest day: next up never picks a held must", nextUpOf({ quest: { reviews: 15, target: 15, dueNow: 0, met: true, cap: 15 }, must: restDay.must }).kind === "clear" && nextUpOf({ quest: { reviews: 15, target: 15, dueNow: 0, met: true, cap: 15 }, must: cb.must }).kind === "must");
+  check("rest day: a held row asks no capacity", restDay.planned < cb.planned, `${restDay.planned} / ${cb.planned}`);
+
+  // Time off (F9 controls, F13 switch).
+  const noLaunch = restOptionsOf({ today: TODAY, launchDay: null, declared: [] });
+  check("time off: nothing before Duty has a launch day", noLaunch.every((o) => o.disabledReason === "Time off arrives with Duty."));
+  const beforeLaunch = restOptionsOf({ today: TODAY, launchDay: "2026-10-12", declared: [] });
+  check("time off: nothing for a day before the launch day", beforeLaunch[0].disabledReason === "Time off counts from Mon 12 Oct." && beforeLaunch[1].disabledReason === "Time off counts from Mon 12 Oct.");
+  const capped = restOptionsOf({ today: TODAY, launchDay: LAUNCH, declared: [{ day: "2026-09-28", kind: "REST" }, { day: "2026-09-29", kind: "REST" }] });
+  check("time off: two rest days in a week, the third says why", capped[0].title === "Rest Friday" && capped[0].disabledReason?.startsWith("Two rest days that week already") === true, capped[0].disabledReason ?? "");
+  const sick = restOptionsOf({ today: TODAY, launchDay: LAUNCH, declared: [{ day: "2026-09-26", kind: "SICK" }] });
+  check("time off: sick once per 14 days, with the next day it is on offer", sick[1].disabledReason === "Sick used on 26 Sep; next from 10 Oct.", sick[1].disabledReason ?? "");
+  check(
+    "time off: a vacation is 3 to 30 days from tomorrow",
+    vacationRangeError(addDays(TODAY, 1), addDays(TODAY, 2), { today: TODAY, launchDay: LAUNCH })?.includes("at least 3") === true &&
+      vacationRangeError(addDays(TODAY, 1), addDays(TODAY, 31), { today: TODAY, launchDay: LAUNCH })?.includes("at most 30") === true &&
+      vacationRangeError(TODAY, addDays(TODAY, 4), { today: TODAY, launchDay: LAUNCH }) === "A vacation starts tomorrow at the earliest." &&
+      vacationRangeError(addDays(TODAY, 1), addDays(TODAY, 5), { today: TODAY, launchDay: LAUNCH }) === null
+  );
+  const sw = restSwitchOf({ today: TODAY, launchDay: LAUNCH, declared: [] });
+  check("close: the rest switch names its day ('Rest Friday')", sw?.label === "Rest Friday" && !sw.checked && sw.disabledReason === null && restSwitchOf({ today: TODAY, launchDay: null, declared: [] }) === null);
+  check("close: a declared rest shows the switch on", restSwitchOf({ today: TODAY, launchDay: LAUNCH, declared: [{ day: addDays(TODAY, 1), kind: "REST" }] })?.checked === true);
+  const runs = cancellableOf(
+    [
+      { day: addDays(TODAY, 1), kind: "REST" },
+      { day: addDays(TODAY, 4), kind: "VACATION" },
+      { day: addDays(TODAY, 5), kind: "VACATION" },
+      { day: addDays(TODAY, 6), kind: "VACATION" },
+      { day: TODAY, kind: "SICK" },
+    ],
+    TODAY
+  );
+  check("time off: future declarations can be cancelled, a vacation as one run; a started day cannot", runs.map((r) => r.label).join(" | ") === "Rest Fri 2 Oct | Vacation Mon 5 Oct – Wed 7 Oct", runs.map((r) => r.label).join(" | "));
+
+  // Before launch the board is the pre-M2 board, exactly.
+  const t1 = tpl({ id: "p1", title: "Gym", recurrence: "DAILY", compulsory: true });
+  const t2 = tpl({ id: "p2", title: "Invoice", dueKind: "DEADLINE", dueDay: WED, compulsory: true });
+  const pd = board(TODAY, [t1, t2, plan, hab]);
+  const sig = (b: ReturnType<typeof buildBoard>) => JSON.stringify([b.must, b.todayRows, b.yesterdayRows, b.anytime].map((rows) => rows.map((r) => `${r.key}:${r.state}:${r.lane}`)));
+  const offDuty = dutyOf({ live: false, launchDay: null, cursor: null });
+  check("pre-launch: with Duty data that is not live, the lanes are the pre-M2 lanes exactly", sig(buildBoard(pd)) === sig(buildBoard({ ...pd, duty: offDuty })) && buildBoard({ ...pd, duty: offDuty }).owed.length === 0);
+  check("pre-launch: the full-day rings read the same with no held day", JSON.stringify(withHeldExcused(pd, buildBoard(pd).must)) === JSON.stringify(pd));
+}
+
+// ── Source guards for M2 on Today (markup rules no function holds) ────────
+
+{
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+  const jsx = boardSrc.slice(boardSrc.indexOf('<div className="page today-board cq-main">'));
+  const mustAt = jsx.indexOf('id="must"');
+  check("never on red: debt cards render only inside the Must lane", mustAt > 0 && jsx.indexOf("renderOwedCard") > mustAt && jsx.indexOf("<OwedSummary") > mustAt);
+  check("never on red: the Owed row sits in .o8, after the lanes", /className="o8">\s*<OwedRow/.test(jsx) && jsx.indexOf("<OwedRow") > jsx.indexOf('id="habits"'));
+  check("never on red: no owed tone is written on the board itself", !/tone="owed"/.test(boardSrc));
+  check("o1: the settled notice and the rest banner are one choice (o1CardOf)", /o1 === "settled"/.test(jsx) && /o1 === "rest"/.test(jsx) && /o1CardOf\(/.test(boardSrc));
+  check(
+    "storage: every localStorage access is in a try (readFlags, writeFlag)",
+    (boardSrc.match(/localStorage/g) ?? []).length === 2 && /function readFlags[\s\S]*?try \{[\s\S]*?localStorage\.getItem[\s\S]*?\} catch/.test(boardSrc) && /function writeFlag[\s\S]*?try \{\s*window\.localStorage\.setItem[\s\S]*?\} catch/.test(boardSrc)
+  );
+  check("storage: MissPrompt keeps nothing of its own (the board writes its 'Not now')", !/localStorage/.test(read("src/components/today/MissPrompt.tsx")));
+  check("rewards: a make-up is Tier 0 makeup-paid; the last debt Tier 1 nothing-owed", boardSrc.includes('kind: "makeup-paid"') && boardSrc.includes('kind: "nothing-owed"'));
+  check("rewards: the settled notice plays yesterday-settled or day-repaired in place, once per device", boardSrc.includes('"day-repaired" : "yesterday-settled"') && boardSrc.includes('writeFlag(settledKey(settledShownDay), "seen")'));
+  check("record yesterday: the board answers ?sheet=yesterday and the 'y' event", boardSrc.includes("addEventListener(RECORD_YESTERDAY_EVENT") && boardSrc.includes("searchParams.get(SHEET_PARAM) === YESTERDAY_SHEET"));
+  // M2 review: the bell's Record link (/today?sheet=yesterday) on /today itself is a same-route navigation: the board keeps its
+  // instance, so the parameter is read from the router's search params, in an effect keyed on it, never on mount only.
+  check(
+    "record yesterday: ?sheet=yesterday is read through useSearchParams in an effect keyed on it (a same-route link opens the sheet)",
+    /const searchParams = useSearchParams\(\)/.test(boardSrc) &&
+      /const sheetWanted = searchParams\.get\(SHEET_PARAM\) === YESTERDAY_SHEET;\s*useEffect\(\(\) => \{\s*if \(!sheetWanted\) return;[\s\S]*?setYesterdayOpen\(true\)[\s\S]*?\}, \[sheetWanted\]\)/.test(boardSrc)
+  );
+  check("streak: the board is typed with lib/streak.ts DailyStreak (type-only), so endedOn and endedAfter are lane B's", /import type \{ DailyStreak \} from "@\/lib\/streak";/.test(boardSrc));
+  check("make-up: 'Accept the loss' resolves the card as written off, never repaid", /state: "written-off"/.test(boardSrc) && /writtenOff: done\.line/.test(boardSrc));
+  check("settled notice: read with the floor (settledFor)", boardSrc.includes("settledNoticeOf(duty.settled, duty.cursor, current.today, { floor: dutyFloorOf(duty) })"));
+  check("rest banner: tomorrow's 'Even on rest days' musts are counted for it", boardSrc.includes("stillOwedTomorrow: stillOwedAhead") && boardSrc.includes("onRestMustsIn(current.templates, ahead.from, ahead.to)"));
+  const drawerSrc = code(read("src/components/today/TaskDrawer.tsx"));
+  check("drawer: 'Even on rest days' says before the tap when turning it off takes effect", drawerSrc.includes("Even on rest days{props.rule.onRest && props.rule.restOffFrom ? ` · off from ${dayLabel(props.rule.restOffFrom)}` : \"\"}"));
+  const cardSrc = code(read("src/components/today/m2/MakeUpCard.tsx"));
+  check("MakeUpCard: its words are makeup-words.ts's, a write-off wears the quiet 'Written off' chip", cardSrc.includes("makeUpWordsOf(item, state)") && /words\.chip === "written-off" \? \(\s*<Chip>Written off<\/Chip>/.test(cardSrc));
+  check("drawer: a must's deferred archive dispatches no hide op (the row stays)", /if \(change\?\.effectiveDay\) \{[\s\S]*?dispatch\(null, \(\) => archiveTask\(templateId, REFRESH\)/.test(boardSrc));
+  check("the full-day rings count today's held musts as excused (settlement agrees)", boardSrc.includes("fullDayInputOf(withHeldExcused(current, board.must), board, quest)"));
+  check("asks: two at most once Duty is live; before launch every Ask shows, as before M2", boardSrc.includes("asksShown(asks, asksExpanded || !live)"));
+  const strip = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const today = strip(read("src/components/today/today.css"));
+  const atLeast = (name: string, v: number | null, min: number) => check(`touch target: ${name} ≥ ${min}px`, v != null && v >= min, String(v));
+  atLeast("'Time off' beside Close the day", cssValue(today, ".today-close .close-off", "min-height"), 44);
+  atLeast("the Asks' 'n more'", cssValue(today, ".asks-more", "min-height"), 40);
+  // M2 review (344 px): a long minimum label wraps inside the card instead of spilling past it (.btn is nowrap; the lane body clips).
+  const actsBtn = /(^|[}\s])\.makeup \.acts \.btn\s*\{([^}]*)\}/m.exec(today)?.[2] ?? "";
+  check("MakeUpCard: its action buttons wrap within the card at 344 px", /white-space:\s*normal/.test(actsBtn) && /max-width:\s*100%/.test(actsBtn), actsBtn);
+  check("MakeUpCard: a written-off card's rail is quiet (never kept)", /\.makeup\[data-state="written-off"\]::before \{ background: var\(--line-ctl\); \}/.test(today));
+  check("MakeUpCard: 'Accept the loss' is the quiet third action", /onAcceptLoss && \([\s\S]*?Accept the loss/.test(read("src/components/today/m2/MakeUpCard.tsx")));
+  check("CloseDaySheet: no rested-bonus promise (decision 33 defers it)", !/rested bonus/i.test(read("src/components/today/CloseDaySheet.tsx")));
 }
 
 // The async checks (withMoments) settle before the tally.

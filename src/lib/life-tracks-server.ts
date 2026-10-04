@@ -21,6 +21,10 @@
  *                                close, a judged week): a per-user advisory lock, released at
  *                                commit, so a guard after it reads every mint committed before
  *   isStaleGuard(err)            a guard op's deliberate division by zero (SQLSTATE 22012)
+ * Added by M2 lane B (compatible, F11):
+ *   The WEEK read also takes each row's receipt, so a held week (mark 'held') reads held
+ *   through life-tracks.ts weekMarkOf; the LifeSettings read also takes settledThroughDay
+ *   (LifeLedger.settledThroughDay) for the judge's cheap check. Still five reads, one round trip.
  *
  * Inert before launch: until isLaunched(today) holds, loadLifeLedger returns
  * the empty ledger without a query, so every caller (the attribute seam, the
@@ -39,6 +43,7 @@ import {
   emptyLifeLedger,
   lifeTracksView,
   notLaunchedView,
+  weekMarkOf,
   type LedgerComposition,
   type LedgerMint,
   type LedgerWeek,
@@ -89,13 +94,13 @@ export async function readLifeLedger(userId: string): Promise<LifeLedger> {
     `,
     prisma.activityEvent.findMany({
       where: { userId, source: "WEEK" },
-      select: { track: true, dedupeKey: true, day: true, qty: true, detail: true },
+      select: { track: true, dedupeKey: true, day: true, qty: true, detail: true, receipt: true },
     }),
     prisma.activityEvent.findMany({
       where: { userId, source: "MP_MINT" },
       select: { track: true, templateId: true, dedupeKey: true, day: true, qty: true, detail: true },
     }),
-    prisma.lifeSettings.findUnique({ where: { userId }, select: { epochDay: true } }),
+    prisma.lifeSettings.findUnique({ where: { userId }, select: { epochDay: true, settledThroughDay: true } }),
   ]);
 
   const xpByDay: LedgerXpDay[] = [];
@@ -114,7 +119,15 @@ export async function readLifeLedger(userId: string): Promise<LifeLedger> {
   for (const r of weekRows) {
     const parsed = parseWeekRowKey(r.dedupeKey);
     if (!parsed) continue;
-    weeks.push({ track: parsed.track, weekKey: parsed.weekKey, sunday: keyOfDateColumn(r.day), kept: (r.qty ?? 0) > 0, detail: r.detail ?? "" });
+    const mark = weekMarkOf({ qty: r.qty, receipt: r.receipt });
+    weeks.push({
+      track: parsed.track,
+      weekKey: parsed.weekKey,
+      sunday: keyOfDateColumn(r.day),
+      kept: mark === "kept",
+      detail: r.detail ?? "",
+      ...(mark === "held" ? { held: true } : {}),
+    });
   }
 
   const mints: LedgerMint[] = [];
@@ -138,6 +151,7 @@ export async function readLifeLedger(userId: string): Promise<LifeLedger> {
     compositions,
     weeks,
     mints,
+    settledThroughDay: settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null,
   };
 }
 

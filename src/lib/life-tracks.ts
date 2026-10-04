@@ -33,6 +33,11 @@
  *       backfill when that week closed before launch (phase B review)
  *     clampTrackComposition(track, composition) — a track's mix within TRACK_SHARE_CAP (C6)
  *     trackShareCap(track, attribute) — max(seed share, TRACK_SHARE_CAP)
+ *   Added by M2 lane B (compatible; m2-refit.md decisions 5 and 20, F11)
+ *     weekMarkOf(row) — the one reader of a WEEK row's mark ('kept' | 'held' | 'missed') from
+ *       its qty and receipt (or a LedgerWeek's kept/held): life-tracks, snapshot and the week page
+ *     LedgerWeek.held? — a held week (receipt mark 'held', qty 0): bridges keptStreak, never kept
+ *     LifeLedger.settledThroughDay? — LifeSettings.settledThroughDay, for the judge's cheap check
  */
 import type { Attribute } from "@prisma/client";
 import { ATTRIBUTES, emptyComposition, normaliseComposition, type Composition as FullComposition, type FieldContribution } from "./attributes";
@@ -51,6 +56,7 @@ import {
   goalIdOfMintKey,
   isBackfillDetail,
   isCappedReason,
+  isHeldWeekReceipt,
   isLaunched,
   lifeLaunchDay,
   moreKeptWeeks,
@@ -66,6 +72,18 @@ import { streakBonusPercent } from "./streak-curve";
 
 /** One judged week of one track. 'held' is never produced before M2 (rest days). */
 export type WeekMark = "kept" | "held" | "missed";
+
+/**
+ * A WEEK row's mark, read structurally and nowhere else (m2-refit.md
+ * decision 20): kept when qty > 0 (or a LedgerWeek's kept); held when its
+ * receipt carries mark 'held' (or a LedgerWeek's held); otherwise missed.
+ * Never parses the detail line, which may carry 'backfill · ' or 'Held · '.
+ */
+export function weekMarkOf(row: { kept?: boolean | null; held?: boolean | null; qty?: number | null; receipt?: unknown }): WeekMark {
+  if (row.kept === true || (typeof row.qty === "number" && row.qty > 0)) return "kept";
+  if (row.held === true || isHeldWeekReceipt(row.receipt)) return "held";
+  return "missed";
+}
 
 /** A life track's sigil (ui/Icon's TrackSigil without 'know'). */
 export type LifeSigil = "body" | "duty" | "craft" | "care";
@@ -126,6 +144,11 @@ export interface LedgerWeek {
   sunday: DayKey;
   kept: boolean;
   detail: string;
+  /**
+   * M2: a held week (qty 0, receipt mark 'held'; weekMarkOf). It bridges the
+   * kept streak and is never kept. Absent reads false (every M5 row).
+   */
+  held?: boolean;
 }
 
 /** One MP_MINT decision row. reason = detail before ' · ', why = the rest (life-economy parseMintDetail). */
@@ -148,6 +171,12 @@ export interface LifeLedger {
   compositions: LedgerComposition[];
   weeks: LedgerWeek[];
   mints: LedgerMint[];
+  /**
+   * M2: LifeSettings.settledThroughDay (the settlement cursor), so the week
+   * judge's cheap check can tell a DUTY week held back by settlement
+   * (decision 5) without a read. Absent or null: no cursor.
+   */
+  settledThroughDay?: DayKey | null;
 }
 
 // ── Track state and the views ────────────────────────────────────────────
@@ -397,9 +426,14 @@ function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: Ful
   const xp = Math.max(0, sum);
 
   const weeks = judgedWeeksOf(ledger, track, day);
-  const keptWeeks = weeks.filter((w) => w.kept).length;
+  const keptWeeks = weeks.filter((w) => weekMarkOf(w) === "kept").length;
+  // The trailing run of kept weeks; a held week (M2 rest) bridges it without counting.
   let keptStreak = 0;
-  for (let i = weeks.length - 1; i >= 0 && weeks[i].kept; i--) keptStreak += 1;
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const mark = weekMarkOf(weeks[i]);
+    if (mark === "kept") keptStreak += 1;
+    else if (mark !== "held") break;
+  }
 
   let rawGoalDepth = 0;
   for (const m of ledger.mints) if (m.track === track && m.day <= day) rawGoalDepth += paidGoalDepth(m);
@@ -430,8 +464,10 @@ function stateOf(ledger: LifeLedger, track: Track, day: DayKey, composition: Ful
 /**
  * Every track (TRACKS order: BODY, DUTY, CRAFT, CARE) as of day D:
  *   xp          max(0, Σ TRACK xp with day ≤ D)
- *   keptWeeks   kept WEEK rows with sunday ≤ D (backfill rows count: they are real judgements)
- *   keptStreak  the trailing run of kept weeks ending at the latest judged week
+ *   keptWeeks   kept WEEK rows with sunday ≤ D (backfill rows count: they are real judgements;
+ *               a held week never counts)
+ *   keptStreak  the trailing run of kept weeks ending at the latest judged week; a held week
+ *               (M2) bridges it without adding to it
  *   goalDepth   min(2, Σ GOAL_DEPTH of this track's paid 'mp:GOAL:*' rows, day ≤ D)
  *   level       trackLevel(xp, keptWeeks, goalDepth); atCap = pointsLevel > level
  *   bonus       keptWeekBonusPercent(keptStreak); effectiveLevel = level × (1 + bonus/100)
@@ -469,7 +505,7 @@ export function trackLine(s: Pick<TrackState, "track" | "xp" | "level" | "cap" |
 /** At most this many pips per track row on the You sheet. */
 const ROW_PIPS = 8;
 
-const markOf = (w: LedgerWeek): WeekMark => (w.kept ? "kept" : "missed");
+const markOf = (w: LedgerWeek): WeekMark => weekMarkOf(w);
 
 /**
  * The You sheet's rows, in DISPLAY_ORDER. now = the meter today; banked =
@@ -550,20 +586,20 @@ export function levelSeries(ledger: LifeLedger, n: number = 12): LevelSeries {
   };
 }
 
-/** The last ≤ n judged weeks as kept / missed marks per track, the same columns for every track. */
+/** The last ≤ n judged weeks as kept / held / missed marks per track, the same columns for every track. */
 export function keptWeekGrid(ledger: LifeLedger, n: number = 12): KeptWeekGrid {
   const weeks = judgedWeekList(ledger).slice(-Math.max(0, Math.floor(n)));
-  const kept = new Map<string, boolean>();
+  const marks = new Map<string, WeekMark>();
   for (const w of ledger.weeks) {
     const k = `${w.track}:${w.weekKey}`;
-    if (!kept.has(k)) kept.set(k, w.kept);
+    if (!marks.has(k)) marks.set(k, weekMarkOf(w));
   }
   return {
     weeks: weeks.map((w) => ({ weekKey: w.weekKey, monday: addDays(w.sunday, -6), sunday: w.sunday })),
     rows: DISPLAY_ORDER.map((track) => ({
       track,
       name: TRACK_NAME[track],
-      weeks: weeks.map((w): WeekMark => (kept.get(`${track}:${w.weekKey}`) ? "kept" : "missed")),
+      weeks: weeks.map((w): WeekMark => marks.get(`${track}:${w.weekKey}`) ?? "missed"),
     })),
   };
 }

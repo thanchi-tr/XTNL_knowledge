@@ -17,6 +17,7 @@ import {
 import {
   CAPTURE_BATCH_MAX,
   CAPTURE_UNDO_MS,
+  type ActivitySource,
   type AutoMetric,
   type Band,
   type BoardPlace,
@@ -50,9 +51,32 @@ import type { GoalProgressRow } from "./goals";
 import { captureShapeOf } from "./capture-shape";
 import { occursOn } from "./recurrence";
 import { statedGoalMp } from "./life-economy";
+import { MAKEUP_RESTORE_EVERY_DAYS, dutyLaunchDay, freezeUseKey, isDutyLaunched, newLifeSettingsData } from "./duty-economy";
+import { HELD_SOURCES } from "./streak-curve";
+import { heldDaysOf, parsePendingChange, type DutyTemplate, type RestRow } from "./duty-rule";
+import {
+  MAKE_UP_UNDO_ELSEWHERE,
+  dutyBoardOf,
+  isSettledDayFor,
+  needsSettledGuard,
+  planClarifyRule,
+  planRuleEdit,
+  settledTickMessage,
+  settledUndoMessage,
+  tickRefusalOf,
+  yesterdayMustsOf,
+  type DutyBoardFacts,
+  type OwedRow,
+  type RuleEdit,
+  type RuleRow,
+  type RuleWrite,
+} from "./duty-plan";
+import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type SettledFact } from "./duty-view";
+import { isMissingRestDayTable } from "./rest-rules";
 import {
   EpochSet,
   HISTORY_DAYS,
+  boardStreakOptionsOf,
   STUDY_METRICS,
   UNDO_WINDOW_MS,
   buildBoard,
@@ -155,8 +179,11 @@ const TEMPLATE_SELECT = {
   krTarget: true,
   krUnit: true,
   compulsory: true,
+  compulsoryOnRest: true,
+  pendingChange: true,
   intrinsic: true,
   mvv: true,
+  mvvMinutes: true,
   autoMetric: true,
   autoTarget: true,
   track: true,
@@ -185,7 +212,10 @@ const TEMPLATE_SELECT = {
   closedScore: true,
 } satisfies Prisma.TaskTemplateSelect;
 
-type TemplateRow = Prisma.TaskTemplateGetPayload<{ select: typeof TEMPLATE_SELECT }>;
+/** What every template read selects. Exported for duty.ts (the make-up's pricing read). */
+export { TEMPLATE_SELECT };
+
+export type TemplateRow = Prisma.TaskTemplateGetPayload<{ select: typeof TEMPLATE_SELECT }>;
 
 const INSTANCE_SELECT = {
   id: true,
@@ -195,6 +225,7 @@ const INSTANCE_SELECT = {
   status: true,
   source: true,
   xpPaid: true,
+  repaired: true,
 } satisfies Prisma.TaskInstanceSelect;
 
 type InstanceRow = Prisma.TaskInstanceGetPayload<{ select: typeof INSTANCE_SELECT }>;
@@ -217,7 +248,7 @@ function topAttributeOf(composition: Prisma.JsonValue): Attribute | null {
   return best;
 }
 
-function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
+export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
   const age = now.getTime() - r.createdAt.getTime();
   const gradeFrozen = isGradeFrozen(r, now);
   return {
@@ -237,6 +268,8 @@ function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     krTarget: r.krTarget,
     krUnit: r.krUnit,
     compulsory: r.compulsory,
+    // M2: 'Even on rest days' (the drawer's pill; ruleOn reads it per day).
+    compulsoryOnRest: r.compulsoryOnRest,
     intrinsic: r.intrinsic,
     mvv: r.mvv,
     autoMetric: (r.autoMetric as AutoMetric | null) ?? null,
@@ -275,6 +308,25 @@ function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     sortOrder: r.sortOrder,
     goalMp: r.goalMp,
     closedScore: r.closedScore,
+    // M2: the rule over time (duty-rule.ts ruleOn reads it per day).
+    pendingChange: parsePendingChange(r.pendingChange),
+  };
+}
+
+/** A template row as duty-rule.ts reads its rule (ruleOn, expectedOn, mustsDueOn). */
+function dutyTemplateOf(r: TemplateRow): DutyTemplate & { id: string } {
+  return {
+    id: r.id,
+    kind: r.kind,
+    recurrence: r.recurrence,
+    startDay: keyOfDateColumn(r.startDay),
+    dueDay: keyOrNull(r.dueDay),
+    dueKind: r.dueKind,
+    compulsory: r.compulsory,
+    compulsoryOnRest: r.compulsoryOnRest,
+    inbox: r.inbox,
+    archivedDay: r.archivedAt ? dayKeyOf(r.archivedAt) : null,
+    pendingChange: r.pendingChange,
   };
 }
 
@@ -287,12 +339,14 @@ function toBoardInstance(i: InstanceRow): BoardInstance {
     status: i.status as InstanceStatus,
     source: i.source as InstanceSource,
     xpPaid: i.xpPaid,
+    // M2: a make-up inside the restore window ('12 days · repaired').
+    repaired: i.repaired,
   };
 }
 
 // ── The day's ledger, in two queries ──────────────────────────────────────
 
-interface TaskEventRow {
+export interface TaskEventRow {
   id: string;
   day: Date;
   source: string;
@@ -311,7 +365,7 @@ interface TaskEventRow {
   bandOverride: number | null;
 }
 
-interface DayTotalRow {
+export interface DayTotalRow {
   day: Date;
   source: string;
   sink: string;
@@ -321,6 +375,8 @@ interface DayTotalRow {
   xp: number;
   raw: number;
   qty: number | null;
+  /** M2: the group's net streak units (streak.ts's CASE: countsForStreak +1, UNDO −1), for the freeze state. */
+  units: number;
 }
 
 const daysSql = (days: DayKey[]) => Prisma.join(days.map((d) => Prisma.sql`${d}::date`));
@@ -330,7 +386,7 @@ const daysSql = (days: DayKey[]) => Prisma.join(days.map((d) => Prisma.sql`${d}:
  * band: what repeat decay (D) and the INTRO count (V) read, and what an undo
  * negates.
  */
-function readDayTaskEvents(userId: string, days: DayKey[]): Promise<TaskEventRow[]> {
+export function readDayTaskEvents(userId: string, days: DayKey[]): Promise<TaskEventRow[]> {
   return prisma.$queryRaw<TaskEventRow[]>`
     SELECT e."id", e."day", e."source", e."sink", e."track", e."templateId", e."sourceId",
            e."xp", e."rawXp", e."occurredAt", e."dedupeKey", e."receipt",
@@ -343,14 +399,15 @@ function readDayTaskEvents(userId: string, days: DayKey[]): Promise<TaskEventRow
 }
 
 /** Per day, source and sink: count, Σ xp, Σ rawXp and the DAY_OPEN qty. The knee base, the tiles and the quest read these. */
-function readDayTotals(userId: string, days: DayKey[]): Promise<DayTotalRow[]> {
+export function readDayTotals(userId: string, days: DayKey[]): Promise<DayTotalRow[]> {
   return prisma.$queryRaw<DayTotalRow[]>`
     SELECT "day", "source", "sink",
            COUNT(*)::int AS n,
            COUNT("rawXp")::int AS nraw,
            COALESCE(SUM("xp"), 0)::float8 AS xp,
            COALESCE(SUM("rawXp"), 0)::float8 AS raw,
-           MAX("qty")::float8 AS qty
+           MAX("qty")::float8 AS qty,
+           COALESCE(SUM(CASE WHEN "countsForStreak" THEN 1 WHEN "source" = 'UNDO' THEN -1 ELSE 0 END), 0)::int AS units
     FROM "ActivityEvent"
     WHERE "userId" = ${userId} AND "day" IN (${daysSql(days)})
     GROUP BY "day", "source", "sink"
@@ -364,7 +421,7 @@ function readDayTotals(userId: string, days: DayKey[]): Promise<DayTotalRow[]> {
  * ledger is append-only, so an unchanged count is an unchanged ledger — the
  * completion guard compares against this.
  */
-function kneeRowsOf(day: DayKey, totals: readonly DayTotalRow[]): number {
+export function kneeRowsOf(day: DayKey, totals: readonly DayTotalRow[]): number {
   return totals
     .filter((r) => keyOfDateColumn(r.day) === day)
     .reduce((s, r) => s + (r.source === "TASK" || r.source === "UNDO" ? r.n : r.nraw), 0);
@@ -379,7 +436,7 @@ function undoneIds(events: readonly TaskEventRow[]): Set<string> {
   return out;
 }
 
-function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: readonly TaskEventRow[]): DayLedger {
+export function ledgerOf(day: DayKey, totals: readonly DayTotalRow[], events: readonly TaskEventRow[]): DayLedger {
   const tot = totals.filter((r) => keyOfDateColumn(r.day) === day);
   const evs = events.filter((e) => keyOfDateColumn(e.day) === day);
   const undone = undoneIds(evs);
@@ -454,10 +511,30 @@ function memoEpoch(): Promise<number> {
 
 type BoardCore = Omit<BoardData, "dueNow">;
 
-async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<BoardCore> {
+/** The board core's one read: the board itself, its Duty part (BoardData.duty, M2) and yesterday's open musts (TodayCounts). */
+interface BoardCoreRead {
+  core: BoardCore;
+  duty: DutyBoard;
+  yesterdayMusts: number;
+}
+
+/** The settlement rows a YesterdaySettled notice reads (duty-view.ts SettledFact). */
+const SETTLED_SOURCES = ["DEBT", "FREEZE_EARN", "FREEZE_USE", "FULL_DAY", "REPAIR"];
+const FREEZE_SOURCES = ["FREEZE_EARN", "FREEZE_USE"];
+
+async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<BoardCoreRead> {
   const yesterday = addDays(today, -1);
-  const [settings, templateRows, instanceRows, totals, events, goalQtyRows] = await Promise.all([
-    prisma.lifeSettings.findUnique({ where: { userId }, select: { dailyCapacityMin: true, capacitySetAt: true } }),
+  // M2 reads. Open debts are read whatever the launch says (a rollback of
+  // DUTY_LAUNCH_DAY must never strand a debt card, decision 2); the rest,
+  // the freezes and the settled facts only once Duty has a launch day.
+  const launchDay = dutyLaunchDay();
+  const dutyOn = launchDay != null;
+  const restoreFrom = dayStartOf(addDays(today, -(MAKEUP_RESTORE_EVERY_DAYS - 1)));
+  const [settings, templateRows, instanceRows, totals, events, goalQtyRows, debtRows, restRows, dutyRows] = await Promise.all([
+    prisma.lifeSettings.findUnique({
+      where: { userId },
+      select: { dailyCapacityMin: true, capacitySetAt: true, settledThroughDay: true, epochDay: true, debtWriteOff: true },
+    }),
     prisma.taskTemplate.findMany({
       where: {
         userId,
@@ -473,7 +550,8 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
       where: { userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
       select: INSTANCE_SELECT,
     }),
-    readDayTotals(userId, [yesterday, today]),
+    // The day before yesterday too: the freeze state reads its streak units (M2).
+    readDayTotals(userId, [addDays(today, -2), yesterday, today]),
     readDayTaskEvents(userId, [yesterday, today]),
     // By goal and life day: goalProgress measures as of min(today, due day).
     prisma.activityEvent.groupBy({
@@ -481,6 +559,54 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
       where: { userId, source: "GOAL_PROGRESS" },
       _sum: { qty: true },
     }),
+    // M2, one query: every open debt with its template, archived ones
+    // included (F12's owed cards), and the restores spent in (today − 7,
+    // today] — one per template (MAKEUP_RESTORE_EVERY_DAYS).
+    prisma.taskInstance.findMany({
+      where: { userId, OR: [{ debtOpen: true }, { repaired: true, completedAt: { gte: restoreFrom } }] },
+      select: {
+        id: true,
+        templateId: true,
+        day: true,
+        slot: true,
+        debtXp: true,
+        debtOpen: true,
+        repaired: true,
+        completedAt: true,
+        template: { select: TEMPLATE_SELECT },
+      },
+      orderBy: [{ day: "asc" }, { slot: "asc" }],
+    }),
+    // A launch day set before the life_duty migration is applied (F20's
+    // order broken) reads no rest rather than failing the board.
+    dutyOn
+      ? prisma.restDay
+          .findMany({
+            where: { userId, day: { gte: dateColumn(addDays(today, -DUTY_READ_BACK_DAYS)), lte: dateColumn(addDays(today, DUTY_READ_AHEAD_DAYS)) } },
+            select: { day: true, kind: true, declaredAt: true, cancelledAt: true },
+          })
+          .catch((err: unknown) => {
+            if (!isMissingRestDayTable(err)) throw err;
+            console.error("Today board: the RestDay table is missing (apply life_duty); reading no rest.");
+            return [];
+          })
+      : Promise.resolve([]),
+    // M2, one query: every freeze and repair row (the balance is all
+    // history, the repair hint the latest; a few a month at most) and the
+    // settlement rows of the last settled days.
+    dutyOn
+      ? prisma.activityEvent.findMany({
+          where: {
+            userId,
+            OR: [
+              { source: { in: FREEZE_SOURCES } },
+              { source: "REPAIR" },
+              { source: { in: SETTLED_SOURCES }, day: { gte: dateColumn(addDays(today, -4)), lte: dateColumn(yesterday) } },
+            ],
+          },
+          select: { source: true, day: true, xp: true, qty: true, templateId: true, dedupeKey: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const templates = templateRows.map((r) => toBoardTemplate(r, now));
@@ -491,11 +617,85 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     if (list) list.push(i);
     else byTpl.set(i.templateId, [i]);
   }
+  const ledgerToday = ledgerOf(today, totals, events);
 
+  // ── Duty (M2): BoardData.duty and yesterday's open musts ──
+  const cursor = settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null;
+  const countOf = (source: string) => dutyRows.filter((r) => r.source === source).length;
+  const settledFrom = addDays(today, -4);
+  const settledRows = dutyRows.filter((r) => {
+    const d = keyOfDateColumn(r.day);
+    return SETTLED_SOURCES.includes(r.source) && d >= settledFrom && d <= yesterday;
+  });
+  // Net streak units and held days from the day totals (streak.ts's CASE and HELD_SOURCES).
+  const heldSources = new Set<string>(HELD_SOURCES);
+  const units: Record<DayKey, number> = {};
+  const heldByLedger = new Set<DayKey>();
+  for (const r of totals) {
+    const d = keyOfDateColumn(r.day);
+    units[d] = (units[d] ?? 0) + (r.units ?? 0);
+    if (heldSources.has(r.source) && r.n > 0) heldByLedger.add(d);
+  }
+  const facts: DutyBoardFacts = {
+    today,
+    launchDay,
+    cursor,
+    epochDay: settings?.epochDay ? keyOfDateColumn(settings.epochDay) : null,
+    debtWriteOff: !!settings?.debtWriteOff,
+    owed: debtRows
+      .filter((o) => o.debtOpen)
+      .map(
+        (o): OwedRow => ({
+          instanceId: o.id,
+          day: keyOfDateColumn(o.day),
+          slot: o.slot,
+          debtXp: o.debtXp,
+          template: { ...toBoardTemplate(o.template, now), archived: !!o.template.archivedAt, mvvMinutes: o.template.mvvMinutes },
+        })
+      ),
+    instances: instanceRows.map((i) => ({ templateId: i.templateId, day: keyOfDateColumn(i.day), status: i.status, repaired: i.repaired })),
+    repairedRecently: new Set(debtRows.filter((r) => r.repaired && r.completedAt && r.completedAt >= restoreFrom).map((r) => r.templateId)),
+    ledger: ledgerToday,
+    restRows: restRows.map((r): RestRow => ({ day: keyOfDateColumn(r.day), kind: r.kind, declaredAt: r.declaredAt, cancelledAt: r.cancelledAt })),
+    freezeEarned: countOf("FREEZE_EARN"),
+    freezeUsed: countOf("FREEZE_USE"),
+    units,
+    heldByLedger,
+    freezeUsedYesterday: settledRows.some((r) => r.source === "FREEZE_USE" && keyOfDateColumn(r.day) === yesterday),
+    templates: templateRows.map(dutyTemplateOf),
+    lastRepairDay: dutyRows.reduce<DayKey | null>((last, r) => {
+      if (r.source !== "REPAIR") return last;
+      const d = keyOfDateColumn(r.day);
+      return last == null || d > last ? d : last;
+    }, null),
+    settledRows: settledRows.map(
+      (r): SettledFact => ({
+        source: r.source as ActivitySource,
+        day: keyOfDateColumn(r.day),
+        xp: r.xp,
+        qty: r.qty,
+        templateId: r.templateId,
+        dedupeKey: r.dedupeKey,
+      })
+    ),
+  };
+  const duty = dutyBoardOf(facts);
+  const yesterdayMusts = yesterdayMustsOf({ ...facts, instances });
+
+  // The habit reads take the cursor and the held days once Duty is live
+  // (decision 15): an unsettled day reads pending, a held day held, so no
+  // row shows a break settlement has not judged (today-board
+  // boardStreakOptionsOf; before launch, M1/M5 exactly).
+  const streakCtx = {
+    live: duty.live,
+    cursor,
+    restDays: heldDaysOf(facts.restRows, addDays(today, -DUTY_READ_BACK_DAYS), today),
+    freezeDays: new Set(dutyRows.filter((r) => r.source === "FREEZE_USE").map((r) => keyOfDateColumn(r.day))),
+  };
   const stats: Record<string, TemplateStats> = {};
   for (const t of templates) {
     const rule = ruleOf(t);
-    if (rule) stats[t.id] = statsFor(t, rule, byTpl.get(t.id) ?? [], today);
+    if (rule) stats[t.id] = statsFor(t, rule, byTpl.get(t.id) ?? [], today, boardStreakOptionsOf(t, streakCtx));
   }
 
   // The browser needs only the current period's instances (TARGET progress
@@ -507,7 +707,7 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
 
   const { goalQty, goalDays } = goalProgressOf(goalQtyRows, templates);
 
-  return {
+  const core: BoardCore = {
     today,
     yesterday,
     capacityMin: settings?.dailyCapacityMin ?? 240,
@@ -515,11 +715,12 @@ async function readBoardCore(userId: string, today: DayKey, now: Date): Promise<
     templates,
     instances: instances.filter((i) => i.day >= recentFrom),
     stats,
-    ledger: { today: ledgerOf(today, totals, events), yesterday: ledgerOf(yesterday, totals, events) },
+    ledger: { today: ledgerToday, yesterday: ledgerOf(yesterday, totals, events) },
     paid: paidOf(events),
     goalQty,
     goalDays,
   };
+  return { core, duty, yesterdayMusts };
 }
 
 /**
@@ -544,7 +745,7 @@ function goalProgressOf(
   return { goalQty, goalDays };
 }
 
-function loadBoardCore(userId: string, day: DayKey, now: Date): Promise<BoardCore> {
+function loadBoardCore(userId: string, day: DayKey, now: Date): Promise<BoardCoreRead> {
   return cached(`boardCore:${userId}:${day}`, ["life", "activity"], () => readBoardCore(userId, day, now));
 }
 
@@ -571,8 +772,10 @@ function loadDueNow(day: DayKey, now: Date): Promise<number> {
  */
 export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
   return cached(`today:${userId}:${day}`, ["life", "activity", "ideas"], async () => {
-    const [core, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
-    return { ...core, dueNow };
+    const [read, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
+    // M2: BoardData.duty (duty-view.ts DutyBoard), read in the same wave.
+    const data = { ...read.core, dueNow, duty: read.duty };
+    return data;
   });
 }
 
@@ -582,6 +785,25 @@ export interface TodayCounts {
   /** Everything else due today still open. */
   due: number;
   inbox: number;
+  /**
+   * M2: compulsory occurrences due yesterday still open (duty-plan.ts
+   * yesterdayMustsOf): 0 before launch, once yesterday is settled, before
+   * the first Duty day, or when a freeze covers it; on a rest day only the
+   * 'Even on rest days' musts.
+   */
+  yesterdayMusts: number;
+}
+
+/**
+ * The nav's and the bell's counts: the board's own, built from the same data
+ * with its Duty part (M2), so they agree with the board row for row — a
+ * debited one-off has only its make-up card (decision 18; the Owed notice
+ * counts it), and a row today's rest holds is not open (nothing is owed on
+ * it). Without `duty` buildBoard is the pre-M2 board, so the part must be
+ * passed.
+ */
+export function todayCountsOf(data: BoardData): Omit<TodayCounts, "yesterdayMusts"> {
+  return buildBoard(data).counts;
 }
 
 /**
@@ -593,8 +815,8 @@ export interface TodayCounts {
 export async function loadTodayCounts(userId: string, now: Date = new Date()): Promise<TodayCounts> {
   const day = todayKey(now);
   return cached(`todayCount:${userId}:${day}`, ["life", "activity", "ideas"], async () => {
-    const [core, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
-    return buildBoard({ ...core, dueNow }).counts;
+    const [read, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
+    return { ...todayCountsOf({ ...read.core, dueNow, duty: read.duty }), yesterdayMusts: read.yesterdayMusts };
   });
 }
 
@@ -730,7 +952,7 @@ export function activeTitlesOf(
 
 /** The open titles for today's board, read from the board's own cached wave. */
 export async function loadActiveTitles(userId: string, now: Date = new Date()): Promise<ActiveTitle[]> {
-  return activeTitlesOf(await loadBoardCore(userId, todayKey(now), now));
+  return activeTitlesOf((await loadBoardCore(userId, todayKey(now), now)).core);
 }
 
 /**
@@ -870,7 +1092,7 @@ async function insertCapture(
     // The first capture ever, or the first after a reset: rare, so one more
     // round trip. A failure costs only the epoch day, never the capture.
     try {
-      await prisma.lifeSettings.upsert({ where: { userId }, create: { userId, epochDay: dateColumn(today) }, update: {} });
+      await prisma.lifeSettings.upsert({ where: { userId }, create: { userId, ...newLifeSettingsData(today) }, update: {} });
     } catch (err) {
       console.error("LifeSettings not created:", err);
     }
@@ -1079,9 +1301,24 @@ interface CompletionRead {
   ledger: DayLedger;
   /** The day's knee rows as read (kneeRowsOf): what the guard holds the write to. */
   kneeRows: number;
+  /**
+   * M2: LifeSettings.settledThroughDay and .epochDay as read. A day on or
+   * before the cursor and on or after the first Duty day takes no tick
+   * (decision 25, duty-economy settledFor).
+   */
+  settledThrough?: DayKey | null;
+  epochDay?: DayKey | null;
+  /** M2: the template has an open debt. A one-off with one is made up from its card only (decision 18). */
+  debited?: boolean;
+  /** M2: a FREEZE_USE covers the day (yesterday only): nothing more is recorded on it (decision 12). */
+  frozen?: boolean;
 }
 
-/** The one read wave a completion needs: the template, its history, and the day's ledger. */
+/**
+ * The one read wave a completion needs: the template, its history, the
+ * day's ledger, the settlement cursor and epoch, any open debt, and — for a
+ * record of yesterday — whether a freeze covers it.
+ */
 async function readForCompletion(
   userId: string,
   templateId: string,
@@ -1089,7 +1326,7 @@ async function readForCompletion(
   day: DayKey,
   now: Date
 ): Promise<(CompletionRead & { row: TemplateRow }) | null> {
-  const [row, instances, totals, events] = await Promise.all([
+  const [row, instances, totals, events, settings, debts, frozen] = await Promise.all([
     prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: TEMPLATE_SELECT }),
     prisma.taskInstance.findMany({
       where: { templateId, userId, day: { gte: dateColumn(addDays(today, -HISTORY_DAYS)) } },
@@ -1097,6 +1334,11 @@ async function readForCompletion(
     }),
     readDayTotals(userId, [day]),
     readDayTaskEvents(userId, [day]),
+    prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
+    prisma.taskInstance.count({ where: { templateId, userId, debtOpen: true } }),
+    day < today
+      ? prisma.activityEvent.findUnique({ where: { userId_dedupeKey: { userId, dedupeKey: freezeUseKey(day) } }, select: { id: true } })
+      : Promise.resolve(null),
   ]);
   if (!row) return null;
   return {
@@ -1106,7 +1348,25 @@ async function readForCompletion(
     events,
     ledger: ledgerOf(day, totals, events),
     kneeRows: kneeRowsOf(day, totals),
+    settledThrough: settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null,
+    epochDay: settings?.epochDay ? keyOfDateColumn(settings.epochDay) : null,
+    debited: debts > 0,
+    frozen: !!frozen,
   };
+}
+
+/** Duty's refusal of a tick from a completion read (duty-plan tickRefusalOf): settled, frozen, or a debited one-off. */
+function tickRefusalFor(read: CompletionRead, day: DayKey, today: DayKey, rule: boolean): string | null {
+  return tickRefusalOf({
+    day,
+    today,
+    launchDay: dutyLaunchDay(),
+    cursor: read.settledThrough,
+    epochDay: read.epochDay,
+    oneOff: !rule,
+    debited: !!read.debited,
+    frozen: !!read.frozen,
+  });
 }
 
 function storedCompletion(ev: { id: string; sourceId: string | null; receipt: Prisma.JsonValue; occurredAt: Date }, inst: { id: string; status: string; source: string }, t: BoardTemplate, day: DayKey, slot: number): Completion {
@@ -1133,39 +1393,128 @@ function doneOnDay(read: CompletionRead, day: DayKey): LifeResult<Completion> | 
   return ev ? ok(storedCompletion(ev, done, read.t, day, done.slot)) : fail("Already done.");
 }
 
-/** Serialises a player's completions: transaction-scoped, released at commit or rollback. */
-function lifeLockOp(userId: string) {
+/**
+ * Serialises a player's completions: transaction-scoped, released at commit
+ * or rollback. Settlement, the make-up actions, freeze spends and rest
+ * declarations take the same lock (M2).
+ */
+export function lifeLockOp(userId: string) {
   return prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`life-complete:${userId}`}::text))`;
 }
 
+export interface FreshnessGuardOptions {
+  /** A make-up (M2): its instance must still be MISSED with its debt open. */
+  openDebtInstanceId?: string;
+  /** A record of yesterday (M2, decision 12): no FREEZE_USE may have landed on `day` ('freeze-use:<day>'). */
+  notFrozen?: boolean;
+}
+
 /**
- * Fails the transaction (division by zero) unless the day's knee rows are
- * still the `kneeRows` the price was read against — and, for a one-off,
- * unless it is still open. Runs after the lock, as its own statement, so
- * it reads everything committed before this transaction got its turn.
+ * The freshness guard's SQL (freshnessGuardOp): division by zero unless the
+ * day's knee rows are still `kneeRows`; for a one-off, unless it is still
+ * open and (M2, decision 18) carries no open debt — settlement charged it
+ * between the read and the write, so the retry's re-read answers 'Make it
+ * up from its card'; for a make-up, unless its instance is still owed; and
+ * for a record of yesterday, unless no freeze has covered the day since.
  */
-function freshnessGuardOp(userId: string, day: DayKey, kneeRows: number, oneOffTemplateId: string | null) {
+export function freshnessGuardSql(
+  userId: string,
+  day: DayKey,
+  kneeRows: number,
+  oneOffTemplateId: string | null,
+  opts: FreshnessGuardOptions = {}
+): Prisma.Sql {
   const stillOpen = oneOffTemplateId
-    ? Prisma.sql`AND EXISTS (SELECT 1 FROM "TaskTemplate" WHERE "id" = ${oneOffTemplateId} AND "completedAt" IS NULL)`
+    ? Prisma.sql`AND EXISTS (SELECT 1 FROM "TaskTemplate" WHERE "id" = ${oneOffTemplateId} AND "completedAt" IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM "TaskInstance" WHERE "templateId" = ${oneOffTemplateId} AND "debtOpen")`
     : Prisma.empty;
-  return prisma.$executeRaw`
+  const stillOwed = opts.openDebtInstanceId
+    ? Prisma.sql`AND EXISTS (SELECT 1 FROM "TaskInstance" WHERE "id" = ${opts.openDebtInstanceId} AND "status" = 'MISSED' AND "debtOpen")`
+    : Prisma.empty;
+  const notFrozen = opts.notFrozen
+    ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "ActivityEvent" WHERE "userId" = ${userId} AND "dedupeKey" = ${freezeUseKey(day)})`
+    : Prisma.empty;
+  return Prisma.sql`
     SELECT 1 / (CASE WHEN
       (SELECT COUNT(*) FROM "ActivityEvent"
         WHERE "userId" = ${userId} AND "day" = ${day}::date
           AND ("source" IN ('TASK', 'UNDO') OR "rawXp" IS NOT NULL)) = ${kneeRows}::int
       ${stillOpen}
+      ${stillOwed}
+      ${notFrozen}
     THEN 1 ELSE 0 END)
   `;
 }
 
-/** The freshness guard's failure: someone else's completion landed between this one's read and its write. */
-function isStaleRead(err: unknown): boolean {
+/**
+ * Fails the transaction (division by zero) unless the day's knee rows are
+ * still the `kneeRows` the price was read against — and, for a one-off,
+ * unless it is still open and not debited; for a make-up (M2), unless its
+ * instance is still MISSED with its debt open; for a record of yesterday,
+ * unless no freeze covers it. Runs after the lock, as its own statement, so
+ * it reads everything committed before this transaction got its turn.
+ */
+export function freshnessGuardOp(
+  userId: string,
+  day: DayKey,
+  kneeRows: number,
+  oneOffTemplateId: string | null,
+  opts: FreshnessGuardOptions = {}
+) {
+  return prisma.$executeRaw(freshnessGuardSql(userId, day, kneeRows, oneOffTemplateId, opts));
+}
+
+/**
+ * The settled-day guard's SQL (settledDayGuardOp): 22003 when `day` is
+ * settled by the one rule, duty-economy settledFor — on or before the
+ * cursor and, once a launch day is set, on or after GREATEST(launch,
+ * epochDay), the first Duty day. The launch script may set the cursor to
+ * firstDutyDay − 1 days before the launch; the floor keeps every pre-launch
+ * day open. Without a launch day (a rollback) the cursor alone locks.
+ */
+export function settledDayGuardSql(userId: string, day: DayKey, launchDay: DayKey | null = dutyLaunchDay()): Prisma.Sql {
+  const floor = launchDay ? Prisma.sql`AND ${day}::date >= GREATEST(${launchDay}::date, "epochDay")` : Prisma.empty;
+  return Prisma.sql`
+    SELECT (CASE WHEN EXISTS (
+      SELECT 1 FROM "LifeSettings" WHERE "userId" = ${userId} AND "settledThroughDay" >= ${day}::date ${floor}
+    ) THEN 40000 ELSE 1 END)::smallint
+  `;
+}
+
+/**
+ * M2 (decision 25): fails the transaction with SQLSTATE 22003 (a smallint
+ * cast overflow) when settlement has already judged `day`. A separate
+ * statement after the lock, and a different error from the freshness
+ * guard's 22012, so it is never retried: isSettledDay maps it straight to
+ * the settled message. Today can never be settled except across 04:00 (an
+ * early settle reaches yesterday at most), so ticks and undos dated today
+ * carry it only near the day's end (duty-plan needsSettledGuard); a
+ * yesterday record, an undo of one and a freeze spend always do.
+ */
+export function settledDayGuardOp(userId: string, day: DayKey, launchDay: DayKey | null = dutyLaunchDay()) {
+  return prisma.$executeRaw(settledDayGuardSql(userId, day, launchDay));
+}
+
+function sqlStateOf(err: unknown): string {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     const meta = (err.meta ?? {}) as Record<string, unknown>;
-    if (String(meta.code ?? "") === "22012") return true;
+    return String(meta.code ?? "");
   }
+  return "";
+}
+
+/** The freshness guard's failure (22012): someone else's completion landed between this one's read and its write. Retried. */
+export function isStaleRead(err: unknown): boolean {
+  if (sqlStateOf(err) === "22012") return true;
   const message = err instanceof Error ? err.message : String(err ?? "");
   return /division by zero|22012/i.test(message);
+}
+
+/** The settled-day guard's failure (22003): the day was settled first. Never retried. */
+export function isSettledDay(err: unknown): boolean {
+  if (sqlStateOf(err) === "22003") return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /smallint out of range|22003/i.test(message);
 }
 
 type SettleArgs = {
@@ -1203,6 +1552,10 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
   const rule = ruleOf(t);
   // A one-off is done once, whichever day it was booked on.
   if (!rule && t.completedAt) return fail("Already done.");
+  // M2: a settled day takes no tick (decision 25), a frozen yesterday no record
+  // (decision 12), and a debited one-off is made up from its card (decision 18).
+  const refusal = tickRefusalFor(read, a.day, a.today, !!rule);
+  if (refusal) return fail(refusal);
 
   const streakDays = rule && !a.auto ? streakDaysFor(t, rule, history, a.day) : 0;
   const plan = planCompletion({
@@ -1237,7 +1590,10 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
 
   const ops: Prisma.PrismaPromise<unknown>[] = [
     lifeLockOp(userId),
-    freshnessGuardOp(userId, a.day, read.kneeRows, rule ? null : t.id),
+    // M2 (decision 25): its own statement, 22003, never retried. A tick dated
+    // today carries it only near 04:00, the one time today can be settled.
+    ...(needsSettledGuard(a.day, a.today, a.now) ? [settledDayGuardOp(userId, a.day)] : []),
+    freshnessGuardOp(userId, a.day, read.kneeRows, rule ? null : t.id, { notFrozen: a.day < a.today }),
     prisma.taskInstance.upsert({
       where: { templateId_day_slot: { templateId: t.id, day: dayCol, slot: a.slot } },
       create: {
@@ -1259,7 +1615,8 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
     // nor a resize can change what this task is worth.
     prisma.taskTemplate.updateMany({ where: { id: t.id, gradeFrozenAt: null }, data: { gradeFrozenAt: a.now } }),
   ];
-  const EVENT_AT = 3;
+  // The TASK row: after the lock, the guards (the settled one only when carried) and the instance.
+  const EVENT_AT = ops.length - 2;
   if (!rule) {
     ops.push(prisma.taskTemplate.updateMany({ where: { id: t.id, completedAt: null }, data: { completedAt: a.now } }));
   }
@@ -1280,6 +1637,7 @@ async function settleOnce(userId: string, read: CompletionRead, a: SettleArgs): 
       duplicate: false,
     });
   } catch (err) {
+    if (isSettledDay(err)) return fail(settledTickMessage(a.day));
     if (isStaleRead(err)) return RETRY;
     if (!isDuplicateActivity(err)) throw err;
     // Another request recorded this tick first (a second device, a retried
@@ -1353,6 +1711,14 @@ export async function completeInstanceCore(userId: string, templateId: string, o
   if (repeat) return repeat;
 
   const rule = ruleOf(t);
+  // M2, up front from the read: a settled day is closed to ticks and records
+  // (decision 25, settledFor: never a day before the first Duty day), a
+  // frozen yesterday to records (decision 12), and a one-off with an open
+  // debt has only its make-up card (decision 18). settleOnce holds all three
+  // again at write time, and the guards in its array after the lock.
+  const refusal = tickRefusalFor(read, day, today, !!rule);
+  if (refusal) return fail(refusal);
+
   const block = completionBlockOf({
     t,
     rule,
@@ -1415,22 +1781,36 @@ export async function againCore(userId: string, templateId: string, opts: Comple
  * The grade stays frozen: a tick is what freezes it, and undoing one is not
  * a way to re-size. Takes the completions' lock, so a tick priced at the
  * same moment re-reads the lowered knee base rather than the old one.
+ *
+ * M2: a tick whose day settlement has since judged stands (decision 25:
+ * refused from the read, and by the settled-day guard at write time), and a
+ * make-up is undone by undoMakeUpCore (its repayment is reversed too), so it
+ * is answered with MAKE_UP_UNDO_ELSEWHERE for the action to route.
  */
 export async function undoCompletionCore(userId: string, instanceId: string, now: Date = new Date()): Promise<LifeResult<{ instanceId: string; xp: number }>> {
-  const [inst, events] = await Promise.all([
+  const [inst, events, settings] = await Promise.all([
     prisma.taskInstance.findFirst({
       where: { id: instanceId, userId },
-      select: { id: true, templateId: true, status: true, source: true, template: { select: { recurrence: true } } },
+      select: { id: true, templateId: true, day: true, status: true, source: true, template: { select: { recurrence: true } } },
     }),
     prisma.activityEvent.findMany({
       where: { userId, sourceId: instanceId, source: { in: ["TASK", "UNDO"] } },
       orderBy: { occurredAt: "desc" },
       select: { id: true, day: true, source: true, sink: true, track: true, templateId: true, sourceId: true, xp: true, rawXp: true, occurredAt: true, dedupeKey: true },
     }),
+    prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
   ]);
   if (!inst) return fail("That tick no longer exists.");
   if (!isDoneStatus(inst.status)) return ok({ instanceId, xp: 0 });
   if (inst.source.startsWith("auto:")) return fail("Your reviews completed this one; it can't be undone.");
+  if (inst.source === "make-up") return fail(MAKE_UP_UNDO_ELSEWHERE);
+  const instDay = keyOfDateColumn(inst.day);
+  const settled = isSettledDayFor(instDay, {
+    cursor: settings?.settledThroughDay ? keyOfDateColumn(settings.settledThroughDay) : null,
+    epochDay: settings?.epochDay ? keyOfDateColumn(settings.epochDay) : null,
+    launchDay: dutyLaunchDay(),
+  });
+  if (settled) return fail(settledUndoMessage(instDay));
 
   const undone = new Set(events.filter((e) => e.source === "UNDO" && e.dedupeKey?.startsWith("undo:")).map((e) => e.dedupeKey!.slice(5)));
   const ev = events.find((e) => e.source === "TASK" && !undone.has(e.id));
@@ -1441,6 +1821,7 @@ export async function undoCompletionCore(userId: string, instanceId: string, now
 
   const ops: Prisma.PrismaPromise<unknown>[] = [
     lifeLockOp(userId),
+    ...(needsSettledGuard(instDay, todayKey(now), now) ? [settledDayGuardOp(userId, instDay)] : []),
     activityOp(
       userId,
       undoEventInput(
@@ -1465,6 +1846,8 @@ export async function undoCompletionCore(userId: string, instanceId: string, now
   try {
     await prisma.$transaction(ops);
   } catch (err) {
+    // Settled between the read and the write: the tick stands.
+    if (isSettledDay(err)) return fail(settledUndoMessage(instDay));
     // Undone already (a double tap on Undo): the first one's row stands.
     if (!isDuplicateActivity(err)) throw err;
   } finally {
@@ -1552,29 +1935,148 @@ export async function rescheduleCore(userId: string, templateId: string, to: "to
   return ok({ dueDay: target });
 }
 
-/** Archives a template. Never deletes: its instances and ledger rows are history, and debts (M2) outlive it. */
-export async function archiveCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
-  const res = await prisma.taskTemplate.updateMany({ where: { id: templateId, userId, archivedAt: null }, data: { archivedAt: now } });
-  if (res.count === 0) {
-    const exists = await prisma.taskTemplate.count({ where: { id: templateId, userId } });
-    if (!exists) return fail("That task no longer exists.");
+// ── The rule over time: the akrasia horizon (M2 F3) ───────────────────────
+
+/** The columns a rule edit reads, and compares again when it writes. */
+const RULE_SELECT = {
+  id: true,
+  compulsory: true,
+  compulsoryOnRest: true,
+  inbox: true,
+  kind: true,
+  recurrence: true,
+  startDay: true,
+  dueDay: true,
+  dueKind: true,
+  archivedAt: true,
+  createdAt: true,
+  pendingChange: true,
+} satisfies Prisma.TaskTemplateSelect;
+
+type RuleReadRow = Prisma.TaskTemplateGetPayload<{ select: typeof RULE_SELECT }>;
+
+function ruleRowOf(r: RuleReadRow): RuleRow {
+  return {
+    compulsory: r.compulsory,
+    compulsoryOnRest: r.compulsoryOnRest,
+    inbox: r.inbox,
+    kind: r.kind,
+    recurrence: r.recurrence,
+    startDay: keyOfDateColumn(r.startDay),
+    dueDay: keyOrNull(r.dueDay),
+    dueKind: r.dueKind,
+    archivedAt: r.archivedAt,
+    createdAt: r.createdAt,
+    pendingChange: r.pendingChange,
+  };
+}
+
+/**
+ * Compare-and-set: the row as it was read, on every column a rule edit
+ * reads. Settlement's housekeeping (applying a `next`, pruning a prior
+ * segment) rewrites these columns too, so an edit read before it lands
+ * matches nothing and is planned again rather than writing over it.
+ */
+function ruleWhere(userId: string, r: RuleReadRow): Prisma.TaskTemplateWhereInput {
+  return {
+    id: r.id,
+    userId,
+    compulsory: r.compulsory,
+    compulsoryOnRest: r.compulsoryOnRest,
+    inbox: r.inbox,
+    archivedAt: r.archivedAt,
+    pendingChange: r.pendingChange == null ? { equals: Prisma.AnyNull } : { equals: r.pendingChange as Prisma.InputJsonValue },
+  };
+}
+
+/** A RuleWrite as Prisma columns (a cleared pendingChange is Prisma.DbNull). */
+function ruleData(w: RuleWrite): Prisma.TaskTemplateUpdateManyMutationInput {
+  const data: Prisma.TaskTemplateUpdateManyMutationInput = {};
+  if (w.compulsory !== undefined) data.compulsory = w.compulsory;
+  if (w.compulsoryOnRest !== undefined) data.compulsoryOnRest = w.compulsoryOnRest;
+  if (w.archivedAt !== undefined) data.archivedAt = w.archivedAt;
+  if (w.pendingChange !== undefined) data.pendingChange = w.pendingChange == null ? Prisma.DbNull : (w.pendingChange as unknown as Prisma.InputJsonValue);
+  if (w.pendingChangeAt !== undefined) data.pendingChangeAt = w.pendingChangeAt;
+  return data;
+}
+
+/** When a rule edit takes effect (actions/duty.ts RuleChangeResult). */
+export interface RuleChangeOutcome {
+  templateId: string;
+  effect: "immediate" | "deferred";
+  /** The day a deferred change takes effect; null when immediate. */
+  effectiveDay: DayKey | null;
+}
+
+const RULE_EDIT_ATTEMPTS = 3;
+
+/**
+ * Reads the template, plans the edit (duty-plan.ts planRuleEdit: the
+ * classifier, one pending change per template, prior segments for a
+ * strengthening) and writes it compare-and-set; a row that moved under it
+ * is read and planned again, a few times at most.
+ */
+async function applyRuleEdit(userId: string, templateId: string, edit: RuleEdit, now: Date): Promise<LifeResult<RuleChangeOutcome>> {
+  const today = todayKey(now);
+  const launched = isDutyLaunched(today);
+  for (let attempt = 1; attempt <= RULE_EDIT_ATTEMPTS; attempt++) {
+    const row = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: RULE_SELECT });
+    if (!row) return fail("That task no longer exists.");
+    if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel")) return fail("That task is archived.");
+    const plan = planRuleEdit(ruleRowOf(row), edit, { today, now, launched });
+    if (!plan.ok) return fail(plan.error);
+    const out: RuleChangeOutcome = { templateId, effect: plan.value.effect, effectiveDay: plan.value.effectiveDay };
+    if (!plan.value.write) return ok(out);
+    const res = await prisma.taskTemplate.updateMany({ where: ruleWhere(userId, row), data: ruleData(plan.value.write) });
+    if (res.count > 0) {
+      invalidate("life", "activity");
+      return ok(out);
+    }
   }
-  invalidate("life", "activity");
-  return ok(null);
+  return fail("Something changed at the same moment. Try again.");
+}
+
+/**
+ * Archives a template. Never deletes: its instances and ledger rows are
+ * history, and debts (M2) outlive it. M2 (F3, decision 17): archiving a must
+ * once Duty is live, past its 60-minute typo grace, is a weakening — it is
+ * deferred to today + 7 as a pending archive (archivedAt is NOT set early;
+ * settlement writes it), and the answer says so. Anything else archives at
+ * once, at `now` (or at `opts.archivedAt`, the link an edit leaves).
+ */
+export async function archiveCore(
+  userId: string,
+  templateId: string,
+  now: Date = new Date(),
+  opts: { archivedAt?: Date } = {}
+): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "archive", at: opts.archivedAt ?? now }, now);
 }
 
 /**
  * Brings an archived template back, history and streak intact (archiving
- * never deleted anything). The undo for Archive and for the inbox's Drop.
+ * never deleted anything). The undo for Archive and for the inbox's Drop: it
+ * also cancels a pending archive. A strengthening, so never retroactive: a
+ * must's archived days stay unowed (duty-plan.ts planRuleEdit).
  */
-export async function unarchiveCore(userId: string, templateId: string): Promise<LifeResult<null>> {
-  const res = await prisma.taskTemplate.updateMany({ where: { id: templateId, userId, archivedAt: { not: null } }, data: { archivedAt: null } });
-  if (res.count === 0) {
-    const exists = await prisma.taskTemplate.count({ where: { id: templateId, userId } });
-    if (!exists) return fail("That task no longer exists.");
-  }
-  invalidate("life", "activity");
-  return ok(null);
+export async function unarchiveCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
+  const res = await applyRuleEdit(userId, templateId, { kind: "unarchive" }, now);
+  return res.ok ? ok(null) : res;
+}
+
+/** 'Not a must' (the drawer, F3): deferred 7 days once launched and past the 60-minute typo grace. */
+export function setCompulsoryCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "unflag" }, now);
+}
+
+/** 'Even on rest days' (the drawer, F3; musts only): on is immediate from today and never retroactive; off is deferred. */
+export function setCompulsoryOnRestCore(userId: string, templateId: string, on: boolean, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "rest", on }, now);
+}
+
+/** 'Keep it': cancels a pending weakening, at once (a strengthening). */
+export function cancelPendingChangeCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "cancel" }, now);
 }
 
 /**
@@ -1675,7 +2177,9 @@ export async function undoCaptureCore(
     const undone = await undoCompletionCore(userId, i.id, now);
     if (!undone.ok) return { ok: false, error: undone.error };
   }
-  return archiveCore(userId, templateId, opts.archivedAt ?? now);
+  // A capture taken back is ten minutes old at most: inside the typo grace, so this archives at once.
+  const archived = await archiveCore(userId, templateId, now, { archivedAt: opts.archivedAt ?? now });
+  return archived.ok ? ok(null) : { ok: false, error: archived.error };
 }
 
 // ── Edit a line just saved (capture.md 'Edit a line you just saved') ──────
@@ -1953,54 +2457,79 @@ export async function clarifyInboxCore(
   choice: InboxChoice,
   parentId: string | null = null,
   now: Date = new Date()
-): Promise<LifeResult<{ href: string | null }>> {
+): Promise<LifeResult<ClarifyOutcome>> {
   const today = todayKey(now);
-  const row = await prisma.taskTemplate.findFirst({
-    where: { id: templateId, userId, archivedAt: null },
-    select: { kind: true, recurrence: true, dueKind: true, dueDay: true },
-  });
+  // A drop is an archive, and archiveCore decides it (M2: deferred on a must).
+  if (choice === "drop") {
+    const dropped = await archiveCore(userId, templateId, now);
+    if (!dropped.ok) return fail(dropped.error === "That task no longer exists." ? "That item no longer exists." : dropped.error);
+    return ok({ href: null, effect: dropped.value.effect, effectiveDay: dropped.value.effectiveDay });
+  }
+  const row = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId, archivedAt: null }, select: RULE_SELECT });
   if (!row) return fail("That item no longer exists.");
   const asTask = row.kind === "IDEA_DRAFT" ? "TASK" : undefined;
   const deadline = row.dueKind === "DEADLINE" && !!row.dueDay;
+  // M2 (F3, decisions 17 and 31): the classifier on a must. A must leaving
+  // the inbox is owed from today, never before (a prior segment rides on the
+  // same update); a scheduled must sent back to the inbox as an idea waits
+  // out the akrasia horizon, so it is refused with the way out.
+  const duty = planClarifyRule(ruleRowOf(row), choice, { today, now, launched: isDutyLaunched(today) });
+  if (!duty.ok) return fail(duty.error);
+  const pendingChange =
+    duty.value.pendingChange === undefined
+      ? {}
+      : { pendingChange: duty.value.pendingChange == null ? Prisma.DbNull : (duty.value.pendingChange as unknown as Prisma.InputJsonValue) };
 
   switch (choice) {
     case "today":
     case "tomorrow": {
       const day = choice === "today" ? today : addDays(today, 1);
+      // Putting a deadline off to tomorrow: a must is never put off past its own day (moveBlockOf, as rescheduleCore).
+      if (choice === "tomorrow" && !row.recurrence && deadline) {
+        const block = moveBlockOf({ recurrence: null, compulsory: row.compulsory, dueKind: "DEADLINE", dueDay: keyOrNull(row.dueDay), completedAt: null }, day, today);
+        if (block) return fail(block);
+      }
       await prisma.taskTemplate.update({
         where: { id: templateId },
         data: row.recurrence
-          ? { inbox: false, kind: asTask }
+          ? { inbox: false, kind: asTask, ...pendingChange }
           : deadline
-            ? { inbox: false, kind: asTask, planDay: day > today ? dateColumn(day) : null }
-            : { inbox: false, kind: asTask, dueDay: dateColumn(day), dueKind: "PLANNED", planDay: null },
+            ? { inbox: false, kind: asTask, planDay: day > today ? dateColumn(day) : null, ...pendingChange }
+            : { inbox: false, kind: asTask, dueDay: dateColumn(day), dueKind: "PLANNED", planDay: null, ...pendingChange },
       });
       break;
     }
     case "anytime":
       await prisma.taskTemplate.update({
         where: { id: templateId },
-        data: deadline ? { inbox: false, kind: asTask, planDay: null } : { inbox: false, kind: asTask, dueDay: null, dueKind: null, planDay: null },
+        data: deadline
+          ? { inbox: false, kind: asTask, planDay: null, ...pendingChange }
+          : { inbox: false, kind: asTask, dueDay: null, dueKind: null, planDay: null, ...pendingChange },
       });
       break;
     case "goal": {
       if (!parentId) return fail("Pick a goal.");
       const goal = await prisma.taskTemplate.findFirst({ where: { id: parentId, userId, kind: "GOAL", archivedAt: null, closedScore: null }, select: { id: true } });
       if (!goal) return fail("That goal is closed or no longer exists.");
-      await prisma.taskTemplate.update({ where: { id: templateId }, data: { inbox: false, kind: asTask, parentId: goal.id } });
+      await prisma.taskTemplate.update({ where: { id: templateId }, data: { inbox: false, kind: asTask, parentId: goal.id, ...pendingChange } });
       break;
     }
     case "idea":
       await prisma.taskTemplate.update({ where: { id: templateId }, data: { kind: "IDEA_DRAFT", inbox: true } });
       invalidate("life", "activity");
-      return ok({ href: `/add?draft=${encodeURIComponent(templateId)}` });
-    case "drop":
-      return (await archiveCore(userId, templateId, now)).ok ? ok({ href: null }) : fail("That item no longer exists.");
+      return ok({ href: `/add?draft=${encodeURIComponent(templateId)}`, effect: "immediate", effectiveDay: null });
     default:
       return fail("Unknown choice.");
   }
   invalidate("life", "activity");
-  return ok({ href: null });
+  return ok({ href: null, effect: "immediate", effectiveDay: null });
+}
+
+/** What a clarify did: where to go next (an idea draft's Add page), and whether a drop was deferred (M2: a must's archive waits 7 days). */
+export interface ClarifyOutcome {
+  href: string | null;
+  effect: "immediate" | "deferred";
+  effectiveDay: DayKey | null;
 }
 
 /**
@@ -2071,7 +2600,7 @@ export async function setDailyCapacityCore(userId: string, minutes: number, now:
   const m = Math.max(CAPACITY_MIN, Math.min(CAPACITY_MAX, Math.round(minutes / 5) * 5));
   await prisma.lifeSettings.upsert({
     where: { userId },
-    create: { userId, epochDay: dateColumn(todayKey(now)), dailyCapacityMin: m, capacitySetAt: now },
+    create: { userId, ...newLifeSettingsData(todayKey(now)), dailyCapacityMin: m, capacitySetAt: now },
     update: { dailyCapacityMin: m, capacitySetAt: now },
   });
   invalidate("life", "activity");
@@ -2195,17 +2724,21 @@ export async function autoCompleteStudyTasks(userId: string, now: Date = new Dat
 
   const ids = autos.map((a) => a.id);
   const needsDue = autos.some((a) => a.autoMetric !== "IDEAS");
-  const [instances, totals, events, dueNow, lastDoneRows] = await Promise.all([
+  const [instances, totals, events, dueNow, lastDoneRows, debtRows] = await Promise.all([
     prisma.taskInstance.findMany({ where: { userId, templateId: { in: ids }, day: dateColumn(today) }, select: INSTANCE_SELECT }),
     readDayTotals(userId, [today]),
     readDayTaskEvents(userId, [today]),
     needsDue ? loadDueNow(today, now) : Promise.resolve(null),
     prisma.taskInstance.groupBy({
       by: ["templateId"],
-      where: { userId, templateId: { in: ids }, status: { in: ["DONE", "DONE_LATE", "DONE_MVV"] } },
+      // MADE_UP (M2) reads done on the board, as today-board DONE_STATUSES does.
+      where: { userId, templateId: { in: ids }, status: { in: ["DONE", "DONE_LATE", "DONE_MVV", "MADE_UP"] } },
       _max: { day: true },
     }),
+    // M2 (decision 18): a debited one-off is made up from its card, never auto-completed beside it.
+    prisma.taskInstance.findMany({ where: { userId, templateId: { in: ids }, debtOpen: true }, select: { templateId: true } }),
   ]);
+  const debited = new Set(debtRows.map((r) => r.templateId));
 
   const ledger = ledgerOf(today, totals, events);
   const kneeRows = kneeRowsOf(today, totals);
@@ -2225,12 +2758,18 @@ export async function autoCompleteStudyTasks(userId: string, now: Date = new Dat
 
   let completed = 0;
   for (const p of plans) {
+    if (debited.has(p.template.id) && !ruleOf(p.template)) {
+      // Nothing to auto-complete today: its card is the one path (and the memo spares the next review the read).
+      autoDoneToday.add(epoch, `${p.template.id}:${today}`);
+      continue;
+    }
     const read: CompletionRead = {
       t: p.template,
       history: history.filter((i) => i.templateId === p.template.id),
       events,
       ledger,
       kneeRows,
+      debited: debited.has(p.template.id),
     };
     try {
       const res = await settleCompletion(

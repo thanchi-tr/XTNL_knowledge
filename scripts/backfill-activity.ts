@@ -33,6 +33,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import { getCurrentUserId } from "../src/lib/user";
 import { activityData } from "../src/lib/activity";
+import { newLifeSettingsDays, newLifeSettingsData } from "../src/lib/duty-economy";
 import {
   LIFE_TZ,
   addDays,
@@ -236,7 +237,7 @@ async function main() {
   console.log(`  REVIEW       ${HISTORY ? reviews : "— (pass --history)"}`);
   console.log(`  IDEA_CREATE  ${HISTORY ? ideasCreated : "— (pass --history)"}`);
   console.log(
-    `  LifeSettings ${settings ? `exists (epochDay ${keyOfDateColumn(settings.epochDay)})` : `${APPLY ? "will be created" : "would be created"} (epochDay ${today})`}`
+    `  LifeSettings ${settings ? `exists (epochDay ${keyOfDateColumn(settings.epochDay)})` : `${APPLY ? "will be created" : "would be created"} (epochDay ${today}, Duty cursor ${newLifeSettingsDays(today).settledThroughDay ?? "null: Duty not launched"})`}`
   );
   if (planned.length > 0) {
     console.log(`\nLegacy days (* = bridge):`);
@@ -252,10 +253,13 @@ async function main() {
   // ── Write ──────────────────────────────────────────────────────────────
   console.log("\nWriting…");
   // The first life day. Nothing earlier ever pays life XP. An existing row
-  // (the first capture may have made one) keeps its epoch.
+  // (the first capture may have made one) keeps its epoch. A new row is
+  // created like every other LifeSettings row (M2 decision 1): after the Duty
+  // launch its settlement cursor starts at today − 1, so a backfill that runs
+  // first after a 'life' reset never leaves the cursor null (Duty off).
   await prisma.lifeSettings.upsert({
     where: { userId },
-    create: { userId, epochDay: dateColumn(today) },
+    create: { userId, ...newLifeSettingsData(today) },
     update: {},
   });
   await writeChunks("LEGACY_DAY", planned.map((p) => activityData(userId, p.input)));

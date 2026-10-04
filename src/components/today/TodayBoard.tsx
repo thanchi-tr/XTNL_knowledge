@@ -3,11 +3,13 @@
 import { TodayFooter } from "./TodayFooter";
 import "./today.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   applyOps,
   buildBoard,
   canUndo,
+  dutyFloorOf,
+  onRestMustsIn,
   placeOf,
   projectRow,
   questOf,
@@ -18,7 +20,8 @@ import {
   type BoardRow,
   type InboxChoice,
 } from "@/lib/today-board";
-import type { DailyStreak } from "@/lib/streak-curve";
+// The server's DailyStreak (streak-curve's plus M2's endedOn, endedAfter, freezeWillCover); type-only, erased from the client bundle.
+import type { DailyStreak } from "@/lib/streak";
 import { fullDayInputOf, fullDayOf, type FullDayRingKind } from "@/lib/full-day";
 import { announce, chime, mark } from "@/lib/celebrate";
 import type { T1Kind } from "@/lib/celebration-types";
@@ -52,7 +55,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { dismissToast, pushToast } from "@/components/ui/toast-store";
 import { cx } from "@/components/ui/cx";
 import { TaskRow } from "./TaskRow";
-import { TaskDrawer, type DrawerWork } from "./TaskDrawer";
+import { TaskDrawer, type DrawerRule, type DrawerWork } from "./TaskDrawer";
 import { NextUp } from "./NextUp";
 import { GOALS_HEADING_ID, GOAL_CLOSE_CHIP, GoalsStrip } from "./GoalsStrip";
 import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview } from "./GoalSheets";
@@ -63,37 +66,90 @@ import { UndoToast, focusUndoOnce } from "./UndoToast";
 import { DayLedger } from "./DayLedger";
 import { Lane } from "./Lane";
 import { AskCard } from "./AskCard";
-import { CloseDaySheet, type CloseItem } from "./CloseDaySheet";
+import { CloseDaySheet } from "./CloseDaySheet";
 import { fmtXp } from "./format";
 import { holdLedger, useAfterFlight } from "./ledger-gate";
 import {
+  HELD_GLYPH,
+  RECORD_YESTERDAY_EVENT,
   REMOVE_UNDO_MS,
+  SHEET_PARAM,
+  YESTERDAY_SHEET,
+  asksShown,
   boardDayEnded,
+  cancellableOf,
   capacityChosen,
   closeDayProminent,
+  closeItemsOf,
+  dayLedgerDutyOf,
   dayMomentsOf,
+  deferredNoticeOf,
   goalAfterClose,
   goalClosedNotice,
   goalRescheduledNotice,
   hhmmOf,
   keptAtOf,
   laneTally,
+  madeUpLineOf,
+  makeUpViewOf,
   mergeSkew,
+  missPromptCopyOf,
+  missPromptKey,
+  missPromptOf,
   momentText,
+  mustLaneOf,
   nextBoardTick,
   nextUpOf,
+  o1CardOf,
+  owedSummaryOf,
+  owedTotalOf,
   receiptIdOf,
   recordByLabel,
+  restOptionsOf,
+  restSwitchOf,
+  rollAllKeysOf,
   rowMinutes,
+  ruleChangeOf,
+  settledKey,
   splitTodayLane,
   todayAsksOf,
   todayLaneNote,
-  tomorrowOffer,
   upcomingOf,
+  vacationRangeError,
+  withHeldExcused,
+  yesterdayActiveOf,
+  yesterdaySheetOf,
   type AskNotice,
   type DayMoment,
   type DaySnapshot,
 } from "./board-ui";
+import { addDays, type DayKey } from "@/lib/life-day";
+import { dayLabel, declaredAheadOf, fullWeekday, restBannerOf, settledNoticeOf, type DeclaredDay, type DutyBoard, type OwedCard } from "@/lib/duty-view";
+import {
+  acceptLoss,
+  cancelPendingChange,
+  cancelRest,
+  declareRest,
+  declareSick,
+  doMinimum,
+  makeUp,
+  setCompulsory,
+  setCompulsoryOnRest,
+  setMinimum,
+  setVacation,
+  settleYesterday,
+  spendFreeze,
+  undoMakeUp,
+  type DutyActionResult,
+  type MakeUpResult,
+} from "@/app/actions/duty";
+import { saveReflection } from "@/app/actions/rituals";
+import { MakeUpCard, OwedRow, OwedSummary } from "./m2/MakeUpCard";
+import { RestBannerCard, YesterdaySettled, type SettledChip as NoticeChip } from "./m2/Notices";
+import { CancelList, FreezeOption, RestControls, SettleFooter, VacationForm } from "./m2/Sheets";
+import { MissPrompt } from "./MissPrompt";
+import { Chip } from "@/components/ui/Chip";
+import { HeldGlyph } from "@/components/ui/Icon";
 
 interface Props {
   data: BoardData;
@@ -191,6 +247,74 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
   return next;
 }
 
+// ── M2: device-local flags (a settled notice seen or dismissed, a miss
+// prompt put off). Every access is wrapped: storage can be missing or throw
+// (a private window, blocked site data); then the flag lives for this tab.
+
+function readFlags(keys: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    for (const k of keys) {
+      const v = window.localStorage.getItem(k);
+      if (v != null) out[k] = v;
+    }
+  } catch {
+    // No storage: every flag reads unset.
+  }
+  return out;
+}
+
+function writeFlag(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // No storage: the flag lives in state for this tab only.
+  }
+}
+
+/** A make-up (or a write-off) resolved in place: its card says so until the refresh after the one that removed it. */
+interface MadeUpEntry {
+  card: OwedCard;
+  state: "repaid" | "minimum" | "written-off";
+  line: string;
+  /** The refreshed props no longer list it as owed: the next refresh drops it. */
+  landed: boolean;
+}
+
+function madeUpAfterRefresh(prev: Record<string, MadeUpEntry>, d: BoardData): Record<string, MadeUpEntry> {
+  const ids = Object.keys(prev);
+  if (ids.length === 0) return prev;
+  const open = new Set((d.duty?.owed ?? []).map((c) => c.instanceId));
+  const next: Record<string, MadeUpEntry> = {};
+  for (const id of ids) {
+    const e = prev[id];
+    if (e.landed) continue;
+    next[id] = open.has(id) ? e : { ...e, landed: true };
+  }
+  return next;
+}
+
+/** A rule change's answer, read defensively (archive and clarify answer with it once lane C defers them). */
+function deferredDayOf(v: unknown): DayKey | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as { effect?: unknown; effectiveDay?: unknown };
+  return o.effect === "deferred" && typeof o.effectiveDay === "string" ? o.effectiveDay : null;
+}
+
+/** The declarations the board knows of: DutyBoard.declared when sent, else the three days RestState names. */
+function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
+  if (!duty) return [];
+  if (duty.declared) return duty.declared;
+  const out: DeclaredDay[] = [];
+  const add = (day: DayKey, kind: DeclaredDay["kind"] | null) => {
+    if (kind) out.push({ day, kind });
+  };
+  add(addDays(today, -1), duty.rest.yesterday);
+  add(today, duty.rest.today);
+  add(addDays(today, 1), duty.rest.tomorrow);
+  return out;
+}
+
 /**
  * The Today board: what the day asks for, in the order it is worth doing
  * (redesign "Sigil & Slate": one DOM, three orders by container width).
@@ -212,9 +336,21 @@ function without<V>(record: Record<string, V>, key: string): Record<string, V> {
  * counts up); the first deed of the day, a closed ring, a kept Must lane
  * and a Full day are Tier 1, once, after a tap, never on arrival. Every
  * number is the real one.
+ *
+ * M2 (Duty, from BoardData.duty): open debts render only inside the Must
+ * lane (one MakeUpCard, or one collapsed OwedSummary) and in the Owed row
+ * (.o8); .o1 holds one Duty card at most (YesterdaySettled, else the rest
+ * banner); Record yesterday gains its honesty line, the freeze switch and
+ * the Settle footer; the drawer gains a must's rule pills; Close the day
+ * gains the note, the mood and 'Rest <weekday>'. A make-up is Tier 0
+ * (makeup-paid), the last debt Tier 1 (nothing-owed); a settled notice
+ * plays its Tier 1 in place the first time a device sees it. Before Duty's
+ * launch the board is the pre-M2 board (debts, which only settlement
+ * writes, render whenever they exist).
  */
 export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<Pending[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -247,6 +383,25 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   const [working, setWorking] = useState<Record<string, DrawerWork>>({});
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [capacityBusy, setCapacityBusy] = useState(false);
+  // ── M2 (Duty) ──
+  /** The collapsed OwedSummary is open (the Owed row opens it). */
+  const [owedOpen, setOwedOpen] = useState(false);
+  /** Make-ups resolved in place, by instance id. */
+  const [madeUp, setMadeUp] = useState<Record<string, MadeUpEntry>>({});
+  /** A make-up, minimum, undo or 'Accept the loss' in flight (the instance id). */
+  const [owedBusy, setOwedBusy] = useState<string | null>(null);
+  /** A Duty write in flight that is not a card's: settle, freeze, rest, rule pills, reflection. */
+  const [dutyBusy, setDutyBusy] = useState(false);
+  /** Plan time off is open, and its vacation form. */
+  const [timeOffOpen, setTimeOffOpen] = useState(false);
+  const [vacationOpen, setVacationOpen] = useState(false);
+  /** The Asks beyond the first two are shown. */
+  const [asksExpanded, setAsksExpanded] = useState(false);
+  /** Close the day's note and mood (never graded). */
+  const [note, setNote] = useState("");
+  const [mood, setMood] = useState<number | null>(null);
+  /** Device-local flags, read after mount (null until then, so the server and first client render agree). */
+  const [flags, setFlags] = useState<Record<string, string> | null>(null);
   /** Visual beats of a Tier 1 moment, cleared once they have played. */
   const [beat, setBeat] = useState<{ glint: Set<FullDayRingKind>; full: boolean; lane: boolean } | null>(null);
   // The undo window's clock, on the server's time: its render time, then the
@@ -263,6 +418,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     setSeen({ data, nowIso });
     setClock((c) => Math.max(c, Date.parse(nowIso)));
     setPending((prev) => prev.filter((p) => !p.settled && !reflected(data, p.op)));
+    if (seen.data !== data) setMadeUp((prev) => madeUpAfterRefresh(prev, data));
   }
 
   // Settling reads the latest props, which only matter after a commit.
@@ -301,7 +457,8 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       }),
     [current]
   );
-  const fullDay = useMemo(() => fullDayOf(fullDayInputOf(current, board, quest)), [current, board, quest]);
+  // Today's held musts (a rest day) count as excused, as settlement will record them (decision 15).
+  const fullDay = useMemo(() => fullDayOf(fullDayInputOf(withHeldExcused(current, board.must), board, quest)), [current, board, quest]);
   // The removed row is gone from the board, so its in-flight write blocks
   // nothing else: the inbox's other items stay usable while a Drop lands.
   const removedId = removal?.opId ?? null;
@@ -502,6 +659,13 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         throw err;
       }
       if (!res.ok) dropUndo();
+      // M2 (F3): the server deferred it (a must, once Duty is live): the row comes back and says when it leaves.
+      const deferred = res.ok ? deferredDayOf(res.value) : null;
+      if (deferred) {
+        dropUndo();
+        setPending((prev) => prev.filter((p) => p.op.id !== op.id));
+        setNotice(deferredNoticeOf(row.title, "archive", deferred));
+      }
       return res;
     });
     const next: Removal = {
@@ -697,10 +861,21 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     dispatch({ id: nextOpId(), kind: "hide", templateId: row.template.id }, () => rescheduleTask(row.template.id, "tomorrow", REFRESH));
   }
 
+  /** The clock and launch state a rule change is classified against (duty-rule.ts classifyChange, as the server does). */
+  const ruleCtx = () => ({ today: current.today, nowMs: serverNow(), live: board.dutyLive });
+
   function archive(row: BoardRow) {
     setOpenKey(null);
     setDrawerMinutes(null);
     const templateId = row.template.id;
+    // M2 (F3): once Duty is live, archiving a must (past its 60-minute typo
+    // grace) waits seven days. The row stays, with 'must · ends Thu 8 Oct'.
+    const change = row.template.compulsory ? ruleChangeOf(row.template, { archived: true }, ruleCtx()) : null;
+    if (change?.effectiveDay) {
+      const day = change.effectiveDay;
+      dispatch(null, () => archiveTask(templateId, REFRESH), (v) => setNotice(deferredNoticeOf(row.template.title, "archive", deferredDayOf(v) ?? day)));
+      return;
+    }
     remove({ id: templateId, title: row.template.title }, "Archived", () => archiveTask(templateId, REFRESH));
   }
 
@@ -710,10 +885,19 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       remove({ id: templateId, title }, "Dropped", () => clarifyInbox(templateId, "drop", null, REFRESH));
       return;
     }
+    const op: BoardOp = { id: nextOpId(), kind: "hide", templateId };
     dispatch(
-      { id: nextOpId(), kind: "hide", templateId },
+      op,
       () => clarifyInbox(templateId, choice, parentId ?? null, REFRESH),
       (v) => {
+        // M2 (F3): a must's idea / anytime / tomorrow can be deferred too: it stays where it was, and says so.
+        const deferred = deferredDayOf(v);
+        if (deferred) {
+          const title = current.templates.find((t) => t.id === templateId)?.title ?? "That must";
+          setPending((prev) => prev.filter((p) => p.op.id !== op.id));
+          setNotice(deferredNoticeOf(title, "archive", deferred));
+          return;
+        }
         if (v.href) router.push(v.href);
       }
     );
@@ -1017,6 +1201,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         onToggleReceipt={() => setReceiptKey((k) => (k === key ? null : key))}
         onMinimum={row.lane === "must" && row.template.mvv ? (from) => complete(row, { mvv: true }, from) : undefined}
         justAdded={justAdded === row.template.id}
+        restToday={board.restToday}
       >
         <TaskDrawer
           row={row}
@@ -1037,6 +1222,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
           onArchive={() => archive(row)}
           onOverride={(n) => work(row.template.id, { kind: "rate", override: n }, () => setBandOverride(row.template.id, n, REFRESH))}
           onResize={() => resize(row)}
+          rule={drawerOpen ? drawerRuleOf(row) : null}
         />
       </TaskRow>
     );
@@ -1083,34 +1269,377 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     "Any tick or review starts a streak."
   );
 
-  // Close the day: what is still open, with the moves the server accepts.
-  const closeItems: CloseItem[] = [
-    ...board.must
-      .filter((r) => r.state === "open" && r.template.mvv)
-      .map<CloseItem>((r) => ({
-        key: r.key,
-        title: r.template.title,
-        meta: `Must${r.dueLabel ? ` · ${r.dueLabel}` : ""} · still open`,
-        choices: [{ id: "minimum", label: `Do the minimum · ${r.template.mvv}` }],
-      })),
-    ...planned
-      .filter((r) => r.state === "open" && tomorrowOffer(r.template, current.today).show)
-      .map<CloseItem>((r) => ({
-        key: r.key,
-        title: r.template.title,
-        meta: r.template.dueKind === "DEADLINE" ? `${r.dueLabel ?? "deadline"} · keeps its deadline` : "Planned · carries forward, never late",
-        choices: [{ id: "tomorrow", label: "Tomorrow" }],
-      })),
-  ];
+  // ── M2: Duty on the board (F3, F8, F10, F12, F13) ───────────────────────
+  //
+  // Debt shows only inside the Must lane (one card, or one collapsed
+  // summary) and in the Owed row at the foot of the lanes; the board never
+  // opens on red. Before launch every piece below answers with the pre-M2
+  // board (duty absent or not live), except open debts, which render
+  // whenever they exist (decision 2).
+
+  const duty = current.duty ?? null;
+  const live = board.dutyLive;
+  const launchDay = duty?.launchDay ?? null;
+  const declared = declaredOf(duty, current.today);
+  const yesterdayActive = yesterdayActiveOf(streak, current);
+  const ledgerDuty = dayLedgerDutyOf({ duty, streak, kept: shown.snapshot.kept, full: shown.fullDay.full, today: current.today, yesterdayActive });
+  /** Rule changes classified on the board's clock (render); the server decides again when it writes. */
+  const viewCtx = { today: current.today, nowMs: clock, live };
+
+  // Device-local flags for what is on screen, read once mounted.
+  const flagSig = [duty?.cursor ? settledKey(duty.cursor) : "", ...(duty?.owed ?? []).map((c) => missPromptKey(c.templateId, c.lastMissDay))]
+    .filter(Boolean)
+    .join("|");
+  useEffect(() => {
+    // Storage is read only after mount, so the server and the first client render agree.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFlags(readFlags(flagSig ? flagSig.split("|") : []));
+  }, [flagSig]);
+  const setFlag = (key: string, value: string) => {
+    writeFlag(key, value);
+    setFlags((f) => ({ ...(f ?? {}), [key]: value }));
+  };
+
+  // .o1: one card at most: the settled notice (until dismissed on this device), else the rest banner.
+  const settled = live && duty ? settledNoticeOf(duty.settled, duty.cursor, current.today, { floor: dutyFloorOf(duty) }) : null;
+  const stillOwedOnRest = board.must.filter((r) => r.template.compulsory && r.template.compulsoryOnRest && r.state === "open").length;
+  // A rest or vacation from tomorrow: the 'Even on rest days' musts due on those days stay owed, and the banner says so.
+  const ahead = duty ? declaredAheadOf(duty.rest, current.today) : null;
+  const stillOwedAhead = ahead ? onRestMustsIn(current.templates, ahead.from, ahead.to) : 0;
+  const banner = duty ? restBannerOf(duty.rest, current.today, { stillOwed: stillOwedOnRest, stillOwedTomorrow: stillOwedAhead }) : null;
+  const o1 = settled && flags === null ? null : o1CardOf({ settled, settledDismissed: !!settled && flags?.[settledKey(settled.day)] === "dismissed", banner });
+  const settledRef = useRef<HTMLElement | null>(null);
+  const settledShownDay = o1 === "settled" && settled ? settled.day : null;
+  const settledRepaired = !!settled?.repairedDay;
+  const settledTitle = settled?.title ?? "Yesterday settled";
+  const settledSeen = settledShownDay != null && !!flags?.[settledKey(settledShownDay)];
+  useEffect(() => {
+    if (!settledShownDay || settledSeen) return;
+    // Tier 1, rendered in place the first time this device sees it (F12, F16). Nothing is stored server-side.
+    writeFlag(settledKey(settledShownDay), "seen");
+    chime({ kind: settledRepaired ? "day-repaired" : "yesterday-settled", id: `settled:${settledShownDay}`, text: settledTitle, burstEl: settledRef.current });
+  }, [settledShownDay, settledSeen, settledRepaired, settledTitle]);
+  const dismissSettled = () => {
+    if (settled) setFlag(settledKey(settled.day), "dismissed");
+  };
+  const settledChips: NoticeChip[] = (settled?.chips ?? []).map((c) =>
+    c.tone === "held" ? { tone: "held", held: "freeze", text: c.text } : c.tone === "kept" ? { tone: "kept", icon: "check", text: c.text } : { tone: "quiet", text: c.text }
+  );
+
+  // The Must lane: today's musts, then the debts (one card, or one collapsed summary once two are open).
+  const openOwed = board.owed.filter((c) => !madeUp[c.instanceId]);
+  const laneCards = [...board.owed, ...Object.values(madeUp).map((e) => e.card).filter((c) => !board.owed.some((o) => o.instanceId === c.instanceId))].sort(
+    (a, b) => a.day.localeCompare(b.day) || a.title.localeCompare(b.title) || a.instanceId.localeCompare(b.instanceId)
+  );
+  const mustView = mustLaneOf({ must: board.must, owed: laneCards, restToday: board.restToday, live, launchDay, today: current.today });
+  const owedTotal = owedTotalOf(openOwed);
+  const prompt = missPromptOf(openOwed, (k) => flags === null || !!flags[k], live);
+
+  /** One Duty write that is not a card's (settle, freeze, rest, the rule pills, the reflection). */
+  function dutyWrite<T>(call: () => Promise<Result<T>>, onOk?: (value: T) => void) {
+    setDutyBusy(true);
+    dispatch(
+      null,
+      async () => {
+        try {
+          return await call();
+        } finally {
+          setDutyBusy(false);
+        }
+      },
+      onOk
+    );
+  }
+
+  /**
+   * Make up (or do the minimum of) a missed must. Optimistic: the card
+   * resolves in place on the tap ('Made up. Nothing owed.'), the "+N" token
+   * flies to the life-XP cell (Tier 0, makeup-paid: the repayment and the
+   * make-up both land in today's life XP), the last debt sweeps the Must
+   * lane (Tier 1, nothing-owed), and Undo waits in the ToastDock. A refusal
+   * takes the card back and says why.
+   */
+  function makeUpOwed(card: OwedCard, minimum: boolean, from: Element | null) {
+    if (staleDay() || owedBusy) return;
+    const shownXp = minimum ? (card.minimumXp ?? 0) : card.makeUpXp;
+    const amount = Math.round((shownXp + card.debtXp) * 10) / 10;
+    actedAt.current = tapTime();
+    const flight = mark({
+      kind: "makeup-paid",
+      id: `makeup:${card.instanceId}`,
+      text: `Made up ${card.title} · repaid ${fmtXp(card.debtXp)}, about ${fmtXp(shownXp)} for the make-up`,
+      amount: amount > 0 ? { kind: "xp", value: amount } : undefined,
+      from,
+    });
+    if (amount > 0) holdLedger("xp", flight);
+    setMadeUp((prev) => ({
+      ...prev,
+      [card.instanceId]: { card, state: minimum && card.restoresToday ? "minimum" : "repaid", line: minimum ? "Minimum done." : "Made up.", landed: false },
+    }));
+    setOwedBusy(card.instanceId);
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      let res: DutyActionResult<MakeUpResult>;
+      try {
+        res = minimum ? await doMinimum(card.instanceId, REFRESH) : await makeUp(card.instanceId, REFRESH);
+      } catch {
+        res = { ok: false, error: "Couldn't reach the server. Check the connection and try again." };
+      }
+      setOwedBusy(null);
+      if (!res.ok) {
+        setMadeUp((prev) => without(prev, card.instanceId));
+        setError(res.error);
+        return;
+      }
+      const v = res.value;
+      setMadeUp((prev) =>
+        prev[card.instanceId] ? { ...prev, [card.instanceId]: { ...prev[card.instanceId], state: v.status === "DONE_MVV" ? "minimum" : "repaid", line: madeUpLineOf(v) } } : prev
+      );
+      if (Math.abs(v.xp - shownXp) > 0.05) setNotice(`${card.title}'s make-up paid ${fmtXp(v.xp)} XP, not about ${fmtXp(shownXp)}: today's total changed since the board loaded.`);
+      if (v.clearedLast) {
+        chime({ kind: "nothing-owed", id: `nothing-owed:${current.today}:${v.instanceId}`, text: "Nothing owed", say: "Nothing owed. Every debt is made up.", sweepEl: mustBodyRef.current });
+      }
+      pushToast({ key: `makeup:${v.instanceId}`, title: minimum ? "Minimum done" : "Made up", body: card.title, action: { label: "Undo", onAction: () => undoOwed(card) }, holdMs: REMOVE_UNDO_MS });
+    });
+  }
+
+  /** Takes a make-up back (10 minutes, the same life day): the debt reopens and the day nets to zero. */
+  function undoOwed(card: OwedCard) {
+    setOwedBusy(card.instanceId);
+    dispatch(
+      null,
+      async () => {
+        try {
+          return await undoMakeUp(card.instanceId, REFRESH);
+        } finally {
+          setOwedBusy(null);
+        }
+      },
+      () => {
+        setMadeUp((prev) => without(prev, card.instanceId));
+        announce(`Make-up undone. ${card.title} is owed again; nothing else changed.`);
+      }
+    );
+  }
+
+  /**
+   * 'Accept the loss' (Settings › Days on, the debt 14 days old): its DEBT
+   * row stays; nothing more is owed. The card resolves as written off (a
+   * quiet chip, never 'Repaid'): nothing was repaid.
+   */
+  function acceptLossOwed(card: OwedCard) {
+    setOwedBusy(card.instanceId);
+    dispatch(
+      null,
+      async () => {
+        try {
+          return await acceptLoss(card.instanceId, REFRESH);
+        } finally {
+          setOwedBusy(null);
+        }
+      },
+      (v) => {
+        const line = `Its −${fmtXp(v.debtXp)} stays in Duty XP; nothing more is owed.`;
+        setMadeUp((prev) => ({ ...prev, [card.instanceId]: { card, state: "written-off", line, landed: false } }));
+        announce(`${card.title} is written off. ${line}`);
+      }
+    );
+  }
+
+  /** The Owed row at the foot of the lanes: to the Must lane, with its summary open. */
+  function openOwedRow() {
+    setOwedOpen(true);
+    const el = boardRef.current?.querySelector<HTMLElement>(`[data-lane="must"]`);
+    el?.scrollIntoView({ block: "start", behavior: motionLevel() === "full" ? "smooth" : "instant" });
+  }
+
+  const unflagLine = (title: string, v: { effect: "immediate" | "deferred"; effectiveDay: DayKey | null }) =>
+    v.effect === "deferred" && v.effectiveDay ? deferredNoticeOf(title, "unflag", v.effectiveDay) : `${title} is no longer a must.`;
+
+  /** The drawer's rule pills (F3): only once Duty has a launch day; a must, or a template with a change pending. */
+  function drawerRuleOf(row: BoardRow): DrawerRule | null {
+    const t = row.template;
+    if (!launchDay || (!t.compulsory && !row.pendingNext)) return null;
+    return {
+      pending: row.pendingNext ?? null,
+      onRest: !!t.compulsoryOnRest,
+      unflagFrom: ruleChangeOf(t, { compulsory: false }, viewCtx).effectiveDay,
+      restOffFrom: ruleChangeOf(t, { compulsoryOnRest: false }, viewCtx).effectiveDay,
+      onNotMust: () => dutyWrite(() => setCompulsory(t.id, false, REFRESH), (v) => setNotice(unflagLine(t.title, v))),
+      onOnRest: (on) =>
+        dutyWrite(
+          () => setCompulsoryOnRest(t.id, on, REFRESH),
+          (v) =>
+            setNotice(
+              on
+                ? `${t.title} is owed even on rest days, from today.`
+                : v.effect === "deferred" && v.effectiveDay
+                  ? deferredNoticeOf(t.title, "rest-off", v.effectiveDay)
+                  : `${t.title} is held on rest days again.`
+            )
+        ),
+      onKeep: () => dutyWrite(() => cancelPendingChange(t.id, REFRESH), () => setNotice(`${t.title} keeps its rule. Nothing changes.`)),
+    };
+  }
+
+  // Record yesterday (decision 24): the honesty line, the freeze switch and the sticky Settle footer.
+  const ys = yesterdaySheetOf({ yesterday: current.yesterday, recordBy, duty, yesterdayActive });
+  function settleNow() {
+    const day = fullWeekday(current.yesterday);
+    dutyWrite(
+      () => settleYesterday(REFRESH),
+      () => {
+        setYesterdayOpen(false);
+        pushToast({ key: "settled-yesterday", title: `${day} is settled`, body: "It is locked now. Anything missed is made up from its card.", holdMs: 6000 });
+      }
+    );
+  }
+  function spendFreezeNow(on: boolean) {
+    if (!on) return;
+    dutyWrite(
+      () => spendFreeze(REFRESH),
+      (v) => announce(`A freeze covers ${fullWeekday(v.day)}. ${v.left} left.`)
+    );
+  }
+
+  // Time off (F9 through RestControls; F13's 'Rest <weekday>' switch).
+  const restOptions = restOptionsOf({ today: current.today, launchDay, declared });
+  const cancellable = cancellableOf(declared, current.today);
+  const restSwitch = restSwitchOf({ today: current.today, launchDay, declared });
+  const tomorrow = addDays(current.today, 1);
+  const vacationMin = launchDay && launchDay > tomorrow ? launchDay : tomorrow;
+  const heldSaid = (day: DayKey) => `${fullWeekday(day)} is held: nothing is owed and the streak holds.`;
+  function restAction(kind: "rest" | "sick" | "away", day: DayKey | null) {
+    if (kind === "away") {
+      setVacationOpen((o) => !o);
+      return;
+    }
+    if (kind === "sick") {
+      dutyWrite(() => declareSick(REFRESH), (v) => setNotice(heldSaid(v.day)));
+      return;
+    }
+    if (day) dutyWrite(() => declareRest(day, REFRESH), (v) => setNotice(heldSaid(v.day)));
+  }
+  function submitVacation(from: DayKey, to: DayKey) {
+    dutyWrite(
+      () => setVacation(from, to, REFRESH),
+      (v) => {
+        setVacationOpen(false);
+        setNotice(`Vacation set: ${v.days} days, ${dayLabel(v.from)} to ${dayLabel(v.to)}. ${v.budgetLeft} vacation days left in the year.`);
+      }
+    );
+  }
+  function cancelDeclared(from: DayKey, to?: DayKey) {
+    dutyWrite(
+      () => cancelRest(from, to && to !== from ? to : undefined, REFRESH),
+      (v) => setNotice(v.cancelled.length === 1 ? `${fullWeekday(v.cancelled[0])} is an ordinary day again.` : `${v.cancelled.length} days are ordinary days again.`)
+    );
+  }
+
+  // Close the day (F13): what is still open, with the moves the server accepts (board-ui.ts closeItemsOf).
+  const closeItems = closeItemsOf({ must: board.must, todayRows: board.todayRows, today: current.today, live });
   const rowByKey = new Map(lanes.map((r) => [r.key, r]));
   const onCloseChoice = (key: string, choice: string) => {
     const r = rowByKey.get(key);
     if (!r) return;
     if (choice === "minimum") complete(r, { mvv: true });
     else if (choice === "tomorrow") moveToTomorrow(r);
+    else if (choice === "anytime") clarify(r.template.id, "anytime");
+    else if (choice === "drop") remove({ id: r.template.id, title: r.template.title }, "Dropped", () => archiveTask(r.template.id, REFRESH));
+    else if (choice === "skip") skip(r);
   };
+  const rollKeys = rollAllKeysOf(closeItems);
   const rollAll = () => {
-    for (const item of closeItems) if (item.choices.some((c) => c.id === "tomorrow")) onCloseChoice(item.key, "tomorrow");
+    for (const key of rollKeys) onCloseChoice(key, "tomorrow");
+  };
+  const closeDone = () => {
+    const clean = note.trim();
+    if (live && (clean || mood != null)) {
+      dutyWrite(
+        () => saveReflection(current.today, clean, mood, REFRESH),
+        () => {
+          setNote("");
+          setMood(null);
+          announce("Noted. Never graded.");
+        }
+      );
+    }
+    setCloseOpen(false);
+  };
+  const reflection = live
+    ? {
+        note,
+        onNote: setNote,
+        mood,
+        onMood: (m: number) => setMood((x) => (x === m ? null : m)),
+        restTomorrow: !!restSwitch?.checked,
+        onRestTomorrow: (v: boolean) => {
+          if (!restSwitch) return;
+          if (v) dutyWrite(() => declareRest(restSwitch.day, REFRESH));
+          else dutyWrite(() => cancelRest(restSwitch.day, undefined, REFRESH));
+        },
+        restLabel: restSwitch?.label,
+        restDisabledReason: restSwitch?.disabledReason ?? null,
+        showRest: !!restSwitch,
+      }
+    : undefined;
+
+  // The Asks: two at most, then 'n more' (once Duty is live; before, every Ask shows, as before M2).
+  const { shown: asksOnScreen, more: asksMore } = asksShown(asks, asksExpanded || !live);
+
+  // The 'y' shortcut on this page opens Record yesterday.
+  useEffect(() => {
+    const open = () => setYesterdayOpen(true);
+    window.addEventListener(RECORD_YESTERDAY_EVENT, open);
+    return () => window.removeEventListener(RECORD_YESTERDAY_EVENT, open);
+  }, []);
+  // /today?sheet=yesterday opens it too (then the parameter goes), on arrival
+  // and on a same-route navigation (the bell's Record link while on /today:
+  // the board keeps its instance, so a mount-only read would miss it). Keyed
+  // on the router's search params; the page is force-dynamic, so they are
+  // known at render and need no Suspense boundary.
+  const sheetWanted = searchParams.get(SHEET_PARAM) === YESTERDAY_SHEET;
+  useEffect(() => {
+    if (!sheetWanted) return;
+    // Deferred, and the address rewritten only when it fires, so a cancelled
+    // first run (Strict Mode mounts effects twice) leaves the parameter for the second.
+    const raf = window.requestAnimationFrame(() => {
+      const params = new URLSearchParams(window.location.search);
+      params.delete(SHEET_PARAM);
+      const q = params.toString();
+      // `null` state, as the Next docs show: the router patches replaceState and keeps its search params in step.
+      window.history.replaceState(null, "", `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`);
+      setYesterdayOpen(true);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [sheetWanted]);
+
+  /** One owed card (and, under it, the miss prompt when this template has earned one). */
+  const renderOwedCard = (card: OwedCard) => {
+    const done = madeUp[card.instanceId];
+    const view = makeUpViewOf(card, current.today);
+    return (
+      <MakeUpCard
+        key={card.instanceId}
+        item={{ ...view, resolved: done ? { repaid: done.line, minimum: done.line, writtenOff: done.line } : undefined }}
+        state={done ? done.state : "open"}
+        busy={owedBusy === card.instanceId || busyTemplates.has(card.templateId)}
+        onMakeUp={(from) => makeUpOwed(card, false, from)}
+        onMinimum={view.minimum ? (from) => makeUpOwed(card, true, from) : undefined}
+        onAcceptLoss={card.canWriteOff ? () => acceptLossOwed(card) : undefined}
+      >
+        {!done && prompt?.instanceId === card.instanceId && (
+          <MissPrompt
+            copy={missPromptCopyOf(card, viewCtx)}
+            busy={dutyBusy}
+            onAddMinimum={(text) => dutyWrite(() => setMinimum(card.templateId, text, null, REFRESH), (v) => setNotice(`${card.title} has a minimum version now: ${v.mvv}.`))}
+            onStop={() => dutyWrite(() => setCompulsory(card.templateId, false, REFRESH), (v) => setNotice(unflagLine(card.title, v)))}
+            onNotNow={() => setFlag(missPromptKey(card.templateId, card.lastMissDay), "later")}
+          />
+        )}
+      </MakeUpCard>
+    );
   };
   const prominent = closeDayProminent(clock);
 
@@ -1160,14 +1689,34 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               </Button>
             </div>
           )}
+          {/* M2: one Duty card at most in .o1 (board-ui.ts o1CardOf); never owed-toned, never hiding the Record-yesterday Ask. */}
+          {o1 === "settled" && settled && (
+            <div className="o1">
+              <YesterdaySettled sectionRef={settledRef} title={settledTitle} chips={settledChips} note={settled.note ?? ""} onOk={dismissSettled} />
+            </div>
+          )}
+          {o1 === "rest" && banner && (
+            <div className="o1">
+              <RestBannerCard
+                held={HELD_GLYPH[banner.kind]}
+                text={banner.text}
+                cancelLabel={banner.cancelLabel}
+                onCancel={banner.cancelDay ? () => cancelDeclared(banner.cancelDay!, banner.cancelTo ?? undefined) : undefined}
+                busy={dutyBusy}
+              />
+            </div>
+          )}
 
           <div className="o2">
             <DayLedger
-              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept }}
-              caption={streakCaption}
-              freezes={streak.bankedFreezes > 0 ? { banked: streak.bankedFreezes } : null}
+              streak={{ count: shown.streakNow, capped: streak.capped, kept: shown.snapshot.kept, broken: ledgerDuty.broken }}
+              caption={ledgerDuty.caption ?? streakCaption}
+              freezes={ledgerDuty.freezes}
+              heldNote={ledgerDuty.heldNote}
+              fullNote={ledgerDuty.fullNote ?? undefined}
+              aside={ledgerDuty.aside ?? undefined}
               fullDay={shown.fullDay}
-              settles={false}
+              settles={ledgerDuty.settles}
               glint={beat?.glint}
               stampLanding={beat?.full}
               xp={board.lifeXpToday}
@@ -1195,7 +1744,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             />
           </div>
 
-          {asks.map((a) => (
+          {asksOnScreen.map((a) => (
             <AskCard
               key={a.id}
               className="o4"
@@ -1208,10 +1757,15 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               onAction={a.id === "yesterday" ? () => setYesterdayOpen(true) : undefined}
             />
           ))}
+          {asksMore > 0 && (
+            <button type="button" className="asks-more o4" aria-label={`Show ${asksMore} more`} onClick={() => setAsksExpanded(true)}>
+              {asksMore} more
+            </button>
+          )}
         </div>
 
         <div className="c2" data-tour="today-lanes">
-          {board.must.length > 0 && (
+          {mustView.show && (
             <Lane
               id="must"
               title="Must"
@@ -1219,10 +1773,33 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               kept={shown.mustLaneKept}
               landing={beat?.lane}
               bodyRef={mustBodyRef}
-              count={`${mustTally.kept} of ${mustTally.total} kept`}
+              count={mustView.count ?? undefined}
+              badge={
+                mustView.chips.length > 0
+                  ? mustView.chips.map((c) => (
+                      <Chip key={c.text} tone={c.tone} held={c.held} icon={c.icon}>
+                        {c.text}
+                      </Chip>
+                    ))
+                  : undefined
+              }
               className="o5"
             >
               {board.must.map(renderRow)}
+              {/* M2: the debts after today's musts: one card, or one collapsed summary once two are open. */}
+              {openOwed.length >= 2 ? (
+                <OwedSummary
+                  total={owedTotal}
+                  count={openOwed.length}
+                  {...owedSummaryOf(openOwed, current.today)}
+                  open={owedOpen}
+                  onOpenChange={setOwedOpen}
+                >
+                  {laneCards.map(renderOwedCard)}
+                </OwedSummary>
+              ) : (
+                laneCards.map(renderOwedCard)
+              )}
             </Lane>
           )}
           {(planned.length > 0 || habits.length === 0) && (
@@ -1234,6 +1811,12 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
             <Lane id="habits" title="Habits" count={`${habitTally.kept} of ${habitTally.total}`} className="o7" note={habits.length > 0 && planned.length === 0 ? plannedNote : null}>
               {habits.map(renderRow)}
             </Lane>
+          )}
+          {/* M2: 'Owed: 2 · −12.5' at the foot of the lanes; nothing at 0. A tap goes to the Must lane, summary open. */}
+          {openOwed.length > 0 && (
+            <div className="o8">
+              <OwedRow count={openOwed.length} total={owedTotal} onOpen={openOwedRow} />
+            </div>
           )}
         </div>
 
@@ -1326,10 +1909,25 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               </span>
               <span className="close-txt">
                 <b>Close the day</b>
-                <span>{closeItems.length > 0 ? `${closeItems.length} still open: move it, or do a must's minimum.` : "Nothing left open. Rest well."}</span>
+                <span>
+                  {closeItems.length > 0
+                    ? live
+                      ? `${closeItems.length} still open: move it, do a minimum, or leave it.`
+                      : `${closeItems.length} still open: move it, or do a must's minimum.`
+                    : "Nothing left open. Rest well."}
+                </span>
               </span>
               <Icon name="chev" size={16} className="ink-2" />
             </button>
+            {/* M2: the always-present way to rest, be sick or plan a vacation, once Duty has a launch day. */}
+            {launchDay && (
+              <div className="close-more">
+                <button type="button" className="close-off" onClick={() => setTimeOffOpen(true)} aria-haspopup="dialog">
+                  <HeldGlyph kind="rest" size={18} />
+                  Time off
+                </button>
+              </div>
+            )}
           </section>
 
           <div className="foot-note o11">
@@ -1361,15 +1959,69 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       <Sheet
         open={yesterdayOpen}
         onClose={() => setYesterdayOpen(false)}
-        title="Record yesterday"
-        description={`Anything you tick pays at the full rate, ${recordBy}.`}
+        title={ys.title}
+        description={ys.description}
+        footer={ys.settle ? <SettleFooter label={ys.settle.label} until={ys.settle.until} lock={ys.settle.lock} onSettle={settleNow} busy={dutyBusy} /> : undefined}
       >
+        {ys.honesty && <p className="y-honesty">{ys.honesty}</p>}
         {board.yesterdayRows.length === 0 ? (
           <p className="t-meta">Nothing from yesterday is left to record.</p>
         ) : (
           <div className="card lane-body sheet-rows">{board.yesterdayRows.map(renderRow)}</div>
         )}
+        {ys.freeze && (
+          <FreezeOption label={ys.freeze.label} sub={ys.freeze.sub} checked={ys.freeze.checked} disabled={ys.freeze.disabled || dutyBusy} onChange={spendFreezeNow} />
+        )}
+        {yesterdayOpen && error && (
+          <p role="alert" className="t-meta">
+            {error}
+          </p>
+        )}
       </Sheet>
+
+      {launchDay && (
+        <RestControls
+          open={timeOffOpen}
+          onClose={() => {
+            setTimeOffOpen(false);
+            setVacationOpen(false);
+          }}
+          options={restOptions.map((o) => ({
+            kind: o.kind,
+            title: o.title,
+            meta: o.meta,
+            action: o.action,
+            disabledReason: o.disabledReason,
+            onAction: () => restAction(o.kind, o.day),
+          }))}
+          extra={
+            <>
+              {vacationOpen && (
+                <VacationForm
+                  min={vacationMin}
+                  initialTo={addDays(vacationMin, 6)}
+                  validate={(from, to) => vacationRangeError(from, to, { today: current.today, launchDay })}
+                  onSubmit={submitVacation}
+                  busy={dutyBusy}
+                />
+              )}
+              <CancelList
+                items={cancellable.map((c) => ({ key: `${c.from}|${c.to}`, label: c.label, held: HELD_GLYPH[c.kind] }))}
+                onCancel={(key) => {
+                  const [from, to] = key.split("|");
+                  cancelDeclared(from, to);
+                }}
+                busy={dutyBusy}
+              />
+              {timeOffOpen && error && (
+                <p role="alert" className="t-meta">
+                  {error}
+                </p>
+              )}
+            </>
+          }
+        />
+      )}
 
       <Sheet open={capacityOpen} onClose={() => setCapacityOpen(false)} title="Capacity" description="Planned time against the day you have.">
         <CapacityPanel
@@ -1417,10 +2069,11 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         description="Optional. Move what is left, or do a must's minimum. Moving changes nothing already paid."
         items={closeItems}
         onChoose={onCloseChoice}
-        onRollAll={closeItems.some((i) => i.choices.some((c) => c.id === "tomorrow")) ? rollAll : undefined}
-        busy={busyTemplates.size > 0}
-        doneLabel="Done"
-        onDone={() => setCloseOpen(false)}
+        onRollAll={rollKeys.length > 0 ? rollAll : undefined}
+        reflection={reflection}
+        busy={busyTemplates.size > 0 || dutyBusy}
+        doneLabel={live ? "Close today" : "Done"}
+        onDone={closeDone}
       />
     </div>
   );

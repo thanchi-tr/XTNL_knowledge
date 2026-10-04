@@ -63,7 +63,7 @@ A. SIZING (once per template, src/lib/life-lexicon.ts and life-sizing.ts)
      - Minutes sanity cap: machineMinutes ≤ 5 allows at most STANDARD; ≤ 15 allows at most DEMANDING.
    - composition = normaliseComposition(0.6·AI + 0.4·lexical).
    - Store gradeConfidence = 0.6 + 0.4·lexConf, lexicalBand, aiBand, gradeModel, gradePromptVersion, aiGradedAt, and gradeBasis = rationale cut to 200 chars.
-   - On failure keep the lexical grade, add ' · AI unavailable', and increment gradeAttempts. From M2 the life cron retries while gradeAttempts < 2 and the grade is not frozen (at most 10 per run).
+   - On failure keep the lexical grade, add ' · AI unavailable', and increment gradeAttempts. 'Resize' can ask again while gradeAttempts < 2 and the grade is not frozen. The life cron (M2) does not retry sizings: a failed one already leaves an honest lexical grade (m2-refit.md decision 28).
 5. Freeze: gradeFrozenAt = the earlier of the first completion and createdAt + 24 h. Neither the AI nor 'Resize' can change the machine grade after that.
 6. Self-rating: bandOverride is clamped so the effective band is never above machine+1 and never below INTRO. It affects future completions only and is printed as 'self-rated' on every receipt. After the first completion it can change at most once per 7 days.
 7. Typed minutes count as self-rated effort: est_eff = min(estMinutes, 2 × machineMinutes).
@@ -93,9 +93,9 @@ raw = B × E × T × C × D × V × K
 C. DAILY KNEE and RESTED BONUS (shared by all life XP)
 - g(R) = R for R ≤ 100; 100 + 100·ln(1 + (R−100)/100) above 100; hard cap 300 (reached at R ≈ 739).
 - paid = g(R_before + raw') − g(R_before), where R_before = SUM(rawXp) today. The day's total is therefore g(ΣR) in any completion order.
-- The only XP outside the knee is DEBT and DEBT_REPAID.
-- Rested bonus (M2): on the first active day after a declared REST or VACATION day, raw' adds 10% on the part of [R_before, R_before+raw] that falls below 50.
-- Concurrent completions or an UNDO can leave a small drift. Settlement appends an ADJUST ('knee:<day>:<n>', detail KNEE_RECONCILE) whenever |Σpaid − g(ΣR)| > 0.05.
+- The only XP outside the knee is DEBT and DEBT_REPAID (positive and negative), which carry rawXp NULL, so they never enter the knee base.
+- Rested bonus: not yet in force (deferred from M2, m2-refit.md decision 33). The plan: on the first active day after a declared REST or VACATION day, raw' adds 10% on the part of [R_before, R_before+raw] that falls below 50. It is a new receipt factor in frozen pricing, so it ships on its own.
+- Knee reconcile: not yet in force (deferred, decision 33). Concurrent completions or an UNDO can leave a small drift; the knee is linear below 100 raw, so drift needs more than 100 raw on one day plus an out-of-order undo. KNEE_RECONCILE_TOLERANCE (0.05) stays in life-grade.ts as the hook. Whoever builds it: Σpaid filters source IN ('TASK', 'UNDO') AND rawXp IS NOT NULL (plus knee ADJUST rows), and the ADJUST row ('knee:<day>:<n>', detail KNEE_RECONCILE) carries templateId NULL and countsForStreak false.
 - No daily XP bar is shown. The position on the knee appears on the receipt only.
 
 Golden values (checked by script):
@@ -139,17 +139,35 @@ D. WORKOUT PRICE (M4, pure body-grade.ts)
   - Pays +10 raw XP through the knee. (The 0.5 MP planned for M5 is gone with M4: LIFE_PR is reserved and never minted.)
 - Gauges: CTL = 42-day and ATL = 7-day EWMA of daily load; Form = CTL − ATL. Shown only after 28 days, otherwise 'calibrating n/28'. No injury or ACWR claims.
 
-E. COMPULSORY DEBT (M2)
-- Day d is judged at dayEnd(d) + 24 h, i.e. at 04:00 local on d+2. The user has the whole next day to record it at T 1.00.
-- debt = min(20, round1(B × E(est_eff))), with no C, no D and no knee. It never grows. It is written as DEBT, sink TRACK on DUTY, whatever the task's own track.
-  - Examples: dishes 4.2, 'stretch 15m' 8.3, a SEVERE 240-min task 20.
-  - Study-linked tasks owe B × E too; the stakes are the promise, not the pay.
-- Caps: ≤ 3 open debts per template and ≤ 100 XP open in total. Beyond that the miss is recorded MISSED with 0 debt ('debt capped').
-- Repayment by a make-up (T 0.85) or its MVV (K 0.3) appends DEBT_REPAID for the full amount.
-- Net effect is monotone: on time +P; missed then made up +0.85·P'; missed −debt.
-- Make-up within 48 h of dayEnd(d) restores the per-duty streak, at most once per 7 days per template.
-- A freeze, rest, sick or vacation day means EXCUSED with no debt, unless the task is compulsoryOnRest (meds).
-- Archiving a template never erases its open debt; its make-up card stays. 'Accept the loss' is available after 14 days only when LifeSettings.debtWriteOff is on (user decision, default off). It keeps the DEBT row and adds DEBT_WRITTEN_OFF.
+E. COMPULSORY DEBT (M2; constants in src/lib/duty-economy.ts, debtFor in life-grade.ts, the rule over time in duty-rule.ts; spec m2-refit.md)
+- Launch. Nothing is judged before DUTY_LAUNCH_DAY (a Monday the lead sets; null until then, so Duty is inert). The first judged day is firstDutyDay = max(DUTY_LAUNCH_DAY, epochDay). A LifeSettings row created after launch starts its cursor at epochDay − 1, so a 'life' reset never switches Duty off. The launch script sets the cursor to firstDutyDay − 1, possibly days before the launch.
+- Timing, on life-day keys and never hours (DST makes some days 23 or 25 hours long):
+  - Day d settles at 04:00 local on d + 2: d is judgeable when d ≤ today − 2 (SETTLE_LAG_DAYS). The user has the whole next day to record it at T 1.00. 'Settle yesterday' judges it early, and a settled day is locked: a tick, record or undo on a settled day is refused ('Wednesday is settled. Make it up from its card.').
+  - The one settled-day rule is duty-economy.ts settledFor(d, cursor, floor) = cursor set, d ≤ cursor and (no launch day, or d ≥ floor), with floor = firstDutyDay(epochDay). Every check uses it: the tick, record and undo refusals, the completion guard's SQL (d ≤ settledThroughDay and d ≥ GREATEST(launch, epochDay) when a launch day is set), the manual freeze, the board's yesterday lane and the weekly review's facts. A day before the first judged day is never settled, so a launch cursor set ahead of the launch locks no pre-launch day; with no launch day (a rollback) the cursor alone locks.
+  - 'Within 48 h of dayEnd(d)' is the make-up's life day ≤ d + 2 (MAKEUP_RESTORE_DAYS). '14 days old' is today ≥ d + 14 (WRITE_OFF_MIN_DAYS).
+  - Settlement runs after the response (never in render) through one maintenance chain, settle first and judge second, and from a daily cron at 18:15 UTC (04:15 AEST, 05:15 AEDT). It writes only where lifeWritesEnabled() and the cursor is set. Running it twice, or on two devices at once, writes nothing new.
+- debt = min(20, round1(B × E(est_eff))) (debtFor), with no C, D, V, T, K and no knee. It never grows. It is written as DEBT dated d: sink TRACK on DUTY whatever the task's own track, xp −debt, rawXp NULL, compositionKey 'debt', countsForStreak false, key 'debt:<tpl>:<d>:<slot>'.
+  - Examples: dishes (INTRO, 15 min) 4.2; 'stretch 15m' (STANDARD, 15) 8.3; a SEVERE 240-min task 20 (48.6 uncapped).
+  - Study-linked tasks owe B × E too; the stakes are the promise, not the pay. Before charging, settlement re-derives the day's auto-completion from the ledger (REVIEW and IDEA_CREATE counts on d): when it was met, it writes the same 0-XP TASK row and DONE instance the auto-completer would have (countsForStreak false), never a debt. REVIEW_DUE is met when the day-open target was 0 or reviews on d ≥ that target; with no DAY_OPEN row it is missed. A study must made up by hand pays 0 (K 0) and repays the debt.
+- Caps: ≤ 3 open debts per template and ≤ 100 XP open in total, applied in templateId, day, slot order. Beyond that the miss is recorded MISSED with 0 debt ('debt capped').
+- Make-up: priced by the shared pricer with the make-up flag: T 0.85 (MAKE_UP) and C 1.00 whatever the streak. Its minimum version pays K 0.3 as well (both apply: a minimum done late is both).
+  - Goldens: dishes made up 5 × 0.833 × 0.85 = 3.5; 'stretch 15m' at its minimum, made up, 10 × 0.833 × 0.3 × 0.85 = 2.1.
+  - It appends the TASK row (dated the make-up day; its key keeps the missed day, 'task:<tpl>:<d>:<slot>:<attempt>'; it counts for the streak: it is today's activity) and DEBT_REPAID for the full debt (dated the make-up day, xp +debt, rawXp NULL, compositionKey 'debt', countsForStreak false, key 'repaid:<tpl>:<d>:<slot>:<n>', n = the 'unrepaid:' rows already on that slot).
+  - Restored: a make-up on or before d + 2, with no other repaired instance of the template in (makeUpDay − 7, makeUpDay], writes DONE_LATE (DONE_MVV for a minimum) with repaired = true: the per-duty streak, its C factor and the Duty week come back. Otherwise it writes MADE_UP: the debt is cleared, the occurrence still reads missed (habit.ts BREAKS).
+  - Undo: within 10 minutes on the same life day. It appends the usual 'undo:<taskRowId>' UNDO of the TASK row and reverses the repayment with a negative DEBT_REPAID {xp −debt, rawXp NULL, compositionKey 'debt', countsForStreak false, key 'unrepaid:<repaidRowId>'}, never an UNDO row (an UNDO counts −1 streak unit and would take a second unit off the day). The instance goes back to MISSED, debtOpen, not repaired. A make-up then its undo nets 0 XP and 0 streak units on the make-up day; a second make-up keys 'repaid:…:1'.
+- Net effect is monotone: on time +P; missed then made up +0.85·P' (the dishes ledger: −4.2 + 4.2 + 3.5 = +3.5); missed −debt; made up then undone −debt.
+- A late deadline one-off is kept (by settlement and by the week judge alike) when it is done by dueDay + 2, whichever path recorded it. Done before its due day is settled (DONE_LATE, T 0.85, stored on its completion day): nothing is charged. Its minimum done late (DONE_MVV dated after dueDay, by dueDay + 2) holds it, as the minimum on time does, and is never charged. Not done when its due day settles: MISSED on dueDay with a DEBT, and from then on only its make-up card (a tick on the task is refused: 'Make it up from its card.'). The week judge applies this rule only to weeks whose Sunday is on or after DUTY_LAUNCH_DAY; earlier weeks keep M5's (F below).
+- An Inbox item is never expected, for settlement, the week judge and the board alike, until it is clarified; clarifying it into a schedule is a strengthening, expected from the clarify day.
+- Freezes: balance = count(FREEZE_EARN) − count(FREEZE_USE) over all history (plus what the run itself plans), at most 2, starting at 0, so a manual spend for yesterday stops an automatic spend on an older unsettled day once the balance is 0. One is earned on a settled active day once ≥ 7 active days lie in (max(last earn day, firstDutyDay − 1), d] and the balance is below 2 ('freeze-earn:<d>'). A freeze covers a no-activity day only (net streak units ≤ 0): settlement spends one by itself only when that protects something (d − 1 active or held, or a non-excused must due on d; a study must already met without activity, REVIEW_DUE on a day that opened with nothing due, protects nothing); by hand it is offered only for an unsettled yesterday with no activity. Either spend writes 'freeze-use:<d>' (one key, so both can never land) and excuses all of that day's musts, 'Even on rest days' included.
+- Rest, sick and vacation (RestDay rows, read only through duty-rule.ts heldDaysOf):
+  - REST is declared before its day starts, at most 2 per life week; SICK may be declared the same day, once per 14 days; VACATION runs 3 to 30 consecutive days from tomorrow, at most 30 VACATION days in any 365 (the new ones included; cancelled days are refunded). Future days may be cancelled before they start. Every declaration resets declaredAt, and settlement ignores a REST or VACATION row declared at or after its day started and a SICK row declared at or after its day ended.
+  - A held day (rest, sick, vacation or freeze) holds everything: settlement writes EXCUSED for every expected recurring occurrence, compulsory or not, with no debt, except compulsory templates marked 'Even on rest days' (compulsoryOnRest, for meds), which are owed as usual on rest, sick and vacation days; only a freeze excuses them.
+- Repair: a Full day d repairs d − 1 (REPAIR dated d − 1, 'repair:<d − 1>', a held source) when d − 1 was neither active nor held, d − 2 was active or held, d − 1 ≥ firstDutyDay, and no REPAIR lies in (d − 8, d − 1).
+- A missed must breaks its own per-duty streak, its C factor and the Duty kept week. It never breaks the global daily streak on a day with other activity (user answer 1).
+- Rows written after the fact never count for the streak: everything settlement writes (the study-must TASK row, FULL_DAY, REPAIR, FREEZE_*, DEBT) carries countsForStreak false, and NEVER_STREAK_SOURCES includes DEBT_REPAID, DEBT_WRITTEN_OFF, FULL_DAY and REPAIR (REPAIR still holds the day through HELD_SOURCES).
+- Debt lowers Duty XP and so Duty's level, silently: trackXp is max(0, Σ). A level-down plays nothing; a level re-reached replays no Seal. The weekly review shows the week's Duty XP 'of which −12.5 debt'.
+- Archiving a template never erases its open debt; its make-up card stays ('(archived)'). 'Accept the loss' is offered on a debt ≥ 14 days old only when LifeSettings.debtWriteOff is on (Settings › Days, default off). It writes WRITTEN_OFF and DEBT_WRITTEN_OFF (sink NONE, qty = the debt, countsForStreak false, 'writeoff:<tpl>:<d>:<slot>') and keeps the DEBT row; a one-off is archived with it.
+- The akrasia horizon. Weakening a must (no longer a must, 'Even on rest days' off, archiving or dropping it) takes effect today + 7 when Duty is live and the template is more than 60 minutes old; until then every day is judged under the old rule. Turning a scheduled must back into an idea draft would be a weakening a pending change cannot hold, so it is refused then ('Tap Not a must first'); a compulsory deadline is never put off past its own day (moveBlockOf). Strengthening ('Even on rest days' on, cancelling a pending change) is immediate from today and never reaches back. Before launch every edit is immediate. The rule over time lives in TaskTemplate.pendingChange (data-model.md), and the board, settlement and the week judge all read it through duty-rule.ts ruleOn.
 
 F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tracks.ts, judgement in life-weeks.ts)
 - Four fixed tracks. Their seed compositions are TRACK_SEED in src/lib/life-lexicon.ts:
@@ -183,17 +201,24 @@ F. TRACKS AND LEVELS (M5; constants in src/lib/life-economy.ts, maths in life-tr
   - BODY: the same, plus ≥ 150 effort minutes (BODY_EFFORT_MINUTES).
     - Effort minutes come from EXERCISE-category receipts only, as minutes × the weight of the receipt's band (its B factor): INTRO 5 → 0, STANDARD 10 → 1, DEMANDING 20 and SEVERE 35 → 2. This is WHO's moderate-equivalent rule applied to the band.
     - HEALTH minutes never count.
-    - There is no strength-day rule and no pro-rating until M2's rest days.
-  - DUTY: count the occurrences of every compulsory TASK or HABIT template, on any track, on days ≥ max(startDay, epochDay) and before the day it was archived:
+    - There is no strength-day rule. Floors pro-rate for declared rest days (M2, below).
+  - DUTY: count the occurrences of every compulsory TASK or HABIT template, on any track, on days ≥ max(startDay, epochDay) and before the day it was archived. From M2 the rule on each day is duty-rule.ts ruleOn (a pending weakening and earlier rule segments included; the judge reads compulsory templates and every template with a pendingChange), and an Inbox item is never an occurrence:
     - Fixed schedules: occurrencesBetween over the week.
-    - TARGET:n/W: n occurrences. kept = min(n, distinct kept days); held = min(n − kept, distinct held days); the rest are missed. Skip it that week if the template started after Monday. Monthly targets are not judged weekly.
-    - A compulsory one-off due in the week: one occurrence, kept or held by a done instance on or before its due day.
-    - The outcome comes from habit.ts instanceOutcome: DONE and DONE_LATE are kept; DONE_MVV, SKIPPED and EXCUSED hold; MISSED, WRITTEN_OFF or no instance are missed. UNDONE reads as absent.
+    - TARGET:n/W: n units (habit.ts targetUnits). kept = min(n, distinct kept days + kept make-up slots); held = min(n − kept, distinct held days + held make-up slots); the rest are missed. Each make-up slot (settlement writes one MISSED slot per unit short on the period's last day) is its own unit; a MADE_UP slot counts nothing. Skip it that week if the template started after Monday. Monthly targets are not judged weekly.
+      - From M2 a TARGET week is judged only when the template is compulsory under ruleOn on both its Monday and its Sunday (and not archived in it): a weakening before Sunday drops it, and a strengthening after Monday is never retroactive (decision 16). Settlement charges a TARGET period by the same rule.
+      - Its held days are the freeze days plus each rest day on which ruleOn(template, that day) is not 'Even on rest days', so a switch made mid-week holds the days before it under the old rule.
+    - A compulsory one-off due in the week: one occurrence, kept by a DONE instance by its due day, a DONE_LATE one by dueDay + 2 (the one-off read reaches Sunday + 2), or a repaired make-up on its due day; held by DONE_MVV by dueDay + 2.
+    - Weeks whose Sunday is before DUTY_LAUNCH_DAY (and every week while it is null) keep M5's rules in full: an Inbox must and a compulsory PLANNED one-off still count, and a deadline done after its due day is missed.
+    - The outcome comes from habit.ts instanceOutcome: DONE and DONE_LATE are kept; DONE_MVV, SKIPPED and EXCUSED hold; MISSED, WRITTEN_OFF, MADE_UP or no instance are missed. UNDONE reads as absent. For a settled day every expected occurrence has an instance, so 'no instance' only ever applies to unsettled days, which the DUTY gate keeps from being judged.
     - Any missed occurrence means the week is not kept.
     - Otherwise, with ≥ 3 occurrences (DUTY_MIN_OCCURRENCES), it is kept iff Duty raw ≥ 30.
     - Otherwise, with 0–2 occurrences, it is kept iff there are ≥ 5 Duty completions (DUTY_FALLBACK_COMPLETIONS) on ≥ 3 days and raw ≥ 30.
     - An MVV holds the must and still needs the floor.
-  - Held days (rest, vacation) are an input that M2 fills. In M5 there are none, so no week is 'held'.
+  - Held weeks and pro-rated floors (M2). restDays are the week's days held by a declared rest, sick or vacation day (heldDaysOf over RestDay rows); held days are restDays plus FREEZE_USE days.
+    - Floors pro-rate by f = (7 − restDays)/7 (life-economy keptFloorsOf): days max(1, ceil(3 × f)), raw 30 × f and BODY effort 150 × f rounded to 1 dp (so the rule and the reason line use one number, '107 of 107.1 effort min'), DUTY's fallback completions ceil(5 × f). Two rest days give BODY 107.1 effort minutes and a Duty fallback of 4 completions. The days floor never drops to 0, so an all-rest week with nothing done is held, not vacuously kept. Freeze days never pro-rate.
+    - A week is Kept when its pro-rated floors are met (a met week is never downgraded); a kept week with rest days adds ' · 2 rest days' to its line. Otherwise it is Held when restDays ≥ 5 (HELD_WEEK_REST_DAYS), else Not kept. A DUTY week with a missed must is never Held, whatever the rest count (decision 23).
+    - A Held week is written WEEK qty 0 with the structural receipt {mark: 'held', restDays} and the display line 'Held · 5 rest days'. It bridges keptStreak, adds no kept week and mints nothing. One helper, life-tracks.ts weekMarkOf(row), reads the mark; no reader parses the detail line.
+  - The DUTY gate (M2). Once Duty is live, the DUTY WEEK row of a week whose Sunday ≥ DUTY_LAUNCH_DAY, and that week's full-day mints, are planned only once its Sunday ≤ settledThroughDay, because settlement writes Duty's occurrences. BODY, CRAFT and CARE are judged on the Wednesday as before, whatever settlement is doing. Normally Sunday settles Tuesday 04:00 and the judge runs Wednesday 04:00, so the gate costs nothing; when the cursor lags more than 3 days behind today − 2 (DUTY_LAG_NOTICE_DAYS), /today/rules says 'Duty is settled through <day>'.
   - Each judgement is one WEEK row per track: 'week:<TRACK>:<YYYY-Www>', qty 1 when kept or 0, day = the week's Sunday.
     - Its detail is the reason line. Kept: 'Kept · 4 days · 52.0 raw XP'; BODY adds ' · 180 effort min'. When there were musts, DUTY adds ' · 5 musts kept', ' · 4 musts kept, 1 held' or ' · 7 musts held'.
     - Not kept: 'Not kept · ' plus only the failing parts, from '2 of 3 days', '12.0 of 30 raw XP', '90 of 150 effort min', '4 of 5 completions' and the missed musts. Any missed must is stated alone: '1 must missed (Tue)', '3 musts missed (Mon, Thu)', or '1 must missed (weekly target)' for a TARGET:n/W shortfall.
@@ -221,13 +246,15 @@ G. MASTERY POINTS FROM LIFE (M5; outcomes only, never XP conversion; constants i
 - Reasons (LIFE_MP):
   - LIFE_WEEK_KEPT pays 1.5 per kept track, dated the week's Sunday and written when the week is judged (from the Wednesday after): 'mp:LIFE_WEEK_KEPT:<TRACK>:<YYYY-Www>', why 'kept week <weekKey>'.
   - GOAL_SHORT pays 1, GOAL_MID 6 × g and GOAL_LONG 20 × g, minted on the close day: 'mp:GOAL:<goalId>'.
-  - LIFE_FULL_DAY (0.5) is minted from M2's settlement, through the same helper and cap.
+  - LIFE_FULL_DAY (0.5) per Full day (M2). Settlement only records the day: FULL_DAY {sink NONE, qty 1, countsForStreak false, key 'fullday:<d>'}. The week judge pays it, in the run that writes that week's DUTY WEEK row (so after the DUTY gate), after the kept-track mints, one per FULL_DAY row in day order, inside the same cap and the same life-mint lock: 'mp:LIFE_FULL_DAY:<d>', day d, why 'full day <d>' (+ ' · trimmed by the weekly cap'), qty 0 allowed. The copy says 'up to +0.5 MP, paid when the week is judged (Wed)'.
+  - A Full day is: every must due that day (duty-rule.ts mustsDueOn: fixed occurrences and deadline one-offs; TARGET musts never) done (DONE, DONE_LATE, DONE_MVV) or EXCUSED; the review quest met (the day-open target was 0, or reviews on d ≥ min(15, the target); with no DAY_OPEN row, 15 reviews); and at least one life deed (a live TASK whose template is not study-linked, #play included; a weigh-in alone is not one). There is no workout ring (M4 is dropped). The board and settlement use the one full-day.ts rule.
+  - The full days are minted last in the DUTY run, after the kept-track mints, and the week's Seal adds one line for them: '+1.0 MP from 2 full days.' (the Seal's MP is the kept tracks plus the full days).
   - LIFE_PR is dropped with M4. It stays reserved and is never minted.
   - Every mint's detail (MP_MINT.detail and MasteryLedgerEntry.detail) is '<REASON> · <why>', or the reason alone, for example 'GOAL_MID · 2 Mid goals paid in the last 30 days'.
 - The weekly cap is 8 MP per life week (LIFE_MP_WEEK_CAP; Monday–Sunday, by the mint's day). It is shared by LIFE_WEEK_KEPT, GOAL_SHORT and LIFE_FULL_DAY (CAPPED_REASONS).
-  - The trim order inside a week is: Short goals at close (they come first in time), then kept tracks in BODY, DUTY, CRAFT, CARE order, then full days (M2).
-  - A trimmed kept week's why adds ' · trimmed by the weekly cap'.
-  - In M5 the most a week can pay is 4 × 1.5 + 2 × 1 = 8, so nothing is trimmed until M2.
+  - The trim order inside a week is: Short goals at close (they come first in time), then kept tracks in BODY, DUTY, CRAFT, CARE order, then full days (M2), last.
+  - A trimmed kept week's or full day's why adds ' · trimmed by the weekly cap'.
+  - Kept tracks and Shorts alone are at most 4 × 1.5 + 2 × 1 = 8, so a kept track is never trimmed, and a DUTY mint written after CRAFT and CARE (the gate) never is either. With full days (M2) the reasons can reach 4 × 1.5 + 2 × 1 + 7 × 0.5 = 11.5: a perfect week with no Shorts pays tracks 6.0 + 4 full days × 0.5 = 8.0, and full days 5–7 write qty-0 rows 'trimmed by the weekly cap'; with 2 Shorts (2 + 6 = 8) every full day is trimmed.
   - MID and LONG goals are limited by their own windows, not by this cap.
 - Goals (GOAL_RULES):
 
@@ -293,7 +320,8 @@ I. WHAT THE USER SEES
 - Grade chip: 'lexical · 40%' → 'sizing…' → 'AI · 84%' (rationale on hover) → 'self-rated' → 'frozen'.
 - Receipt, for example: 'Demanding 20 × 150 min 1.33 × on time 1.00 × one-off 1.00 × 1st today 1.00 = 26.7 · full rate (46 of 100 used today) → Duty'.
 - Size panel: band blurbs ('Routine, no real resistance', 'Ordinary focused effort', 'Sustained strain, concentration or discomfort', 'Near your limit, or high stakes'), basis, source and confidence, prompt version, and 'Adjust size'.
-- /today/rules renders every constant straight from life-grade.ts and body-grade.ts. Its 'Tracks and kept weeks' card (M5) renders from life-economy.ts.
+- /today/rules renders every constant straight from life-grade.ts and body-grade.ts. Its 'Tracks and kept weeks' card (M5) renders from life-economy.ts, and its Duty cards (M2, from the launch day; before it, 'Musts carry stakes from Mon 12 Oct' once the day is set) from duty-economy.ts, with the debt and make-up examples priced live.
+- Capture (M2): once Duty is live, a must with a schedule shows its stake on the Must chip, 'Must · ≈ −4.2 if missed' (debtFor on the lexical grade; approximate, since the AI may resize within a day); before launch, 'Must · stakes from Mon 12 Oct'. A line with both '?' and '!' says 'A must once you clarify it'.
 
 J. SERVER CLAMPS AND WORST FORGED CASE
 - Reported minutes: [0.5, 2] × est_eff, and ≤ 480. Typed estimate 1..480, with est_eff ≤ 2 × machineMinutes.

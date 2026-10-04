@@ -20,6 +20,9 @@
  *       ' ' + ariaKeysOf('capture-anywhere').
  *   (f) The README's 'Keyboard shortcuts' table is generated from the list
  *       (`npx tsx scripts/shortcut-check.ts --write` regenerates it).
+ *   (g) M2: 'y' opens Record yesterday (the sheet on /today, the deep link
+ *       elsewhere), clear of every browser key and of every key and
+ *       sequence the app already has; 'g y' stays You.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -33,11 +36,15 @@ import {
   GLOBAL_HANDLED,
   MAC_NOTE,
   MODAL_OPEN_SELECTOR,
+  RECORD_YESTERDAY_EVENT,
+  RECORD_YESTERDAY_HREF,
+  RECORD_YESTERDAY_PARAM,
   SCOPE_NOTE,
   SEQUENCE_IDLE,
   SEQUENCE_MS,
   SEQUENCE_PREFIXES,
   SHORTCUTS,
+  SHORTCUT_GROUPS,
   STANDARD_KEYS,
   ariaKeysOf,
   decideShortcut,
@@ -138,14 +145,16 @@ console.log("\n── (b) Unique ids and keys");
   const byScope = new Map<string, string[]>();
   for (const s of SHORTCUTS) {
     const scope = s.scope === "anywhere" ? "global" : s.scope;
-    for (const k of s.keys) for (const one of expand(k)) byScope.set(scope, [...(byScope.get(scope) ?? []), canon(one)]);
+    // A sequence is compared whole ('g y'); canon() would collapse it to its last key and clash with a single 'y'.
+    for (const k of s.keys) for (const one of expand(k)) byScope.set(scope, [...(byScope.get(scope) ?? []), one.includes(" ") ? one : canon(one)]);
   }
   const dupes = [...byScope].flatMap(([scope, keys]) => keys.filter((k, i) => keys.indexOf(k) !== i).map((k) => `${scope}: ${k}`));
   check("keys are unique per scope (global and anywhere together)", dupes.length === 0, dupes.join("; "));
   const singles = new Set((byScope.get("global") ?? []).filter((k) => !k.includes(" ")));
   const prefixClash = [...SEQUENCE_PREFIXES].filter((p) => singles.has(canon(p)));
   check("a sequence prefix ('g') is no shortcut of its own", prefixClash.length === 0 && SEQUENCE_PREFIXES.size === 1 && SEQUENCE_PREFIXES.has("g"), prefixClash.join(", "));
-  check("every shortcut has a label, a group and keys", SHORTCUTS.every((s) => s.label.trim() && s.keys.length > 0 && ["Capture", "Go to", "Study", "Help"].includes(s.group)));
+  check("every shortcut has a label, a group and keys", SHORTCUTS.every((s) => s.label.trim() && s.keys.length > 0 && (SHORTCUT_GROUPS as readonly string[]).includes(s.group)));
+  check("groups: Capture, Today, Go to, Study, Help, each with at least one shortcut", SHORTCUT_GROUPS.join(",") === "Capture,Today,Go to,Study,Help" && SHORTCUT_GROUPS.every((g) => SHORTCUTS.some((s) => s.group === g)));
   check("every 'Go to' shortcut has an href", SHORTCUTS.filter((s) => s.group === "Go to").every((s) => !!s.href?.startsWith("/")));
   check("SEQUENCE_MS is 1.5 s, as the header says", SEQUENCE_MS === 1500);
 }
@@ -519,6 +528,39 @@ function readmeBlock(): string {
   check("shortcuts.css: no text under 12 px", sizes.length > 0 && sizes.every((px) => px >= 12), sizes.join(", "));
   const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   check("package.json: ui:check runs shortcut-check", pkg.scripts["ui:check"].includes("tsx scripts/shortcut-check.ts") && pkg.scripts["shortcut:check"] === "tsx scripts/shortcut-check.ts");
+}
+
+// ── (g) M2: 'y' opens Record yesterday ─────────────────────────────────────
+console.log("\n── (g) Record yesterday ('y')");
+{
+  const y = shortcutOf("record-yesterday");
+  check("y: one unmodified letter, page-wide (not while typing or with a dialog open), in the Today group", y.keys.length === 1 && y.keys[0] === "y" && y.scope === "global" && y.group === "Today" && y.label === "Record yesterday");
+  check("y: neither 'y' nor 'Shift+Y' is a Chrome or Edge shortcut", !RESERVED.has(canon("y")) && !RESERVED.has(canon("Shift+Y")));
+  check("y: the browsers' Y chords (Cmd+Y history, Ctrl+Shift+Y) stay reserved and are never ours", RESERVED.has("Cmd+Y") && RESERVED.has("Ctrl+Shift+Y") && !SHORTCUTS.some((s) => s.keys.some((k) => /\+Y$/i.test(canon(k)))));
+  const globalSingles = SHORTCUTS.filter((s) => s.scope === "global" || s.scope === "anywhere").flatMap((s) => s.keys.filter((k) => !k.includes(" ")).map(canon));
+  check("y: no other page-wide single key is y", globalSingles.filter((k) => k === "Y").length === 1, globalSingles.join(" "));
+  check("y: not a sequence prefix", !SEQUENCE_PREFIXES.has("y") && SEQUENCE_PREFIXES.has("g"));
+  check("y: the global handler answers it (the capture sheet owns only 'c' and Alt+N)", CAPTURE_OWNED.join(",") === "capture,capture-anywhere" && GLOBAL_HANDLED.some((s) => s.id === "record-yesterday"));
+  check("y: its href is the Today deep link /today?sheet=yesterday", y.href === RECORD_YESTERDAY_HREF && RECORD_YESTERDAY_HREF === "/today?sheet=yesterday" && RECORD_YESTERDAY_PARAM === "sheet");
+  const ev = (k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  const env = (over: Partial<ShortcutEnv> = {}): ShortcutEnv => ({ target: { tagName: "BODY", closest: () => null }, modalOpen: false, reviewSession: false, now: 5_000, ...over });
+  check("y: 'y' on the page runs Record yesterday", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env()).run?.id === "record-yesterday");
+  const g = decideShortcut(ev("g", { code: "KeyG" }), SEQUENCE_IDLE, env({ now: 1000 }));
+  const gy = decideShortcut(ev("y", { code: "KeyY" }), g.seq, env({ now: 1200 }));
+  check("y: 'g y' still goes to You (the sequence owns the key after 'g')", gy.run?.id === "go-you" && gy.consume);
+  const late = decideShortcut(ev("y", { code: "KeyY" }), g.seq, env({ now: 1000 + SEQUENCE_MS + 1 }));
+  check("y: 'y' after the sequence window runs Record yesterday (the window is over)", late.run?.id === "record-yesterday");
+  check("y: typed in a field does nothing", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env({ target: { tagName: "INPUT", closest: () => null } })).run === null);
+  check("y: with a dialog open does nothing", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env({ modalOpen: true })).run === null);
+  check("y: during a review session does nothing", decideShortcut(ev("y", { code: "KeyY" }), SEQUENCE_IDLE, env({ reviewSession: true })).run === null);
+  check("y: Shift+Y and Ctrl+Y run nothing", decideShortcut(ev("Y", { shiftKey: true, code: "KeyY" }), SEQUENCE_IDLE, env()).run === null && decideShortcut(ev("y", { ctrlKey: true, code: "KeyY" }), SEQUENCE_IDLE, env()).run === null);
+  const shell = code(read("src/components/shell/Shortcuts.tsx"));
+  check(
+    "Shortcuts.tsx: on /today 'y' asks the board (RECORD_YESTERDAY_EVENT); elsewhere it opens the deep link",
+    /if \(s\.id === "record-yesterday"\) \{[\s\S]{0,200}?if \(pathRef\.current === "\/today"\) window\.dispatchEvent\(new Event\(RECORD_YESTERDAY_EVENT\)\);\s*else router\.push\(RECORD_YESTERDAY_HREF\);/.test(shell)
+  );
+  check("Shortcuts.tsx: the help sheet lists the groups in SHORTCUT_GROUPS order (Today among them)", /const GROUPS: readonly Shortcut\["group"\]\[\] = SHORTCUT_GROUPS;/.test(shell));
+  check("y: the event name is the board's own", RECORD_YESTERDAY_EVENT === "xtnl:today:record-yesterday");
 }
 
 console.log(`\nshortcut-check: ${passed} passed, ${failed} failed`);

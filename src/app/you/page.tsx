@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
-import { maybeJudgeWeeks } from "@/lib/life-weeks-server";
+import { maybeMaintainLife } from "@/lib/settlement";
 import { IDEA_MASTERY_POINTS } from "@/lib/mastery";
 import { recordTodaySnapshot } from "@/lib/snapshot";
 import { MASTERY_LEVEL } from "@/lib/xp";
@@ -26,14 +26,14 @@ export const dynamic = "force-dynamic";
 export default async function YouSheetPage() {
   const userId = getCurrentUserId();
   // After the response, nothing here waits on either: today's Field snapshot (so a week from
-  // now the radar and Knowledge have a real "7 days ago"), then the lazy week judge (idempotent;
-  // it writes only once life counts, on a server allowed to write). A kept week's Seal plays on
-  // the next load.
+  // now the radar and Knowledge have a real "7 days ago"), then life's one maintenance chain
+  // (settle any day that is due, then judge the weeks; idempotent, single flight, and it writes
+  // only on a server allowed to write). A kept week's Seal plays on the next load.
   after(async () => {
     try {
       await recordTodaySnapshot();
     } finally {
-      await maybeJudgeWeeks(userId);
+      await maybeMaintainLife(userId);
     }
   });
   const s = await loadSheet(userId);

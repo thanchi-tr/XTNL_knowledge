@@ -41,7 +41,17 @@ import { depthOf } from "../src/lib/skill-form";
 import { RANK_MATERIAL as VISUALS_RANK_MATERIAL } from "../src/lib/skill-visuals";
 import { RANK_MATERIAL } from "../src/lib/materials";
 import { REVIEW_STATUS_COLORS, CHART_THEME, seriesDash, fieldColor } from "../src/lib/palette";
-import { characterLevelOf } from "../src/components/shell/shell-types";
+import {
+  EFFECTS_GROUP,
+  WEEK_REVIEW_NOTICE_ID,
+  YESTERDAY_MUSTS_NOTICE_ID,
+  askCount,
+  asksFromNotices,
+  characterLevelOf,
+} from "../src/components/shell/shell-types";
+import { askSectionsOf, inPlaceEventOf } from "../src/components/shell/AsksSheet";
+import { RECORD_YESTERDAY_EVENT, RECORD_YESTERDAY_HREF } from "../src/lib/shortcuts";
+import { owedNotice, weekReviewNotice, yesterdayMustsNotice } from "../src/lib/rituals";
 import {
   LADDER_RANKS,
   buildLadder,
@@ -605,6 +615,43 @@ const BODY_SEED = comp({ PHYSICAL: 46, STUBBORNNESS: 24, SELF_RESPECT: 20, FAITH
   check("celebrate fixtures: the Long goal's moment states the 18 MP paid", /\+18\b/.test(bookEvent), bookEvent.slice(0, 200));
 }
 
+// ── 4n. M2 integration (lead): the bell's listed rows, the tour, Settings › Days, capture ──
+{
+  const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const today = "2026-10-14";
+  const effect = { id: "boon:x", group: EFFECTS_GROUP, tone: "good", title: "Focus", detail: "In effect" } as const;
+  const notices = [
+    owedNotice({ count: 2, debt: 12.5 }),
+    yesterdayMustsNotice(2, today),
+    weekReviewNotice({ weekKey: "2026-W41", monday: "2026-10-05", sunday: "2026-10-11", judgeDay: "2026-10-14" }),
+    effect,
+  ].filter((n): n is NonNullable<typeof n> => n != null);
+  const items = asksFromNotices(notices);
+  const sections = askSectionsOf(items);
+  check("bell: the counted card holds exactly the bell's count (askCount)", sections.asking.length === askCount(items) && sections.asking.every((a) => a.counted !== false), JSON.stringify(sections.asking.map((a) => a.id)));
+  check("bell: yesterday's open musts and the weekly review are listed apart, never counted", sections.listed.map((a) => a.id).sort().join(",") === [YESTERDAY_MUSTS_NOTICE_ID, WEEK_REVIEW_NOTICE_ID].sort().join(","), JSON.stringify(sections.listed.map((a) => a.id)));
+  check("bell: the effects in play stay in their own group", sections.effects.length === 1 && sections.effects[0].id === effect.id);
+  check("bell: every row lands in exactly one group", sections.asking.length + sections.listed.length + sections.effects.length === items.length);
+  const asksSrc = strip(read("src/components/shell/AsksSheet.tsx"));
+  check("bell: the listed rows render under their own quiet heading", /listed\.length > 0/.test(asksSrc) && /For your information/.test(asksSrc) && /aria-labelledby="asks-listed"/.test(asksSrc));
+  const yRow = items.find((a) => a.id === YESTERDAY_MUSTS_NOTICE_ID);
+  check("bell: the 'Yesterday' row links to the Record yesterday deep link", yRow?.href === RECORD_YESTERDAY_HREF, yRow?.href ?? "missing");
+  check("bell: on /today that row opens the sheet in place (a same-route link would not)", inPlaceEventOf(RECORD_YESTERDAY_HREF, "/today") === RECORD_YESTERDAY_EVENT);
+  check("bell: elsewhere it follows the link, and other rows always do", inPlaceEventOf(RECORD_YESTERDAY_HREF, "/you") === null && inPlaceEventOf("/today", "/today") === null && inPlaceEventOf("/today/week?view=run", "/today") === null);
+  check("bell: the in-place row prevents the navigation and dispatches the event", /e\.preventDefault\(\)/.test(asksSrc) && /dispatchEvent\(new Event\(inPlace\)\)/.test(asksSrc));
+
+  const tour = strip(read("src/components/tour/Tour.tsx"));
+  check("tour: the steps know whether Duty is live (F15's Today line)", /tourSteps\(\{\s*keyboard,\s*dutyLive\s*\}\)/.test(tour) && /isDutyLaunched\(todayKey\(\)\)/.test(tour));
+  check("tour: dutyLive is read when a run starts (client only), never during render on the server", /setRun\(\{[^}]*dutyLive: isDutyLaunched\(/.test(tour));
+
+  const settings = strip(read("src/app/settings/page.tsx"));
+  check("settings: the page reads LifeSettings.debtWriteOff", /select: \{[^}]*debtWriteOff: true[^}]*\}/.test(settings));
+  check("settings: Settings › Days gets duty (today, the server's launch day, debtWriteOff)", /duty: \{\s*today: todayKey\(\),\s*launchDay: dutyLaunchDay\(\),\s*debtWriteOff: life\?\.debtWriteOff \?\? false\s*\}/.test(settings));
+
+  const qc = strip(read("src/components/capture/QuickCapture.tsx"));
+  check("capture: QuickCapture passes the server's launch day to the Must chip when it has it", /export function QuickCapture\(\{ dutyLaunchDay \}/.test(qc) && /duty=\{dutyLaunchDay === undefined \? undefined : \{ today: day, launchDay: dutyLaunchDay \}\}/.test(qc));
+}
+
 // ── 5. Palette on tokens ────────────────────────────────────────────────────
 {
   const vals = [...Object.values(REVIEW_STATUS_COLORS), ...Object.values(CHART_THEME)];
@@ -841,8 +888,11 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   const lifeMilestones = lifePages.filter((f) => /\bM[1-9]\b/.test(code(f)));
   check("copy: no milestone codes on /today/week and /today/rules", lifeMilestones.length === 0, lifeMilestones.join(", "));
   check("week: /today/week imports nothing capture-owned (components/today/**)", !/@\/components\/today\//.test(read("src/app/today/week/page.tsx")));
-  check("week: /today/week judges after the response and is never prerendered", /after\(async \(\) => \{\s*await maybeJudgeWeeks\(userId\)/.test(read("src/app/today/week/page.tsx")) && /export const dynamic = "force-dynamic"/.test(read("src/app/today/week/page.tsx")));
-  check("you: the sheet judges after its snapshot", /recordTodaySnapshot\(\);[\s\S]{0,40}finally \{\s*await maybeJudgeWeeks\(userId\)/.test(read("src/app/you/page.tsx")));
+  // M2 (F14, F15): both pages run life's one maintenance chain (settle, then judge) after the
+  // response; neither calls the judge on its own, which would skip the settle-first order.
+  check("week: /today/week settles and judges after the response and is never prerendered", /after\(async \(\) => \{\s*await maybeMaintainLife\(userId\)/.test(read("src/app/today/week/page.tsx")) && /export const dynamic = "force-dynamic"/.test(read("src/app/today/week/page.tsx")));
+  check("you: the sheet settles and judges after its snapshot", /recordTodaySnapshot\(\);[\s\S]{0,40}finally \{\s*await maybeMaintainLife\(userId\)/.test(read("src/app/you/page.tsx")));
+  for (const f of ["src/app/today/week/page.tsx", "src/app/you/page.tsx"]) check(`life chain: ${f} never calls maybeJudgeWeeks directly (maybeMaintainLife settles first)`, !/\bmaybeJudgeWeeks\s*\(/.test(code(f)));
   const rules = read("src/app/today/rules/page.tsx");
   const start = rules.indexOf("function TracksRules()");
   const body = start >= 0 ? rules.slice(rules.indexOf("return (", start), rules.indexOf("\n}\n", start)) : "";

@@ -206,6 +206,19 @@ export const DEBT_CAP = 20;
 export const DEBT_OPEN_PER_TEMPLATE = 3;
 export const DEBT_OPEN_TOTAL_CAP = 100;
 
+/**
+ * What one missed compulsory occurrence owes (M2, grading E):
+ * min(DEBT_CAP, round1(B[effective band] × E(est_eff))). No C, D, V, T, K
+ * and no knee: the debt is a property of the task, fixed by its frozen
+ * size, never by the day it was missed on. Goldens: dishes (INTRO, 15 min)
+ * 4.2; 'stretch 15m' (STANDARD, 15) 8.3; SEVERE 240 min 20 (48.6 capped).
+ */
+export function debtFor(t: { band: Band | string; bandOverride: number; estMinutes: number; machineMinutes: number }): number {
+  const band = effBand(toBand(t.band), t.bandOverride);
+  const raw = roundTo(BAND_BASE[band] * effortFactor(estEff(t.estMinutes, t.machineMinutes)), 1);
+  return Math.min(DEBT_CAP, raw);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 /** Half away from zero, with a nudge so 1.005-style binary artefacts round the way they read. */

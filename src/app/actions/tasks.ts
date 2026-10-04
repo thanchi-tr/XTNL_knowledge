@@ -26,10 +26,14 @@ import {
   unarchiveCore,
   undoCaptureCore,
   undoCompletionCore,
+  type ClarifyOutcome,
   type Completion,
   type InboxChoice,
   type LifeResult,
+  type RuleChangeOutcome,
 } from "@/lib/tasks";
+import { undoMakeUpCore } from "@/lib/duty";
+import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
 
 /**
  * The task actions: the Today board's writes, plus a text capture.
@@ -161,10 +165,19 @@ export async function completeTask(
   );
 }
 
-/** Undoes a tick within ten minutes, on the same day. Nets to zero. */
+/**
+ * Undoes a tick within ten minutes, on the same day. Nets to zero. A tick
+ * whose day has since been settled stands (M2). A make-up's undo goes to
+ * undoMakeUpCore, which also takes its debt repayment back (M2 decision 10).
+ */
 export async function undoCompletion(instanceId: string, opts?: TaskActionOptions): Promise<TaskActionResult<{ instanceId: string; xp: number }>> {
   if (!isId(instanceId)) return noId();
-  return run("undoCompletion", opts, (userId) => undoCompletionCore(userId, instanceId));
+  return run("undoCompletion", opts, async (userId) => {
+    const res = await undoCompletionCore(userId, instanceId);
+    if (res.ok || res.error !== MAKE_UP_UNDO_ELSEWHERE) return res;
+    const undone = await undoMakeUpCore(userId, instanceId);
+    return undone.ok ? { ok: true as const, value: { instanceId, xp: undone.value.xp } } : undone;
+  });
 }
 
 /**
@@ -212,8 +225,14 @@ export async function rescheduleTask(templateId: string, to: "tomorrow" | DayKey
   return run("rescheduleTask", opts, (userId) => rescheduleCore(userId, templateId, to));
 }
 
-/** Archives a task. Nothing with history is ever deleted. */
-export async function archiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<null>> {
+/**
+ * Archives a task. Nothing with history is ever deleted. M2 (F3): a must,
+ * once Duty is live and past its 60-minute typo grace, is archived only from
+ * today + 7 — `effect: 'deferred'` with its effectiveDay, and the row stays
+ * on the board until then ('must · ends Thu 8 Oct'); its Undo is
+ * unarchiveTask, which cancels the pending archive.
+ */
+export async function archiveTask(templateId: string, opts?: TaskActionOptions): Promise<TaskActionResult<RuleChangeOutcome>> {
   if (!isId(templateId)) return noId();
   return run("archiveTask", opts, (userId) => archiveCore(userId, templateId));
 }
@@ -232,13 +251,18 @@ export async function setDailyCapacity(minutes: number, opts?: TaskActionOptions
 
 const INBOX_CHOICES: readonly InboxChoice[] = ["today", "tomorrow", "anytime", "goal", "idea", "drop"];
 
-/** One-tap clarify for an inbox item: Today / Tomorrow / Anytime / Goal ^ / Idea / Drop. */
+/**
+ * One-tap clarify for an inbox item: Today / Tomorrow / Anytime / Goal ^ / Idea / Drop.
+ * M2 (F3): a Drop on a must goes through the akrasia horizon like Archive
+ * (`effect: 'deferred'` and its effectiveDay when it waits); a must leaving
+ * the inbox is owed from today, never before.
+ */
 export async function clarifyInbox(
   templateId: string,
   choice: InboxChoice,
   parentId?: string | null,
   opts?: TaskActionOptions
-): Promise<TaskActionResult<{ href: string | null }>> {
+): Promise<TaskActionResult<ClarifyOutcome>> {
   if (!isId(templateId)) return noId();
   if (!INBOX_CHOICES.includes(choice)) return { ok: false, error: "Unknown choice." };
   return run("clarifyInbox", opts, (userId) => clarifyInboxCore(userId, templateId, choice, isId(parentId) ? parentId : null));

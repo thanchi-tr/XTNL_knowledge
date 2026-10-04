@@ -6,18 +6,21 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon, Sigil, type TrackSigil } from "@/components/ui/Icon";
 import { approx, formatAmount, formatNumber } from "@/components/ui/format";
+import { makeUpWordsOf, type MakeUpState } from "./makeup-words";
 
 /**
- * M2-READY (presentational; driven from fixtures on /dev/style/today until
- * M2's settlement lands). No real page renders these with made-up numbers.
+ * M2 (presentational): Today renders these from BoardData.duty (lane D,
+ * F12); /dev/style/today renders them from fixtures. Never made-up numbers.
  *
  * MakeUpCard: a 3 px owed rail, the owed chip ("−3.8 owed"), when it was
  * missed ("Stretch · Tuesday"), one plain sentence and the 48 h window.
  * Actions: [Make up · ≈ 3.2] [Do minimum · 2 min · ≈ 1.1]. Resolved, the rail
  * turns kept ("Made up. Nothing owed.", repaid in full) or held (minimum).
- * Debt is a true minus, never a red wall.
+ * Written off ('Accept the loss'), the rail goes quiet with a quiet chip
+ * and "Written off. The miss stays on the ledger.": nothing was repaid, so
+ * it never reads 'Repaid'. Debt is a true minus, never a red wall.
  */
-export type MakeUpState = "open" | "repaid" | "minimum";
+export type { MakeUpState };
 
 export interface MakeUp {
   id: string;
@@ -30,8 +33,8 @@ export interface MakeUp {
   window: string;
   makeUpPrice: number;
   minimum?: { label: string; price: number } | null;
-  /** Resolved lines (the outcome's own words). */
-  resolved?: { repaid: string; minimum: string };
+  /** Resolved lines (the outcome's own words). `writtenOff` absent: makeup-words.ts WRITTEN_OFF_SUB. */
+  resolved?: { repaid: string; minimum: string; writtenOff?: string };
 }
 
 export function MakeUpCard({
@@ -39,53 +42,71 @@ export function MakeUpCard({
   state = "open",
   onMakeUp,
   onMinimum,
+  onAcceptLoss,
   busy,
+  children,
 }: {
   item: MakeUp;
   state?: MakeUpState;
   onMakeUp?: (from: Element | null) => void;
   onMinimum?: (from: Element | null) => void;
+  /** M2: the quiet third action, only when Settings › Days allows it and the debt is ≥ 14 days old. */
+  onAcceptLoss?: () => void;
   busy?: boolean;
+  /** Rendered under the card (the miss prompt). */
+  children?: ReactNode;
 }) {
+  // The words are makeup-words.ts (pure, held by today-ui-check); the chips' glyphs are here.
+  const words = makeUpWordsOf(item, state);
   const chip =
-    state === "repaid" ? (
+    words.chip === "repaid" ? (
       <Chip tone="kept" icon="check">
         Repaid {formatNumber(item.owed, 1)}
       </Chip>
-    ) : state === "minimum" ? (
+    ) : words.chip === "minimum" ? (
       <Chip tone="held" held="rest">
         Held · minimum
       </Chip>
+    ) : words.chip === "written-off" ? (
+      <Chip>Written off</Chip>
     ) : (
       <Chip tone="owed">{formatAmount(-item.owed)} owed</Chip>
     );
   return (
-    <div className="makeup" data-state={state === "open" ? undefined : state}>
-      <div className="mh">
-        {chip}
-        <span className="when">{item.when}</span>
-      </div>
-      <p className="mu-text">{state === "repaid" ? "Made up. Nothing owed." : state === "minimum" ? "Minimum done. The promise is kept." : item.text}</p>
-      <p className="mu-sub">{state === "repaid" ? item.resolved?.repaid : state === "minimum" ? item.resolved?.minimum : item.window}</p>
-      {state === "open" && (onMakeUp || onMinimum) && (
-        <div className="acts">
-          {onMakeUp && (
-            <Button variant="secondary" disabled={busy} onClick={(e) => onMakeUp(e.currentTarget)}>
-              Make up ·{" "}
-              <span className="cur">
-                <CurrencyGlyph kind="xp" />
-                <span className="num">{approx(item.makeUpPrice)}</span>
-              </span>
-            </Button>
-          )}
-          {onMinimum && item.minimum && (
-            <Button variant="quiet" disabled={busy} onClick={(e) => onMinimum(e.currentTarget)}>
-              Do minimum · {item.minimum.label} · {approx(item.minimum.price)}
-            </Button>
-          )}
+    <>
+      <div className="makeup" data-state={state === "open" ? undefined : state} data-instance-id={item.id}>
+        <div className="mh">
+          {chip}
+          <span className="when">{item.when}</span>
         </div>
-      )}
-    </div>
+        <p className="mu-text">{words.text}</p>
+        <p className="mu-sub">{words.sub}</p>
+        {state === "open" && (onMakeUp || onMinimum) && (
+          <div className="acts">
+            {onMakeUp && (
+              <Button variant="secondary" disabled={busy} onClick={(e) => onMakeUp(e.currentTarget)}>
+                Make up ·{" "}
+                <span className="cur">
+                  <CurrencyGlyph kind="xp" />
+                  <span className="num">{approx(item.makeUpPrice)}</span>
+                </span>
+              </Button>
+            )}
+            {onMinimum && item.minimum && (
+              <Button variant="quiet" disabled={busy} onClick={(e) => onMinimum(e.currentTarget)}>
+                Do minimum · {item.minimum.label} · {approx(item.minimum.price)}
+              </Button>
+            )}
+            {onAcceptLoss && (
+              <Button variant="quiet" disabled={busy} onClick={onAcceptLoss}>
+                Accept the loss
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {children}
+    </>
   );
 }
 
@@ -101,6 +122,8 @@ export function OwedSummary({
   sub,
   children,
   defaultOpen = false,
+  open: openProp,
+  onOpenChange,
 }: {
   total: number;
   count: number;
@@ -109,8 +132,17 @@ export function OwedSummary({
   sub: string;
   children: ReactNode;
   defaultOpen?: boolean;
+  /** Controlled (M2: the Owed row opens it from the foot of the board). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [own, setOwn] = useState(defaultOpen);
+  const open = openProp ?? own;
+  const setOpen = (next: (o: boolean) => boolean) => {
+    const v = next(open);
+    if (openProp === undefined) setOwn(v);
+    onOpenChange?.(v);
+  };
   return (
     <div className="owed-stack">
       <div className="makeup">

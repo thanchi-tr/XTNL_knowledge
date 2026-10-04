@@ -8,6 +8,7 @@ import { bump, countTo, formatFigure, roll } from "@/lib/motion";
 import { useMiniLedger } from "@/components/shell/MiniLedger";
 import { cx } from "@/components/ui/cx";
 import { CurrencyGlyph, HeldGlyph, Icon } from "@/components/ui/Icon";
+import { Chip } from "@/components/ui/Chip";
 import { PromiseRing } from "@/components/ui/PromiseRing";
 import { fmtMinutes } from "./format";
 import { ledgerGate } from "./ledger-gate";
@@ -57,6 +58,10 @@ export interface DayLedgerProps {
   settles: boolean;
   /** The note under the rings; a default says what a Full day does. */
   fullNote?: ReactNode;
+  /** The aside beside 'n of 3'; a default says what a Full day pays. */
+  aside?: ReactNode;
+  /** M2: a held chip under the caption ('A freeze will cover Wed'): the held glyph plus words. */
+  heldNote?: ReactNode;
   /** Rings that just closed (one glint each). */
   glint?: ReadonlySet<FullDayRingKind>;
   /** The FULL DAY stamp is landing now. */
@@ -79,12 +84,13 @@ export function DayLedger(props: DayLedgerProps) {
   useMiniLedger(publish ? { xp: props.xp, pts: props.pts } : null, publish ? cellsRef : noWatch);
   const over = planned.chosen && planned.over > 0;
 
-  const aside = props.settles ? `+${FULL_DAY_MP} MP when it settles` : "Musts · quest · one life deed";
+  // M2 (decision 6): the week judge pays a Full day, inside the weekly cap, so "up to" and "when the week is judged".
+  const aside = props.aside ?? (props.settles ? `up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed)` : "Musts · quest · one life deed");
   const note =
     props.fullNote ??
     (fullDay.full
       ? props.settles
-        ? `Full day. Pays +${FULL_DAY_MP} MP when today settles.`
+        ? `Full day. Up to +${FULL_DAY_MP} MP, paid when the week is judged (Wed).`
         : "Full day: musts, the quest and a life deed, all kept."
       : props.settles
         ? "A Full day also repairs a broken day before it, once a week."
@@ -100,6 +106,13 @@ export function DayLedger(props: DayLedgerProps) {
             <span className="streak-word">day streak</span>
           </div>
           <p className="streak-cap">{props.caption}</p>
+          {props.heldNote && (
+            <div className="held-note">
+              <Chip tone="held" held="freeze">
+                {props.heldNote}
+              </Chip>
+            </div>
+          )}
         </div>
         {props.freezes && props.freezes.banked + (props.freezes.used ?? 0) > 0 && <Freezes {...props.freezes} />}
       </div>

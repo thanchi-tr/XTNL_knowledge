@@ -12,6 +12,9 @@
  *     its capture's Edit and Undo (replacingOf);
  *   - the tap-to-add grammar row (insertRowChips, insertMenuOptions,
  *     applyInsert) and the block-once Must gate (mustGate);
+ *   - M2: the Must chip's stake (mustStakeLabel: '≈ −4.2 if missed' once
+ *     Duty is live, 'stakes from Mon 12 Oct' before) and the Inbox-must
+ *     note (inboxMustNote);
  *   - the suggestion row (caretContext, goalSuggestions, tagSuggestions);
  *   - the toast copy by case (toastCopy), the paste split
  *     (splitPastedLines) and its where-guess (wherePreviewOf);
@@ -33,7 +36,9 @@ import {
   type TargetLike,
 } from "../../lib/capture-parse";
 import { addDays, todayKey, weekdayOf, type DayKey } from "../../lib/life-day";
-import { CAPTURE_BATCH_MAX, CAPTURE_UNDO_MS, type BoardPlace, type ParsedCapture } from "../../lib/life-types";
+import { CAPTURE_BATCH_MAX, CAPTURE_UNDO_MS, type Band, type BoardPlace, type ParsedCapture } from "../../lib/life-types";
+import { debtFor } from "../../lib/life-grade";
+import { dutyPhaseOf, formatDebt, weekdayDateLabel } from "../../lib/rituals";
 import { normTitleOf } from "../../lib/life-lexicon";
 import { captureShapeOf } from "../../lib/capture-shape";
 import { nextDue, parseRule } from "../../lib/recurrence";
@@ -827,6 +832,48 @@ export function mustGate(blocked: string | null, text: string, warning: boolean)
   if (!warning) return { action: "save", blocked: null };
   if (blocked === text) return { action: "save-not-must", blocked: null };
   return { action: "block", blocked: text };
+}
+
+// ── M2: the Must chip's stake, and a must bound for the Inbox ─────────────
+
+/** What the capture sheet knows of Duty: today's life day and the launch day (duty-economy dutyLaunchDay()). */
+export interface DutyStakeContext {
+  today: DayKey;
+  /** Null keeps the chip exactly as it was. */
+  launchDay: DayKey | null;
+}
+
+/** The chip's word for a must once Duty speaks about it. */
+export const MUST_CHIP_WORD = "Must";
+/** Under the chips of a line with both '?' and '!' (decision 31): an unclarified item is never owed. */
+export const INBOX_MUST_NOTE = "A must once you clarify it";
+
+/**
+ * The Must chip on a line that will be a must (a '!' or 'must' with a fixed
+ * schedule or a deadline, not bound for the Inbox; decision 29):
+ *   - Duty live: 'Must · ≈ −4.2 if missed', debtFor on the lexical grade.
+ *     Approximate: the AI may still resize the task within a day.
+ *   - a launch day set and still ahead: 'Must · stakes from Mon 12 Oct'.
+ *   - otherwise null: the chip keeps its own label, as before.
+ * The capture grammar is unchanged.
+ */
+export function mustStakeLabel(
+  parsed: Pick<ParsedCapture, "compulsory" | "compulsoryWarning" | "inbox" | "kind">,
+  grade: { band: Band; machineMinutes: number; estMinutes: number } | null,
+  ctx: DutyStakeContext
+): string | null {
+  if (!parsed.compulsory || parsed.compulsoryWarning || parsed.inbox || parsed.kind === "GOAL" || parsed.kind === "IDEA_DRAFT") return null;
+  const phase = dutyPhaseOf(ctx.today, ctx.launchDay);
+  if (phase === "announced" && ctx.launchDay) return `${MUST_CHIP_WORD} · stakes from ${weekdayDateLabel(ctx.launchDay)}`;
+  if (phase !== "live" || !grade) return null;
+  const debt = debtFor({ band: grade.band, bandOverride: 0, estMinutes: grade.estMinutes, machineMinutes: grade.machineMinutes });
+  return `${MUST_CHIP_WORD} · ≈ −${formatDebt(debt)} if missed`;
+}
+
+/** The note under a line marked both '!' and '?' (decision 31); null otherwise. */
+export function inboxMustNote(parsed: Pick<ParsedCapture, "inbox" | "kind" | "tokens">): string | null {
+  if (!parsed.inbox || parsed.kind === "IDEA_DRAFT" || parsed.kind === "GOAL") return null;
+  return parsed.tokens.some((t) => t.field === "compulsory") ? INBOX_MUST_NOTE : null;
 }
 
 // ── The suggestion row ────────────────────────────────────────────────────

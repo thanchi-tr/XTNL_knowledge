@@ -330,11 +330,17 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .makeup::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--owed); }
 .makeup[data-state="repaid"]::before { background: var(--kept); }
 .makeup[data-state="minimum"]::before { background: var(--held); }
+/* Written off: nothing repaid, nothing owed any more — a quiet rail, never kept. */
+.makeup[data-state="written-off"]::before { background: var(--line-ctl); }
 .makeup .mh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .makeup .mh .when { font-size: 13px; color: var(--ink-2); }
 .makeup .mu-text { font-size: 15px; line-height: 20px; margin-top: 8px; }
 .makeup .mu-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 18px; }
 .makeup .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+/* The minimum's label is the player's own words (up to 80 characters): a
+   long one wraps inside the card at 344 px instead of spilling past it
+   (.btn is nowrap; the lane body clips). */
+.makeup .acts .btn { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; padding-block: 8px; }
 .t-row + .makeup, .makeup + .t-row, .makeup + .makeup { border-top: 1px solid var(--line-1); }
 .owed-sum { display: flex; align-items: center; gap: 10px; padding: 0 14px; min-height: 52px; width: 100%; text-align: left; background: var(--card); color: inherit; }
 .owed-sum b { font-weight: 600; flex: 1; }
@@ -356,6 +362,34 @@ html[data-motion="calm"] .today-lane.fresh .lane-body::before { animation: none;
 .today-notice .acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .today-notice .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .today-notice .t-meta { margin-top: 10px; }
+
+/* ── M2 on Today (lane D): Duty wired to the board ─────────────────────── */
+/* The Must lane's chips under its header: held ('Rest · nothing owed') or quiet; never owed. */
+.today-lane .lane-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; margin-top: -2px; }
+/* The miss prompt under its template's card: the Ask's layout inside the lane card. */
+.miss-prompt { border-top: 1px solid var(--line-1); align-items: flex-start; }
+.miss-prompt .mp-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.miss-prompt .mp-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* The rest banner (.o1): held glyph plus words, a quiet Cancel for a day not started. */
+.today-rest .rest-txt { display: flex; gap: 8px; align-items: flex-start; min-width: 0; padding: 8px 0; }
+.today-rest .rest-txt > svg { flex: none; margin-top: 1px; }
+/* The Day ledger's held chip ('A freeze will cover Wed'). */
+.today-day .held-note { margin-top: 6px; }
+/* Asks beyond the first two. */
+.asks-more { display: inline-flex; align-items: center; min-height: 40px; padding: 0 4px; border: 0; background: none; color: var(--ink-0); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: start; }
+/* Record yesterday's honesty line. */
+.y-honesty { font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 0 0 12px; }
+/* Close the day's end-cap: a quiet 'Time off' beside it. */
+.today-close .close-more { border-top: 1px solid var(--line-1); }
+.today-close .close-off { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 14px; background: none; border: 0; color: var(--ink-1); font: 600 14px var(--font-ui); text-align: left; border-radius: 0 0 var(--r-card) var(--r-card); }
+.today-close .close-off:hover { background: var(--raised); color: var(--ink-0); }
+.today-close .close-off svg { color: var(--held); flex: none; }
+/* Plan time off: the vacation form and the declared days. */
+.vac-form { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-1); }
+.vac-field { display: grid; gap: 4px; }
+.vac-form .today-input { flex: none; width: 100%; }
+.vac-note { margin: 0; }
+.rest-declared { margin-top: 8px; }
 
 /* The weekly review runner (focus mode) and its week card. */
 .wr { max-width: 560px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }

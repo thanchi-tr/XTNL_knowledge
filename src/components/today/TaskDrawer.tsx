@@ -8,7 +8,9 @@ import { gradeChipOf } from "@/lib/life-lexicon";
 import type { DayKey } from "@/lib/life-day";
 import { formatExpiry } from "@/lib/format-date";
 import { BAND_BLURB, BAND_LABEL, fmtMinutes, fmtXp } from "./format";
-import { ratingGate, tomorrowOffer } from "./board-ui";
+import { pendingLineOf, ratingGate, tomorrowOffer } from "./board-ui";
+import type { PendingNext } from "@/lib/duty-rule";
+import { dayLabel } from "@/lib/duty-view";
 
 /** A slower write this drawer started and is waiting on. */
 export type DrawerWork = { kind: "resize" } | { kind: "rate"; override: number } | { kind: "rename"; title: string };
@@ -38,6 +40,23 @@ interface Props {
   onArchive: () => void;
   onOverride: (override: number) => void;
   onResize: () => void;
+  /** M2 (F3): a must's rule pills and its pending change; null before Duty has a launch day (the pre-M2 drawer). */
+  rule?: DrawerRule | null;
+}
+
+/** M2 (F3): what the drawer offers a must. A weakening is deferred seven days once Duty is live; a strengthening is immediate. */
+export interface DrawerRule {
+  /** A pending weakening: 'Pending: archived on Thu 8 Oct · [Keep it]'. */
+  pending: PendingNext | null;
+  /** TaskTemplate.compulsoryOnRest: 'Even on rest days'. */
+  onRest: boolean;
+  /** When 'Not a must' would take effect (deferred); null when it would be immediate. */
+  unflagFrom: DayKey | null;
+  /** When turning 'Even on rest days' off would take effect (deferred); null when immediate. */
+  restOffFrom: DayKey | null;
+  onNotMust: () => void;
+  onOnRest: (on: boolean) => void;
+  onKeep: () => void;
 }
 
 /** The grade chip's tone: ink for a settled grade, the held hue for one still sizing (always with its words). */
@@ -155,6 +174,39 @@ export function TaskDrawer(props: Props) {
       </div>
       {open && !recurring && row.lane !== "yesterday" && !tomorrow.show && tomorrow.reason && (
         <p className="today-drawer-note">{tomorrow.reason}</p>
+      )}
+
+      {props.rule && (t.compulsory || props.rule.pending) && (
+        <>
+          {props.rule.pending && (
+            <div className="today-drawer-row">
+              <span className="today-drawer-note">{pendingLineOf(props.rule.pending)}</span>
+              <button type="button" className="today-pill" disabled={busy} onClick={props.rule.onKeep}>
+                Keep it
+              </button>
+            </div>
+          )}
+          {t.compulsory && (
+            <div className="today-drawer-row" role="group" aria-label="What makes it a must">
+              {!props.rule.pending && (
+                <button type="button" className="today-pill" disabled={busy} onClick={props.rule.onNotMust}>
+                  Not a must{props.rule.unflagFrom ? ` · from ${dayLabel(props.rule.unflagFrom)}` : ""}
+                </button>
+              )}
+              <button
+                type="button"
+                className="today-pill"
+                aria-pressed={props.rule.onRest}
+                // Turning it off is a weakening: refused while another change is pending.
+                disabled={busy || (props.rule.onRest && !!props.rule.pending)}
+                onClick={() => props.rule?.onOnRest(!props.rule.onRest)}
+              >
+                {/* Said before the tap: turning it off is a weakening, deferred seven days once Duty is live. */}
+                Even on rest days{props.rule.onRest && props.rule.restOffFrom ? ` · off from ${dayLabel(props.rule.restOffFrom)}` : ""}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {editing && (
