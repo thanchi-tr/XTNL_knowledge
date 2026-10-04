@@ -6,6 +6,7 @@ import {
   decodeStringArray,
   decodeNumericAnswer,
 } from "./idea-payload";
+import { displayShortAnswer } from "./short-answer";
 
 /** Human-readable question preview. Safe anywhere — never touches `answer`. */
 export function displayQuestion(questionType: QuestionType, question: string): string {
@@ -53,6 +54,7 @@ export function displayQuestion(questionType: QuestionType, question: string): s
 export function displayAnswer(questionType: QuestionType, answer: string): string {
   switch (questionType) {
     case "SHORT":
+      return displayShortAnswer(answer);
     case "FORMULA":
     case "MULTI":
       return answer;

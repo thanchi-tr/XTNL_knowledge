@@ -16,6 +16,7 @@ import {
   type EnrichResult,
 } from "@/lib/dedup";
 import { encodeIdeaContent, type IdeaContent } from "@/lib/idea-payload";
+import { shortAnswerProblem } from "@/lib/short-answer";
 import { cardTextFromStored } from "@/lib/novelty";
 import { estimateDifficulty } from "@/lib/difficulty";
 import { embeddingTextFromStored } from "@/lib/embedding-text";
@@ -211,7 +212,7 @@ export async function submitIdea(input: SubmitIdeaInput): Promise<SubmitIdeaResu
  * one takes a userId.
  */
 async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<SubmitIdeaResult> {
-  const { question, answer, questionType } = encodeIdeaContent(input.content);
+  const { question, answer, questionType, answerCaseSensitive } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
   const card = cardTextFromStored(questionType, question, answer);
 
@@ -337,6 +338,7 @@ async function submitIdeaCore(userId: string, input: SubmitIdeaInput): Promise<S
       question,
       questionType,
       answer,
+      answerCaseSensitive: answerCaseSensitive === true,
       dueDate,
       graceEndsAt: graceEndsAt(dueDate, level, modifiers.graceExtraDays),
       // Scored from the stored form, so the same function serves creation and
@@ -545,7 +547,7 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult | I
     where: { id: existing.domainId },
     include: { field: { select: { name: true } } },
   });
-  const { question, answer, questionType } = encodeIdeaContent(input.content);
+  const { question, answer, questionType, answerCaseSensitive } = encodeIdeaContent(input.content);
   const contentText = embeddingTextFromStored(questionType, question, answer);
 
   // A linked Idea is still a node in its own right — it gets the same
@@ -574,6 +576,7 @@ export async function linkIdea(input: LinkIdeaInput): Promise<LinkIdeaResult | I
       question,
       questionType,
       answer,
+      answerCaseSensitive: answerCaseSensitive === true,
       dueDate,
       graceEndsAt: graceEndsAt(dueDate, level, modifiers.graceExtraDays),
       linkedIdeaIds: [existing.id],
@@ -711,7 +714,9 @@ export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ 
     const q = input.content.question.trim();
     const a = input.content.answer.trim();
     if (!q || !a) return { ok: false, error: "Both the question and the answer are needed." };
-    content = { type: "SHORT", question: q, answer: a };
+    const problem = shortAnswerProblem(a);
+    if (problem) return { ok: false, error: problem };
+    content = { type: "SHORT", question: q, answer: a, caseSensitive: input.content.caseSensitive === true };
   } else if (input.content.type === "CLOZE") {
     const text = input.content.text.trim();
     if (!text || countClozeBlanks(text) === 0) return { ok: false, error: "Wrap at least one part in {{double braces}} to blank it." };
@@ -720,10 +725,16 @@ export async function editIdea(input: EditIdeaInput): Promise<SkillFreeResult<{ 
     return { ok: false, error: "This format can't be edited here yet. Delete it and add it again." };
   }
 
-  const { question, answer, questionType } = encodeIdeaContent(content);
+  const { question, answer, questionType, answerCaseSensitive } = encodeIdeaContent(content);
   await prisma.idea.update({
     where: { id: existing.id },
-    data: { question, answer, difficulty: estimateDifficulty(questionType, question, answer).score },
+    data: {
+      question,
+      answer,
+      // Only SHORT carries the choice; a CLOZE edit leaves it as it was.
+      ...(answerCaseSensitive === undefined ? {} : { answerCaseSensitive }),
+      difficulty: estimateDifficulty(questionType, question, answer).score,
+    },
   });
   invalidate("ideas");
 

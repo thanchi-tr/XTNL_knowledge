@@ -16,7 +16,8 @@ import type { QuestionType } from "@prisma/client";
  * (dueOffsetDays, failedAttempts) don't belong in a live submission path.
  */
 export type IdeaContent =
-  | { type: "SHORT"; question: string; answer: string }
+  /** `answer` may use the list syntax (short-answer.ts); `caseSensitive` makes capitals count (default off). */
+  | { type: "SHORT"; question: string; answer: string; caseSensitive?: boolean }
   | { type: "FORMULA"; question: string; answer: string }
   | { type: "MULTI"; options: string[]; correct: string }
   | { type: "DIAGRAM"; image: string; hotspots: { id: string; x: number; y: number }[]; labels: Record<string, string> }
@@ -103,9 +104,12 @@ export function encodeIdeaContent(content: IdeaContent): {
   question: string;
   answer: string;
   questionType: QuestionType;
+  /** The Idea's `answerCaseSensitive`: set only by a SHORT answer that asked for it. */
+  answerCaseSensitive?: boolean;
 } {
   switch (content.type) {
     case "SHORT":
+      return { question: content.question, answer: content.answer, questionType: "SHORT", answerCaseSensitive: content.caseSensitive === true };
     case "FORMULA":
       return { question: content.question, answer: content.answer, questionType: content.type };
 

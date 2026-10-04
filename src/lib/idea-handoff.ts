@@ -227,6 +227,8 @@ export interface AddContentState {
   type: AddFormat;
   shortQuestion: string;
   shortAnswer: string;
+  /** Capitals must match (SHORT). Off by default; a snapshot from before it existed reads as off. */
+  shortCaseSensitive: boolean;
   formulaQuestion: string;
   formulaAnswer: string;
   clozeText: string;
@@ -247,6 +249,7 @@ export const EMPTY_ADD_CONTENT: AddContentState = {
   type: "SHORT",
   shortQuestion: "",
   shortAnswer: "",
+  shortCaseSensitive: false,
   formulaQuestion: "",
   formulaAnswer: "",
   clozeText: "",
@@ -290,7 +293,7 @@ export function isEmptyAddContent(s: AddContentState): boolean {
 
 /** A stable key for "has the content changed", in field order. */
 export function addContentKey(s: AddContentState): string {
-  return JSON.stringify([s.type, ...TEXT_KEYS.map((k) => s[k]), ...LIST_KEYS.map((k) => s[k]), s.correctIndex]);
+  return JSON.stringify([s.type, ...TEXT_KEYS.map((k) => s[k]), ...LIST_KEYS.map((k) => s[k]), s.correctIndex, s.shortCaseSensitive]);
 }
 
 export type AutosaveEncoding = { kind: "empty" } | { kind: "too-big"; chars: number } | { kind: "ok"; json: string };
@@ -323,6 +326,7 @@ export function decodeAddAutosave(raw: string | null): AddContentState | null {
   }
   const c = s.correctIndex;
   out.correctIndex = Number.isInteger(c) && (c as number) >= 0 && (c as number) < out.options.length ? (c as number) : 0;
+  out.shortCaseSensitive = s.shortCaseSensitive === true;
   return isEmptyAddContent(out) ? null : out;
 }
 

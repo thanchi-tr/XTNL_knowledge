@@ -49,28 +49,43 @@ enum CollectionLabel {
 
 /**
  * How an Idea is drilled, and therefore how its answer is graded.
- *
  * Each value has a verifier in `verification.ts`, an encoder in
  * `idea-payload.ts`, and a base XP in `xp.ts` — the switches over this enum
  * are deliberately exhaustive so adding a member fails to compile until
  * every one of them has been taught about it.
  */
 enum QuestionType {
-  /** Free recall, graded on Dice-coefficient similarity. */
+  /**
+   * Free recall, graded on Dice-coefficient similarity.
+   */
   SHORT
-  /** One correct option out of several. */
+  /**
+   * One correct option out of several.
+   */
   MULTI
-  /** Labelled hotspots over an image. */
+  /**
+   * Labelled hotspots over an image.
+   */
   DIAGRAM
-  /** Symbolic expression, graded by algebraic equivalence. */
+  /**
+   * Symbolic expression, graded by algebraic equivalence.
+   */
   FORMULA
-  /** Fill-in-the-blank. One prompt yields as many blanks as it marks. */
+  /**
+   * Fill-in-the-blank. One prompt yields as many blanks as it marks.
+   */
   CLOZE
-  /** Enumerate a set of items; order irrelevant, completeness required. */
+  /**
+   * Enumerate a set of items; order irrelevant, completeness required.
+   */
   LIST
-  /** Arrange items into the correct sequence. */
+  /**
+   * Arrange items into the correct sequence.
+   */
   ORDER
-  /** A number, graded within a tolerance, optionally carrying a unit. */
+  /**
+   * A number, graded within a tolerance, optionally carrying a unit.
+   */
   NUMERIC
 
   @@schema("public")
@@ -78,7 +93,6 @@ enum QuestionType {
 
 /**
  * The thirteen base attributes every Field is composed from.
- *
  * These are the substrate of the whole progression system: a Field declares
  * what mix of them it trains, Field levels flow into attribute scores
  * weighted by that mix, and skills gate on attribute scores. Nothing here
@@ -106,14 +120,14 @@ enum Attribute {
 }
 
 model Field {
-  id        String           @id @default(cuid())
-  name      String           @unique
-  level     Float            @default(1.0)
-  domains    Domain[]
-  snapshots  FieldSnapshot[]
-  attributes FieldAttribute[]
-  streaks    FieldStreak[]
-  bosses     BossEncounter[]
+  id          String             @id @default(cuid())
+  name        String             @unique
+  level       Float              @default(1.0)
+  domains     Domain[]
+  snapshots   FieldSnapshot[]
+  attributes  FieldAttribute[]
+  streaks     FieldStreak[]
+  bosses      BossEncounter[]
   maintenance FieldMaintenance[]
 
   createdAt DateTime @default(now())
@@ -123,23 +137,22 @@ model Field {
 }
 
 model Domain {
-  id          String @id @default(cuid())
-  name        String
-  fieldId     String
-  field       Field  @relation(fields: [fieldId], references: [id], onDelete: Cascade)
-  totalPoints Float  @default(0)
-  level       Int    @default(1)
-  ideas       Idea[]
-  attributes  DomainAttribute[]
+  id                    String            @id @default(cuid())
+  name                  String
+  fieldId               String
+  field                 Field             @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  totalPoints           Float             @default(0)
+  level                 Int               @default(1)
+  ideas                 Idea[]
+  attributes            DomainAttribute[]
   /**
    * How many Ideas have been folded into `attributes` so far.
-   *
    * Not the same as `ideas.length`: it is the observation count the running
    * blend in `attribute-inference.ts` divides by, so a Domain's identity
    * stabilises as it fills. Kept as its own counter because deletions
    * should not make the next submission swing the Domain harder.
    */
-  attributeObservations Int @default(0)
+  attributeObservations Int               @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -150,7 +163,6 @@ model Domain {
 
 /**
  * A Domain's inferred attribute split (attribute-inference.ts).
- *
  * Mirrors `FieldAttribute` deliberately. A Field's name is a label someone
  * chose once; its Domains are where the subject is actually described, and
  * its Ideas are where it is described in detail. Storing the split here is
@@ -162,7 +174,9 @@ model DomainAttribute {
   domainId  String
   domain    Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
   attribute Attribute
-  /** 0-100, summing to 100 across the thirteen. */
+  /**
+   * 0-100, summing to 100 across the thirteen.
+   */
   weight    Int       @default(0)
 
   @@unique([domainId, attribute])
@@ -171,46 +185,45 @@ model DomainAttribute {
 }
 
 model Idea {
-  id              String          @id @default(cuid())
-  domainId        String
-  domain          Domain          @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  collectionLabel CollectionLabel
-  level           Int             @default(1) // Max 12
-  basePoints      Float           @default(0)
-  yieldPoints     Float           @default(0)
-  fragments       Int             @default(1)
-  question        String // JSON stringified for complex types (MULTI options, DIAGRAM hotspots)
-  questionType    QuestionType
-  answer          String // JSON stringified for complex types
-  dueDate         DateTime
-  graceEndsAt     DateTime?
-  failedAttempts  Int             @default(0)
-  endorsements    Int             @default(0)
-  isArchived      Boolean         @default(false)
-  linkedIdeaIds   String[]        @default([])
+  id                  String          @id @default(cuid())
+  domainId            String
+  domain              Domain          @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  collectionLabel     CollectionLabel
+  level               Int             @default(1) // Max 12
+  basePoints          Float           @default(0)
+  yieldPoints         Float           @default(0)
+  fragments           Int             @default(1)
+  question            String // JSON stringified for complex types (MULTI options, DIAGRAM hotspots)
+  questionType        QuestionType
+  answer              String // JSON stringified for complex types
+  /// Capitals must match when grading (SHORT answers, cloze blanks, LIST items). Chosen when the idea is written; off by default.
+  answerCaseSensitive Boolean         @default(false)
+  dueDate             DateTime
+  graceEndsAt         DateTime?
+  failedAttempts      Int             @default(0)
+  endorsements        Int             @default(0)
+  isArchived          Boolean         @default(false)
+  linkedIdeaIds       String[]        @default([])
 
   /**
    * 0–100, decided automatically from what the card asks (src/lib/difficulty.ts).
-   *
    * A property of the question, not of your history with it: format,
    * how much must be produced, vocabulary density and required precision.
    * Review performance deliberately does not feed it — level, interval and
    * degradation already track that, and letting difficulty move with
    * performance would count the same signal twice and pay you more for the
    * cards you keep failing.
-   *
    * The band (Intro/Standard/Demanding/Severe) is derived on read rather
    * than stored, so recalibrating the thresholds does not require rewriting
    * every row.
    */
-  difficulty      Int             @default(0)
+  difficulty Int @default(0)
 
   /**
    * Memory-engineering node data (src/lib/dedup.ts). Distinct from
    * `question`/`answer`, which are the *drill* — what the review session
    * shows you. These are the *node*: what this Idea asserts, used for
    * deduplication and library browsing.
-   *
    * Nullable, and left that way: every Idea predating the dedup pipeline
    * has none, and populating them retroactively would mean one Gemini call
    * per existing row. Readers must tolerate the absence — `enrichNode`
@@ -225,13 +238,12 @@ model Idea {
   /**
    * The single attribute this Idea most exercises, inferred from its own
    * wording and question type (attribute-inference.ts).
-   *
    * A label, not a weight vector: the full composition an Idea produces is
    * folded into its Domain at creation and does not need storing per row.
    * Nullable because everything created before inference existed has none,
    * and because a submission can be too generic to call.
    */
-  attribute    Attribute?
+  attribute Attribute?
 
   enrichments IdeaEnrichment[]
 
@@ -248,7 +260,6 @@ model Idea {
 
 /**
  * Append-only log of ENRICH_EXISTING merges (src/lib/dedup.ts).
- *
  * When a candidate lands in the enrichment band it adds nuance to an Idea
  * that already exists rather than deserving its own node. The obvious
  * implementation — rewriting `Idea.corePremise` in place — silently
@@ -257,7 +268,6 @@ model Idea {
  * a bad call. So enrichments accumulate here instead: `Idea` keeps its
  * original premise, and the full picture is the premise plus its
  * enrichments in `createdAt` order.
- *
  * `similarity` records the cosine score that triggered the merge, which is
  * what you need to tune thresholds against real data later.
  */
@@ -299,7 +309,6 @@ model FieldSnapshot {
 
 /**
  * One Field's weighting across the thirteen attributes.
- *
  * Weights are integers summing to 100 per Field — a percentage split of
  * what that Field trains. Modelled as rows rather than a JSON blob on
  * Field so a weight is queryable and constrained, matching how the rest of
@@ -322,7 +331,6 @@ model FieldAttribute {
 
 /**
  * Append-only mastery-point ledger.
- *
  * Mastery points are the scarce currency skills are bought with, so the
  * balance is the sum of deltas rather than a mutable counter: spends are
  * negative rows, and every grant records what earned it. A single mutable
@@ -337,7 +345,7 @@ model FieldAttribute {
  * BOSS_VICTORY | DECAY.
  */
 model MasteryLedgerEntry {
-  id     String @id @default(cuid())
+  id     String  @id @default(cuid())
   userId String
   /**
    * Positive to grant, negative to spend/decay. Float, not Int: every
@@ -349,7 +357,9 @@ model MasteryLedgerEntry {
    */
   delta  Float
   reason String
-  /** Free-text detail — the graded rationale, or the skill code purchased. */
+  /**
+   * Free-text detail — the graded rationale, or the skill code purchased.
+   */
   detail String?
   ideaId String?
 
@@ -365,7 +375,6 @@ model MasteryLedgerEntry {
  * `BOSS_UNLOCK_LEVEL` (bosses.ts); challenging it runs a capped, themed
  * review batch through the normal SRS engine (real grading, no separate
  * game state), and only the aggregate accuracy is judged here.
- *
  * `tier` climbs on every victory — the Boss "respawns stronger," which is
  * what makes it replayable rather than a one-time unlock. `cooldownUntil`
  * paces re-attempts (shorter after a loss, longer after a win) so this
@@ -396,7 +405,6 @@ model BossEncounter {
  * table with it: the two are folded into `ActiveModifiers` by different
  * code with opposite sign conventions, and one table holding both would
  * make every read site check which kind it was looking at.
- *
  * Boons come from a Spoils Cache. Which boon you draw is random; that a
  * victory yields one, and the mastery it pays alongside, are not — see
  * `boons.ts` for why that distinction is the whole design.
@@ -404,10 +412,14 @@ model BossEncounter {
 model ActiveBoon {
   id        String   @id @default(cuid())
   userId    String
-  /** BoonKind from boons.ts, e.g. "INSIGHT" | "MOMENTUM" | "FOCUS". */
+  /**
+   * BoonKind from boons.ts, e.g. "INSIGHT" | "MOMENTUM" | "FOCUS".
+   */
   kind      String
   magnitude Float
-  /** Machine-readable source: BOSS_SPOILS. */
+  /**
+   * Machine-readable source: BOSS_SPOILS.
+   */
   reason    String
   expiresAt DateTime
 
@@ -428,10 +440,14 @@ model ActiveBoon {
 model ActiveDebuff {
   id        String   @id @default(cuid())
   userId    String
-  /** DebuffKind from debuffs.ts, e.g. "SHAKEN" | "FATIGUED" | "DOUBT". */
+  /**
+   * DebuffKind from debuffs.ts, e.g. "SHAKEN" | "FATIGUED" | "DOUBT".
+   */
   kind      String
   magnitude Float
-  /** Machine-readable source: BOSS_DEFEAT | STREAK_BROKEN. */
+  /**
+   * Machine-readable source: BOSS_DEFEAT | STREAK_BROKEN.
+   */
   reason    String
   expiresAt DateTime
 
@@ -443,7 +459,6 @@ model ActiveDebuff {
 
 /**
  * Per-Field daily activity streak.
- *
  * Distinct from the global streak derived in src/lib/streak.ts: that one
  * answers "did you show up at all", this one answers "did you keep faith
  * with *this* subject", which is what field-streak skill effects key off.
@@ -452,14 +467,12 @@ model ActiveDebuff {
  */
 /**
  * A Field the user has put into maintenance mode.
- *
  * Stored as the *exception* rather than as the interest, which is what makes
  * this safe to add to a live database with no backfill: no rows means every
  * Field is of interest, exactly the behaviour that existed before this table.
  * Marking a Field inserts a row; unmarking deletes it. There is no state in
  * which the set is ambiguous or in which an empty table silently disables
  * every challenge and quota at once.
- *
  * A maintained Field keeps reviewing normally — its Ideas come due, degrade
  * and pay out exactly as before. It is only excused the weekly new-Idea quota
  * and excluded from Boss encounters.
@@ -479,23 +492,25 @@ model FieldMaintenance {
 
 /**
  * Append-only capital ledger — the passive currency.
- *
  * Deliberately a third currency with a job the other two do not do. Domain
  * points measure what a subject is worth; mastery is *earned by answering*
  * and buys new emblems. Capital accrues from what you already hold, whether
  * or not you show up, and is only ever spent deepening emblems you own. So
  * the three never compete for the same decision.
- *
  * Append-only for the same reason `MasteryLedgerEntry` is: a balance that is
  * the sum of its history can be audited and replayed, where a mutable
  * counter silently loses the reason it changed.
  */
 model CapitalLedgerEntry {
-  id     String @id @default(cuid())
+  id     String  @id @default(cuid())
   userId String
-  /** Positive for a claimed dividend, negative for an augment purchase. */
+  /**
+   * Positive for a claimed dividend, negative for an augment purchase.
+   */
   delta  Float
-  /** DIVIDEND | AUGMENT | ADJUSTMENT */
+  /**
+   * DIVIDEND | AUGMENT | ADJUSTMENT
+   */
   reason String
   detail String?
 
@@ -508,7 +523,6 @@ model CapitalLedgerEntry {
 
 /**
  * A permanent upgrade burned onto an emblem the user already owns.
- *
  * Keyed by `skillCode` rather than by `UnlockedSkill.id` so an augment
  * survives any future re-issue of the unlock row, and unique per kind so the
  * same emblem cannot be sold the same upgrade twice.
@@ -517,9 +531,13 @@ model EmblemAugment {
   id        String @id @default(cuid())
   userId    String
   skillCode String
-  /** AugmentKind from augments.ts: AMPLIFY | GRAFT | YIELD | PRESTIGE */
+  /**
+   * AugmentKind from augments.ts: AMPLIFY | GRAFT | YIELD | PRESTIGE
+   */
   kind      String
-  /** Capital actually burned — recorded so a future rebalance can refund honestly. */
+  /**
+   * Capital actually burned — recorded so a future rebalance can refund honestly.
+   */
   costPaid  Float  @default(0)
 
   createdAt DateTime @default(now())
@@ -553,20 +571,20 @@ model UnlockedSkill {
   usesThisWeek Int      @default(0)
   weekAnchor   DateTime @default(now()) // start of the week usesThisWeek is counted against
 
-  /** Mastery points actually spent to unlock — recorded so a future rebalance can refund honestly. */
-  masteryPaid  Int      @default(0)
-  unlockedAt   DateTime @default(now())
+  /**
+   * Mastery points actually spent to unlock — recorded so a future rebalance can refund honestly.
+   */
+  masteryPaid Int      @default(0)
+  unlockedAt  DateTime @default(now())
 
   /**
    * Loadout slot, 0..9, or null when benched.
-   *
    * Owning a skill no longer makes it do anything: only the ten equipped
    * skills fold into `ActiveModifiers`. Unlocking used to be the last
    * decision a player ever made about a skill — with 749 of them and no
    * cap, a long-running account would simply hold every effect at once and
    * the whole tree would collapse into "buy everything". A hard ten-slot
    * bench turns each unlock into an ongoing choice about what to carry.
-   *
    * Uniqueness is per (userId, slot), so a slot holds at most one skill;
    * equipping into an occupied slot swaps rather than stacks.
    */
@@ -879,20 +897,20 @@ model BodyWeight {
 
 /// The weight goal and the unit weights are shown in. One row per user.
 model WeightGoal {
-  id         String    @id @default(cuid())
-  userId     String    @unique
+  id        String    @id @default(cuid())
+  userId    String    @unique
   /// kg | lb (display only; readings are stored in kg).
-  unit       String    @default("kg")
+  unit      String    @default("kg")
   /// The target, in kg. Null: no target set, the card shows the trend only.
-  targetKg   Decimal?  @db.Decimal(6, 2)
+  targetKg  Decimal?  @db.Decimal(6, 2)
   /// An optional date to reach it by (a life day).
-  targetDay  DateTime? @db.Date
+  targetDay DateTime? @db.Date
   /// The trend weight when the target was set: the bar measures progress from here.
-  startKg    Decimal?  @db.Decimal(6, 2)
+  startKg   Decimal?  @db.Decimal(6, 2)
   /// When the target was set (a life day).
-  startDay   DateTime? @db.Date
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  startDay  DateTime? @db.Date
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@schema("public")
 }

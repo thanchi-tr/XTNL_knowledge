@@ -61,6 +61,8 @@ import { Button, buttonClass } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon } from "@/components/ui/Icon";
 import { SectionHeader, Segmented, Switch } from "@/components/ui/Tabs";
+import { ShortAnswerOptions } from "@/components/library/ShortAnswerOptions";
+import { shortAnswerProblem } from "@/lib/short-answer";
 import { approx, formatNumber } from "@/components/ui/format";
 import {
   ADD_AUTOSAVE_DEBOUNCE_MS,
@@ -197,6 +199,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
 
   const [shortQuestion, setShortQuestion] = useState(initialQuestion);
   const [shortAnswer, setShortAnswer] = useState(initialAnswer);
+  const [shortCaseSensitive, setShortCaseSensitive] = useState(false);
   const [formulaQuestion, setFormulaQuestion] = useState("");
   const [formulaAnswer, setFormulaAnswer] = useState("");
   const [clozeText, setClozeText] = useState("");
@@ -252,6 +255,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       type: questionType,
       shortQuestion,
       shortAnswer,
+      shortCaseSensitive,
       formulaQuestion,
       formulaAnswer,
       clozeText,
@@ -266,7 +270,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
       options,
       correctIndex,
     }),
-    [questionType, shortQuestion, shortAnswer, formulaQuestion, formulaAnswer, clozeText, listPrompt, listItems, orderPrompt, orderItems, numericPrompt, numericValue, numericTolerance, numericUnit, options, correctIndex]
+    [questionType, shortQuestion, shortAnswer, shortCaseSensitive, formulaQuestion, formulaAnswer, clozeText, listPrompt, listItems, orderPrompt, orderItems, numericPrompt, numericValue, numericTolerance, numericUnit, options, correctIndex]
   );
   const contentKey = useMemo(() => addContentKey(content), [content]);
 
@@ -275,6 +279,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
     setQuestionType(c.type);
     setShortQuestion(c.shortQuestion);
     setShortAnswer(c.shortAnswer);
+    setShortCaseSensitive(c.shortCaseSensitive);
     setFormulaQuestion(c.formulaQuestion);
     setFormulaAnswer(c.formulaAnswer);
     setClozeText(c.clozeText);
@@ -447,8 +452,8 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
 
   function buildContent(): IdeaContent | null {
     if (questionType === "SHORT") {
-      if (!shortQuestion.trim() || !shortAnswer.trim()) return null;
-      return { type: "SHORT", question: shortQuestion.trim(), answer: shortAnswer.trim() };
+      if (!shortQuestion.trim() || !shortAnswer.trim() || shortAnswerProblem(shortAnswer)) return null;
+      return { type: "SHORT", question: shortQuestion.trim(), answer: shortAnswer.trim(), caseSensitive: shortCaseSensitive };
     }
     if (questionType === "FORMULA") {
       if (!formulaQuestion.trim() || !formulaAnswer.trim()) return null;
@@ -798,6 +803,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
   function clearContentFields() {
     setShortQuestion("");
     setShortAnswer("");
+    setShortCaseSensitive(false);
     setFormulaQuestion("");
     setFormulaAnswer("");
     setClozeText("");
@@ -980,6 +986,7 @@ export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialA
                 onChange={(e) => setShortAnswer(e.target.value)}
                 {...complete()}
               />
+              <ShortAnswerOptions answer={shortAnswer} caseSensitive={shortCaseSensitive} onCaseSensitive={setShortCaseSensitive} />
             </div>
           </>
         )}

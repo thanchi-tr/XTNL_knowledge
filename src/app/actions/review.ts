@@ -97,7 +97,7 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     captureSnapshot(userId, { scope: "review" }).catch(() => null),
   ]);
 
-  const correct = verifyAnswer(idea.questionType, input.userAnswer, idea.answer);
+  const correct = verifyAnswer(idea.questionType, input.userAnswer, idea.answer, { caseSensitive: idea.answerCaseSensitive });
   const outcome = await applyReviewResult(idea.id, correct, now, combo, { idea, progression });
 
   // After the write (and its leveling), so the diff sees it. Never fails the answer: the points are already in.

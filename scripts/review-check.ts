@@ -436,7 +436,7 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const submit = action.slice(action.indexOf("export async function submitReview"));
   const toApply = submit.slice(0, submit.indexOf("await applyReviewResult("));
   check("action: one read wave before grading and the write (a single Promise.all)", (toApply.match(/await /g) ?? []).length === 1 && /await Promise\.all\(\[/.test(toApply));
-  check("action: grading stays on the server; the answer returns only after it", /verifyAnswer\(idea\.questionType, input\.userAnswer, idea\.answer\)/.test(submit) && submit.indexOf("verifyAnswer(") < submit.indexOf("expected:"));
+  check("action: grading stays on the server; the answer returns only after it", /verifyAnswer\(idea\.questionType, input\.userAnswer, idea\.answer, \{ caseSensitive: idea\.answerCaseSensitive \}\)/.test(submit) && submit.indexOf("verifyAnswer(") < submit.indexOf("expected:"));
   check("action: L3's detectCelebrations runs after the write and cannot fail the answer", /detectCelebrations\(before, afterSnap/.test(submit) && /\.catch\(\(\) => \[\]\)/.test(submit));
 
   const route = [...walk("src/components/workspace"), ...walk("src/app/review")];

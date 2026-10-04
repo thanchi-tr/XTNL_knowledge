@@ -30,6 +30,8 @@ export interface LibraryIdea {
   id: string;
   question: string;
   answer: string;
+  /** Capitals must match when graded (Idea.answerCaseSensitive). */
+  answerCaseSensitive: boolean;
   questionType: QuestionType;
   collectionLabel: CollectionLabel;
   level: number;

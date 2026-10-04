@@ -32,6 +32,7 @@ export default async function LibraryPage() {
         id: i.id,
         question: i.question,
         answer: i.answer,
+        answerCaseSensitive: i.answerCaseSensitive,
         questionType: i.questionType,
         collectionLabel: i.collectionLabel,
         level: i.level,

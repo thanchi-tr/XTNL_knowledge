@@ -74,6 +74,7 @@ function idea(over: Partial<LibraryIdea>): LibraryIdea {
     id: "i",
     question: "What is the median?",
     answer: "The middle value",
+    answerCaseSensitive: false,
     questionType: "SHORT",
     collectionLabel: "BOOK",
     level: 3,

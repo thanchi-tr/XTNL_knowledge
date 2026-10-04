@@ -1,17 +1,16 @@
-import { compareTwoStrings } from "string-similarity";
 import { create, all } from "mathjs";
 import type { QuestionType } from "@prisma/client";
 import { decodeStringArray, decodeNumericAnswer } from "./idea-payload";
+import { gradeShortAnswer, matchesText, type ShortGradeOptions } from "./short-answer";
 
 const math = create(all);
 
 // ============================================================================
-// SHORT — Dice's-coefficient string similarity (spec: pass > 0.85)
+// SHORT — normalised text, typos pass on similarity (> 0.85), and the
+// `[a, b]` / `2 of [a, b, c]` list syntax (short-answer.ts)
 // ============================================================================
-const SHORT_PASS_THRESHOLD = 0.85;
-
-export function verifyShort(userInput: string, correctAnswer: string): boolean {
-  return compareTwoStrings(userInput.trim(), correctAnswer.trim()) > SHORT_PASS_THRESHOLD;
+export function verifyShort(userInput: string, correctAnswer: string, opts: ShortGradeOptions = {}): boolean {
+  return gradeShortAnswer(userInput, correctAnswer, opts);
 }
 
 // ============================================================================
@@ -129,10 +128,10 @@ export function verifyDiagram(userLabels: Record<string, string>, correctAnswerJ
  * them must pass. A partially-filled sentence is not partial knowledge of
  * the claim; it is the claim not recalled.
  */
-export function verifyCloze(userBlanks: string[], correctAnswerJson: string): boolean {
+export function verifyCloze(userBlanks: string[], correctAnswerJson: string, opts: ShortGradeOptions = {}): boolean {
   const correct = decodeStringArray(correctAnswerJson);
   if (correct.length === 0 || userBlanks.length !== correct.length) return false;
-  return correct.every((expected, i) => verifyShort(userBlanks[i] ?? "", expected));
+  return correct.every((expected, i) => matchesText(userBlanks[i] ?? "", expected, opts));
 }
 
 // ============================================================================
@@ -144,7 +143,7 @@ export function verifyCloze(userBlanks: string[], correctAnswerJson: string): bo
  * learner list the same correct item four times and pass a four-item
  * question.
  */
-export function verifyList(userItems: string[], correctAnswerJson: string): boolean {
+export function verifyList(userItems: string[], correctAnswerJson: string, opts: ShortGradeOptions = {}): boolean {
   const correct = decodeStringArray(correctAnswerJson);
   if (correct.length === 0) return false;
 
@@ -152,7 +151,7 @@ export function verifyList(userItems: string[], correctAnswerJson: string): bool
   if (remaining.length !== correct.length) return false;
 
   for (const expected of correct) {
-    const idx = remaining.findIndex((given) => verifyShort(given, expected));
+    const idx = remaining.findIndex((given) => matchesText(given, expected, opts));
     if (idx === -1) return false;
     remaining.splice(idx, 1);
   }
@@ -200,14 +199,19 @@ export function verifyNumeric(userInput: string, correctAnswerJson: string): boo
 // ============================================================================
 export type ReviewAnswer = string | string[] | Record<string, string>;
 
+/**
+ * `opts.caseSensitive` is the Idea's `answerCaseSensitive`: capitals count
+ * for SHORT answers, cloze blanks and list items only when it is set.
+ */
 export function verifyAnswer(
   questionType: QuestionType,
   userAnswer: ReviewAnswer,
-  correctAnswer: string
+  correctAnswer: string,
+  opts: ShortGradeOptions = {}
 ): boolean {
   switch (questionType) {
     case "SHORT":
-      return verifyShort(String(userAnswer), correctAnswer);
+      return verifyShort(String(userAnswer), correctAnswer, opts);
     case "MULTI":
       return verifyMulti(String(userAnswer), correctAnswer);
     case "FORMULA":
@@ -217,9 +221,9 @@ export function verifyAnswer(
       if (typeof userAnswer === "string" || Array.isArray(userAnswer)) return false;
       return verifyDiagram(userAnswer, correctAnswer);
     case "CLOZE":
-      return Array.isArray(userAnswer) ? verifyCloze(userAnswer, correctAnswer) : false;
+      return Array.isArray(userAnswer) ? verifyCloze(userAnswer, correctAnswer, opts) : false;
     case "LIST":
-      return Array.isArray(userAnswer) ? verifyList(userAnswer, correctAnswer) : false;
+      return Array.isArray(userAnswer) ? verifyList(userAnswer, correctAnswer, opts) : false;
     case "ORDER":
       return Array.isArray(userAnswer) ? verifyOrder(userAnswer, correctAnswer) : false;
     case "NUMERIC":

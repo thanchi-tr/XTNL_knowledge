@@ -16,6 +16,8 @@ import { deleteIdea, editIdea } from "@/app/actions/ideas";
 import { bandFor, DIFFICULTY_META } from "@/lib/difficulty";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
 import { countClozeBlanks, parseCloze, type IdeaContent } from "@/lib/idea-payload";
+import { shortAnswerProblem } from "@/lib/short-answer";
+import { ShortAnswerOptions } from "./ShortAnswerOptions";
 import { MASTERY_LEVEL } from "@/lib/xp";
 import { MathText } from "@/components/math/MathText";
 import { Button } from "@/components/ui/Button";
@@ -209,6 +211,7 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
   const cloze = idea.questionType === "CLOZE";
   const [question, setQuestion] = useState(cloze ? "" : idea.question);
   const [answer, setAnswer] = useState(cloze ? "" : idea.answer);
+  const [caseSensitive, setCaseSensitive] = useState(idea.answerCaseSensitive);
   const [text, setText] = useState(cloze ? clozeTemplate(idea.question, idea.answer) : "");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -217,8 +220,8 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
     ? text.trim() && countClozeBlanks(text) > 0
       ? { type: "CLOZE", text }
       : null
-    : question.trim() && answer.trim()
-      ? { type: "SHORT", question, answer }
+    : question.trim() && answer.trim() && !shortAnswerProblem(answer)
+      ? { type: "SHORT", question, answer, caseSensitive }
       : null;
 
   function save() {
@@ -272,6 +275,7 @@ function IdeaEditForm({ idea, onCancel, onSaved }: { idea: LibraryIdea; onCancel
               Answer
             </label>
             <textarea id={aId} className="st-input" rows={3} value={answer} onChange={(e) => setAnswer(e.target.value)} />
+            <ShortAnswerOptions answer={answer} caseSensitive={caseSensitive} onCaseSensitive={setCaseSensitive} />
           </div>
         </>
       )}
