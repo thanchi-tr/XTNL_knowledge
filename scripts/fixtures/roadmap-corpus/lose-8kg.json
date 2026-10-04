@@ -1,0 +1,65 @@
+{
+  "aim": "lose-8kg",
+  "about": "A Body aim with a knee constraint: \"knee injury, no running\" makes every WORKOUT practice a possible clash (the method's keywords), and diet advice is HEALTH.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": null,
+  "input": {
+    "intake": {
+      "aim": "Lose 8 kg without hurting my knee",
+      "fieldId": null,
+      "track": "BODY",
+      "domainIds": [],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 5,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "NEW",
+      "intensity": "LIGHT",
+      "practicesAllowed": true,
+      "constraints": "knee injury, no running",
+      "examLabel": null
+    },
+    "areaName": "Body",
+    "domains": [],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [],
+  "drafts": [
+    {
+      "id": "lose-8kg-a",
+      "about": "Interval runs against \"no running\"; fasting and calorie cuts; a walking practice the method keywords flag although it makes no claim.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Steady habits",
+            "titleClaims": [],
+            "practices": [
+              { "name": "Brisk walks", "method": "WORKOUT", "claims": [] },
+              { "name": "Plan the week's meals", "method": "PROJECT_WORK", "claims": [] }
+            ],
+            "steps": [{ "title": "Weigh in on the same day each week", "claims": [] }],
+            "checkpoint": { "label": "Weekly weigh-in trend", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Fitness without impact",
+            "titleClaims": [],
+            "practices": [
+              { "name": "Interval runs", "method": "WORKOUT", "claims": ["constraint"] },
+              { "name": "Swimming sessions", "method": "WORKOUT", "claims": [] },
+              { "name": "Cut calories by fasting", "method": "PROJECT_WORK", "claims": ["health"] }
+            ],
+            "steps": [{ "title": "Plan low-impact sessions", "claims": [] }],
+            "checkpoint": { "label": "Monthly weight trend check", "kind": "SELF_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

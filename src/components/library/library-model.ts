@@ -22,7 +22,7 @@ import { fieldTier, type FieldTier } from "@/lib/field-tier";
 import { displayAnswer, displayQuestion } from "@/lib/idea-display";
 import { LIFE_TZ } from "@/lib/life-day";
 import { QUESTION_TYPES, decodeStringArray } from "@/lib/idea-payload";
-import { MASTERY_LEVEL } from "@/lib/xp";
+import { MASTERY_LEVEL, MAX_LEVEL } from "@/lib/xp";
 
 // ─── Rows ───────────────────────────────────────────────────────────────────
 
@@ -133,6 +133,13 @@ export interface LibraryFilters {
   maxLevel: number;
 }
 
+/**
+ * The top of the level filter: xp.ts MAX_LEVEL (20), so the post-mastery
+ * levels 13–20 are listed under the default filter (roadmap.md question 8,
+ * F16 seam 20). "Mastered" (isMastered, the status chip) still means level 12+.
+ */
+export const LEVEL_FILTER_MAX = MAX_LEVEL;
+
 export const EMPTY_FILTERS: Readonly<LibraryFilters> = Object.freeze({
   q: "",
   status: "all",
@@ -143,7 +150,7 @@ export const EMPTY_FILTERS: Readonly<LibraryFilters> = Object.freeze({
   cols: [],
   bands: [],
   minLevel: 1,
-  maxLevel: MASTERY_LEVEL,
+  maxLevel: LEVEL_FILTER_MAX,
 });
 
 /** URL keys, one per family. `idea` (the open detail) rides along but is not a filter. */
@@ -189,7 +196,7 @@ function oneOf<T extends string>(values: string[], allowed: readonly T[]): T[] {
 }
 
 function clampLevel(n: number, fallback: number): number {
-  return Number.isFinite(n) ? Math.max(1, Math.min(MASTERY_LEVEL, Math.round(n))) : fallback;
+  return Number.isFinite(n) ? Math.max(1, Math.min(LEVEL_FILTER_MAX, Math.round(n))) : fallback;
 }
 
 /** URL → filters. Unknown or malformed values are dropped; nothing throws. */
@@ -197,7 +204,7 @@ export function parseFilters(src: ParamSource): LibraryFilters {
   const status = all(src, URL_KEYS.status)[0];
   const [lo, hi] = (all(src, URL_KEYS.levels)[0] ?? "").split("-").map((s) => Number.parseInt(s, 10));
   let minLevel = clampLevel(lo, 1);
-  let maxLevel = clampLevel(hi, MASTERY_LEVEL);
+  let maxLevel = clampLevel(hi, LEVEL_FILTER_MAX);
   if (minLevel > maxLevel) [minLevel, maxLevel] = [maxLevel, minLevel];
   return {
     q: (all(src, URL_KEYS.q)[0] ?? "").slice(0, MAX_TEXT),
@@ -224,7 +231,7 @@ export function filtersToParams(f: LibraryFilters, extra?: { idea?: string | nul
   for (const v of f.types) p.append(URL_KEYS.types, v);
   for (const v of f.cols) p.append(URL_KEYS.cols, v);
   for (const v of f.bands) p.append(URL_KEYS.bands, v);
-  if (f.minLevel > 1 || f.maxLevel < MASTERY_LEVEL) p.set(URL_KEYS.levels, `${f.minLevel}-${f.maxLevel}`);
+  if (f.minLevel > 1 || f.maxLevel < LEVEL_FILTER_MAX) p.set(URL_KEYS.levels, `${f.minLevel}-${f.maxLevel}`);
   if (extra?.idea) p.set(URL_KEYS.idea, extra.idea);
   return p;
 }
@@ -238,7 +245,7 @@ export function facetCount(f: LibraryFilters): number {
     f.types.length +
     f.cols.length +
     f.bands.length +
-    (f.minLevel > 1 || f.maxLevel < MASTERY_LEVEL ? 1 : 0)
+    (f.minLevel > 1 || f.maxLevel < LEVEL_FILTER_MAX ? 1 : 0)
   );
 }
 

@@ -3,15 +3,17 @@ import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
 import { todayKey } from "@/lib/life-day";
 import { autoCompleteStudyTasks, loadTodayBoard, recordDayOpen } from "@/lib/tasks";
-import { boardClock, unrecordedStudyTasks } from "@/lib/today-board";
+import { boardClock, unrecordedStudyTasks, weekQuestsShownOnToday } from "@/lib/today-board";
 import { getDailyStreak } from "@/lib/streak";
 import { loadBossStates } from "@/lib/bosses";
 import { loadNotifications } from "@/lib/notifications";
 import { isLaunched } from "@/lib/life-economy";
 import { maybeMaintainLife } from "@/lib/settlement";
+import { freezeWeekQuests, loadWeekQuests } from "@/lib/roadmap-quests-server";
 import { ShellTitle } from "@/components/shell/ShellTitle";
 import { longDate } from "@/components/shell/nav";
 import { TodayBoard } from "@/components/today/TodayBoard";
+import { WeekQuests } from "@/components/roadmap/WeekQuests";
 
 // The board turns on the clock (a 04:00 day edge, a ten-minute undo window)
 // and on every tick — never statically cache it.
@@ -25,15 +27,20 @@ export default async function TodayPage() {
   const day = todayKey(now);
 
   // One wave: the board's own read (templates, recent instances, the day's
-  // ledger, the queue size — cached per life day), the streak, the ready
-  // encounters Next up names, and the notification feed the Asks cards
-  // read (the same cached feed as the top bar's bell). All cached; a warm
-  // load costs nothing.
-  const [board, streak, bosses, feed] = await Promise.all([
+  // ledger, the queue size, and each open ROADMAP goal's stored series —
+  // cached per life day), the streak, the ready encounters Next up names,
+  // the notification feed the Asks cards read (the same cached feed as the
+  // top bar's bell), and this life week's quests for the started roadmap
+  // milestone (roadmap F17: one cached indexed row once the week is frozen,
+  // so the card loads with the board; no Suspense, no fallback, and a
+  // failure or a missing table renders nothing). All cached; a warm load
+  // costs nothing.
+  const [board, streak, bosses, feed, quests] = await Promise.all([
     loadTodayBoard(userId, day, now),
     getDailyStreak(userId),
     loadBossStates(userId),
     loadNotifications(userId, now).catch(() => null),
+    loadWeekQuests(userId, now).catch(() => null),
   ]);
 
   // Writes a render may owe, after the response and only when owed: the
@@ -46,6 +53,16 @@ export default async function TodayPage() {
       if (needsDayOpen) await recordDayOpen(userId, board.dueNow ?? 0, now);
       if (studyToRecord) await autoCompleteStudyTasks(userId, now);
     });
+  }
+
+  // Roadmap F14: this week's quest set, frozen once (INSERT … ON CONFLICT DO
+  // NOTHING). The life cron freezes it just after Monday 04:00; a render that
+  // finds none (a failed cron) freezes it after the response, in its own
+  // after(). An empty, held or past-due week is frozen too. freezeWeekQuests
+  // writes only where life writes are on and never throws; a writes-off
+  // server shows the live set, labelled, and schedules nothing.
+  if (quests && !quests.frozen && !quests.view.writesOff) {
+    after(() => freezeWeekQuests(userId, now, "RENDER"));
   }
 
   // Life maintenance, its own after(), never awaited by the render (M2 F5,
@@ -65,6 +82,10 @@ export default async function TodayPage() {
   // silently shift every day edge in the app, and this is where it shows.
   const clock = boardClock(now);
 
+  // The week quests card (F17) under the goals, only for an open week with a
+  // quest: never an Ask, a count or a bell line, and never on red.
+  const questsSlot = quests && weekQuestsShownOnToday(quests.view) ? <WeekQuests variant="today" view={quests.view} /> : null;
+
   return (
     <>
       <ShellTitle eyebrow={clock.lateNight ? "Today · until 04:00" : "Today"} title={longDate(board.today)} />
@@ -77,6 +98,7 @@ export default async function TodayPage() {
         bosses={readyBosses}
         footClock={{ time: clock.time, zone: clock.zone, tz: clock.tz }}
         launched={isLaunched(day)}
+        questsSlot={questsSlot}
       />
     </>
   );

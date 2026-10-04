@@ -67,7 +67,14 @@ export type TaskKind = "TASK" | "HABIT" | "GOAL" | "IDEA_DRAFT";
 /** PLANNED carries forward silently and is never late; DEADLINE is late after its day. */
 export type DueKind = "PLANNED" | "DEADLINE";
 export type Horizon = "SHORT" | "MID" | "LONG";
-export type KrMetric = "CHILDREN" | "MANUAL" | "REVIEWS" | "IDEAS" | "WORKOUTS" | "RUN_KM";
+/** ROADMAP (roadmap lane 0): a roadmap milestone's goal, measured from stored readings (goals.ts, F16 seam 1). */
+export type KrMetric = "CHILDREN" | "MANUAL" | "REVIEWS" | "IDEAS" | "WORKOUTS" | "RUN_KM" | "ROADMAP";
+/**
+ * Every goal metric, in the order goals-server.ts lists them, plus ROADMAP:
+ * the one whitelist a stored krMetric is read through (goals-server metricOf,
+ * F16 seam 2), so a ROADMAP goal is never read as CHILDREN.
+ */
+export const KR_METRICS: readonly KrMetric[] = ["CHILDREN", "MANUAL", "REVIEWS", "IDEAS", "WORKOUTS", "RUN_KM", "ROADMAP"];
 /** A task that completes itself from activity: reviews, new Ideas, the whole queue, steps, a workout. */
 export type AutoMetric = "REVIEWS" | "IDEAS" | "REVIEW_DUE" | "STEPS" | "WORKOUT";
 export type CaptureSource = "quick" | "share" | "api" | "form";

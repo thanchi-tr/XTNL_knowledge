@@ -2,7 +2,7 @@
 
 import type { Horizon } from "@/lib/life-types";
 import type { GoalCard } from "@/lib/today-board";
-import { ChipButton } from "@/components/ui/Chip";
+import { Chip, ChipButton } from "@/components/ui/Chip";
 import { CurrencyGlyph, Sigil } from "@/components/ui/Icon";
 import { Meter } from "@/components/ui/Meter";
 import { SectionHeader } from "@/components/ui/Tabs";
@@ -70,6 +70,17 @@ function PaysText({ text }: { text: string }) {
  * line says so). From launch it states what it pays, fixed when it was set
  * ('pays ⬡ 6 × progress from 70%'), and offers Close. Past its due day and
  * short of 100% it is carried, never owed: 'Carried 0.55 · Reschedule?'.
+ *
+ * A roadmap milestone's goal (krMetric ROADMAP, roadmap.md F16 seam 4) is
+ * measured from stored readings only: its line names the evidence of the
+ * part that set g ('23% · tested by your reviews · slowest: cards at level
+ * 6+ · measured 09:12', or '· from your ticks · …'), a 0-stated one says why
+ * after 'pays nothing', and a quiet chip names its place ('Roadmap ·
+ * milestone 2 of 3'). One that will never be measured again (its roadmap
+ * archived by a reset or by hand, or its row replaced by Start again) reads
+ * 'not measured · pays nothing' with its note on a line of its own: its
+ * close pays 0 whatever it stated, so the card never shows '× progress'.
+ * No +1 (it is measured from your records), and never an owed tone.
  */
 export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose, onReschedule, justAdded = null }: Props) {
   const list = HORIZON_ORDER.flatMap((h) => goals[h]);
@@ -88,6 +99,11 @@ export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose,
             const copy = goalCardCopy(g, launched);
             const fresh = justAdded === g.template.id;
             const title = g.template.title;
+            const rm = g.roadmap ?? null;
+            // 'measured 09:12' follows the evidence words, only beside a figure (never on 'not measured').
+            const measured = rm?.measured && copy.percent != null ? ` · ${rm.measured}` : "";
+            // Never measured again: its close pays 0, so the stated rule is not offered.
+            const pays = copy.pays && rm?.unmeasured ? "pays nothing" : copy.pays;
             return (
               <div key={g.template.id} className="goal" data-template-id={g.template.id} data-just-added={fresh ? "1" : undefined}>
                 <div className="gh">
@@ -105,10 +121,16 @@ export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose,
                 {g.progress != null && <Meter value={g.progress} label={`${title}: ${g.label}`} valueText={copy.percent ?? g.label} />}
                 <div className="gf">
                   <span className="num">{copy.percent ?? g.label}</span>
-                  {copy.percent != null && <span>· {g.label}</span>}
-                  {copy.pays ? (
+                  {copy.percent != null && (
                     <span>
-                      · <PaysText text={copy.pays} />
+                      · {g.label}
+                      {measured}
+                    </span>
+                  )}
+                  {pays ? (
+                    <span>
+                      · <PaysText text={pays} />
+                      {rm?.zeroReason ? ` · ${rm.zeroReason}` : ""}
                     </span>
                   ) : (
                     <span>· pays through its steps</span>
@@ -120,6 +142,12 @@ export function GoalsStrip({ goals, busy, onProgress, launched = false, onClose,
                   )}
                 </div>
                 {g.support && <p className="t-meta">{g.support}</p>}
+                {rm?.note && <p className="t-meta goal-note">{rm.note}</p>}
+                {rm?.chip && (
+                  <div className="goal-acts goal-chips">
+                    <Chip>{rm.chip}</Chip>
+                  </div>
+                )}
                 {(copy.carried || (copy.canClose && onClose)) && (
                   <div className="goal-acts">
                     {copy.carried && <span className="goal-carried">{copy.carried}</span>}

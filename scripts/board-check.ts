@@ -14,8 +14,21 @@
  *
  * No database: every fixture is the shape `tasks.ts` reads in its one wave.
  *
+ * The roadmap (roadmap.md F16 seams 3, 4; F17; lane T) adds ROADMAP goal
+ * cards — g from goals.ts over the stored series, the same as the ladder's,
+ * with the binding part's words, the chip, the zero reason and the reset
+ * note — and shows that week quests leave todayCountsOf and the lanes
+ * unchanged. The fix round adds: a goal never measured again (an archived
+ * roadmap, or a row replaced by Start again) is `unmeasured`; a rescheduled
+ * goal reads as of roadmap-types milestoneDueDayOf (the goal's day); a paid
+ * lineage's reason keeps its day; every zero-reason code reads as the
+ * roadmap page words it. Fix round 2: a 'measured …' date in another year
+ * carries the year, word for word the Aim card's. scripts/_no-model.ts comes first (F16 seam 22):
+ * tasks.ts may reach roadmap modules, and no check may reach a model.
+ *
  *   npx tsx scripts/board-check.ts
  */
+import "./_no-model";
 import { addDays, weekdayOf, type DayKey } from "../src/lib/life-day";
 import type { Receipt } from "../src/lib/life-types";
 import { KNEE_CAP, consistencyFactor, estEff, kneeG, payModeOf, priceTask, roundTo, timingFor } from "../src/lib/life-grade";
@@ -30,10 +43,15 @@ import { fullDayInputFor, fullDayInputOf, fullDayOf, isLifeDeed } from "../src/l
 import type { DutyBoard, OwedCard } from "../src/lib/duty-view";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { goalAsOf, goalPercent, goalProgress, type GoalLadderItem, type GoalProgressInput } from "../src/lib/goals";
+import { goalAsOf, goalPercent, goalProgress, type GoalLadderItem, type GoalProgressInput, type RoadmapGoalEntry, type RoadmapSeriesPoint } from "../src/lib/goals";
+import { milestoneDueDayOf, type StatedZeroReason } from "../src/lib/roadmap-types";
+import { ZERO_REASON_WORDS as R1_ZERO_REASON_WORDS, zeroReasonWordsOf } from "../src/lib/roadmap-measures";
+import { ZERO_REASON_LINE, measuredLabel as aimMeasuredLabel, zeroReasonWords } from "../src/components/roadmap/roadmap-copy";
+import { SUPERSEDED_NOTE } from "../src/lib/roadmap-readings";
+import { RESET_ARCHIVE_NOTE } from "../src/lib/reset-scopes";
 import { goalRowCopy } from "../src/components/home/GoalLadder";
 import { captureShapeOf } from "../src/lib/capture-shape";
-import { captureGoalFields } from "../src/lib/tasks";
+import { captureGoalFields, todayCountsOf } from "../src/lib/tasks";
 import { PLACE_LANES } from "../src/lib/life-types";
 import {
   BOARD_COLUMNS,
@@ -54,8 +72,14 @@ import {
   cheapestMovable,
   completionBlockOf,
   goalMetricOf,
+  goalProgressInputOf,
   goalProgressQty,
   groupKeyOf,
+  measuredLabelOf,
+  roadmapGoalIdsOf,
+  roadmapZeroReasonText,
+  seekPlaceOf,
+  weekQuestsShownOnToday,
   horizonFor,
   lastDoneOf,
   moveBlockOf,
@@ -665,6 +689,308 @@ const completion = (templateId: string, groupKey: string, p: Partial<LedgerCompl
   check("board read: toBoardTemplate carries goalMp and closedScore", /goalMp: r\.goalMp,/.test(tasksSrc) && /closedScore: r\.closedScore,/.test(tasksSrc));
   check("board read: GOAL_PROGRESS is grouped by goal and day (goalDays)", /by: \["templateId", "day"\],\s*where: \{ userId, source: "GOAL_PROGRESS" \}/.test(tasksSrc) && /goalDays,\r?\n/.test(tasksSrc));
   check("closed goal: +1 and linking a step refuse it (closedScore: null in both reads)", (tasksSrc.match(/kind: "GOAL", archivedAt: null, closedScore: null \}/g) ?? []).length >= 2);
+}
+
+// ── Roadmap goals and week quests on Today (roadmap.md F16 seams 3, 4, 16; F17; lane T) ──
+// A ROADMAP goal's g is goals.ts goalProgress over its stored series (lane
+// L's ROADMAP branch); the board only supplies the series and the words.
+// Cases that need lane L's branch say SKIP until it lands (integration).
+{
+  // 09:12 on Thu 1 Oct, 08:40 on Wed 30 Sep, 02:30 on Fri 2 Oct (still Thursday's life day), Sydney AEST.
+  const AT_0912 = "2026-09-30T23:12:00.000Z";
+  const WED_0840 = "2026-09-29T22:40:00.000Z";
+  const LATE_0230 = "2026-10-01T16:30:00.000Z";
+  const pt = (day: DayKey, g: number, bindingClass: RoadmapSeriesPoint["bindingClass"], bindingLabel: string, observedAt: string): RoadmapSeriesPoint => ({
+    day,
+    g,
+    observedAt,
+    bindingClass,
+    bindingLabel,
+  });
+  const branchLive = goalProgress({ krMetric: "ROADMAP", krTarget: null, steps: [], progress: [], readings: [pt(TODAY, 0.5, "MEASURED", "x", AT_0912)] }, TODAY) === 0.5;
+  const skip = (name: string) => console.log(`SKIP ${name} — goals.ts's ROADMAP branch (lane L) has not landed; green at integration`);
+  console.log(branchLive ? "goals.ts ROADMAP branch: live" : "goals.ts ROADMAP branch: not landed yet (lane L)");
+
+  const rg = tpl({ id: "rg", title: "Risk and position sizing", kind: "GOAL", horizon: "MID", krMetric: "ROADMAP", dueDay: addDays(TODAY, 40), goalMp: 6, track: "CRAFT", captureKey: "rm:ms2" });
+  const rgPractice = tpl({ id: "rgp", title: "Backtest", parentId: "rg", recurrence: "TARGET:3/W", track: "CRAFT", captureKey: "rm:ms2:p0" });
+  const rgStep = tpl({ id: "rgs", title: "Set a maximum daily loss", parentId: "rg", track: "CRAFT", captureKey: "rm:ms2:s0" });
+  const entry: RoadmapGoalEntry = {
+    series: [pt(ago(3), 0.2, "MEASURED", "cards at level 6+", WED_0840), pt(TODAY, 0.4, "MEASURED", "cards at level 6+", AT_0912)],
+    ord: 2,
+    of: 3,
+    // goalMp is 6: a stray reason is never shown beside a stated ⬡ 6.
+    zeroReason: "knowledge is paid by reviews",
+    note: null,
+  };
+  // The step is open, so the steps' share (0 of 1) binds below the series: steps checked separately below.
+  const base = board([rg, rgPractice]);
+  const d: BoardData = { ...base, roadmapGoals: { rg: entry } };
+  const b = buildBoard(d);
+  const card = b.goals.MID.find((g) => g.template.id === "rg");
+
+  // The ladder reads the same goal through goals-server: the same series into the same goals.ts function.
+  const ladderInput: GoalProgressInput = { krMetric: "ROADMAP", krTarget: null, steps: [], progress: [], readings: entry.series };
+  const ladderG = goalProgress(ladderInput, goalAsOf(TODAY, rg.dueDay));
+  check("roadmap goal: the card's g is goals.ts goalProgress over the stored series, as the ladder's is", card != null && card.progress === ladderG, `${card?.progress} vs ${ladderG}`);
+  check(
+    "roadmap goal: goalProgressInputOf carries the stored series (readings) for a ROADMAP goal only",
+    JSON.stringify(goalProgressInputOf(rg, [], d).readings) === JSON.stringify(entry.series) &&
+      goalProgressInputOf(rg, [], base).readings?.length === 0 &&
+      !("readings" in goalProgressInputOf(tpl({ id: "gx", title: "x", kind: "GOAL", krMetric: "CHILDREN" }), [], d))
+  );
+  if (branchLive) {
+    check("roadmap goal: g is the last reading ≤ as-of (0.4), and the label names the binding part", card?.progress === 0.4 && card.label === "tested by your reviews · slowest: cards at level 6+", `${card?.progress} '${card?.label}'`);
+  } else skip("roadmap goal: g is the last reading ≤ as-of (0.4), and the label names the binding part");
+  check(
+    "roadmap goal: the card's words — caption, slowest part, 'measured 09:12', the chip; no zero reason beside a stated ⬡ 6",
+    card?.roadmap?.caption === "tested by your reviews" &&
+      card.roadmap.slowest === "cards at level 6+" &&
+      card.roadmap.measured === "measured 09:12" &&
+      card.roadmap.chip === "Roadmap · milestone 2 of 3" &&
+      card.roadmap.zeroReason === null &&
+      card.roadmap.note === null,
+    JSON.stringify(card?.roadmap)
+  );
+  check("roadmap goal: its metric is ROADMAP (only a MANUAL goal offers +1; it is measured from your records)", card?.metric === "ROADMAP");
+
+  // Past its due day: g and its words are read as of the due day, never from a later reading.
+  const pastDue = tpl({ ...rg, id: "rgd", dueDay: ago(2) });
+  const pd = buildBoard({
+    ...board([pastDue]),
+    roadmapGoals: { rgd: { ...entry, series: [pt(ago(4), 0.3, "SELF_REPORTED", "Backtest sessions", "2026-09-26T23:00:00.000Z"), pt(ago(1), 0.9, "MEASURED", "cards at level 6+", WED_0840)] } },
+  }).goals.MID[0];
+  check(
+    "roadmap goal: past its due day the card reads the due day's last reading (its class, label and day), not a later one",
+    pd?.roadmap?.caption === "from your ticks" && pd.roadmap.slowest === "Backtest sessions" && pd.roadmap.measured === "measured Sun",
+    JSON.stringify(pd?.roadmap)
+  );
+  if (branchLive) check("roadmap goal: …and its g is 0.3, carried (past due, below 1)", pd?.progress === 0.3 && pd.carried === 0.3, `${pd?.progress}/${pd?.carried}`);
+  else skip("roadmap goal: …and its g is 0.3, carried (past due, below 1)");
+
+  // The steps' share sets the minimum: the caption says ticks, with no 'measured' time.
+  const st = buildBoard({ ...board([rg, rgStep, tpl({ id: "rgs2", title: "Write the exit rule", parentId: "rg", completedAt: "2026-09-29T00:00:00.000Z" }), tpl({ id: "rgs3", title: "Size ten old trades", parentId: "rg" })]), roadmapGoals: { rg: entry } }).goals.MID[0];
+  check(
+    "roadmap goal: when the steps' share (1 of 3) is below the series (0.4), the caption is 'from your ticks · slowest: 1 of 3 steps'",
+    st?.roadmap?.caption === "from your ticks" && st.roadmap.slowest === "1 of 3 steps" && st.roadmap.measured === null,
+    JSON.stringify(st?.roadmap)
+  );
+  const tie = buildBoard({ ...board([rg, tpl({ ...rgStep, completedAt: "2026-09-29T00:00:00.000Z" }), tpl({ id: "rgs4", title: "Open step", parentId: "rg" })]), roadmapGoals: { rg: { ...entry, series: [pt(TODAY, 0.5, "MEASURED", "cards at level 6+", AT_0912)] } } }).goals.MID[0];
+  // goals.ts's rule (the ladder's words too): the steps bind only when strictly below the series; a tie keeps the measure.
+  check(
+    "roadmap goal: the card's caption parts follow goals.ts's binding rule (a tie keeps the measure), so Today and the ladder say the same",
+    tie?.roadmap?.caption === "tested by your reviews" && tie.roadmap.slowest === "cards at level 6+" && (!branchLive || tie.label === "tested by your reviews · slowest: cards at level 6+"),
+    `${JSON.stringify(tie?.roadmap)} '${tie?.label}'`
+  );
+  if (branchLive) {
+    check(
+      "roadmap goal: the card's label is goals.ts goalProgressLabel (the ladder's), on every fixture above",
+      [card, st, tie, pd].every((c) => c != null && c.label.startsWith(`${c.roadmap?.caption} · slowest: ${c.roadmap?.slowest}`)),
+      [card, st, tie, pd].map((c) => c?.label).join(" | ")
+    );
+  } else skip("roadmap goal: the card's label is goals.ts goalProgressLabel (the ladder's), on every fixture above");
+
+  // Stated 0: the reason in words after 'pays nothing'; a code or a prefixed line is normalised.
+  const zero = buildBoard({ ...board([tpl({ ...rg, id: "rgz", goalMp: 0 })]), roadmapGoals: { rgz: { ...entry, zeroReason: "KNOWLEDGE_ONLY" } } }).goals.MID[0];
+  check("roadmap goal: a 0-stated milestone carries its reason in words ('knowledge is paid by reviews')", zero?.roadmap?.zeroReason === "knowledge is paid by reviews", String(zero?.roadmap?.zeroReason));
+  check(
+    "roadmap goal: zero reasons — words kept, 'pays nothing · …' stripped, codes worded, blank is none",
+    roadmapZeroReasonText("pays nothing · practice under an hour a week") === "practice under an hour a week" &&
+      roadmapZeroReasonText("this milestone already paid on 3 Mar") === "this milestone already paid on 3 Mar" &&
+      roadmapZeroReasonText("PRACTICE_UNDER_HOUR") === "practice under an hour a week" &&
+      roadmapZeroReasonText("  ") === null &&
+      roadmapZeroReasonText(null) === null
+  );
+
+  // The fix round: a code is worded in the roadmap page's own words (R5's ZERO_REASON_LINE), so one
+  // milestone's reason reads the same on Today and its page; a key on Object.prototype is not a code.
+  const codes = Object.keys(ZERO_REASON_LINE) as StatedZeroReason[];
+  check(
+    "roadmap goal: every zero-reason code is worded as the roadmap page words it (roadmap-copy ZERO_REASON_LINE)",
+    codes.length === 4 && codes.every((c) => roadmapZeroReasonText(c) === ZERO_REASON_LINE[c]) && roadmapZeroReasonText("toString") === "toString",
+    codes.map((c) => `${c}: '${roadmapZeroReasonText(c)}'`).join(" | ")
+  );
+  // Lens 2 minor (LINEAGE_PAID drops its date): the loader's words carry the day it paid; Today keeps them whole.
+  const paid = buildBoard({ ...board([tpl({ ...rg, id: "rgp0", goalMp: 0 })]), roadmapGoals: { rgp0: { ...entry, zeroReason: "pays nothing · this milestone already paid on 18 Sep" } } }).goals.MID[0];
+  check(
+    "roadmap goal: a paid lineage's 0 keeps its day ('this milestone already paid on 18 Sep'), and still reads its g",
+    paid?.roadmap?.zeroReason === "this milestone already paid on 18 Sep" && paid.roadmap.unmeasured === false && (!branchLive || paid.progress === 0.4),
+    JSON.stringify(paid?.roadmap)
+  );
+  check(
+    "roadmap goal: R1's own words for a paid lineage (zeroReasonWordsOf with its day) reach the card unchanged",
+    roadmapZeroReasonText(zeroReasonWordsOf("LINEAGE_PAID", "2026-09-18")) === "this milestone already paid on 18 Sep",
+    String(zeroReasonWordsOf("LINEAGE_PAID", "2026-09-18"))
+  );
+  // Fix round 2 (strict; was a PENDING line): R1's words are the ones that reach Today
+  // (loadRoadmapGoalSeries → zeroReasonWordsOf); R5's are the roadmap page's and the Aim card's.
+  // One milestone's reason reads the same on all of them, a paid lineage's day included.
+  const drift = codes.filter((c) => (R1_ZERO_REASON_WORDS as Readonly<Record<string, string>>)[c] !== ZERO_REASON_LINE[c] || zeroReasonWordsOf(c) !== zeroReasonWords(c));
+  check(
+    "roadmap goal: R1's zero-reason words (what the loader sends Today) are word for word the roadmap page's (roadmap-copy ZERO_REASON_LINE / zeroReasonWords)",
+    drift.length === 0,
+    drift.map((c) => `${c} '${R1_ZERO_REASON_WORDS[c]}' vs '${ZERO_REASON_LINE[c]}'`).join("; ")
+  );
+  const paidDays: [DayKey, DayKey][] = [
+    ["2026-09-18", TODAY],
+    ["2025-12-18", "2026-01-05"],
+  ];
+  const paidDiff = paidDays.filter(([on, day]) => zeroReasonWordsOf("LINEAGE_PAID", on, day) !== zeroReasonWords("LINEAGE_PAID", on, day));
+  check(
+    "roadmap goal: a paid lineage's day reads the same from R1 and R5, within and across a year ('… paid on 18 Sep', '… paid on 18 Dec 2025')",
+    paidDiff.length === 0 && roadmapZeroReasonText(zeroReasonWordsOf("LINEAGE_PAID", "2025-12-18", "2026-01-05")) === "this milestone already paid on 18 Dec 2025",
+    paidDays.map(([on, day]) => `'${zeroReasonWordsOf("LINEAGE_PAID", on, day)}' vs '${zeroReasonWords("LINEAGE_PAID", on, day)}'`).join("; ")
+  );
+
+  // A reset archived its roadmap: no series, so g is null (pays 0, 'not measured'), with the note; no meter.
+  const reset = buildBoard({ ...board([tpl({ ...rg, id: "rgr" })]), roadmapGoals: { rgr: { series: [], ord: 2, of: 3, zeroReason: null, note: RESET_ARCHIVE_NOTE } } }).goals.MID[0];
+  check(
+    "roadmap goal: a reset-archived roadmap's goal reads 'not measured' with the note, and draws no meter",
+    reset?.progress === null && reset.label === "not measured" && reset.roadmap?.note === "measures removed by a reset" && reset.roadmap.caption === null,
+    `${reset?.progress} '${reset?.label}' ${JSON.stringify(reset?.roadmap)}`
+  );
+  check("roadmap goal: …and it is never measured again (unmeasured: the strip reads 'pays nothing', not the stated ⬡ 6 rule)", reset?.roadmap?.unmeasured === true);
+  // Lens 1 major 5 / contract §9.4 item 4: an unarchived goal whose row a started 'Start again' copy
+  // supersedes (roadmap-types isSupersededRow) gets an empty series and the note; its close pays 0.
+  const again = buildBoard({ ...board([tpl({ ...rg, id: "rga" }), tpl({ ...rgStep, id: "rgas", parentId: "rga", completedAt: "2026-09-29T00:00:00.000Z" })]), roadmapGoals: { rga: { series: [], ord: 2, of: 3, zeroReason: null, note: SUPERSEDED_NOTE } } }).goals.MID[0];
+  check(
+    "roadmap goal: a row replaced by Start again (R1's SUPERSEDED_NOTE) reads 'not measured' (never 'not measured yet', even with a step ticked), with its note and chip, unmeasured, no meter",
+    SUPERSEDED_NOTE === "replaced by Start again" &&
+      again?.progress === null &&
+      again.label === "not measured" &&
+      again.roadmap?.note === "replaced by Start again" &&
+      again.roadmap.unmeasured === true &&
+      again.roadmap.caption === null &&
+      again.roadmap.measured === null &&
+      again.roadmap.chip === "Roadmap · milestone 2 of 3",
+    `${again?.progress} '${again?.label}' ${JSON.stringify(again?.roadmap)}`
+  );
+  // No entry at all (the read failed, or a missing table): nothing invented.
+  const bare = buildBoard(board([tpl({ ...rg, id: "rgn" })])).goals.MID[0];
+  check("roadmap goal: with no stored series it reads 'not measured yet' and claims no place", bare?.progress === null && bare.label === "not measured yet" && bare.roadmap?.chip === null, `'${bare?.label}'`);
+  // A milestone just started has no reading yet and no note: it may still be measured, so its stated rule stands.
+  const fresh = buildBoard({ ...board([tpl({ ...rg, id: "rgf" })]), roadmapGoals: { rgf: { series: [], ord: 1, of: 3, zeroReason: null, note: null } } }).goals.MID[0];
+  check(
+    "roadmap goal: no reading yet and no note reads 'not measured yet' and is not unmeasured (a reading may still come)",
+    fresh?.label === "not measured yet" && fresh.roadmap?.unmeasured === false && bare?.roadmap?.unmeasured === false && card?.roadmap?.unmeasured === false,
+    `'${fresh?.label}' ${JSON.stringify(fresh?.roadmap)}`
+  );
+
+  // Lens 1 major 2 / contract §9.4 item 3 (one due day): after a Reschedule only the goal's
+  // TaskTemplate.dueDay moves. The card reads g as of the goal's due day, which is
+  // roadmap-types milestoneDueDayOf's day, never the milestone's old one.
+  const oldMilestoneDue = ago(5);
+  const moved = tpl({ ...rg, id: "rgm", dueDay: addDays(TODAY, 20) });
+  const movedSeries = [pt(ago(6), 0.2, "MEASURED", "cards at level 6+", "2026-09-24T23:00:00.000Z"), pt(TODAY, 1, "MEASURED", "cards at level 6+", AT_0912)];
+  const mv = buildBoard({ ...board([moved]), roadmapGoals: { rgm: { ...entry, series: movedSeries } } }).goals.MID[0];
+  const oneDay = goalAsOf(TODAY, milestoneDueDayOf(oldMilestoneDue, moved.dueDay));
+  const movedInput: GoalProgressInput = { krMetric: "ROADMAP", krTarget: null, steps: [], progress: [], readings: movedSeries };
+  check(
+    "roadmap goal: a rescheduled goal reads as of milestoneDueDayOf (the goal's day): today's reading, not carried, 'measured 09:12'",
+    oneDay === TODAY &&
+      mv?.roadmap?.measured === "measured 09:12" &&
+      mv.carried === null &&
+      mv.dueLabel != null &&
+      (!branchLive || (mv.progress === 1 && mv.progress === goalProgress(movedInput, oneDay) && goalProgress(movedInput, goalAsOf(TODAY, oldMilestoneDue)) === 0.2)),
+    `${mv?.progress} ${JSON.stringify(mv?.roadmap)} oneDay=${oneDay}`
+  );
+
+  // The one extra query: only open ROADMAP goals, sorted.
+  check(
+    "roadmapGoalIds: open ROADMAP goals only (not closed, not completed, not another metric), sorted",
+    roadmapGoalIdsOf([
+      tpl({ ...rg, id: "z-open" }),
+      tpl({ ...rg, id: "a-open" }),
+      tpl({ ...rg, id: "closed", closedScore: 0.8 }),
+      tpl({ ...rg, id: "done", completedAt: "2026-09-30T00:00:00.000Z" }),
+      tpl({ id: "kids", title: "x", kind: "GOAL", krMetric: "CHILDREN" }),
+      tpl({ id: "task", title: "y", krMetric: "ROADMAP" }),
+    ]).join() === "a-open,z-open"
+  );
+
+  // 'measured …': the time on this life day (02:30 is still Thursday's), the weekday this week, else the date.
+  check(
+    "measured: '09:12' today, '02:30' before the 04:00 edge, 'Wed' yesterday, '21 Sep' ten days back, null for a bad time",
+    measuredLabelOf(AT_0912, TODAY) === "measured 09:12" &&
+      measuredLabelOf(LATE_0230, TODAY) === "measured 02:30" &&
+      measuredLabelOf(WED_0840, TODAY) === "measured Wed" &&
+      measuredLabelOf("2026-09-20T23:00:00.000Z", TODAY) === "measured 21 Sep" &&
+      measuredLabelOf("not a time", TODAY) === null,
+    [AT_0912, LATE_0230, WED_0840, "2026-09-20T23:00:00.000Z"].map((x) => measuredLabelOf(x, TODAY)).join(" | ")
+  );
+  // Fix round 2 (lane Y's handoff; contract §11.4 item 7): a date in another year carries the year,
+  // as the You ladder (sheet-math shortDayLabel) and the Aim card (roadmap-copy dayLabel) print it.
+  // The weekday within the past week never does, even across New Year.
+  const DEC20_0800 = "2025-12-19T21:00:00.000Z"; // Sat 20 Dec 2025 08:00 AEDT
+  const DEC30_0800 = "2025-12-29T21:00:00.000Z"; // Tue 30 Dec 2025 08:00 AEDT
+  const JAN27_2027 = "2027-01-27T00:00:00.000Z"; // Wed 27 Jan 2027 11:00 AEDT (a clock ahead)
+  check(
+    "measured: another year's date carries the year ('measured 20 Dec 2025', a future '27 Jan 2027'); the weekday across New Year does not ('measured Tue'); this year's date stays bare",
+    measuredLabelOf(DEC20_0800, "2026-01-05") === "measured 20 Dec 2025" &&
+      measuredLabelOf(DEC30_0800, "2026-01-02") === "measured Tue" &&
+      measuredLabelOf(JAN27_2027, TODAY) === "measured 27 Jan 2027" &&
+      measuredLabelOf(DEC20_0800, "2025-12-31") === "measured 20 Dec",
+    [measuredLabelOf(DEC20_0800, "2026-01-05"), measuredLabelOf(DEC30_0800, "2026-01-02"), measuredLabelOf(JAN27_2027, TODAY), measuredLabelOf(DEC20_0800, "2025-12-31")].join(" | ")
+  );
+  // One reading, one wording: Today's card and the Aim card (roadmap-copy measuredLabel) agree on
+  // the time, the 04:00 edge, the weekday and the date, within and across a year.
+  const sameWords: [string, DayKey][] = [
+    [AT_0912, TODAY],
+    [LATE_0230, TODAY],
+    [WED_0840, TODAY],
+    ["2026-09-20T23:00:00.000Z", TODAY],
+    [JAN27_2027, TODAY],
+    [DEC20_0800, "2026-01-05"],
+    [DEC30_0800, "2026-01-02"],
+    [DEC20_0800, "2025-12-31"],
+  ];
+  const wordDiff = sameWords.filter(([at, day]) => measuredLabelOf(at, day) !== aimMeasuredLabel(at, day));
+  check(
+    "measured: Today's 'measured …' is word for word the Aim card's (roadmap-copy measuredLabel), within and across a year",
+    wordDiff.length === 0,
+    wordDiff.map(([at, day]) => `${at}@${day}: '${measuredLabelOf(at, day)}' ≠ '${aimMeasuredLabel(at, day)}'`).join("; ")
+  );
+
+  // Week quests are not on the board: the counts (nav, bell) and the lanes are the same with or without the roadmap.
+  const plain = board([rg, rgPractice, rgStep, tpl({ id: "mustx", title: "Morning meds", compulsory: true, dueKind: "DEADLINE", dueDay: TODAY })]);
+  const withRoadmap: BoardData = { ...plain, roadmapGoals: { rg: entry } };
+  const lanes = (x: BoardData) => {
+    const bb = buildBoard(x);
+    return JSON.stringify([bb.must, bb.todayRows, bb.anytime, bb.inbox].map((l) => l.map((r) => ("key" in r ? r.key : r.id))));
+  };
+  check(
+    "week quests: todayCountsOf and the lanes are unchanged by a roadmap goal's series (quests add no Ask, no count, no row)",
+    JSON.stringify(todayCountsOf(plain)) === JSON.stringify(todayCountsOf(withRoadmap)) && lanes(plain) === lanes(withRoadmap),
+    `${JSON.stringify(todayCountsOf(plain))} vs ${JSON.stringify(todayCountsOf(withRoadmap))}`
+  );
+
+  // The card shows only for an OPEN week with a quest.
+  check(
+    "week quests: Today shows the card only for an OPEN week with at least one quest (never empty, HELD or PAST_DUE)",
+    weekQuestsShownOnToday({ state: "OPEN", rows: [{}] }) &&
+      !weekQuestsShownOnToday({ state: "OPEN", rows: [] }) &&
+      !weekQuestsShownOnToday({ state: "HELD", rows: [] }) &&
+      !weekQuestsShownOnToday({ state: "PAST_DUE", rows: [{}] }) &&
+      !weekQuestsShownOnToday(null) &&
+      !weekQuestsShownOnToday(undefined)
+  );
+
+  // Seeking a task from a week quest row: the place the board must open first.
+  const sk = board([
+    rgPractice,
+    rgStep,
+    tpl({ id: "inb", title: "Sort the receipts", inbox: true }),
+    tpl({ id: "due", title: "Call the bank", dueKind: "PLANNED", dueDay: TODAY }),
+  ]);
+  check(
+    "seek: a one-off step with no day opens Anytime; a task due today is drawn; an inbox item flashes the Inbox; an unknown id is not found",
+    seekPlaceOf(sk, "rgs").open === "anytime" &&
+      seekPlaceOf(sk, "rgs").found &&
+      seekPlaceOf(sk, "due").open === null &&
+      seekPlaceOf(sk, "inb").open === "inbox" &&
+      !seekPlaceOf(sk, "nope").found,
+    JSON.stringify(["rgs", "due", "inb", "rgp"].map((id) => seekPlaceOf(sk, id)))
+  );
+  check("seek: a habit with a weekly target is drawn in a lane or opens Anytime (never the Inbox)", seekPlaceOf(sk, "rgp").found && seekPlaceOf(sk, "rgp").open !== "inbox");
 }
 
 // ── The server accepts exactly what the board offers ─────────────────────

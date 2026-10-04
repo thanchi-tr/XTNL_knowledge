@@ -1,0 +1,73 @@
+{
+  "aim": "vietnamese-japanese",
+  "about": "A Vietnamese-language aim (speak Japanese fluently at work): every Gemini label is LANGUAGE_UNCHECKED and bulk keep is off; a digit is still NUMBER in any language.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_jp",
+  "input": {
+    "intake": {
+      "aim": "Nói tiếng Nhật trôi chảy trong công việc",
+      "fieldId": "fld_jp",
+      "track": "CRAFT",
+      "domainIds": ["d_jp_vocab", "d_jp_gram"],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 6,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "WORKING",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Tiếng Nhật",
+    "domains": [
+      { "id": "d_jp_vocab", "name": "Từ vựng", "fieldId": "fld_jp", "cards": 80, "atSix": 30, "atTop": 5, "chosen": true },
+      { "id": "d_jp_gram", "name": "Ngữ pháp", "fieldId": "fld_jp", "cards": 45, "atSix": 12, "atTop": 1, "chosen": true }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [
+    { "id": "d_jp_vocab", "name": "Từ vựng", "fieldId": "fld_jp", "fieldName": "Tiếng Nhật", "cards": 80, "titles": ["Từ vựng công sở"], "tags": ["từ vựng"] },
+    { "id": "d_jp_gram", "name": "Ngữ pháp", "fieldId": "fld_jp", "fieldName": "Tiếng Nhật", "cards": 45, "titles": ["Kính ngữ"], "tags": ["ngữ pháp"] }
+  ],
+  "drafts": [
+    {
+      "id": "vietnamese-japanese-a",
+      "about": "Labels in the aim's language.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Nền tảng giao tiếp",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [{ "label": "Kính ngữ cơ bản", "domain": "D2", "claims": [] }],
+            "practices": [
+              { "name": "Luyện nói với giáo viên", "method": "COACHED_SESSION", "claims": [] },
+              { "name": "Học 50 từ mỗi ngày", "method": "DELIBERATE_PRACTICE", "claims": ["number"] }
+            ],
+            "steps": [{ "title": "Viết bài tự giới thiệu", "claims": [] }],
+            "checkpoint": { "label": "Tự kiểm tra hội thoại", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Giao tiếp công việc",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [{ "label": "Từ vựng công sở", "domain": "D1", "claims": [] }],
+            "practices": [{ "name": "Đọc email công việc mỗi ngày", "method": "READING", "claims": [] }],
+            "steps": [{ "title": "Thuyết trình ngắn bằng tiếng Nhật", "claims": [] }],
+            "checkpoint": null
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import type { ReviewAnswer } from "@/lib/verification";
 import { gradeReview } from "@/lib/answer-judge";
 import type { MeaningVerdict } from "@/lib/meaning-match";
@@ -13,6 +14,7 @@ import { historyOf, questTargetOf, trueFactOf, type TrueFact } from "@/lib/revie
 import { captureSnapshot, detectCelebrations } from "@/lib/celebrations";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { getCurrentUserId } from "@/lib/user";
+import { recordCardsForReview } from "@/lib/roadmap-readings";
 import { readIdeaHistory, readReviewDay } from "@/app/review/review-data";
 
 export interface SubmitReviewInput {
@@ -114,13 +116,26 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
 
   const cap = progression.modifiers.comboCap;
   const advanced = outcome.outcome === "advanced" ? outcome : null;
+  const levelAfter = advanced ? advanced.newLevel : outcome.outcome === "degraded" ? outcome.newLevel : idea.level;
+  // A review that moved the card's level records the roadmap's reading at once (roadmap.md F10, F16
+  // seam 7), after the answer is sent. The writer is a no-op unless a started milestone or the aim
+  // counts this Domain at a level the move crossed, writes only where writes are on, and never fails
+  // the answer: its points are already in. The writer logs its own failures and never throws; anything
+  // that escapes it anyway is logged here, never swallowed without a trace.
+  if (levelAfter !== idea.level) {
+    after(() =>
+      recordCardsForReview(userId, idea.id, idea.domainId, idea.level, levelAfter, { now }).catch((err: unknown) => {
+        console.error("roadmap: the review's reading was not recorded:", err);
+      })
+    );
+  }
   const trueFact = trueFactOf({
     correct,
     today,
     history: historyOf(historyRows, dayKeyOf(idea.createdAt)),
     addedDay: dayKeyOf(idea.createdAt),
     levelBefore: idea.level,
-    levelAfter: advanced ? advanced.newLevel : outcome.outcome === "degraded" ? outcome.newLevel : idea.level,
+    levelAfter,
     failedAttemptsBefore: idea.failedAttempts,
     mastered: advanced?.mastered ?? false,
     overdueDays: Math.max(0, -daysUntilDue(idea.dueDate, now)),

@@ -245,9 +245,11 @@ for (const tz of [SYD, BNE]) {
   );
 
   // npm run life:check runs every pure life check (M2 appends settlement, Duty, the Duty
-  // actions and the rituals after character-check), and the backfill has its script.
+  // actions and the rituals after character-check; the roadmap appends its seven checks
+  // after the rituals, roadmap.md Acceptance), and the backfill has its script.
   const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
-  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "settle", "duty", "duty-actions", "rituals"].map((n) => `scripts/${n}-check.ts`);
+  const ROADMAP_LIFE_CHECKS = ["roadmap-contract", "roadmap-measures", "throughput", "roadmap-realism", "roadmap-model", "roadmap-server", "roadmap-quests"];
+  const all = ["life-day", "streak", "life-grade", "recurrence", "capture-parse", "board", "today-ui", "capture-server", "idea-capture", "weight", "weight-capture", "character", "settle", "duty", "duty-actions", "rituals", ...ROADMAP_LIFE_CHECKS].map((n) => `scripts/${n}-check.ts`);
   const lifeCheck = scripts["life:check"] ?? "";
   check(
     "package.json life:check chains every life check with &&, and each exists",
@@ -258,7 +260,7 @@ for (const tz of [SYD, BNE]) {
     "package.json db:backfill-activity runs the backfill script",
     scripts["db:backfill-activity"] === "tsx scripts/backfill-activity.ts" && existsSync(resolve(ROOT, "scripts/backfill-activity.ts"))
   );
-  for (const [name, file] of [["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"]] as const) {
+  for (const [name, file] of [["settle:check", "settle"], ["duty:check", "duty"], ["duty-actions:check", "duty-actions"], ["rituals:check", "rituals"], ...ROADMAP_LIFE_CHECKS.map((n) => [`${n}:check`, n] as const)] as const) {
     check(`package.json ${name} runs scripts/${file}-check.ts on its own too`, scripts[name] === `tsx scripts/${file}-check.ts`, scripts[name] ?? "missing");
   }
 

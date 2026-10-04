@@ -12,18 +12,31 @@
  *   Goals closed in the last 30 days, measured as of their close: 'Closed ·
  *   paid ⬡ 4.8 · Duty depth +1', or 'Closed · paid 0: <why>'.
  *   Percentages are goals.ts goalPercent, the one floored figure Today shows too.
+ *   A roadmap milestone's goal (krMetric ROADMAP; roadmap.md F16 seam 13)
+ *   also shows the quiet chip 'Roadmap · milestone 2 of 3', when its stored
+ *   reading was taken ('measured 09:12'; its caption, 'tested by your
+ *   reviews · slowest: …', is the progress label goals.ts writes) and the
+ *   note on a goal that is no longer measured, word for word as the entry
+ *   carries it: 'measures removed by a reset' or 'roadmap archived', or
+ *   'replaced by Start again' once a dropped milestone's copy has started
+ *   (roadmap-types isSupersededRow: its series is empty, so g is null and it
+ *   pays 0). Why it states 0 ('pays nothing · knowledge is paid by reviews')
+ *   is its stated line, which goals-server folds. All of it comes from the
+ *   item goals-server builds; no roadmap module is read here.
  *   Then ideas mastered, Field tiers and habits by rung. No PRs.
  *
  * Before life counts, nothing here states or previews MP: goals show their
  * progress only. Every figure comes from loadSheet; the copy is pure
- * (goalRowCopy, rungsLine) so scripts/you-check.ts holds it.
+ * (goalRowCopy, roadmapRowCopy, rungsLine) so scripts/you-check.ts holds it.
  */
 import Link from "next/link";
-import { goalPercent, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout } from "@/lib/goals";
+import { goalAsOf, goalPercent, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout, type RoadmapGoalEntry } from "@/lib/goals";
 import type { HabitRung } from "@/lib/habit";
-import type { DayKey } from "@/lib/life-day";
+import { LIFE_TZ, type DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
 import { TRACK_NAME, TRACK_SIGIL } from "@/lib/life-tracks";
+import { measuredLabelOf } from "@/lib/today-board";
+import { Chip } from "@/components/ui/Chip";
 import { CurrencyGlyph, Icon, Sigil } from "@/components/ui/Icon";
 import { mpFigure, shortDayLabel } from "./sheet-math";
 
@@ -46,11 +59,69 @@ function carriedFigure(g: number): string {
   return (goalPercent(g) / 100).toFixed(2);
 }
 
+// ─── A roadmap milestone's goal (F16 seam 13) ──────────────────────────────
+
+/** The entry goals-server's loadGoalLadder attaches to an open ROADMAP goal (GoalLadderItem.roadmap); null on every other goal. */
+export function roadmapEntryOf(item: GoalLadderItem): RoadmapGoalEntry | null {
+  return item.roadmap ?? null;
+}
+
+/**
+ * When a stored reading was taken, in the life zone: 'measured 09:12' on
+ * today's life day, 'measured Sat' within the past week, 'measured 25 Sep'
+ * (with the year when it differs) before that. null for an unreadable time.
+ * It is Today's goal card's own rule (today-board.ts measuredLabelOf, which
+ * carries the year since fix round 2), so the same goal's reading reads the
+ * same on Today and here; the Aim card above it on /you says the same words
+ * too (roadmap-copy.ts measuredLabel; you-check holds them together).
+ */
+export function measuredLabel(observedAt: string, today: DayKey, tz: string = LIFE_TZ): string | null {
+  return measuredLabelOf(observedAt, today, tz);
+}
+
+export interface RoadmapRowCopy {
+  /** 'Roadmap · milestone 2 of 3' (a quiet chip). */
+  chip: string | null;
+  /** 'measured 09:12': when the reading g is read from was taken (open goals; null with no reading). */
+  measured: string | null;
+  /** Why the goal is no longer measured, as the entry says it: 'measures removed by a reset', 'roadmap archived', 'replaced by Start again'. */
+  note: string | null;
+}
+
+/**
+ * The roadmap lines of one ladder row, from the entry goals-server attached:
+ * the chip, the binding reading's time (the last stored point on or before
+ * goalAsOf, the day g is read on; none when the steps set g, as on Today's
+ * card, since then no reading binds) and the entry's note. All null without an
+ * entry, so every other goal reads exactly as before. The zero reason is not
+ * here: goals-server folds it into the item's stated line (goals.ts
+ * statedPayoutLine, 'pays nothing · knowledge is paid by reviews'), the one
+ * place it is worded.
+ */
+export function roadmapRowCopy(entry: RoadmapGoalEntry | null, item: Pick<GoalLadderItem, "dueDay" | "closed" | "g">, today: DayKey): RoadmapRowCopy {
+  if (!entry) return { chip: null, measured: null, note: null };
+  const open = !item.closed;
+  const asOf = goalAsOf(today, item.dueDay);
+  let point: RoadmapGoalEntry["series"][number] | null = null;
+  for (const p of entry.series) if (p.day <= asOf && (!point || p.day >= point.day)) point = p;
+  // goals.ts takes g = min(the reading, the steps' share): below the reading, the steps bind.
+  const stepsBind = point != null && item.g != null && item.g < Math.min(1, point.g) - 1e-9;
+  return {
+    chip: entry.of > 0 && entry.ord > 0 ? `Roadmap · milestone ${entry.ord} of ${entry.of}` : null,
+    measured: open && point && !stepsBind ? measuredLabel(point.observedAt, today) : null,
+    note: entry.note?.trim() || null,
+  };
+}
+
 export interface GoalRowCopy {
-  /** 'Mid · Duty · 62% · 3 of 5 steps · due 12 Dec'. */
+  /** 'Mid · Duty · 62% · 3 of 5 steps · due 12 Dec'; a roadmap goal adds '· measured 09:12'. */
   meta: string;
-  /** The stated payout, once life counts ('pays ⬡ 6 × progress from 70%'). */
+  /** The stated payout, once life counts ('pays ⬡ 6 × progress from 70%'; a roadmap goal stating 0: 'pays nothing · <why>'). */
   pays: string | null;
+  /** A roadmap milestone's goal: 'Roadmap · milestone 2 of 3'. */
+  chip: string | null;
+  /** A roadmap milestone's goal that is no longer measured: 'measures removed by a reset', 'replaced by Start again'. */
+  note: string | null;
   /** 'Carried 0.55' (open, past due, g < 1), with '· reschedule or close it on Today' once life counts. */
   carried: string | null;
   /** What closing now pays, once life counts: 'Closing now pays 0: below 70%', 'Closing now pays ⬡ 4.8'. */
@@ -66,11 +137,13 @@ function previewCopy(p: GoalPayout | null): string | null {
 }
 
 export function goalRowCopy(item: GoalLadderItem, launched: boolean, today: DayKey): GoalRowCopy {
+  const rm = roadmapRowCopy(roadmapEntryOf(item), item, today);
   const parts = [GOAL_RULES[item.horizon].name, TRACK_NAME[item.track]];
   // g is null when the goal is not measured (a closed one too: never an invented 0%).
   if (item.g != null) parts.push(`${goalPercent(item.g)}%`);
   if (item.progressLabel) parts.push(item.progressLabel);
   if (!item.closed && item.dueDay) parts.push(`${item.pastDue ? "was due" : "due"} ${shortDayLabel(item.dueDay, today)}`);
+  if (rm.measured) parts.push(rm.measured);
   const c = item.closed;
   const closed = c
     ? c.paid > 0
@@ -80,6 +153,8 @@ export function goalRowCopy(item: GoalLadderItem, launched: boolean, today: DayK
   return {
     meta: parts.join(" · "),
     pays: launched && !c ? item.copy : null,
+    chip: rm.chip,
+    note: rm.note,
     // Today has Close and Reschedule only once life counts, so the sheet sends you there only then.
     carried: !c && item.carried != null ? `Carried ${carriedFigure(item.carried)}${launched ? " · reschedule or close it on Today" : ""}` : null,
     preview: launched && !c ? previewCopy(item.preview) : null,
@@ -117,6 +192,11 @@ function GoalRow({ item, launched, today }: { item: GoalLadderItem; launched: bo
       </span>
       <div className="mo-body">
         <b className="gl-title">{item.title}</b>
+        {copy.chip && (
+          <span className="gl-line">
+            <Chip>{copy.chip}</Chip>
+          </span>
+        )}
         <span className="t-meta gl-line">{copy.meta}</span>
         {copy.pays && (
           <span className="t-meta gl-line">
@@ -129,6 +209,7 @@ function GoalRow({ item, launched, today }: { item: GoalLadderItem; launched: bo
           </span>
         )}
         {copy.carried && <span className="t-meta gl-line gl-carried">{copy.carried}</span>}
+        {copy.note && <span className="t-meta gl-line">{copy.note}</span>}
         {copy.closed && (
           <span className="t-meta gl-line">
             <GlyphText text={copy.closed} />

@@ -39,7 +39,20 @@ import type { Attribute } from "@prisma/client";
 import { STUDY_AUTO_METRICS, UNDO_WINDOW_MINUTES, effBand, estEff, payModeOf, priceTask, receiptBandOf, timingFor } from "./life-grade";
 import { repeatNOf } from "./life-lexicon";
 import { describeRule, nextDue, occursOn, parseRule, periodProgress, scheduledPerWeek, type Rule } from "./recurrence";
-import { goalAsOf, goalProgress, progressQtyAsOf, stepsDoneAsOf, type GoalProgressInput, type GoalProgressRow } from "./goals";
+import {
+  ROADMAP_CAPTION,
+  goalAsOf,
+  goalProgress,
+  goalProgressLabel,
+  progressQtyAsOf,
+  roadmapPointAsOf,
+  stepsDoneAsOf,
+  type GoalProgressInput,
+  type GoalProgressRow,
+  type RoadmapGoalEntry,
+} from "./goals";
+// Type-only (erased): the zero-reason codes the fallback words must cover.
+import type { StatedZeroReason } from "./roadmap-types";
 import {
   HABIT_WINDOW_DAYS,
   habitStrength,
@@ -173,6 +186,12 @@ export interface BoardTemplate extends PricedTemplate {
   compulsoryOnRest?: boolean;
   /** M2 (lane D): TaskTemplate.mvvMinutes, the minimum version's minutes. Absent reads as null. */
   mvvMinutes?: number | null;
+  /**
+   * Roadmap (lane 0 type; lane G fills it through TEMPLATE_SELECT):
+   * TaskTemplate.captureKey. A roadmap goal is 'rm:<milestoneId>', its
+   * practices and steps 'rm:<milestoneId>:p<i>' / ':s<i>'. Absent reads as null.
+   */
+  captureKey?: string | null;
 }
 
 export interface BoardInstance {
@@ -271,6 +290,15 @@ export interface BoardData {
    * facts (duty-view.ts dutyBoardOf). Absent: the pre-M2 board, exactly.
    */
   duty?: DutyBoard;
+  /**
+   * Roadmap (lane 0 type; lane T fills it, F16 seam 3): each open ROADMAP
+   * goal's stored series (with its binding class and label), "Roadmap ·
+   * milestone 2 of 3", the "pays nothing · …" reason and the note of a goal
+   * never measured again ("measures removed by a reset", "replaced by Start
+   * again"; its series is empty), keyed by goal id. Read with one query only when
+   * such a goal exists; a missing table reads as none. Absent: no roadmap goals.
+   */
+  roadmapGoals?: Record<string, RoadmapGoalEntry>;
 }
 
 // ── Small pure helpers ────────────────────────────────────────────────────
@@ -917,6 +945,50 @@ export interface GoalCard {
    * null. Never a debt: the goal stays open to reschedule or close.
    */
   carried: number | null;
+  /**
+   * Roadmap (lane T, F16 seams 3–4): a ROADMAP goal's caption parts, chip,
+   * zero reason and reset note, from BoardData.roadmapGoals. Absent (or
+   * null) on every other goal.
+   */
+  roadmap?: RoadmapGoalCard | null;
+}
+
+/**
+ * What a ROADMAP goal's card says beyond g (roadmap.md F10, F16 seam 4). g
+ * itself is goals.ts goalProgress over the stored series (the one function
+ * the ladder and the close use); these are only its words.
+ */
+export interface RoadmapGoalCard {
+  /**
+   * The binding part's class in words (goals.ts ROADMAP_CAPTION): "tested by
+   * your reviews" (MEASURED) or "from your ticks" (SELF_REPORTED, or the
+   * steps' share when it is strictly below the series). null before the
+   * first reading ≤ the as-of day.
+   */
+  caption: string | null;
+  /** The binding part ("cards at level 6+", "1 of 3 steps"); null before the first reading. */
+  slowest: string | null;
+  /** When the binding reading was taken: "measured 09:12", "measured Sat", "measured 3 Oct"; null when the steps bind or before the first reading. */
+  measured: string | null;
+  /** "Roadmap · milestone 2 of 3"; null when the milestone's place is unknown (no entry). */
+  chip: string | null;
+  /** Why it states 0, shown after "pays nothing" ("knowledge is paid by reviews"); null unless goalMp is 0. */
+  zeroReason: string | null;
+  /**
+   * Why it will never be measured again, on a line of its own: "measures
+   * removed by a reset" or "roadmap archived" (its roadmap was archived), or
+   * "replaced by Start again" (roadmap-types isSupersededRow: a newer copy of
+   * its milestone has started).
+   */
+  note: string | null;
+  /**
+   * The goal will never be measured again: a note and no stored point. The
+   * roadmap's readings refuse it for good (readingOpsFor's final refusal), so
+   * its close pays 0, "not measured", whatever MP it stated: the card reads
+   * "not measured · pays nothing", never "pays ⬡ 6 × progress from 70%".
+   * False for a goal with no reading yet ("not measured yet"): it may still be.
+   */
+  unmeasured: boolean;
 }
 
 /** A one-off waiting for a later day, as Anytime's 'Planned later' list shows it. */
@@ -1626,10 +1698,23 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
         : null;
     const metric: KrMetric = g.krMetric ?? "CHILDREN";
     const input = goalProgressInputOf(g, steps, d);
+    // The goal's own due day. For a ROADMAP goal that is the one due day
+    // every surface reads (roadmap-types milestoneDueDayOf: the goal's
+    // TaskTemplate.dueDay once started, which a Reschedule moves), so Today,
+    // the ladder, the close and the roadmap's reach rules judge one day.
     const asOf = goalAsOf(d.today, g.dueDay);
     const progress = goalProgress(input, asOf);
     let label: string;
-    if (metric === "MANUAL") {
+    let roadmap: RoadmapGoalCard | null = null;
+    if (metric === "ROADMAP") {
+      // g and its label are goals.ts's ROADMAP branch over the stored series
+      // (never a live value), the words the ladder and the close read too.
+      // A goal that will never be measured again (its roadmap archived, or
+      // its row replaced by Start again) reads 'not measured', with its
+      // note, rather than 'not measured yet'.
+      roadmap = roadmapGoalCardOf(g, input, asOf, d.today, d.roadmapGoals?.[g.id] ?? null);
+      label = roadmap.unmeasured ? "not measured" : goalProgressLabel(input, asOf);
+    } else if (metric === "MANUAL") {
       const qty = progressQtyAsOf(input.progress, asOf);
       const target = g.krTarget ?? null;
       const unit = g.krUnit ? ` ${g.krUnit}` : "";
@@ -1652,6 +1737,7 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
       dueLabel: g.dueDay ? dueLabelOf(g, d.today).label : null,
       steps: steps.length,
       carried: pastDue && progress != null && progress < 1 ? progress : null,
+      ...(roadmap ? { roadmap } : {}),
     });
   }
   for (const h of Object.keys(out) as Horizon[]) {
@@ -1665,15 +1751,153 @@ function goalCards(goals: BoardTemplate[], d: BoardData, tplById: Map<string, Bo
  * its one-off steps (non-recurring, non-goal children; the board reads no
  * archived template) with the life day each was completed, and its
  * GOAL_PROGRESS by day (goalDays, or, absent, goalQty on the day it was set).
+ * A ROADMAP goal also carries its stored series (BoardData.roadmapGoals; none
+ * when absent), which goals.ts reads in its ROADMAP branch: the same series
+ * the ladder and the close read, so all three give one g.
  */
-export function goalProgressInputOf(g: BoardTemplate, steps: readonly BoardTemplate[], d: Pick<BoardData, "goalQty" | "goalDays">): GoalProgressInput {
+export function goalProgressInputOf(
+  g: BoardTemplate,
+  steps: readonly BoardTemplate[],
+  d: Pick<BoardData, "goalQty" | "goalDays" | "roadmapGoals">
+): GoalProgressInput {
   const qty = d.goalQty[g.id] ?? 0;
   return {
     krMetric: g.krMetric ?? "CHILDREN",
     krTarget: g.krTarget,
     steps: steps.map((s) => ({ completedDay: s.completedAt ? dayKeyOf(new Date(s.completedAt)) : null })),
     progress: d.goalDays?.[g.id] ?? (qty !== 0 ? [{ day: dayKeyOf(new Date(g.createdAt)), qty }] : []),
+    ...(g.krMetric === "ROADMAP" ? { readings: d.roadmapGoals?.[g.id]?.series ?? [] } : {}),
   };
+}
+
+// ── Roadmap goals on Today (F16 seams 3–4, lane T) ──────────────────────────
+
+/**
+ * The open ROADMAP goals whose stored series the board loader reads
+ * (BoardData.roadmapGoals, roadmap-readings loadRoadmapGoalSeries): goals
+ * with krMetric 'ROADMAP' that are not closed or completed. Empty means the
+ * one extra query is skipped. Sorted, so the cache key is stable.
+ */
+export function roadmapGoalIdsOf(templates: readonly Pick<BoardTemplate, "id" | "kind" | "krMetric" | "closedScore" | "completedAt">[]): string[] {
+  return templates
+    .filter((t) => t.kind === "GOAL" && t.krMetric === "ROADMAP" && t.closedScore == null && !t.completedAt)
+    .map((t) => t.id)
+    .sort();
+}
+
+/**
+ * Why a milestone states 0, in words, for "pays nothing · …" (F15). The
+ * loader sends the words themselves (roadmap-readings loadRoadmapGoalSeries;
+ * LINEAGE_PAID's carry the day it paid: "this milestone already paid on 3
+ * Mar"), used as they are, without a leading "pays nothing ·". A bare
+ * roadmap-types StatedZeroReason code is worded here as a fallback, in the
+ * roadmap page's own words (roadmap-copy ZERO_REASON_LINE; board-check pins
+ * them equal), so a milestone's reason reads the same on Today and its page.
+ */
+const ZERO_REASON_WORDS: Readonly<Record<StatedZeroReason, string>> = {
+  KNOWLEDGE_ONLY: "knowledge is paid by reviews",
+  PRACTICE_UNDER_HOUR: "practice under an hour a week",
+  PRACTICE_UNDER_SHARE: "practice under a third of this milestone's planned time",
+  LINEAGE_PAID: "this milestone already paid",
+};
+
+export function roadmapZeroReasonText(reason: string | null | undefined): string | null {
+  const t = (reason ?? "").trim();
+  if (!t) return null;
+  const code = Object.prototype.hasOwnProperty.call(ZERO_REASON_WORDS, t) ? ZERO_REASON_WORDS[t as StatedZeroReason] : null;
+  const words = code ?? t.replace(/^pays nothing\s*·\s*/i, "").trim();
+  return words || null;
+}
+
+/**
+ * When a stored reading was taken, as Today shows it (F10: "measured 09:12"
+ * or "measured Sat"): the time on this life day, the weekday within the
+ * last six days, else the date, with its year when that differs from
+ * today's ("measured 20 Dec 2025"). The You ladder (GoalLadder
+ * measuredLabel, sheet-math shortDayLabel) and the Aim card (roadmap-copy
+ * measuredLabel, dayLabel) word it the same way, so one reading reads alike
+ * on all three. Life days and times are Sydney's (LIFE_TZ), so the server
+ * and the browser print the same words. null for a bad time.
+ */
+export function measuredLabelOf(observedAt: string, today: DayKey, tz: string = LIFE_TZ): string | null {
+  const ms = Date.parse(observedAt);
+  if (!Number.isFinite(ms)) return null;
+  const at = new Date(ms);
+  const day = dayKeyOf(at, tz);
+  if (day === today) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-AU", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
+      const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+      return `measured ${pad2(Number(get("hour")))}:${get("minute")}`;
+    } catch {
+      return "measured today";
+    }
+  }
+  const gap = daysBetween(day, today);
+  if (gap > 0 && gap < 7) return `measured ${weekdayName(day)}`;
+  const year = day.slice(0, 4) !== today.slice(0, 4) ? ` ${Number(day.slice(0, 4))}` : "";
+  return `measured ${shortDate(day)}${year}`;
+}
+
+/**
+ * The words of a ROADMAP goal's card, part by part (the label itself is
+ * goals.ts goalProgressLabel). The binding part is the one that set g's
+ * minimum as of `asOf`, by goals.ts's own rule: the stored series point that
+ * day reads (roadmapPointAsOf: its class, its label, and when it was
+ * measured), or the steps' done share when that is strictly lower (from your
+ * ticks; a tie keeps the measure). With no point the caption is null and
+ * the card reads not measured: "not measured yet" while a reading may still
+ * come, "not measured" for good (`unmeasured`) when the entry's note says
+ * why it never will (an archived roadmap, or a row replaced by Start again).
+ */
+export function roadmapGoalCardOf(
+  g: Pick<BoardTemplate, "goalMp">,
+  input: Pick<GoalProgressInput, "steps" | "readings">,
+  asOf: DayKey,
+  today: DayKey,
+  entry: RoadmapGoalEntry | null
+): RoadmapGoalCard {
+  const point = roadmapPointAsOf(input.readings, asOf);
+  const { done, total } = stepsDoneAsOf(input.steps, asOf);
+  const stepsBind = point != null && total > 0 && done / total < Math.max(0, Math.min(1, point.g));
+  const caption = point == null ? null : stepsBind || point.bindingClass !== "MEASURED" ? ROADMAP_CAPTION.SELF_REPORTED : ROADMAP_CAPTION.MEASURED;
+  const slowest = point == null ? null : stepsBind ? `${done} of ${total} step${total === 1 ? "" : "s"}` : (point.bindingLabel ?? "").trim() || null;
+  const note = entry?.note?.trim() || null;
+  return {
+    caption,
+    slowest,
+    measured: point && !stepsBind ? measuredLabelOf(point.observedAt, today) : null,
+    chip: entry && entry.ord > 0 && entry.of >= entry.ord ? `Roadmap · milestone ${entry.ord} of ${entry.of}` : null,
+    zeroReason: g.goalMp === 0 ? roadmapZeroReasonText(entry?.zeroReason) : null,
+    note,
+    unmeasured: point == null && note != null,
+  };
+}
+
+/**
+ * Whether Today shows the week quests card (F17): only for an OPEN week with
+ * at least one quest. Absent for no ACTIVE roadmap or STARTED milestone (no
+ * view), and for an empty, HELD or PAST_DUE set — Today stays silent there;
+ * the roadmap page says what to do.
+ */
+export function weekQuestsShownOnToday(view: { state: string; rows: readonly unknown[] } | null | undefined): boolean {
+  return !!view && view.state === "OPEN" && view.rows.length > 0;
+}
+
+/**
+ * Where a sought task lives (SEEK_TEMPLATE_EVENT from a week quest row, or a
+ * capture's '#t-' link): which collapsed place the board must open first —
+ * 'anytime' for Anytime, Planned later and Coming up, 'inbox' for the Inbox
+ * (its row only flashes) — or null when it is drawn in a lane already.
+ * `found` is false for a template the board does not hold (archived, or a
+ * done one-off off the board): the seek gives up.
+ */
+export function seekPlaceOf(data: Pick<BoardData, "templates" | "instances" | "stats" | "today">, templateId: string): { found: boolean; open: "anytime" | "inbox" | null } {
+  const t = data.templates.find((x) => x.id === templateId);
+  if (!t) return { found: false, open: null };
+  const lane = placeOf(t, data.today, data.instances.filter((i) => i.templateId === t.id), data.stats[t.id]?.lastDone ?? null).lane;
+  if (lane === "inbox") return { found: true, open: "inbox" };
+  return { found: true, open: lane === "anytime" || lane === "later" || lane === "upcoming" ? "anytime" : null };
 }
 
 function fmtQty(n: number): string {

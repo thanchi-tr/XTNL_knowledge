@@ -28,7 +28,38 @@
  * named by week, the track lines draw 2–12 points, the figure and date
  * labels, the first judged week, and (§8) the rules card types no number
  * by hand.
+ *
+ * Roadmap, lane Y (§9; roadmap.md F16 seams 9, 12, 13 and 18): the Aim card
+ * joins the sheet's one wave on /you, under the hero, with no Suspense, and a
+ * failed load renders the sheet without it (the page's own guard, run here);
+ * the dismissed prompt is read from its cookie; the fallback week quest
+ * freeze runs in the page's after() only when the week is unfrozen; the goal
+ * ladder's roadmap lines (chip, 'measured 09:12', 'pays nothing · …', the
+ * reset note); the Aim card fixtures on /dev/style/art/you; and the rules
+ * page's Roadmap section (no number typed by hand, week quests never a bare
+ * "quest", Proficiency and the Aim rank kept apart from mastery and pay).
+ * The fix round adds: /you passes the card its life day (todayKey(now)); the
+ * ladder's "measured …" matches the Aim card's word for word, and a goal
+ * replaced by its Start again copy shows that note; every fixture fact is
+ * possible today, each fixture's rank is read from its places
+ * (maxScheduledPositionsOf), ACCEPTED holds only before any milestone was
+ * carried, draftItems counts the next milestone's undecided rows, a
+ * started milestone shows its goal's due day, a paid lineage states 0 with
+ * its day; the fixtures page renders (the real AimCard, inside
+ * FixtureRoadmapProvider); and the rules page's new sentences are held to
+ * the helpers that apply them (countsTowardDraftCap, milestoneDueDayOf,
+ * isSupersededRow, maxScheduledPositionsOf, proficiencyOf's shares).
+ * Fix round 2 adds: the ladder's "measured …" is Today's own rule
+ * (today-board measuredLabelOf), equal to the Aim card's across a year too;
+ * draftItems is draftNeedsOf over real draft rows (never a syllabus topic,
+ * a row the user wrote or a removed row); every card
+ * after acceptance carries acceptedDay, and the ACCEPTED caption claims the
+ * acceptance only for that day's reading (accepted vs accepted-later, and a
+ * live-shaped view without acceptedDay); a Gemini title's numbers are
+ * struck on the card with the spans R3's withLabelChecks derives.
+ * It imports roadmap modules, so scripts/_no-model.ts comes first.
  */
+import "./_no-model";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { createElement } from "react";
@@ -99,12 +130,50 @@ import { KeptWeeks, endLabelTops, keptCellLabel, trackLinesGeometry } from "../s
 import { LifeTracks } from "../src/components/home/SheetSections";
 import { CharacterHero } from "../src/components/home/CharacterHero";
 import { fixtures as celebrateFixtures, fixtureMoments } from "../src/app/dev/style/celebrate/fixtures";
-import { goalRowCopy, rungsLine } from "../src/components/home/GoalLadder";
+import { GoalLadder, goalRowCopy, measuredLabel, roadmapEntryOf, roadmapRowCopy, rungsLine } from "../src/components/home/GoalLadder";
 import { LIFE_NOTE_KEY, readNoteDismissed, writeNoteDismissed } from "../src/components/home/LifeNote";
-import { goalPercent, statedPayoutCopy, type GoalLadderItem, type GoalPayout } from "../src/lib/goals";
+import { goalPercent, statedPayoutCopy, statedPayoutLine, type GoalLadderItem, type GoalPayout, type RoadmapGoalEntry } from "../src/lib/goals";
 import { GOAL_RULES } from "../src/lib/life-economy";
 import type { LifeTrackRow } from "../src/lib/life-tracks";
 import { momentMeta, momentMonths } from "../src/app/you/_lib/moments";
+import Module from "node:module";
+import { addDays, dayKeyOf, todayKey, weekStartKeyOf, zonedToInstant, type DayKey } from "../src/lib/life-day";
+import {
+  AIM_PROMPT_COOKIE,
+  AIM_RANKS,
+  PROFICIENCY_WEIGHTS,
+  RANK_NEW_DAYS,
+  RANK_TOP,
+  TOP_LEVEL,
+  aimRankName,
+  countsTowardDraftCap,
+  draftNeedsOf,
+  type AimCardView,
+  type MilestoneDraft,
+  type PositionRow,
+  isAcceptanceReading,
+  isSupersededRow,
+  maxScheduledPositionsOf,
+  milestoneDueDayOf,
+  positionCountOf,
+  topRankIndexOf,
+} from "../src/lib/roadmap-types";
+import { proficiencyOf } from "../src/lib/roadmap-proficiency";
+import { withLabelChecks } from "../src/lib/roadmap-validate";
+import { measuredLabel as aimMeasuredLabel } from "../src/components/roadmap/roadmap-copy";
+import { measuredLabelOf as todayMeasuredLabel } from "../src/lib/today-board";
+import {
+  BODY_ROWS,
+  DRAFT_NEXT,
+  MILESTONE2_DUE,
+  REPLAN_NEXT,
+  TITLE_WITH_NUMBER,
+  TRADING_LABEL_BASE,
+  aimCardFixtures,
+  buildAimFixture,
+  tradingRows,
+} from "../src/app/dev/style/art/you/aim-fixtures";
+import ts from "typescript";
 
 const ROOT = join(__dirname, "..");
 let pass = 0;
@@ -113,6 +182,11 @@ function check(name: string, ok: boolean, detail = "") {
   if (ok) pass++;
   else fails.push(detail ? `${name} — ${detail}` : name);
 }
+/** A check that waits on another roadmap lane's code (its shell still throws "Not yet: …"): printed, never failing. */
+const warns: string[] = [];
+const warn = (name: string, detail: string) => warns.push(`${name} — ${detail}`);
+/** A known difference another lane owns, printed and never failing. */
+const notes: string[] = [];
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 // A deterministic LCG for fixtures (never Math.random in a check either).
@@ -926,12 +1000,632 @@ function sourceChecks(isUtility: UtilityTest, via: string) {
   check("rules: the track share ceiling is published from TRACK_SHARE_CAP", /\{TRACK_SHARE_CAP\}%/.test(rules));
 }
 
+// ── 9. Roadmap on You (lane Y: F16 seams 9, 12, 13 and 18) ─────────────────
+
+/** Source without comments (a comment may name what the code must not do). */
+const codeOf = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+/** JSX's literal text: every balanced {…} expression stripped. */
+function literalText(body: string): string {
+  let text = "";
+  let depth = 0;
+  for (const ch of body) {
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    else if (depth === 0) text += ch;
+  }
+  return text;
+}
+
+// 9a. The goal ladder's roadmap lines (seam 13): read from the entry goals-server attaches.
+{
+  const today: DayKey = "2026-10-05"; // a Monday (AEDT since Sun 4 Oct)
+  const iso = (y: number, m: number, d: number, h: number, min: number) => new Date(zonedToInstant(y, m, d, h).getTime() + min * 60_000).toISOString();
+  check("ladder roadmap: a reading taken today reads its time, 'measured 09:12'", measuredLabel(iso(2026, 10, 5, 9, 12), today) === "measured 09:12", String(measuredLabel(iso(2026, 10, 5, 9, 12), today)));
+  check("ladder roadmap: 02:30 on Mon is Sunday's life day (the 04:00 edge): 'measured Sun'", measuredLabel(iso(2026, 10, 5, 2, 30), today) === "measured Sun", String(measuredLabel(iso(2026, 10, 5, 2, 30), today)));
+  check("ladder roadmap: within the past week reads the weekday, 'measured Sat'", measuredLabel(iso(2026, 10, 3, 21, 40), today) === "measured Sat");
+  check("ladder roadmap: older reads the date, 'measured 25 Sep'", measuredLabel(iso(2026, 9, 25, 8, 0), today) === "measured 25 Sep");
+  check("ladder roadmap: an unreadable time reads nothing", measuredLabel("not a time", today) === null);
+  // One page, one wording: the Aim card above the ladder on /you prints its "measured …" with
+  // roadmap-copy's measuredLabel, and Today's goal card with today-board's measuredLabelOf.
+  const sameWords = [iso(2026, 10, 5, 9, 12), iso(2026, 10, 5, 2, 30), iso(2026, 10, 3, 21, 40), iso(2026, 9, 29, 4, 0), iso(2026, 9, 25, 8, 0), iso(2026, 1, 3, 12, 0)];
+  const aimDiff = sameWords.filter((t) => measuredLabel(t, today) !== aimMeasuredLabel(t, today));
+  check("ladder roadmap: the ladder's 'measured …' is word for word the Aim card's on the same page (time, weekday, date)", aimDiff.length === 0, aimDiff.map((t) => `${measuredLabel(t, today)} ≠ ${aimMeasuredLabel(t, today)}`).join("; "));
+  // And Today's goal card's (today-board measuredLabelOf), across a year too: lane T added the year
+  // (fix round 2), so what was a NOTE here is now strict. 20 Dec 2025 read on 5 Jan 2026 is
+  // 'measured 20 Dec 2025' on all three surfaces.
+  const lastYear = iso(2025, 12, 20, 8, 0);
+  const jan: DayKey = "2026-01-05";
+  const acrossYear: [string, DayKey][] = [...sameWords.map((t): [string, DayKey] => [t, today]), [lastYear, jan], [iso(2026, 1, 2, 9, 0), jan], [iso(2026, 12, 30, 9, 0), "2027-01-12"]];
+  const todayDiff = acrossYear.filter(([t, d]) => measuredLabel(t, d) !== todayMeasuredLabel(t, d) || measuredLabel(t, d) !== aimMeasuredLabel(t, d));
+  check(
+    "ladder roadmap: and Today's goal card's, word for word, across a year too ('measured 20 Dec 2025' on 5 Jan; 'measured Fri' within the week)",
+    todayDiff.length === 0 && measuredLabel(lastYear, jan) === "measured 20 Dec 2025" && measuredLabel(iso(2026, 1, 2, 9, 0), jan) === "measured Fri",
+    todayDiff.map(([t, d]) => `${measuredLabel(t, d)} · Today ${todayMeasuredLabel(t, d)} · Aim ${aimMeasuredLabel(t, d)}`).join("; ")
+  );
+
+  const point = (day: DayKey, g: number, observedAt: string) => ({ day, g, observedAt, bindingClass: "MEASURED" as const, bindingLabel: "cards at level 6+" });
+  const entry = (extra: Partial<RoadmapGoalEntry> = {}): RoadmapGoalEntry => ({
+    series: [point("2026-10-03", 0.7, iso(2026, 10, 3, 21, 40)), point("2026-10-05", 0.75, iso(2026, 10, 5, 9, 12))],
+    ord: 2,
+    of: 3,
+    zeroReason: null,
+    note: null,
+    ...extra,
+  });
+  const open = { dueDay: "2026-12-13", closed: null, g: 0.75 };
+  const base = roadmapRowCopy(entry(), open, today);
+  check("ladder roadmap: the quiet chip 'Roadmap · milestone 2 of 3'", base.chip === "Roadmap · milestone 2 of 3", String(base.chip));
+  check("ladder roadmap: the binding reading's time is the last stored point on or before today", base.measured === "measured 09:12", String(base.measured));
+  check("ladder roadmap: no note, no note line", base.note === null);
+  const pastDue = roadmapRowCopy(entry(), { dueDay: "2026-10-04", closed: null, g: 0.7 }, today);
+  check("ladder roadmap: past its due day, the time is the due day's reading (goalAsOf), never a later one", pastDue.measured === "measured Sat", String(pastDue.measured));
+  const steps = roadmapRowCopy(entry(), { ...open, g: 0.5 }, today);
+  check("ladder roadmap: when the steps set g (below the reading), no reading binds, so no time is shown (as on Today)", steps.measured === null && steps.chip === "Roadmap · milestone 2 of 3");
+  const reset = roadmapRowCopy(entry({ series: [], note: "measures removed by a reset" }), open, today);
+  check("ladder roadmap: a reset-archived roadmap's goal shows its note and no time (no reading)", reset.note === "measures removed by a reset" && reset.measured === null && reset.chip === "Roadmap · milestone 2 of 3");
+  // A dropped milestone whose "Start again" copy has started (isSupersededRow): R1 empties its series and
+  // says why; the ladder shows that note word for word, no time and no %.
+  const superseded = roadmapRowCopy(entry({ series: [], note: "replaced by Start again" }), { ...open, g: null }, today);
+  check("ladder roadmap: a goal replaced by its Start again copy shows that note, no time", superseded.note === "replaced by Start again" && superseded.measured === null);
+  check("ladder roadmap: a blank note reads as none", roadmapRowCopy(entry({ note: "  " }), open, today).note === null);
+  const closed = roadmapRowCopy(entry(), { dueDay: "2026-12-13", g: 0.75, closed: { paid: 0, depth: 0, day: "2026-10-04", why: "it states 0 MP" } }, today);
+  check("ladder roadmap: a closed goal shows no time", closed.measured === null);
+  const none = roadmapRowCopy(null, open, today);
+  check("ladder roadmap: every other goal gets no roadmap line", none.chip === null && none.measured === null && none.note === null);
+
+  // As goals-server builds it: the stated line folds the zero reason (goals.ts statedPayoutLine).
+  const item: GoalLadderItem = {
+    id: "g-rm",
+    title: "Risk and position sizing",
+    horizon: "MID",
+    track: "CRAFT",
+    stated: 0,
+    copy: statedPayoutLine("MID", 0, "knowledge is paid by reviews"),
+    g: 0.75,
+    progressLabel: "tested by your reviews · slowest: cards at level 6+",
+    dueDay: "2026-12-13",
+    pastDue: false,
+    carried: null,
+    preview: null,
+    closed: null,
+    roadmap: entry({ zeroReason: "knowledge is paid by reviews" }),
+  };
+  check("ladder roadmap: roadmapEntryOf reads the attached entry, and null on an ordinary goal", roadmapEntryOf(item)?.ord === 2 && roadmapEntryOf({ ...item, roadmap: undefined }) === null);
+  const row = goalRowCopy(item, true, today);
+  check(
+    "ladder roadmap: the row's meta ends with the reading's time",
+    row.meta === "Mid · Craft · 75% · tested by your reviews · slowest: cards at level 6+ · due 13 Dec · measured 09:12",
+    row.meta
+  );
+  check("ladder roadmap: the row states the folded 'pays nothing · knowledge is paid by reviews' once life counts, and carries the chip", row.pays === "pays nothing · knowledge is paid by reviews" && row.chip === "Roadmap · milestone 2 of 3" && row.note === null, String(row.pays));
+  check("ladder roadmap: before life counts the row states nothing, the zero reason included", goalRowCopy(item, false, today).pays === null);
+  const plain = goalRowCopy({ ...item, roadmap: undefined, copy: statedPayoutCopy("MID"), stated: 6, progressLabel: "3 of 5 steps" }, true, today);
+  check("ladder roadmap: an ordinary goal's row is unchanged (no chip, no note, no time)", plain.chip === null && plain.note === null && plain.meta === "Mid · Craft · 75% · 3 of 5 steps · due 13 Dec" && plain.pays === "pays ⬡ 6 × progress from 70%", plain.meta);
+  const html = renderToStaticMarkup(
+    createElement(GoalLadder, {
+      ladder: { open: [item, { ...item, id: "g-plain", roadmap: undefined, title: "Read 12 books", progressLabel: "4 of 12 books" }], closed: [] },
+      launched: true,
+      today,
+      mastered: 3,
+      tiers: { established: 1, highest: null, highestField: null },
+      rungs: null,
+      pays: { points: 5, level: 12 },
+    })
+  );
+  check("ladder roadmap: the chip renders once, as a kit .chip, and the plain goal has none", (html.match(/Roadmap · milestone 2 of 3/g) ?? []).length === 1 && /<span class="chip">Roadmap · milestone 2 of 3<\/span>/.test(html));
+  const resetHtml = renderToStaticMarkup(
+    createElement(GoalLadder, {
+      ladder: { open: [{ ...item, g: null, progressLabel: "not measured", roadmap: entry({ series: [], note: "measures removed by a reset" }) }], closed: [] },
+      launched: true,
+      today,
+      mastered: 0,
+      tiers: { established: 0, highest: null, highestField: null },
+      rungs: null,
+      pays: { points: 5, level: 12 },
+    })
+  );
+  check("ladder roadmap: the reset note renders, and an unmeasured goal shows no %", resetHtml.includes("measures removed by a reset") && !/\d%/.test(resetHtml));
+  const supersededHtml = renderToStaticMarkup(
+    createElement(GoalLadder, {
+      ladder: { open: [{ ...item, g: null, progressLabel: "not measured", roadmap: entry({ series: [], note: "replaced by Start again" }) }], closed: [] },
+      launched: true,
+      today,
+      mastered: 0,
+      tiers: { established: 0, highest: null, highestField: null },
+      rungs: null,
+      pays: { points: 5, level: 12 },
+    })
+  );
+  check("ladder roadmap: the superseded goal's note renders once, with no % and no time", (supersededHtml.match(/replaced by Start again/g) ?? []).length === 1 && !/\d%/.test(supersededHtml) && !/measured \d/.test(supersededHtml));
+  const ladderSrc = codeOf(read("src/components/home/GoalLadder.tsx"));
+  check("ladder roadmap: GoalLadder reads no roadmap module (only the entry goals-server attaches)", !/from "@\/lib\/roadmap-|from "@\/components\/roadmap\//.test(ladderSrc));
+  // Fix round 2 (lane T's handoff): one rule for a goal's "measured …" on Today and on the ladder.
+  check(
+    "ladder roadmap: the ladder's 'measured …' is Today's own rule (today-board measuredLabelOf), not a copy",
+    /import \{ measuredLabelOf \} from "@\/lib\/today-board";/.test(ladderSrc) && /export function measuredLabel\([^)]*\)[^{]*\{\s*return measuredLabelOf\(observedAt, today, tz\);\s*\}/.test(ladderSrc) && !/Intl\.DateTimeFormat/.test(ladderSrc)
+  );
+}
+
+// 9b. The Aim card on /you (seam 9, F19): one wave, under the hero, no Suspense, never an error page.
+{
+  const you = read("src/app/you/page.tsx");
+  const youCode = codeOf(you);
+  check("aim card: loadSheet and the Aim card load in one Promise.all with the cookies", /Promise\.all\(\[\s*loadSheet\(userId, now\),\s*aimCardOrNull\(userId, now\),\s*cookies\(\)\s*\]\)/.test(youCode));
+  check("aim card: loadAimCard is called only inside aimCardOrNull's try", (youCode.match(/\bloadAimCard\(/g) ?? []).length === 1 && /async function aimCardOrNull[\s\S]*?try \{\s*return await loadAimCard\(userId, now\);\s*\} catch/.test(youCode));
+  const hero = youCode.indexOf("<CharacterHero");
+  const card = youCode.indexOf("{aim && <AimCard view={aim} promptDismissed={promptDismissed} today={aimToday} />}");
+  const ready = youCode.indexOf("{s.ready && <ReadyCallout");
+  check("aim card: rendered only when loaded, directly under CharacterHero and before the ready callout", hero >= 0 && card > hero && ready > card && !/<\/div>|<div/.test(youCode.slice(youCode.indexOf("/>", hero), card)));
+  check("aim card: no Suspense on /you (the card arrives with the sheet; nothing shifts)", !/Suspense/.test(youCode));
+  check(
+    "aim card: the card gets the life day from the page's own `now` (todayKey(now)), so it never reads the client's clock and hydration agrees at the 04:00 turn",
+    /const aimToday = todayKey\(now\);/.test(youCode) &&
+      /import \{ todayKey \} from "@\/lib\/life-day";/.test(youCode) &&
+      (youCode.match(/<AimCard\b/g) ?? []).length === 1 &&
+      /<AimCard\b[^>]*\btoday=\{aimToday\}/.test(youCode)
+  );
+  check("aim card: you/loading.tsx is left as it was (no Aim skeleton to match)", !/aim/i.test(read("src/app/you/loading.tsx")));
+  check(
+    "aim card: the dismissed prompt is read from its cookie on the server",
+    /import \{ cookies \} from "next\/headers"/.test(youCode) && /jar\.get\(AIM_PROMPT_COOKIE\)\?\.value === "off"/.test(youCode) && AIM_PROMPT_COOKIE === "xtnl-aim-prompt"
+  );
+  check(
+    "aim card: the fallback freeze (RENDER) runs in the page's one after(), after the chain, only when this week is unfrozen",
+    /questWeekUnfrozen = aim\?\.questWeekUnfrozen === true;/.test(youCode) &&
+      /await maybeMaintainLife\(userId\);\s*if \(questWeekUnfrozen\) \{\s*try \{\s*const frozen = await freezeWeekQuests\(userId, now, "RENDER"\);/.test(youCode) &&
+      (youCode.match(/\bafter\(/g) ?? []).length === 1
+  );
+  check(
+    "aim card: the freeze never throws, so its returned `error` is what gets logged (roadmap-types QuestFreezeRun.error)",
+    /const frozen = await freezeWeekQuests\(userId, now, "RENDER"\);\s*if \(frozen\.error\) console\.error\("\[you\] week quest freeze failed", frozen\.error\);/.test(youCode)
+  );
+  check("aim card: the page calls no other roadmap writer", !/recordRoadmapReadings|finalizeQuestWeeks|recordCardsForReview|recordPracticeForTemplate|questWeekInsertOp/.test(youCode));
+}
+
+/** Runs the page's own guard (aimCardOrNull, transpiled from its source) against a failing and a working loader. */
+async function aimCardGuardChecks() {
+  const src = read("src/app/you/page.tsx");
+  const fn = /async function aimCardOrNull[\s\S]*?\n\}\n/.exec(src)?.[0] ?? "";
+  if (!fn) {
+    check("aim card: the page's guard can be read", false, "aimCardOrNull not found");
+    return;
+  }
+  const js = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  type Guard = (userId: string, now: Date) => Promise<unknown>;
+  const quiet = { error: () => undefined };
+  const make = (loader: (userId: string, now: Date) => unknown) => new Function("loadAimCard", "console", `${js}\nreturn aimCardOrNull;`)(loader, quiet) as Guard;
+  const view = { state: "EMPTY" };
+  const rejected = await make(async () => {
+    throw new Error("relation \"Roadmap\" does not exist");
+  })("u", new Date());
+  const thrown = await make(() => {
+    throw new Error("sync");
+  })("u", new Date());
+  const loaded = await make(async () => view)("u", new Date());
+  const missing = await make(async () => null)("u", new Date());
+  check("aim card: a loadAimCard failure renders the sheet without the card (the guard gives null, never throws)", rejected === null && thrown === null);
+  check("aim card: a loaded view passes through, and no view stays none", loaded === view && missing === null);
+}
+
+// 9c. The Aim card states on /dev/style/art/you (seam 18): pure fixtures through the roadmap's builders.
+{
+  const today: DayKey = "2026-12-22";
+  const fixtures = aimCardFixtures(today);
+  const keys = fixtures.map((f) => f.key);
+  const needed = ["empty", "draft", "accepted", "active", "new-rank", "fallen", "replan", "past-due", "done"];
+  check("aim fixtures: the spec's nine states are all there", needed.every((k) => keys.includes(k as (typeof keys)[number])), needed.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  // The fix round's states: a re-plan waiting on an active plan, between milestones (ACTIVE, not
+  // ACCEPTED), and a "Start again" copy whose milestone already paid (LINEAGE_PAID with its day).
+  // Fix round 2 adds an ACCEPTED card whose latest reading is not the acceptance's (accepted-later).
+  const fixRound = ["replan-waiting", "between", "paid-lineage", "accepted-later"];
+  check("aim fixtures: the fix rounds' states are there too", fixRound.every((k) => keys.includes(k as (typeof keys)[number])), fixRound.filter((k) => !keys.includes(k as (typeof keys)[number])).join(", "));
+  check("aim fixtures: every key is unique", new Set(keys).size === keys.length);
+  /** Facts a fixture can't hold on its own today (the impossible-facts class the review found in R5's fixtures). */
+  const impossible = (v: AimCardView): string[] => {
+    const out: string[] = [];
+    const dayOf = (isoAt: string) => dayKeyOf(new Date(isoAt));
+    if (v.measuredAt && dayOf(v.measuredAt) > today) out.push(`measured ${v.measuredAt}, after today`);
+    if (v.proficiency && dayOf(v.proficiency.measuredAt) > today) out.push(`Proficiency measured ${v.proficiency.measuredAt}, after today`);
+    if (v.targetDay && v.targetDay <= today && v.state !== "DONE") out.push(`aim date ${v.targetDay} is not ahead`);
+    for (const d of [v.reachedDay, v.doneDay, v.rank?.newSince ?? null]) if (d && d > today) out.push(`${d} is after today`);
+    if (v.rank?.newSince && addDays(v.rank.newSince, RANK_NEW_DAYS) <= today) out.push(`new since ${v.rank.newSince}, longer ago than ${RANK_NEW_DAYS} days`);
+    const ms = v.milestone;
+    if (ms) {
+      if (ms.ord > ms.of) out.push(`milestone ${ms.ord} of ${ms.of}`);
+      if (ms.dueDay && (ms.status === "PAST_DUE" || v.state === "PAST_DUE" ? ms.dueDay >= today : ms.dueDay < today)) out.push(`${ms.status} milestone due ${ms.dueDay}`);
+      if (ms.reachedDay && ms.reachedDay > today) out.push(`milestone reached ${ms.reachedDay}, after today`);
+      if (ms.countsFrom && ms.countsFrom <= today) out.push(`a pending reach counting from ${ms.countsFrom}, not ahead`);
+      if (ms.pace?.kind === "on-pace" && "day" in ms.pace && ms.dueDay && ms.pace.day > ms.dueDay) out.push(`on pace for ${ms.pace.day}, after its due day ${ms.dueDay}`);
+      if (ms.percent != null && ms.headline && ms.percent !== Math.floor(100 * Number(ms.headline.value) + 1e-9)) out.push(`headline ${ms.percent}% ≠ its value`);
+      if (ms.status === "PLANNED" && !ms.start) out.push("a planned milestone without its Start line");
+      if (ms.status !== "PLANNED" && ms.start) out.push("a Start line on a started milestone");
+      if (ms.start?.givesRank && v.rank && AIM_RANKS.indexOf(ms.start.givesRank) <= v.rank.index) out.push(`Start offers ${ms.start.givesRank}, already held`);
+      if (ms.start && ms.start.stated > 0 && ms.start.zeroReason) out.push("a stated ⬡ with a zero reason");
+      if (ms.start && ms.start.stated === 0 && !ms.start.zeroReason) out.push("states 0 with no reason");
+      if (ms.start?.paidOn && (ms.start.zeroReason !== "LINEAGE_PAID" || ms.start.paidOn >= today)) out.push(`paid on ${ms.start.paidOn} without LINEAGE_PAID, or not before today`);
+      if (ms.titleClass == null) out.push("milestone title has no class (provenanceOf)");
+      // Fix round 2: a title's struck spans lie inside it, in order, and only Gemini's unchecked words
+      // carry them (a NUMBER title can't be kept: TITLE_NUMBER), never the user's.
+      const spans = ms.titleStruck ?? [];
+      if (spans.some(([a, b], i) => a < 0 || b <= a || b > ms.title.length || (i > 0 && a < spans[i - 1][1]))) out.push(`title struck spans ${JSON.stringify(spans)} outside "${ms.title}"`);
+      if (spans.length > 0 && ms.titleClass !== "DRAFT") out.push(`a ${ms.titleClass} title with struck numbers`);
+    }
+    if (v.weekQuests && (v.weekQuests.done > v.weekQuests.total || v.state !== "ACTIVE" || ms?.status === "PLANNED")) out.push("week quests without a started milestone");
+    if (v.draftItems != null && v.state !== "DRAFT" && v.state !== "ACTIVE") out.push(`draft items on a ${v.state} card`);
+    // Fix round 2: acceptedDay is the current version's acceptance day, set on every card after one
+    // (R4 fills it from RoadmapAcceptance.day), never ahead, and an ACCEPTED card's reading is never
+    // older than its acceptance (readings are written only for an accepted roadmap).
+    const accepted = v.state === "ACCEPTED" || v.state === "ACTIVE" || v.state === "PAST_DUE" || v.state === "DONE";
+    if (accepted && !v.acceptedDay) out.push(`a ${v.state} card with no acceptance day`);
+    if (!accepted && v.acceptedDay) out.push(`an acceptance day on a ${v.state} card`);
+    if (v.acceptedDay && v.acceptedDay > today) out.push(`accepted ${v.acceptedDay}, after today`);
+    if (v.state === "ACCEPTED" && v.acceptedDay && v.proficiency && dayOf(v.proficiency.measuredAt) < v.acceptedDay) out.push(`Proficiency measured ${v.proficiency.measuredAt}, before the acceptance on ${v.acceptedDay}`);
+    return out;
+  };
+  for (const f of fixtures) {
+    const built = buildAimFixture(f);
+    if (!built.view) {
+      if (/^Not yet: /.test(built.waiting)) warn(`aim fixture ${f.key}: waits on a roadmap shell`, built.waiting);
+      else check(`aim fixture ${f.key}: builds`, false, built.waiting);
+      continue;
+    }
+    const v = built.view;
+    const percent = v.proficiency?.percent ?? null;
+    const change = v.proficiency?.change?.kind ?? null;
+    check(`aim fixture ${f.key}: state ${f.expect.state}`, v.state === f.expect.state, v.state);
+    check(`aim fixture ${f.key}: Proficiency ${f.expect.percent ?? "none"}`, percent === f.expect.percent, String(percent));
+    check(`aim fixture ${f.key}: Aim rank ${f.expect.rank ?? "none"}`, (v.rank?.name ?? null) === f.expect.rank, String(v.rank?.name ?? null));
+    check(`aim fixture ${f.key}: change ${f.expect.change ?? "none"}`, change === f.expect.change, String(change));
+    if (v.proficiency) check(`aim fixture ${f.key}: Proficiency reads its stored reading's percent, floored`, v.proficiency.percent === Math.floor(100 * v.proficiency.figure.value + 1e-9));
+    const bad = impossible(v);
+    check(`aim fixture ${f.key}: every fact is possible today`, bad.length === 0, bad.join("; "));
+    // R4's rankInputOf: maxScheduled is counted by place (maxScheduledPositionsOf), never by row.
+    if (v.rank && f.rows) check(`aim fixture ${f.key}: the top rank on this plan is read from its places`, v.rank.top.index === topRankIndexOf(maxScheduledPositionsOf(f.rows)), `${v.rank.top.name} vs ${maxScheduledPositionsOf(f.rows)} places`);
+    if (v.rank && !f.rows) check(`aim fixture ${f.key}: a ranked fixture names the rows its rank was read from`, false);
+    // ACCEPTED: a plan accepted and no milestone ever carried (roadmap-types AimCardState).
+    if (f.rows) {
+      const carried = f.rows.some((r) => r.status === "STARTING" || r.status === "STARTED");
+      if (v.state === "ACCEPTED") check(`aim fixture ${f.key}: ACCEPTED only while no milestone was ever carried`, !carried && (v.rank?.index ?? 0) === 0);
+      if (carried && v.milestone?.status === "PLANNED") check(`aim fixture ${f.key}: a planned milestone after a carried one reads ACTIVE, never ACCEPTED`, v.state === "ACTIVE", v.state);
+    }
+  }
+  // The fixture states pin each fix-round rule as R4's loaders apply it (lane 0's helpers).
+  {
+    const view = (k: string) => buildAimFixture(fixtures.find((f) => f.key === k)!).view;
+    const between = view("between");
+    if (between)
+      check(
+        "aim fixture between: milestone 1 reached this week, milestone 2 not started: ACTIVE, with the 'new' Aim rank, the meter and its parts over milestone 2's Start line",
+        between.state === "ACTIVE" &&
+          between.milestone?.status === "PLANNED" &&
+          between.milestone.ord === 2 &&
+          between.rank?.newSince === weekStartKeyOf(today) &&
+          between.proficiency != null &&
+          between.milestone.start?.givesRank === aimRankName(2) &&
+          between.weekQuests === null,
+        JSON.stringify({ state: between.state, newSince: between.rank?.newSince, ms: between.milestone?.status })
+      );
+    // Fix round 2: '· n items' is lane 0's one definition, draftNeedsOf(the next milestone).length (R4's
+    // undecidedRowsOf, the review footer's "N items left"), read over real draft rows.
+    const draft = view("draft");
+    const needs = draftNeedsOf(DRAFT_NEXT);
+    const label = (m: MilestoneDraft, id: string | null) => (id === m.id ? `title:${m.title}` : (m.items.find((i) => i.id === id)?.label ?? String(id)));
+    const needList = needs.map((n) => `${n.need} ${label(DRAFT_NEXT, n.id)}`);
+    check(
+      "aim fixture draft: '· n items' is draftNeedsOf(milestone 1).length: decide a Domain, map the proposed one, decide a practice and a step, set the checkpoint's bar, in the page's order",
+      draft?.draftItems === needs.length &&
+        needList.join(" | ") === "DECIDE Risk Management | MAP Backtesting Methods | DECIDE Replay a week of charts | DECIDE Write the entry rules down | SET_BAR Rules checklist",
+      `${draft?.draftItems} · ${needList.join(" | ")}`
+    );
+    const pendingRows = DRAFT_NEXT.items.filter((i) => i.decision === "PENDING").length;
+    const notCounted = DRAFT_NEXT.items.filter((i) => i.origin === "SYLLABUS" || i.origin === "USER" || i.decision === "REMOVED");
+    check(
+      "aim fixture draft: the count is never a syllabus topic, a row the user wrote or a removed row (a count of PENDING rows would read differently)",
+      notCounted.length === 4 && notCounted.every((i) => !needs.some((n) => n.id === i.id)) && pendingRows !== needs.length && DRAFT_NEXT.items.some((i) => i.origin === "SYLLABUS" && i.decision === "PENDING"),
+      `${pendingRows} PENDING rows vs ${needs.length} needs`
+    );
+    const waiting = view("replan-waiting");
+    const replanNeeds = draftNeedsOf(REPLAN_NEXT);
+    check(
+      "aim fixture replan-waiting: an ACTIVE plan's pending re-plan shows Draft waiting with draftNeedsOf(its first changed milestone), never its syllabus topic, and the plan as it stands",
+      waiting?.state === "ACTIVE" &&
+        waiting.draftItems === replanNeeds.length &&
+        replanNeeds.length === 3 &&
+        !replanNeeds.some((n) => REPLAN_NEXT.items.find((i) => i.id === n.id)?.origin === "SYLLABUS") &&
+        waiting.milestone?.status === "STARTED",
+      String(waiting?.draftItems)
+    );
+    // Fix round 2: the ACCEPTED caption may say "as measured at acceptance" only for a reading of the
+    // acceptance day (isAcceptanceReading); every chain day after writes a new reading.
+    const acc = view("accepted");
+    const later = view("accepted-later");
+    check(
+      "aim fixture accepted: accepted yesterday and its latest Proficiency is that day's reading, so the acceptance caption holds",
+      acc?.state === "ACCEPTED" && acc.acceptedDay === addDays(today, -1) && isAcceptanceReading(acc.proficiency?.measuredAt, acc.acceptedDay),
+      JSON.stringify({ acceptedDay: acc?.acceptedDay, measuredAt: acc?.proficiency?.measuredAt })
+    );
+    check(
+      "aim fixture accepted-later: accepted three days ago and measured this morning, so the acceptance caption would be false",
+      later?.state === "ACCEPTED" &&
+        later.acceptedDay === addDays(today, -3) &&
+        later.proficiency != null &&
+        dayKeyOf(new Date(later.proficiency.measuredAt)) === today &&
+        !isAcceptanceReading(later.proficiency.measuredAt, later.acceptedDay) &&
+        later.rank?.index === 0,
+      JSON.stringify({ acceptedDay: later?.acceptedDay, measuredAt: later?.proficiency?.measuredAt })
+    );
+    // Fix round 2: a Gemini title's numbers are struck on the Aim card too, with the spans R3's check
+    // derives (withLabelChecks over the plan's intake, R4's derivation for titleStruck).
+    const struck = between?.milestone?.titleStruck ?? [];
+    check(
+      "aim fixture between: milestone 2's title is still Gemini's (decided at Start), class DRAFT, with its '1%' struck",
+      between?.milestone?.title === TITLE_WITH_NUMBER &&
+        between.milestone.titleClass === "DRAFT" &&
+        struck.length === 1 &&
+        TITLE_WITH_NUMBER.slice(struck[0][0], struck[0][1]) === "1%",
+      JSON.stringify(struck)
+    );
+    const unstruck: string[] = [];
+    for (const f of fixtures) {
+      const ms = buildAimFixture(f).view?.milestone;
+      if (!ms || (ms.titleClass !== "DRAFT" && ms.titleClass !== "KEPT_SUGGESTION")) continue;
+      const decision = ms.titleClass === "DRAFT" ? "PENDING" : "KEPT";
+      const row: MilestoneDraft = { id: ms.id, lineageId: ms.id, version: 1, ord: ms.ord, title: ms.title, titleOrigin: "GEMINI", titleDecision: decision, windowStart: null, dueDay: null, status: "PLANNED", rankIndex: null, overAccepted: false, items: [], measures: [], notes: [] };
+      const [checked] = withLabelChecks([row], TRADING_LABEL_BASE, ms.of);
+      if (JSON.stringify(checked.titleStruck ?? []) !== JSON.stringify(ms.titleStruck ?? [])) unstruck.push(`${f.key}: ${JSON.stringify(ms.titleStruck ?? [])} vs ${JSON.stringify(checked.titleStruck ?? [])}`);
+      if (decision === "KEPT" && checked.titleFlags.includes("NUMBER")) unstruck.push(`${f.key}: a kept title flagged NUMBER (Keep is refused on one)`);
+    }
+    check("aim fixtures: every Gemini title on a card shows exactly the struck spans R3's title check derives, and no kept title holds a number", unstruck.length === 0, unstruck.join("; "));
+    const active = view("active");
+    check(
+      "aim fixture active: a started milestone shows its goal's due day after a Reschedule (milestoneDueDayOf), not the planned one",
+      active?.milestone?.dueDay === milestoneDueDayOf(addDays(today, MILESTONE2_DUE.planned), addDays(today, MILESTONE2_DUE.goal)) && active.milestone.dueDay === addDays(today, MILESTONE2_DUE.goal),
+      String(active?.milestone?.dueDay)
+    );
+    const paid = view("paid-lineage");
+    const restarted = tradingRows("STARTED", "PLANNED");
+    check(
+      "aim fixture paid-lineage: the Start again copy states 0 with LINEAGE_PAID and the day its milestone paid",
+      paid?.milestone?.status === "PLANNED" && paid.milestone.start?.stated === 0 && paid.milestone.start.zeroReason === "LINEAGE_PAID" && paid.milestone.start.paidOn != null && paid.milestone.start.paidOn < today,
+      JSON.stringify(paid?.milestone?.start)
+    );
+    check(
+      "aim fixture paid-lineage: the copy keeps milestone 2's place: 7 rows, 6 places, the same milestone count on the card, and a PLANNED copy supersedes nothing",
+      restarted.length === 7 && positionCountOf(restarted) === 6 && maxScheduledPositionsOf(restarted) === 6 && paid?.milestone?.of === 6 && !restarted.some((r) => isSupersededRow(r, restarted))
+    );
+    const done = view("done");
+    const dropped = BODY_ROWS.find((r) => r.id === "fx-run-ms-2")!;
+    check(
+      "aim fixture done: a Body plan of three with milestone 2 started again counts three places (4 rows), so the reached aim tops out at Specialist, never Paragon",
+      BODY_ROWS.length === 4 &&
+        maxScheduledPositionsOf(BODY_ROWS) === 3 &&
+        topRankIndexOf(BODY_ROWS.length) === RANK_TOP &&
+        done?.rank?.name === aimRankName(3) &&
+        done.rank.top.withAim === false &&
+        isSupersededRow(dropped, BODY_ROWS),
+      `${done?.rank?.name} · top ${done?.rank?.top.name}`
+    );
+    const classes = fixtures.map((f) => buildAimFixture(f).view?.milestone?.titleClass).filter(Boolean);
+    check("aim fixtures: milestone titles carry their class, Gemini's kept words among them (the audit sees the chip)", classes.includes("KEPT_SUGGESTION") && classes.includes("YOURS"), classes.join(", "));
+  }
+  const newRank = buildAimFixture(fixtures.find((f) => f.key === "new-rank")!);
+  if (newRank.view) check("aim fixture new-rank: marked new from the confirmed reach this week (after Sunday's reading, which counts no milestone yet)", newRank.view.rank?.newSince === "2026-12-21", String(newRank.view.rank?.newSince));
+  const pending = buildAimFixture(fixtures.find((f) => f.key === "pending-reach")!);
+  if (pending.view) check("aim fixture pending-reach: the rank waits for the reach to count", pending.view.rank?.name === AIM_RANKS[1] && pending.view.rank?.pending?.milestoneOrd === 2);
+  const done = buildAimFixture(fixtures.find((f) => f.key === "done")!);
+  if (done.view) check("aim fixture done: a reach more than a week old carries no 'new' marker", done.view.rank?.newSince === null, String(done.view.rank?.newSince));
+  const words = fixtures.map((f) => `${f.label} ${f.note}`).join("\n");
+  check("aim fixtures: their words never call a week quest a bare quest, nor say mastery or earn", !/\bquests?\b/i.test(words.replace(/week quests?/gi, "")) && !/master|\bearns?\b/i.test(words), words.slice(0, 120));
+  const dir = "src/app/dev/style/art/you";
+  const files = readdirSync(join(ROOT, dir)).map((n) => `${dir}/${n}`);
+  const reads = files.filter((f) => /@\/lib\/(prisma|roadmap-server|roadmap-quests-server|roadmap-readings|throughput-server)|@prisma\/client|getCurrentUserId/.test(codeOf(read(f))));
+  check("aim fixtures: the fixture route reads no database and never the user's roadmap", reads.length === 0, reads.join(", "));
+  const page = codeOf(read(`${dir}/page.tsx`));
+  check("aim fixtures: every state renders the real AimCard in its own [data-aim-card] box", /<AimCard view=\{built\.view\} promptDismissed=\{false\} today=\{today\} \/>/.test(page) && /data-aim-card=\{slot \?\? fixture\.key\}/.test(page) && /data-aim-fixture=\{f\.key\}/.test(page));
+  // Every AimCard on the page sits inside FixtureRoadmapProvider (read from the JSX tree), so the
+  // EMPTY card's × reaches the inert fixture action, never the live dismissAimPrompt (which would set
+  // the real xtnl-aim-prompt cookie for a year).
+  {
+    const sf = ts.createSourceFile("page.tsx", read(`${dir}/page.tsx`), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    const tags: { name: string; wrapped: boolean; today: boolean }[] = [];
+    const tagOf = (n: ts.Node) => (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n) ? n.tagName.getText(sf) : null);
+    const visit = (n: ts.Node) => {
+      if (tagOf(n) === "AimCard") {
+        let wrapped = false;
+        for (let p: ts.Node | undefined = n.parent; p && !ts.isFunctionLike(p); p = p.parent) if (ts.isJsxElement(p) && p.openingElement.tagName.getText(sf) === "FixtureRoadmapProvider") wrapped = true;
+        const attrs = (n as ts.JsxSelfClosingElement | ts.JsxOpeningElement).attributes.properties.map((a) => (ts.isJsxAttribute(a) ? a.name.getText(sf) : ""));
+        tags.push({ name: "AimCard", wrapped, today: attrs.includes("today") });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    check(
+      "aim fixtures: every AimCard renders inside FixtureRoadmapProvider (inert actions: the × sets no real cookie) and gets the page's life day",
+      tags.length > 0 && tags.every((t) => t.wrapped && t.today) && /import \{ FixtureRoadmapProvider \} from "@\/components\/roadmap\/roadmap-runtime";/.test(page),
+      JSON.stringify(tags)
+    );
+  }
+  check("aim fixtures: no brand constructor is called outside the roadmap's own builders", !/\b(measured|recorded|selfReported|estimated|workedOut)\(/.test(codeOf(read(`${dir}/aim-fixtures.ts`))));
+}
+
+// 9d. The rules page's Roadmap section (seam 12).
+{
+  const rules = read("src/app/today/rules/page.tsx");
+  const start = rules.indexOf("function RoadmapRules(");
+  const body = start >= 0 ? rules.slice(rules.indexOf("return (", start), rules.indexOf("\n}\n", start)) : "";
+  const text = literalText(body);
+  // Class names (ink-0) are not figures; every other digit in the cards' literal text would be.
+  const typed = [...text.replace(/className="[^"]*"/g, "").matchAll(/\d+/g)].map((m) => m[0]);
+  check("rules roadmap: the Roadmap cards type no number by hand", start >= 0 && body.length > 2000 && typed.length === 0, typed.join(", "));
+  const imported = rules.match(/import \{([^}]*)\} from "@\/lib\/roadmap-types"/)?.[1] ?? "";
+  const needed = [
+    "SPAN_MIN_DAYS", "SPAN_MAX_DAYS", "MILESTONE_TARGET_DAYS", "MAX_MILESTONES", "THRESHOLDS", "INTENSITY", "KEEP_SHARE", "PRACTICE_PAY_FLOOR_MIN", "PRACTICE_PAY_SHARE",
+    "DECLARED_FACTOR", "RAMP_ALLOWANCE", "TIME_FITS_MAX", "CARD_WRITE_MIN", "REVIEW_SECONDS", "WEEK_QUEST_CATCHUP_FACTOR", "WEEK_QUEST_ADD_MIN_CAP", "WEEK_QUESTS_PER_WEEK_MAX",
+    "LEVEL_WEIGHT", "AIM_RANKS", "RANK_MILESTONE_MAX", "PARAGON_MIN_MILESTONES", "rankIndexAt", "topRankIndexOf", "floorBase",
+  ];
+  const missing = needed.filter((n) => !new RegExp(`\\b${n}\\b`).test(imported));
+  check("rules roadmap: the constants and tables are read from roadmap-types", missing.length === 0, missing.join(", "));
+  check("rules roadmap: the Proficiency shares come from the formula itself (roadmap-proficiency proficiencyOf)", /import \{ proficiencyOf \} from "@\/lib\/roadmap-proficiency";/.test(rules) && /PROFICIENCY_SHARE_ROWS\.map/.test(body));
+  // The share table, run: the page's own builder (transpiled from its source) over R1's real formula.
+  {
+    const fn = /function proficiencySharesOf[\s\S]*?\n\}\n/.exec(rules)?.[0] ?? "";
+    const js = fn ? ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText : "";
+    type SharesOf = (withCards: boolean, withPractice: boolean) => { cards: number | null; practice: number | null; milestones: number | null };
+    const sharesOf = js ? (new Function("proficiencyOf", "TOP_LEVEL", `${js}\nreturn proficiencySharesOf;`)(proficiencyOf, TOP_LEVEL) as SharesOf) : null;
+    const near = (a: number | null, b: number | null) => (a == null || b == null ? a === b : Math.abs(a - b) < 1e-9);
+    const same = (s: ReturnType<SharesOf> | undefined, want: [number | null, number | null, number | null]) => !!s && near(s.cards, want[0]) && near(s.practice, want[1]) && near(s.milestones, want[2]);
+    const w = PROFICIENCY_WEIGHTS;
+    const all = sharesOf?.(true, true);
+    const noPractice = sharesOf?.(true, false);
+    const noCards = sharesOf?.(false, true);
+    check("rules roadmap: with every part, the shares are PROFICIENCY_WEIGHTS", same(all, [w.cards, w.practice, w.milestones]), JSON.stringify(all));
+    check(
+      "rules roadmap: a Field Area without practice reads cards 80% / milestones 20% (the spec's F12 prose says 0.75 / 0.25; the rule gives 0.8 / 0.2)",
+      same(noPractice, [w.cards / (w.cards + w.milestones), null, w.milestones / (w.cards + w.milestones)]) && same(noPractice, [0.8, null, 0.2]),
+      JSON.stringify(noPractice)
+    );
+    check("rules roadmap: a track Area reads practice 62.5% / milestones 37.5%", same(noCards, [null, 0.625, 0.375]), JSON.stringify(noCards));
+    const sharePct = /const sharePct = \(n: number\) => `\$\{Number\(\(n \* 100\)\.toFixed\(1\)\)\}%`;/.test(rules);
+    check("rules roadmap: shares print to one decimal at most (62.5%, never a rounded 63% + 38%)", sharePct);
+  }
+  // The fix round's rules, each sentence held to the helper that applies it (roadmap-types).
+  {
+    const aims = literalText(body.split(/<Card title="/).find((p) => p.startsWith('Aims and milestones"')) ?? "");
+    const payText = literalText(body.split(/<Card title="/).find((p) => p.startsWith('What a milestone pays"')) ?? "");
+    const rankText = literalText(body.split(/<Card title="/).find((p) => p.startsWith('Aim rank"')) ?? "");
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const failedCounts = countsTowardDraftCap({ kind: "GEMINI", status: "FAILED" });
+    const reusedCounts = countsTowardDraftCap({ kind: "GEMINI", status: "REUSED" });
+    check(
+      "rules roadmap: the draft cap counts a failed Gemini draft and not a reused one, as countsTowardDraftCap does",
+      failedCounts && !reusedCounts && /drafts a day, a failed one included/.test(flat(aims)) && /a reused draft doesn&apos;t count/.test(flat(aims))
+    );
+    check(
+      "rules roadmap: Gemini's words keep their label until checked or reworded (EDITED means the words changed), and a number is struck, only Edit or Remove",
+      /keeps its label until you check it or change its words/.test(flat(aims)) && /struck through, never rewritten: that item can only be edited or removed/.test(flat(aims))
+    );
+    check(
+      "rules roadmap: once started, a milestone's due day is its goal's (milestoneDueDayOf), so a Reschedule moves it",
+      milestoneDueDayOf("2026-11-01", "2026-11-08") === "2026-11-08" && milestoneDueDayOf("2026-11-01", null) === "2026-11-01" && /its due day is its goal&apos;s: a Reschedule on Today moves it/.test(flat(payText))
+    );
+    const lineage: PositionRow[] = [
+      { id: "a", lineageId: "m2", version: 1, status: "STARTED", rankIndex: 2, createdAt: 1 },
+      { id: "b", lineageId: "m2", version: 1, status: "STARTED", rankIndex: 2, createdAt: 2 },
+    ];
+    check(
+      "rules roadmap: a milestone pays once: once its Start again copy starts, the dropped goal is never measured again (isSupersededRow)",
+      isSupersededRow(lineage[0], lineage) && !isSupersededRow(lineage[1], lineage) && /A milestone pays once\./.test(flat(payText)) && /dropped goal is never measured again and pays nothing/.test(flat(payText))
+    );
+    const plan3: PositionRow[] = [
+      { id: "m1", lineageId: "l1", version: 1, status: "STARTED", rankIndex: 1, createdAt: 1 },
+      ...lineage.map((r) => ({ ...r, lineageId: "l2" })),
+      { id: "m3", lineageId: "l3", version: 1, status: "PLANNED", rankIndex: 3, createdAt: 1 },
+    ];
+    check(
+      "rules roadmap: a milestone started again counts once (by place, never by row: 3 places, not 4, so never Paragon)",
+      maxScheduledPositionsOf(plan3) === 3 && topRankIndexOf(maxScheduledPositionsOf(plan3)) !== RANK_TOP && topRankIndexOf(plan3.length) === RANK_TOP && /keeps its place and counts once/.test(flat(rankText)) && /never by row/.test(flat(rankText))
+    );
+  }
+  check("rules roadmap: the section sits under its own 'Roadmap' header, after the day's rules", /<SectionHeader id="rules-roadmap" title="Roadmap"/.test(rules) && rules.indexOf("<RoadmapRules") > rules.indexOf("<TracksRules />"));
+  const cards = new Map<string, string>();
+  const parts = body.split(/<Card title="/).slice(1);
+  for (const p of parts) cards.set(p.slice(0, p.indexOf('"')), literalText(p));
+  const titles = [...cards.keys()];
+  check(
+    "rules roadmap: cards for the aim, realism, pay, week quests, Proficiency and the Aim rank",
+    ["Aims and milestones", "Is the plan realistic?", "What a milestone pays", "Week quests (not the daily review quest)", "Proficiency", "Aim rank"].every((t) => cards.has(t)),
+    titles.join(" | ")
+  );
+  check("rules roadmap: no heading starts with 'Quest'", titles.every((t) => !/^quest/i.test(t)));
+  const quests = text.replace(/week quests?/gi, "").replace(/review quest/gi, "");
+  check("rules roadmap: 'quest' only ever as 'week quest(s)' or the daily review quest", !/\bquests?\b/i.test(quests), (quests.match(/.{0,30}\bquests?\b.{0,30}/i) ?? [""])[0]);
+  const wq = cards.get("Week quests (not the daily review quest)") ?? "";
+  check("rules roadmap: week quests pay nothing, count nothing on Today, and never link to Review", /pay nothing/.test(wq) && /never link to Review/.test(wq) && /add nothing to Today/.test(wq));
+  check("rules roadmap: week quests publish the catch-up and capacity caps and the Field quota overlap", /catch-up cap/.test(wq) && /capacity\s+cap/.test(wq) && /weekly quota too/.test(wq));
+  const prof = `${cards.get("Proficiency") ?? ""}`;
+  const profSrc = parts.find((p) => p.startsWith('Proficiency"')) ?? "";
+  check("rules roadmap: the Proficiency card never says mastery, master or ⬡, and pays nothing", !/master/i.test(prof) && !/⬡|CurrencyGlyph/.test(profSrc) && /pays nothing/.test(prof));
+  // JSX collapses a line break in its text to a space, so the words are read the same way.
+  const rank = (cards.get("Aim rank") ?? "").replace(/\s+/g, " ");
+  const rankLeft = rank.replace(/Aim ranks?/g, "").replace(/top rank on this plan/gi, "").replace(/next rank|keeps your rank|rank is kept for good/gi, "");
+  check("rules roadmap: 'rank' only as 'Aim rank', 'top rank on this plan' or 'rank is kept for good'", !/\brank/i.test(rankLeft), (rankLeft.match(/.{0,30}\brank.{0,30}/i) ?? [""])[0]);
+  check("rules roadmap: no rank line uses 'earn', and the rank is never called a title band", !/\bearns?\b/i.test(rank) && !/Novice|Apprentice|Adept|Master/.test(rank) && /not a title/.test(rank));
+  const pay = parts.find((p) => p.startsWith('What a milestone pays"')) ?? "";
+  check("rules roadmap: the milestone's stated MP carries an sr-only ' MP'", /<CurrencyGlyph kind="mp" \/>\s*\{mpFigure\(mid\.stated\)\}\s*<span className="sr-only"> MP<\/span>/.test(pay));
+  check("rules roadmap: the review quest's text and its QUEST_CAP import are untouched", /import \{ FULL_DAY_MP, QUEST_CAP \} from "@\/lib\/full-day";/.test(rules) && (rules.match(/\{QUEST_CAP\}/g) ?? []).length === 3);
+}
+
+/**
+ * Renders /dev/style/art/you itself (the server page, with the real AimCard
+ * inside the fixtures provider): one box per state plus the one under the
+ * hero, each holding a card, none waiting on a builder, nothing thrown.
+ */
+async function aimPageRenderChecks() {
+  // AimCard imports roadmap.css (so /you gets it with the card); Node can't load CSS.
+  (Module as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions[".css"] = (m) => {
+    m.exports = {};
+  };
+  let html = "";
+  try {
+    const { default: Page } = await import("../src/app/dev/style/art/you/page");
+    html = renderToStaticMarkup(createElement(Page));
+  } catch (err) {
+    check("aim fixtures page: renders", false, err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const keys = aimCardFixtures("2026-12-22").map((f) => f.key);
+  const boxes = [...html.matchAll(/data-aim-card="([^"]+)"/g)].map((m) => m[1]);
+  check("aim fixtures page: one [data-aim-card] box per state, and the active card under the hero", boxes.length === keys.length + 1 && keys.every((k) => boxes.includes(k)) && boxes[0] === "under-hero", boxes.join(", "));
+  check("aim fixtures page: no state waits on a roadmap builder", !html.includes("Fixture waits on the roadmap"));
+  const segments = html.split(/data-aim-card="/).slice(1);
+  const bare = segments.filter((seg) => !/class="card rm-ac(?:-empty)?[ "]/.test(seg)).map((seg) => seg.slice(0, seg.indexOf('"')));
+  check("aim fixtures page: every box holds an Aim card (.rm-ac, or the compact .rm-ac-empty line)", bare.length === 0, bare.join(", "));
+  const empty = segments.find((seg) => seg.startsWith('empty"')) ?? "";
+  check("aim fixtures page: the EMPTY state shows its line with the × (inert here: the fixtures provider)", /Set an aim/.test(empty.slice(0, 2000)) && /aria-label="Hide this"/.test(empty.slice(0, 2000)));
+
+  // Fix round 2, as R5's AimCard renders the fixtures (fields lane 0 added; R4 fills them live). Each
+  // box is cut before the next fixture's label and note, which may quote the words checked for.
+  const box = (key: string) => {
+    const seg = segments.find((s) => s.startsWith(`${key}"`)) ?? "";
+    const end = seg.indexOf("data-aim-fixture=");
+    return end >= 0 ? seg.slice(0, end) : seg;
+  };
+  const aimSrc = codeOf(read("src/components/roadmap/AimCard.tsx"));
+  const r5 = "R5 (AimCard.tsx): fix round 2, contracts §11.4.5";
+  // The ACCEPTED caption: "as measured at acceptance on <day>" only for a reading of the acceptance day.
+  const captionOk = /as measured at acceptance on /.test(box("accepted")) && !/at acceptance/.test(box("accepted-later"));
+  if (/\bisAcceptanceReading\b/.test(aimSrc))
+    check("aim fixtures page: 'as measured at acceptance on <day>' shows for the acceptance day's reading only, never once a later reading stands", captionOk, `${/as measured at acceptance on /.test(box("accepted"))} / ${!/at acceptance/.test(box("accepted-later"))}`);
+  else if (!captionOk) warn("aim fixtures page: the ACCEPTED caption claims the acceptance whatever the reading's day (accepted-later)", `waits on ${r5}: isAcceptanceReading(proficiency.measuredAt, view.acceptedDay)`);
+  // A Gemini title's NUMBER spans are struck on the card's milestone line.
+  const strikeOk = /<s>1%<\/s>/.test(box("between"));
+  if (/\btitleStruck\b/.test(aimSrc)) check("aim fixtures page: the between card strikes the '1%' in Gemini's undecided title", strikeOk);
+  else if (!strikeOk) warn("aim fixtures page: the between card shows Gemini's '1%' unstruck", `waits on ${r5}: StruckLabel with milestone.titleStruck`);
+  // Live-shaped: a view without acceptedDay (R4 not filling it) never claims the acceptance.
+  if (/\bisAcceptanceReading\b/.test(aimSrc)) {
+    try {
+      const { AimCard } = await import("../src/components/roadmap/AimCard");
+      const { FixtureRoadmapProvider } = await import("../src/components/roadmap/roadmap-runtime");
+      const today = todayKey(new Date());
+      const accepted = buildAimFixture(aimCardFixtures(today).find((f) => f.key === "accepted")!).view!;
+      const bare = renderToStaticMarkup(createElement(FixtureRoadmapProvider, null, createElement(AimCard, { view: { ...accepted, acceptedDay: undefined }, promptDismissed: false, today })));
+      check("aim card: without acceptedDay (a loader that doesn't fill it) the ACCEPTED caption never claims the acceptance", /Proficiency/.test(bare) && !/at acceptance/.test(bare));
+    } catch (err) {
+      check("aim card: renders a live-shaped ACCEPTED view", false, err instanceof Error ? err.message : String(err));
+    }
+  }
+}
+
 (async () => {
   await redirects();
+  await aimCardGuardChecks();
+  await aimPageRenderChecks();
   const tw = await tailwindUtilities();
   cssChecks(tw.test, tw.via);
   sourceChecks(tw.test, tw.via);
-  console.log(`you-check: ${pass} passed, ${fails.length} failed`);
+  console.log(`you-check: ${pass} passed, ${fails.length} failed${warns.length ? `, ${warns.length} waiting on another lane` : ""}`);
+  for (const w of warns) console.log(`  WARN ${w}`);
+  for (const n of notes) console.log(`  NOTE ${n}`);
   for (const f of fails) console.log(`  FAIL ${f}`);
   process.exit(fails.length ? 1 : 0);
 })();

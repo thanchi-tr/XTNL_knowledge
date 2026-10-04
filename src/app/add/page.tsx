@@ -8,6 +8,7 @@ import { getCurrentUserId } from "@/lib/user";
 import { ideaDraftContent, validDraftId } from "@/lib/idea-filing";
 import { AddIdeaForm, type AddFormField } from "@/components/AddIdeaForm";
 import { Chip } from "@/components/ui/Chip";
+import { addPreselectOf } from "@/components/roadmap/roadmap-links";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +74,7 @@ export default async function AddIdeaPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const { draft: draftParam } = await searchParams;
+  const { draft: draftParam, field: fieldParam, domain: domainParam } = await searchParams;
   // Domains are offered as explicit placement targets: without them an empty
   // hand-created Domain is unreachable (discovery routes by nearest Idea).
   const [rows, vocab, structure, draft, focus] = await Promise.all([
@@ -105,6 +106,11 @@ export default async function AddIdeaPage({
       .slice(0, COMPOSITION_PREVIEW_COUNT),
   }));
 
+  // ?field=&domain= (roadmap F21: "Add a card here" and the ADD week quest): a manual
+  // placement in the user's own Field and Domain. Unknown or foreign ids are ignored,
+  // and dedup still decides MERGE, SATURATION or a new card.
+  const preselect = addPreselectOf({ field: fieldParam, domain: domainParam }, fields);
+
   return (
     <div className="page narrow add-page">
       {draft && (
@@ -130,6 +136,8 @@ export default async function AddIdeaPage({
         initialAnswer={draft?.answer ?? ""}
         draftId={draft?.id}
         focus={focus}
+        initialFieldId={preselect.fieldId}
+        initialDomainId={preselect.domainId}
       />
     </div>
   );

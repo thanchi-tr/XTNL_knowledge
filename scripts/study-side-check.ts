@@ -15,6 +15,7 @@ import { join, relative } from "node:path";
 import {
   EDITABLE_TYPES,
   EMPTY_FILTERS,
+  LEVEL_FILTER_MAX,
   TIER_MATERIAL,
   clozeTemplate,
   dueLabel,
@@ -47,7 +48,7 @@ import {
 import { RESET_SCOPES, RESET_SCOPE_ORDER } from "../src/lib/reset-scopes";
 import { FIELD_TIERS } from "../src/lib/field-tier";
 import { QUESTION_TYPES, encodeIdeaContent, parseCloze } from "../src/lib/idea-payload";
-import { MASTERY_LEVEL } from "../src/lib/xp";
+import { MASTERY_LEVEL, MAX_LEVEL } from "../src/lib/xp";
 import { SECTIONS, activeSub, titleFor } from "../src/components/shell/nav";
 
 const ROOT = join(__dirname, "..");
@@ -130,7 +131,19 @@ eq(
   { ...EMPTY_FILTERS, types: ["SHORT"], cols: ["BOOK"] }
 );
 eq("filters: level range is clamped and ordered", [parseFilters(new URLSearchParams("lv=9-2")).minLevel, parseFilters(new URLSearchParams("lv=9-2")).maxLevel], [2, 9]);
-eq("filters: level range clamps to 1..MASTERY_LEVEL", [parseFilters(new URLSearchParams("lv=0-99")).minLevel, parseFilters(new URLSearchParams("lv=0-99")).maxLevel], [1, MASTERY_LEVEL]);
+eq("filters: level range clamps to 1..MAX_LEVEL (20)", [parseFilters(new URLSearchParams("lv=0-99")).minLevel, parseFilters(new URLSearchParams("lv=0-99")).maxLevel], [1, MAX_LEVEL]);
+// Roadmap lane 0 (roadmap.md question 8, F16 seam 20): the Library lists the post-mastery levels 13–20.
+check("filters: the level filter's top is MAX_LEVEL (20), the default range 1–20", LEVEL_FILTER_MAX === MAX_LEVEL && MAX_LEVEL === 20 && EMPTY_FILTERS.minLevel === 1 && EMPTY_FILTERS.maxLevel === 20);
+eq("filters: lv=13-20 survives the URL (was clamped to 12)", [parseFilters(new URLSearchParams("lv=13-20")).minLevel, parseFilters(new URLSearchParams("lv=13-20")).maxLevel], [13, 20]);
+eq("filters: a range that ends at 12 now writes its lv (12 < 20 narrows)", filtersToParams({ ...EMPTY_FILTERS, maxLevel: MASTERY_LEVEL }).toString(), `lv=1-${MASTERY_LEVEL}`);
+{
+  const L15 = idea({ id: "l15", level: 15 });
+  const L20 = idea({ id: "l20", level: MAX_LEVEL });
+  const listed = [L15, L20, A].filter((i) => matchesFilters(i, { ...EMPTY_FILTERS }, NOW)).map((i) => i.id);
+  eq("library: a level-15 and a level-20 card are listed under the default filter", listed, ["l15", "l20", "a"]);
+  eq("library: lv=13-20 lists the post-mastery cards only", [L15, L20, A].filter((i) => matchesFilters(i, parseFilters(new URLSearchParams("lv=13-20")), NOW)).map((i) => i.id), ["l15", "l20"]);
+  check("library: a level-15 card is Mastered (level ≥ 12) and counts in the chip", run({ status: "mastered" }).includes("c") && statusCounts([L15], NOW).mastered === 1);
+}
 eq("filters: repeated values are de-duplicated", parseFilters(new URLSearchParams("tag=a&tag=a&tag=b")).tags, ["a", "b"]);
 eq("filters: a record (Next searchParams) parses like URLSearchParams", parseFilters({ field: ["x", "y"], show: "mastered" }).fields, ["x", "y"]);
 eq("filters: facetCount counts families' values, not q or status", facetCount({ ...EMPTY_FILTERS, q: "x", status: "due", tags: ["a", "b"], minLevel: 3 }), 3);

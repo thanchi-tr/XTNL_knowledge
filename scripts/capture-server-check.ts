@@ -23,13 +23,31 @@
  *     first, capped at 300, each with its board place;
  *   - where a real line goes (captureShapeOf, then placeOf): the toast's
  *     place for the lines capture.md's acceptance names, and an idea's
- *     answer kept as its note.
+ *     answer kept as its note;
+ *   - the roadmap seams (docs/life-plan/roadmap.md F16 seams 3, 5 and 6,
+ *     lane G): captureKey in TEMPLATE_SELECT and on the board's template;
+ *     createTemplateCore's `link` (an explicit parent replaces the '^name'
+ *     match, the goal override replaces the metric and stated MP, a ROADMAP
+ *     goal must come out MID); '+1' refused on a ROADMAP goal; and, read
+ *     from the source, the completion and undo actions' practice hook and
+ *     the close preview's readings first;
+ *   - the unarchive of a roadmap milestone's goal (fix round; roadmap.md
+ *     F15, F22; roadmap-types isSupersededRow): refused once its "Start
+ *     again" copy has started, or while another milestone is under way;
+ *     allowed while the copy is still PLANNED (Undo right after Drop). Run
+ *     through unarchiveCore with every Prisma entry it can reach swapped for
+ *     a stub or a throwing spy.
  *
  * No database: nothing here runs a query (importing tasks.ts only creates
- * the idle Prisma client). Today is Thursday 1 October 2026.
+ * the idle Prisma client; the unarchive cases swap its entries for stubs and
+ * restore them). Today is Thursday 1 October 2026.
  *
  *   npx tsx scripts/capture-server-check.ts
  */
+// tasks.ts and goals-server.ts read the roadmap's modules (roadmap.md F16 seam 22): no check can reach a model.
+import "./_no-model";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { addDays, dayStartOf, type DayKey } from "../src/lib/life-day";
 import { CAPTURE_BATCH_MAX, CAPTURE_UNDO_MS, PLACE_LANES, type ParsedCapture } from "../src/lib/life-types";
 import { normTitleOf } from "../src/lib/life-lexicon";
@@ -41,6 +59,15 @@ import { toastCopy } from "../src/components/capture/capture-ui";
 import {
   ACTIVE_TITLES_MAX,
   BATCH_NO_KEY,
+  ROADMAP_GOAL_PROGRESS_REFUSAL,
+  TEMPLATE_SELECT,
+  captureGoalFields,
+  goalProgressRefusalOf,
+  linkedGoalFields,
+  linkedParentOf,
+  toBoardTemplate,
+  type CaptureLink,
+  type TemplateRow,
   BATCH_SAME_KEY,
   BATCH_THREW,
   BATCH_TOO_MANY,
@@ -65,7 +92,14 @@ import {
   tickFactsOf,
   type CreatedTask,
   type LifeResult,
+  ROADMAP_UNARCHIVE_OTHER_LIVE,
+  ROADMAP_UNARCHIVE_REPLACED,
+  roadmapUnarchiveRefusalOf,
+  unarchiveCore,
+  type RoadmapUnarchiveFacts,
+  type UnarchiveMilestoneRow,
 } from "../src/lib/tasks";
+import { prisma } from "../src/lib/prisma";
 
 const TODAY: DayKey = "2026-10-01";
 const YESTERDAY = addDays(TODAY, -1);
@@ -579,8 +613,382 @@ function tpl(p: Partial<BoardTemplate> & { id: string; title: string }): BoardTe
   check("idea: no answer, no note; a task line never gets one", shape("idea: just a question").note === null && shape("call the bank :: later").note === null);
 }
 
+// ── Roadmap seams (roadmap.md F16 seams 3, 5 and 6; lane G) ───────────────
+{
+  // Seam 3: the board's template carries its capture key ('rm:<milestoneId>' for a roadmap goal).
+  const row = (captureKey: string | null): TemplateRow => {
+    const r = Object.fromEntries(Object.keys(TEMPLATE_SELECT).map((k) => [k, null])) as Record<string, unknown>;
+    Object.assign(r, {
+      id: "g1",
+      title: "Probability to level 6+",
+      normTitle: normTitleOf("Probability to level 6+"),
+      kind: "GOAL",
+      inbox: false,
+      startDay: new Date(Date.UTC(2026, 9, 1)),
+      track: "CRAFT",
+      category: "OTHER",
+      band: "STANDARD",
+      lexicalBand: "STANDARD",
+      bandOverride: 0,
+      estMinutes: 30,
+      machineMinutes: 30,
+      gradeSource: "LEXICAL",
+      gradeConfidence: 0.4,
+      gradeAttempts: 0,
+      compulsory: false,
+      compulsoryOnRest: false,
+      intrinsic: false,
+      sortOrder: 0,
+      createdAt: new Date("2026-10-01T02:00:00.000Z"),
+      captureKey,
+    });
+    return r as unknown as TemplateRow;
+  };
+  const now = new Date("2026-10-01T03:00:00.000Z");
+  check(
+    "roadmap seam 3: TEMPLATE_SELECT selects captureKey, and toBoardTemplate fills BoardTemplate.captureKey (null when none)",
+    TEMPLATE_SELECT.captureKey === true && toBoardTemplate(row("rm:m1"), now).captureKey === "rm:m1" && toBoardTemplate(row(null), now).captureKey === null
+  );
+
+  // Seam 5: the goal override. A milestone whose title reads like a count is still measured by its roadmap.
+  const due60 = addDays(TODAY, 60);
+  const base = captureGoalFields("GOAL", "Read 12 books", "MID", due60, TODAY);
+  const roadmap = (goalMp: number): CaptureLink => ({ goal: { krMetric: "ROADMAP", krTarget: null, krUnit: null, goalMp } });
+  const six = linkedGoalFields("GOAL", base, roadmap(6));
+  const zero = linkedGoalFields("GOAL", base, roadmap(0));
+  check(
+    "roadmap seam 5: a linked goal takes the link's metric, target, unit and stated MP (6 or 0), never the title's MANUAL 12 books",
+    base.krMetric === "MANUAL" &&
+      base.krTarget === 12 &&
+      JSON.stringify(six) === JSON.stringify({ horizon: "MID", krMetric: "ROADMAP", krTarget: null, krUnit: null, goalMp: 6 }) &&
+      zero.goalMp === 0 &&
+      zero.krMetric === "ROADMAP",
+    `${JSON.stringify(base)} → ${JSON.stringify(six)} / ${JSON.stringify(zero)}`
+  );
+  const habit = captureGoalFields("HABIT", "Backtest", null, null, TODAY);
+  check(
+    "roadmap seam 5: no link, or a link on anything but a goal, changes nothing (the horizon is always horizonFor's)",
+    linkedGoalFields("GOAL", base, undefined) === base && linkedGoalFields("GOAL", base, { parentId: "p" }) === base && linkedGoalFields("HABIT", habit, roadmap(6)) === habit && habit.krMetric === null
+  );
+  const throws = (f: () => unknown): string | null => {
+    try {
+      f();
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+  const short = throws(() => linkedGoalFields("GOAL", captureGoalFields("GOAL", "Milestone", "MID", addDays(TODAY, 30), TODAY), roadmap(6)));
+  const longUntagged = throws(() => linkedGoalFields("GOAL", captureGoalFields("GOAL", "Milestone", null, addDays(TODAY, 183), TODAY), roadmap(6)));
+  const midTagged = throws(() => linkedGoalFields("GOAL", captureGoalFields("GOAL", "Milestone", "MID", addDays(TODAY, 183), TODAY), roadmap(6)));
+  check(
+    "roadmap seam 5: a ROADMAP goal that would not be MID (due in 30 days, or untagged at 183) throws before anything is written; tagged MID at 183 days is MID",
+    short !== null && /Mid goal/.test(short) && longUntagged !== null && midTagged === null,
+    `${short} / ${longUntagged} / ${midTagged}`
+  );
+  check(
+    "roadmap seam 5: a stated MP that is not a finite number ≥ 0 throws",
+    [Number.NaN, -1, Number.POSITIVE_INFINITY].every((mp) => throws(() => linkedGoalFields("GOAL", base, roadmap(mp))) !== null)
+  );
+  check(
+    "roadmap seam 5: a ROADMAP goal states 6 (statedGoalMp('MID')) or 0 and nothing else; a non-roadmap link keeps its own figure",
+    [20, 3, 1, 5.99].every((mp) => throws(() => linkedGoalFields("GOAL", base, roadmap(mp))) !== null) &&
+      linkedGoalFields("GOAL", base, { goal: { krMetric: "MANUAL", krTarget: 5, krUnit: "runs", goalMp: 3 } }).goalMp === 3
+  );
+  check(
+    "roadmap seam 5: an explicit parentId replaces the '^name' match for a practice or a step; a goal never takes a parent",
+    linkedParentOf("HABIT", { parentId: "goal-1" }) === "goal-1" &&
+      linkedParentOf("TASK", { parentId: "goal-1" }) === "goal-1" &&
+      linkedParentOf("GOAL", { parentId: "goal-1" }) === null &&
+      linkedParentOf("TASK", { parentId: "  " }) === null &&
+      linkedParentOf("TASK", undefined) === null
+  );
+
+  // Seam 5: '+1' on a roadmap goal.
+  check(
+    "roadmap seam 5: '+1' on a ROADMAP goal is refused ('This goal is measured from your records.'); every other metric takes it",
+    goalProgressRefusalOf({ krMetric: "ROADMAP" }) === ROADMAP_GOAL_PROGRESS_REFUSAL &&
+      ROADMAP_GOAL_PROGRESS_REFUSAL === "This goal is measured from your records." &&
+      ["MANUAL", "CHILDREN", null].every((m) => goalProgressRefusalOf({ krMetric: m }) === null)
+  );
+
+  // The wiring, read from the source (comments stripped).
+  const ROOT = join(__dirname, "..");
+  const code = (rel: string) => readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const tasks = code("src/lib/tasks.ts");
+  const insert = tasks.slice(tasks.indexOf("async function insertCapture("), tasks.indexOf("export interface CaptureGoalFields"));
+  check(
+    "roadmap seam 5: insertCapture applies the link (linkedGoalFields, then linkedParentOf before the '^name' match) before its insert, and no longer throws 'not wired'",
+    !/roadmap link not wired yet/.test(tasks) &&
+      /linkedGoalFields\(kind, captureGoalFields\(kind, title, parsed\.horizon, dueDay, today\), opts\.link\)/.test(insert) &&
+      insert.indexOf("linkedParentOf(kind, opts.link)") > 0 &&
+      insert.indexOf("linkedParentOf(kind, opts.link)") < insert.indexOf("matchParentGoal(") &&
+      insert.indexOf("linkedGoalFields(") < insert.indexOf("prisma.taskTemplate"),
+    insert.length ? "" : "insertCapture not found"
+  );
+  const loader = tasks.slice(tasks.indexOf("export async function loadTodayBoard("), tasks.indexOf("export interface TodayCounts"));
+  check(
+    "roadmap seam 3: the board loader attaches BoardData.roadmapGoals (cached under 'roadmap'): one query, only for open ROADMAP goals, a failure reads as none",
+    /cached\(`today:\$\{userId\}:\$\{day\}`, \["life", "activity", "ideas", "roadmap"\]/.test(loader) &&
+      /roadmapGoals = await loadBoardRoadmapGoals\(userId, read\.core\.templates, day\)/.test(loader) &&
+      /const ids = roadmapGoalIdsOf\(templates\);\s*if \(ids\.length === 0\) return \{\};/.test(loader) &&
+      /return await loadRoadmapGoalSeries\(userId, ids, day\);/.test(loader) &&
+      /catch \(err\) \{[\s\S]*?return \{\};/.test(loader)
+  );
+  const progress = tasks.slice(tasks.indexOf("export async function goalProgressCore("));
+  check(
+    "roadmap seam 5: goalProgressCore reads krMetric and refuses a ROADMAP goal before it records anything",
+    /select: \{ id: true, krMetric: true \}/.test(progress) && progress.indexOf("goalProgressRefusalOf(goal)") > 0 && progress.indexOf("goalProgressRefusalOf(goal)") < progress.indexOf("recordActivity(")
+  );
+  const actions = code("src/app/actions/tasks.ts");
+  const fn = (name: string) => {
+    const at = actions.indexOf(`export async function ${name}(`);
+    const next = actions.indexOf("export async function ", at + 1);
+    return at < 0 ? "" : actions.slice(at, next < 0 ? undefined : next);
+  };
+  const hook = actions.slice(actions.indexOf("function recordPracticeAfter("), actions.indexOf("export type WithCelebrations"));
+  check(
+    "roadmap seam 6: the practice hook runs recordPracticeForTemplate in after(), only where life writes are on, and never fails the tick",
+    /if \(!lifeWritesEnabled\(\)\) return;/.test(hook) && /after\(async \(\) => \{/.test(hook) && /await recordPracticeForTemplate\(userId, id\)/.test(hook) && /catch \(err\)/.test(hook)
+  );
+  check(
+    "roadmap seam 6: completeTask and againTask hand their template to the hook on success",
+    ["completeTask", "againTask"].every((n) => /if \(res\.ok\) recordPracticeAfter\(userId, templateId\);/.test(fn(n)))
+  );
+  const undo = fn("undoCompletion");
+  check(
+    "roadmap seam 6: undoCompletion hands the undone tick's template to the hook (a make-up's read only after the response), keeping its result's shape",
+    /recordPracticeAfter\(userId, res\.value\.templateId\)/.test(undo) &&
+      /recordPracticeAfter\(userId, \(\) => templateIdOfInstance\(userId, instanceId\)\)/.test(undo) &&
+      /value: \{ instanceId: res\.value\.instanceId, xp: res\.value\.xp \}/.test(undo)
+  );
+  const preview = fn("previewGoalClose");
+  check(
+    "roadmap seam 6: previewGoalClose records a ROADMAP goal's readings first (prepareRoadmapGoalClose) and decides from that input",
+    /const prep = await prepareRoadmapGoalClose\(userId, goalId, new Date\(\)\);/.test(preview) && /prep\.input \? closeDecision\(prep\.input\) : null/.test(preview) && !/readGoalCloseInput/.test(preview)
+  );
+  check(
+    "previewGoalClose: readings that can't be worked out now (lane L's preview throws where the close would answer GOAL_CLOSE_RETRY) answer 'Couldn't work out what closing pays now', never 'Couldn't save that'",
+    /catch \(err\) \{[\s\S]*?return \{ ok: false as const, error: PREVIEW_RETRY \};/.test(preview) &&
+      /const PREVIEW_RETRY = "Couldn't work out what closing pays now\. Try again\.";/.test(actions)
+  );
+}
+
+// ── Unarchive of a roadmap milestone's goal (roadmap.md F15, F22; fix round) ──
+// The review (Lens 1) found a lineage paid twice: Drop, Start again (the copy states 6), then
+// unarchive the original. roadmap-types isSupersededRow makes the replaced row unmeasurable (R1);
+// unarchiveCore refuses to reopen it, and refuses a second open milestone (Start's own rule).
+async function unarchiveChecks(): Promise<void> {
+  console.log("\n— unarchive of a roadmap milestone's goal —");
+  const T0 = Date.UTC(2026, 8, 1);
+  const ms = (o: Partial<UnarchiveMilestoneRow> & Pick<UnarchiveMilestoneRow, "id">): UnarchiveMilestoneRow => ({
+    lineageId: "L1",
+    version: 1,
+    status: "STARTED",
+    rankIndex: 1,
+    createdAt: new Date(T0),
+    goalId: null,
+    ...o,
+  });
+  // A 3-milestone plan: m1 reached and closed, m2 started (goal g2) and dropped, m3 planned.
+  const m1 = ms({ id: "m1", lineageId: "L1", goalId: "g1" });
+  const m2 = ms({ id: "m2", lineageId: "L2", rankIndex: 2, goalId: "g2", createdAt: new Date(T0) });
+  const m3 = ms({ id: "m3", lineageId: "L3", rankIndex: 3, status: "PLANNED" });
+  const copy = (status: string, goalId: string | null) => ms({ id: "m2b", lineageId: "L2", rankIndex: 2, status, goalId, createdAt: new Date(T0 + 86_400_000) });
+  const facts = (row: UnarchiveMilestoneRow, rows: UnarchiveMilestoneRow[], open: string[], roadmapStatus = "ACTIVE"): RoadmapUnarchiveFacts => ({
+    row,
+    rows,
+    roadmapStatus,
+    openGoalIds: new Set(open),
+  });
+
+  check("unarchive: a goal with no milestone (or no roadmap table) is never refused", roadmapUnarchiveRefusalOf(null) === null);
+  check(
+    "unarchive: Undo right after Drop (no copy, nothing else under way) reopens the milestone",
+    roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3], [])) === null
+  );
+  check(
+    "unarchive: a 'Start again' copy still PLANNED supersedes nothing, so the unarchive undoes DROPPED (spec: 'Unarchiving the goal undoes DROPPED')",
+    roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3, copy("PLANNED", null)], [])) === null
+  );
+  const replaced = [copy("STARTING", null), copy("STARTED", "g2b")].map((c) => roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3, c], c.goalId ? [c.goalId] : [])));
+  check(
+    "unarchive: once the copy is STARTING or STARTED, the original is replaced: refused, so one lineage never has two paying goals",
+    replaced.every((r) => r === ROADMAP_UNARCHIVE_REPLACED),
+    JSON.stringify(replaced)
+  );
+  check(
+    "unarchive: …also when the copy was dropped in turn (its goal archived), and on an archived roadmap: a replaced row stays replaced",
+    roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3, copy("STARTED", "g2b")], [])) === ROADMAP_UNARCHIVE_REPLACED &&
+      roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3, copy("STARTED", "g2b")], [], "ARCHIVED")) === ROADMAP_UNARCHIVE_REPLACED
+  );
+  check(
+    "unarchive: the dropped copy itself reopens (the original it replaced is not 'another milestone under way')",
+    roadmapUnarchiveRefusalOf(facts(copy("STARTED", "g2b"), [m1, m2, m3, copy("STARTED", "g2b")], ["g2"])) === null
+  );
+  const m3live = ms({ id: "m3", lineageId: "L3", rankIndex: 3, status: "STARTED", goalId: "g3" });
+  check(
+    "unarchive: refused while another milestone is STARTED with an open goal, or STARTING (Start is one milestone at a time)",
+    roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3live], ["g3"])) === ROADMAP_UNARCHIVE_OTHER_LIVE &&
+      roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, ms({ id: "m3", lineageId: "L3", status: "STARTING" })], [])) === ROADMAP_UNARCHIVE_OTHER_LIVE
+  );
+  check(
+    "unarchive: …but not once that milestone's goal is closed or archived, nor on a roadmap that is no longer ACTIVE",
+    roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3live], [])) === null && roadmapUnarchiveRefusalOf(facts(m2, [m1, m2, m3live], ["g3"], "DONE")) === null
+  );
+  check(
+    "unarchive: a re-plan's version + 1 rows (PLANNED, DRAFT) under way of nothing never block it",
+    roadmapUnarchiveRefusalOf(
+      facts(m2, [m1, m2, ms({ id: "m3v2", lineageId: "L3", version: 2, status: "PLANNED" }), ms({ id: "m4v2", lineageId: "L4", version: 2, status: "DRAFT" })], [])
+    ) === null
+  );
+
+  // ── Through unarchiveCore, every Prisma entry it can reach stubbed (a missed one throws) ──
+  const db = prisma as unknown as Record<string, unknown>;
+  const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "taskTemplate", "roadmapMilestone"] as const;
+  const saved = ENTRIES.map((k) => [k, db[k]] as const);
+  const calls: string[] = [];
+  const NOW = new Date("2026-10-01T02:00:00.000Z");
+  const archivedAt = new Date("2026-09-28T01:00:00.000Z");
+  const ruleRow = (krMetric: string | null, archived: Date | null) => ({
+    id: "g2",
+    compulsory: false,
+    compulsoryOnRest: false,
+    inbox: false,
+    kind: "GOAL",
+    recurrence: null,
+    startDay: new Date("2026-09-01T00:00:00.000Z"),
+    dueDay: new Date("2026-11-30T00:00:00.000Z"),
+    dueKind: null,
+    archivedAt: archived,
+    createdAt: new Date("2026-09-01T01:00:00.000Z"),
+    pendingChange: null,
+    krMetric,
+  });
+  const spy = (name: string) => () => {
+    calls.push(name);
+    throw new Error(`database reached: ${name}`);
+  };
+  /** One scenario: the goal's rule row, the milestone read's answer (a value or a thrown error), the open goals. */
+  const scenario = (o: { rule: ReturnType<typeof ruleRow>; milestone?: unknown; milestoneThrows?: unknown; open?: string[] }) => {
+    for (const k of ENTRIES) db[k] = k.startsWith("$") ? spy(k) : new Proxy({}, { get: (_t, m) => spy(`${k}.${String(m)}`) });
+    db.taskTemplate = new Proxy(
+      {
+        findFirst: async () => (calls.push("taskTemplate.findFirst"), o.rule),
+        findMany: async (args: { where: { id: { in: string[] } } }) => (calls.push(`taskTemplate.findMany:${args.where.id.in.join("|")}`), (o.open ?? []).map((id) => ({ id }))),
+        updateMany: async (args: { data: { archivedAt?: unknown } }) => (calls.push(`taskTemplate.updateMany:archivedAt=${String(args.data.archivedAt)}`), { count: 1 }),
+      },
+      { get: (t, m) => (t as Record<string, unknown>)[String(m)] ?? spy(`taskTemplate.${String(m)}`) }
+    );
+    db.roadmapMilestone = new Proxy(
+      {
+        findFirst: async (args: { where: { goalId: string; roadmap: { userId: string } } }) => {
+          calls.push(`roadmapMilestone.findFirst:${args.where.goalId}:${args.where.roadmap.userId}`);
+          if (o.milestoneThrows) throw o.milestoneThrows;
+          return o.milestone ?? null;
+        },
+      },
+      { get: (t, m) => (t as Record<string, unknown>)[String(m)] ?? spy(`roadmapMilestone.${String(m)}`) }
+    );
+  };
+  const withRoadmap = (row: UnarchiveMilestoneRow, rows: UnarchiveMilestoneRow[], status = "ACTIVE") => ({ ...row, roadmap: { status, milestones: rows } });
+  const runIt = async (): Promise<LifeResult<null> | { threw: string }> => {
+    try {
+      return await unarchiveCore("u-unarchive", "g2", NOW);
+    } catch (err) {
+      return { threw: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  const wrote = () => calls.some((c) => c.startsWith("taskTemplate.updateMany"));
+  try {
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", archivedAt), milestone: withRoadmap(m2, [m1, m2, m3, copy("STARTED", "g2b")]), open: ["g2b"] });
+    const r1 = await runIt();
+    check(
+      "unarchiveCore: a dropped goal whose copy has started is refused with ROADMAP_UNARCHIVE_REPLACED (no goal-state read needed), and nothing is written",
+      "ok" in r1 &&
+        !r1.ok &&
+        r1.error === ROADMAP_UNARCHIVE_REPLACED &&
+        !wrote() &&
+        calls.join() === "taskTemplate.findFirst,roadmapMilestone.findFirst:g2:u-unarchive",
+      `${JSON.stringify(r1)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", archivedAt), milestone: withRoadmap(m2, [m1, m2, m3, copy("PLANNED", null)]) });
+    const r2 = await runIt();
+    check(
+      "unarchiveCore: with the copy still PLANNED (and m1's goal closed) it unarchives: archivedAt cleared",
+      "ok" in r2 &&
+        r2.ok &&
+        calls.join() === "taskTemplate.findFirst,roadmapMilestone.findFirst:g2:u-unarchive,taskTemplate.findMany:g1,taskTemplate.updateMany:archivedAt=null",
+      `${JSON.stringify(r2)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", archivedAt), milestone: withRoadmap(m2, [m2, m3]) });
+    const r2b = await runIt();
+    check(
+      "unarchiveCore: with no other STARTED milestone it reads no goal states at all",
+      "ok" in r2b && r2b.ok && !calls.some((c) => c.startsWith("taskTemplate.findMany")) && wrote(),
+      `${JSON.stringify(r2b)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", archivedAt), milestone: withRoadmap(m2, [m1, m2, m3live]), open: ["g3"] });
+    const r3 = await runIt();
+    check(
+      "unarchiveCore: another milestone open (its goal read among the other STARTED rows' goals) refuses with ROADMAP_UNARCHIVE_OTHER_LIVE, nothing written",
+      "ok" in r3 && !r3.ok && r3.error === ROADMAP_UNARCHIVE_OTHER_LIVE && !wrote() && calls.includes("taskTemplate.findMany:g1|g3"),
+      `${JSON.stringify(r3)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow(null, archivedAt) });
+    const r4 = await runIt();
+    check(
+      "unarchiveCore: any other template never reads a roadmap table (one rule read, then the write)",
+      "ok" in r4 && r4.ok && !calls.some((c) => c.startsWith("roadmapMilestone")) && calls.join() === "taskTemplate.findFirst,taskTemplate.updateMany:archivedAt=null",
+      `${JSON.stringify(r4)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", null) });
+    const r5 = await runIt();
+    check(
+      "unarchiveCore: a ROADMAP goal that is not archived (nothing to reopen) reads no roadmap table either",
+      "ok" in r5 && r5.ok && !calls.some((c) => c.startsWith("roadmapMilestone")),
+      `${JSON.stringify(r5)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({
+      rule: ruleRow("ROADMAP", archivedAt),
+      milestoneThrows: Object.assign(new Error("The table `public.RoadmapMilestone` does not exist in the current database."), { code: "P2021", meta: { table: "public.RoadmapMilestone" } }),
+    });
+    const r6 = await runIt();
+    check(
+      "unarchiveCore: a missing roadmap table (life_roadmap not applied) reads as no roadmap: the unarchive goes on",
+      "ok" in r6 && r6.ok && wrote(),
+      `${JSON.stringify(r6)} | ${calls.join()}`
+    );
+
+    calls.length = 0;
+    scenario({ rule: ruleRow("ROADMAP", archivedAt), milestoneThrows: Object.assign(new Error("Timed out fetching a new connection from the connection pool."), { code: "P2024" }) });
+    const r7 = await runIt();
+    check(
+      "unarchiveCore: any other failure of the roadmap read throws (the action answers 'Couldn't save that'), and the goal stays archived",
+      "threw" in r7 && /connection pool/.test(r7.threw) && !wrote(),
+      `${JSON.stringify(r7)} | ${calls.join()}`
+    );
+  } finally {
+    for (const [k, v] of saved) db[k] = v;
+  }
+}
+
 batchChecks()
   .then(replacementChecks)
+  .then(unarchiveChecks)
   .catch((err) => {
     failed++;
     console.log(`FAIL batch checks threw — ${String(err)}`);

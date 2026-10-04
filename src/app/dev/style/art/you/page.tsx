@@ -8,9 +8,13 @@ import { KeptWeeks, TrackLines } from "@/components/home/TrackCharts";
 import { lifeMpCell, titleDistance } from "@/components/home/sheet-math";
 import { LoadoutStrip } from "@/components/skills/LoadoutStrip";
 import { statedPayoutCopy, type GoalLadder as GoalLadderData, type GoalLadderItem, type GoalPayout } from "@/lib/goals";
+import { todayKey, type DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
 import type { Horizon, Track } from "@/lib/life-types";
 import { SKILL_POOL } from "@/lib/skill-pool";
+import { AimCard } from "@/components/roadmap/AimCard";
+import { FixtureRoadmapProvider } from "@/components/roadmap/roadmap-runtime";
+import { aimCardFixtures, buildAimFixture, type AimFixture } from "./aim-fixtures";
 
 export const metadata: Metadata = { title: "You fixtures" };
 
@@ -22,7 +26,37 @@ export const metadata: Metadata = { title: "You fixtures" };
  * goal ladder with open, carried and closed goals, track levels over 12
  * judged weeks, the kept-weeks heatmap, and the loadout strip L2 puts on the
  * Study hub and the runner footer. The copy is the real copy.
+ *
+ * The Aim card (roadmap F19, F23) sits under the hero as on /you, in its
+ * active state, and every state follows in "Aim card states", each card in
+ * its own [data-aim-card] box so ui-audit can record its height per state.
+ * Its fixtures (aim-fixtures.ts) are anchored on today's life day and built
+ * through the roadmap's pure view builders; they never read the user's
+ * roadmap. Every card sits inside FixtureRoadmapProvider, so its buttons
+ * reach the inert fixture actions ("nothing is saved on this page"), never
+ * the live ones: the EMPTY card's × can't set the real xtnl-aim-prompt
+ * cookie from here. Each card gets the page's life day, as /you passes it.
  */
+
+/**
+ * One Aim card fixture, or the line saying which builder it still waits on.
+ * `slot` names its box when the state shows twice. The fixtures provider
+ * keeps every action inert (no cookie, no write, no router).
+ */
+function AimFixtureCard({ fixture, today, slot }: { fixture: AimFixture; today: DayKey; slot?: string }) {
+  const built = buildAimFixture(fixture);
+  return (
+    <div data-aim-card={slot ?? fixture.key}>
+      {built.view ? (
+        <FixtureRoadmapProvider>
+          <AimCard view={built.view} promptDismissed={false} today={today} />
+        </FixtureRoadmapProvider>
+      ) : (
+        <p className="t-meta">Fixture waits on the roadmap: {built.waiting}</p>
+      )}
+    </div>
+  );
+}
 
 const pips = (s: string): WeekPip[] => s.split("").map((c) => (c === "k" ? "kept" : "missed"));
 
@@ -70,6 +104,11 @@ export default function YouFixturesPage() {
     const skill = slot < 7 ? SKILL_POOL[slot * 97] ?? null : null;
     return { slot, skill, active: slot !== 3 };
   });
+  // The Aim card's fixtures read today's life day, so "measured 09:12" and "new 3 Nov" read as on /you.
+  const aimToday = todayKey(new Date());
+  const aims = aimCardFixtures(aimToday);
+  const activeAim = aims.find((f) => f.key === "active");
+  const columns = [aims.filter((_, i) => i % 2 === 0), aims.filter((_, i) => i % 2 === 1)];
   return (
     <div className="page">
       <p className="t-meta" style={{ margin: "4px 0 16px" }}>
@@ -93,6 +132,7 @@ export default function YouFixturesPage() {
             poolSize={SKILL_POOL.length}
             seenKey="fixture:level"
           />
+          {activeAim && <AimFixtureCard fixture={activeAim} today={aimToday} slot="under-hero" />}
           <LifeNote storageKey="xtnl:dev:life-note:v1" />
           <div>
             <SectionHeader title="Life tracks" aside="levels capped by kept weeks and paid goals · fixture" />
@@ -185,6 +225,24 @@ export default function YouFixturesPage() {
           </div>
         </div>
       </div>
+      <section aria-labelledby="aim-states" style={{ marginTop: 24 }}>
+        <SectionHeader id="aim-states" title="Aim card states" aside="fixture · each card in its column's width" />
+        <div className="you-grid">
+          {columns.map((list, c) => (
+            <div key={c} className="you-stack">
+              {list.map((f) => (
+                <div key={f.key} data-aim-fixture={f.key}>
+                  <p className="t-eyebrow">{f.label}</p>
+                  <p className="t-meta" style={{ margin: "2px 0 8px" }}>
+                    {f.note}
+                  </p>
+                  <AimFixtureCard fixture={f} today={aimToday} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

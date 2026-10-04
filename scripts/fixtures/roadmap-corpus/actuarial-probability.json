@@ -1,0 +1,106 @@
+{
+  "aim": "actuarial-probability",
+  "about": "An exam aim with the user's own syllabus: topics take the user's lines (origin SYLLABUS) and S6 is left uncovered. Credential (exam label and the word exam).",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_stats",
+  "input": {
+    "intake": {
+      "aim": "Pass the actuarial probability exam",
+      "fieldId": "fld_stats",
+      "track": "CRAFT",
+      "domainIds": ["d_st_prob", "d_st_inf"],
+      "targetDay": "2027-05-16",
+      "hoursPerWeek": 6,
+      "newCardsPerWeek": null,
+      "typicalHours": 300,
+      "typicalHoursSource": "the exam body's study guide",
+      "syllabus": {
+        "lines": [
+          "General probability",
+          "Univariate random variables",
+          "Multivariate random variables",
+          "Conditional expectation and variance",
+          "Common discrete distributions",
+          "Common continuous distributions"
+        ],
+        "source": "the exam body's outline"
+      },
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": "evenings only",
+      "examLabel": "Exam P"
+    },
+    "areaName": "Statistics",
+    "domains": [
+      { "id": "d_st_prob", "name": "Probability", "fieldId": "fld_stats", "cards": 42, "atSix": 18, "atTop": 2, "chosen": true },
+      { "id": "d_st_inf", "name": "Inference", "fieldId": "fld_stats", "cards": 9, "atSix": 0, "atTop": 0, "chosen": true },
+      { "id": "d_st_calc", "name": "Calculus", "fieldId": "fld_stats", "cards": 20, "atSix": 7, "atTop": 0, "chosen": false },
+      { "id": "d_st_linalg", "name": "Linear Algebra", "fieldId": "fld_stats", "cards": 5, "atSix": 1, "atTop": 0, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-20" },
+      { "start": "2026-12-21", "end": "2027-02-28" },
+      { "start": "2027-03-01", "end": "2027-05-16" }
+    ]
+  },
+  "library": [
+    { "id": "d_st_prob", "name": "Probability", "fieldId": "fld_stats", "fieldName": "Statistics", "cards": 42, "titles": ["Conditional probability", "Bayes rule", "Counting principle", "Joint distributions"], "tags": ["probability"] },
+    { "id": "d_st_inf", "name": "Inference", "fieldId": "fld_stats", "fieldName": "Statistics", "cards": 9, "titles": ["Conditional expectation", "Variance of a sum"], "tags": ["inference"] },
+    { "id": "d_st_calc", "name": "Calculus", "fieldId": "fld_stats", "fieldName": "Statistics", "cards": 20, "titles": ["Integration by parts"], "tags": ["calculus"] },
+    { "id": "d_st_linalg", "name": "Linear Algebra", "fieldId": "fld_stats", "fieldName": "Statistics", "cards": 5, "titles": ["Matrix inverse"], "tags": ["matrices"] },
+    { "id": "d_fi_risk", "name": "Risk Management", "fieldId": "fld_fin", "fieldName": "Finance", "cards": 12, "titles": ["Value at risk"], "tags": ["risk"] }
+  ],
+  "drafts": [
+    {
+      "id": "exam-syllabus",
+      "about": "Syllabus topics, a named question bank, a possessive book, a spelled number, a statement about the person, a syllabus claim without an S-key.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Probability foundations",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Counting and conditional probability", "domain": "D1", "syllabus": "S1", "claims": [] },
+              { "label": "Single random variables", "domain": "D1", "syllabus": "S2", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Work the SOA sample questions", "method": "DELIBERATE_PRACTICE", "claims": ["resource", "proper-noun"] },
+              { "name": "Timed past-paper drills", "method": "DELIBERATE_PRACTICE", "claims": [] }
+            ],
+            "steps": [{ "title": "Summarise the counting rules on one page", "claims": ["number"] }],
+            "checkpoint": { "label": "Self-test on conditional probability", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Several variables at once",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Joint distributions", "domain": "D1", "syllabus": "S3", "claims": [] },
+              { "label": "Conditional expectation", "domain": "D2", "syllabus": "S4", "claims": [] },
+              { "label": "Exam P syllabus: multivariate distributions and risk management", "domain": "D2", "claims": ["syllabus"] }
+            ],
+            "practices": [{ "name": "Derive moments by hand", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Fix your weak calculus", "claims": ["about-you"] }],
+            "checkpoint": { "label": "Mock test under exam conditions", "kind": "MOCK_TEST", "claims": [] }
+          },
+          {
+            "title": "Exam readiness",
+            "titleClaims": [],
+            "domains": ["D1", "D2", "D3"],
+            "newDomains": [],
+            "topics": [{ "label": "Common discrete distributions", "domain": "D1", "syllabus": "S5", "claims": [] }],
+            "practices": [{ "name": "Mixed problem sets from Blitzstein's book", "method": "DELIBERATE_PRACTICE", "claims": ["resource", "proper-noun"] }],
+            "steps": [{ "title": "Pass the exam", "claims": [] }],
+            "checkpoint": { "label": "Full mock exam", "kind": "MOCK_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

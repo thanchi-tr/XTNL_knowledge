@@ -1,0 +1,137 @@
+{
+  "aim": "guitar",
+  "about": "A craft aim, not an exam: no past paper or mock item (corpus golden). The constraints exclude a teacher, so COACHED_SESSION is not offered.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_music",
+  "input": {
+    "intake": {
+      "aim": "Play 20 songs on guitar from memory",
+      "fieldId": "fld_music",
+      "track": "CRAFT",
+      "domainIds": ["d_mu_chords", "d_mu_theory"],
+      "targetDay": "2027-05-16",
+      "hoursPerWeek": 4,
+      "newCardsPerWeek": 5,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "NEW",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": "No teacher; I practise alone at home",
+      "examLabel": null
+    },
+    "areaName": "Music",
+    "domains": [
+      { "id": "d_mu_chords", "name": "Guitar Chords", "fieldId": "fld_music", "cards": 30, "atSix": 10, "atTop": 0, "chosen": true },
+      { "id": "d_mu_theory", "name": "Music Theory", "fieldId": "fld_music", "cards": 18, "atSix": 3, "atTop": 0, "chosen": true },
+      { "id": "d_mu_rhythm", "name": "Rhythm", "fieldId": "fld_music", "cards": 6, "atSix": 0, "atTop": 0, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-20" },
+      { "start": "2026-12-21", "end": "2027-02-28" },
+      { "start": "2027-03-01", "end": "2027-05-16" }
+    ]
+  },
+  "library": [
+    { "id": "d_mu_chords", "name": "Guitar Chords", "fieldId": "fld_music", "fieldName": "Music", "cards": 30, "titles": ["Open chord shapes", "Barre chord on the fifth fret", "Major and minor chords", "Chord changes"], "tags": ["chords", "guitar"] },
+    { "id": "d_mu_theory", "name": "Music Theory", "fieldId": "fld_music", "fieldName": "Music", "cards": 18, "titles": ["Verse and chorus", "Reading a chord chart", "Song form"], "tags": ["theory", "songs"] },
+    { "id": "d_mu_rhythm", "name": "Rhythm", "fieldId": "fld_music", "fieldName": "Music", "cards": 6, "titles": ["Strumming in eighths", "Syncopation"], "tags": ["rhythm", "strumming"] }
+  ],
+  "drafts": [
+    {
+      "id": "guitar-a",
+      "about": "Plain, mostly unflagged: one statement about the person, one spelled number, one Domain added to scope.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Clean chord changes",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Open chord shapes", "domain": "D1", "claims": [] },
+              { "label": "Strumming patterns", "domain": "D3", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Chord change drills", "method": "DELIBERATE_PRACTICE", "claims": [] },
+              { "name": "Play along to slow songs", "method": "DELIBERATE_PRACTICE", "claims": [] }
+            ],
+            "steps": [{ "title": "Learn your first full song", "claims": ["about-you"] }],
+            "checkpoint": { "label": "Play a song start to finish without stopping", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          },
+          {
+            "title": "Barre chords and rhythm",
+            "titleClaims": [],
+            "domains": ["D1", "D3"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Barre chord shapes", "domain": "D1", "claims": [] },
+              { "label": "Syncopated strumming", "domain": "D3", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Barre chord drills", "method": "DELIBERATE_PRACTICE", "claims": [] },
+              { "name": "Learn songs by ear", "method": "DELIBERATE_PRACTICE", "claims": [] }
+            ],
+            "steps": [{ "title": "Record a run-through of a full song", "claims": [] }],
+            "checkpoint": { "label": "Play two songs from memory", "kind": "PERFORMANCE_CHECK", "claims": ["number"] }
+          },
+          {
+            "title": "A memorised set",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [{ "label": "Song structure", "domain": "D2", "claims": [] }],
+            "practices": [{ "name": "Run the whole set from memory", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Play the set for a friend", "claims": [] }],
+            "checkpoint": { "label": "Full set from memory", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          }
+        ]
+      }
+    },
+    {
+      "id": "guitar-b",
+      "about": "A named online course (a person's name), a spelled number, a topic outside the milestone's Domains added to its scope.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Chord vocabulary",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [{ "label": "Major and minor shapes", "domain": "D1", "claims": [] }],
+            "practices": [
+              { "name": "Follow the Justin Guitar beginner course", "method": "READING", "claims": ["resource", "proper-noun"] },
+              { "name": "Metronome practice", "method": "DELIBERATE_PRACTICE", "claims": [] }
+            ],
+            "steps": [{ "title": "Tune by ear without an app", "claims": [] }],
+            "checkpoint": { "label": "Change chords cleanly in time", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          },
+          {
+            "title": "Songs end to end",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [{ "label": "Reading chord charts", "domain": "D2", "claims": [] }],
+            "practices": [{ "name": "Learn one new song a week", "method": "DELIBERATE_PRACTICE", "claims": ["number"] }],
+            "steps": [{ "title": "Build a set list", "claims": [] }],
+            "checkpoint": { "label": "Play the set list through", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          },
+          {
+            "title": "From memory",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [{ "label": "Memory cues for song sections", "domain": "D2", "claims": [] }],
+            "practices": [{ "name": "Play the set without chord sheets", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Perform the set for friends", "claims": [] }],
+            "checkpoint": null
+          }
+        ]
+      }
+    }
+  ]
+}

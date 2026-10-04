@@ -9,7 +9,10 @@
  *                            with <ShellTitle/>); /today's title is the life day's date
  *
  * Routes other lanes create (/today/week, /structure, /you/*, /settings, /train)
- * are linked here from the start; they 404 until their lane lands.
+ * are linked here from the start; they 404 until their lane lands. The
+ * roadmap (docs/life-plan/roadmap.md F16 seam 10) adds Roadmap as the second
+ * You sub-page (/you/roadmap), the "Set an aim" title for /you/roadmap/new,
+ * and its fixture route /dev/style/roadmap.
  */
 import type { IconName } from "@/components/ui/Icon";
 
@@ -74,6 +77,7 @@ export const SECTIONS: readonly Section[] = [
     prefixes: ["/you", "/skills", "/overview", "/dashboard", "/settings", "/dev"],
     subs: [
       { href: "/you", label: "Sheet", also: ["/overview"] },
+      { href: "/you/roadmap", label: "Roadmap" },
       { href: "/skills", label: "Skills" },
       { href: "/you/loadout", label: "Loadout" },
       { href: "/you/moments", label: "Moments" },
@@ -138,6 +142,7 @@ export const DEV_STYLE_PAGES: readonly SubPage[] = [
   { href: "/dev/style/celebrate", label: "Celebrations" },
   { href: "/dev/style/art", label: "Art" },
   { href: "/dev/style/settings", label: "Settings fixtures" },
+  { href: "/dev/style/roadmap", label: "Roadmap fixtures" },
 ];
 
 /**
@@ -157,6 +162,8 @@ export function titleFor(pathname: string | null | undefined, dayKey?: string): 
   if (under(path, "/library") && path !== "/library") return { eyebrow: "Study", title: "Idea" };
   // The sheet's title is the character, as the mockup names it (its tab is "Sheet").
   if (path === "/you") return { eyebrow: "You", title: "Character" };
+  // The intake form sits under the Roadmap tab, which would title it "Roadmap".
+  if (under(path, "/you/roadmap/new")) return { eyebrow: "You", title: "Set an aim" };
   const id = sectionOf(path);
   if (!id) return { eyebrow: null, title: "XTNL" };
   const section = sectionById(id);

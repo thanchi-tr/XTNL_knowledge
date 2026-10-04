@@ -14,13 +14,21 @@
  *   §4 maybeMaintainLife: no read and no write where writes are off, settle before judge,
  *      single flight, never throws.
  *   §5 the life cron: 401 without CRON_SECRET or with a wrong header; settle, then judge.
+ *   §4b, §5b, §5c the roadmap step (docs/life-plan/roadmap.md F16 seam 8, lane G): settle → judge →
+ *      roadmap in the chain and the cron, also while Duty is inert, only with writes on; freeze
+ *      (CRON from the cron, RENDER from the chain) before readings, then finalisation; a roadmap
+ *      failure fails neither caller and leaves the cron's status; the degrade cron's readings.
+ *      A failure a writer RETURNS as `error` (they never throw) reaches the errors of the step,
+ *      the cron JSON and the degrade JSON as one thrown does (roadmapStepErrorsOf; fix round).
  *
  * Pure: no database (the app's Prisma client is swapped for throwing spies while §3–§5 run,
  * so a missed injection fails loudly instead of reaching the shared database), no network,
- * an injected clock and env.
+ * an injected clock and env. settlement.ts imports the roadmap's writers, so _no-model comes
+ * first (roadmap.md F16 seam 22), and every chain and cron call here injects them.
  *
  *   npx tsx scripts/settle-check.ts
  */
+import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Prisma } from "@prisma/client";
@@ -74,7 +82,9 @@ import {
   lifeLaunchFinished,
   maybeMaintainLife,
   readSettlementState,
+  recordRoadmapAfterDegrade,
   runLifeCron,
+  runRoadmapStep,
   settleGuardSql,
   settleLifeDays,
   settlementWritesEnabled,
@@ -84,7 +94,9 @@ import {
   type SettleOptions,
   type SettleResult,
   type SettlementClient,
+  type RoadmapStepDeps,
 } from "../src/lib/settlement";
+import type { RoadmapStepReport } from "../src/lib/roadmap-types";
 
 let failed = 0;
 let passed = 0;
@@ -978,7 +990,26 @@ class FakeDb {
 
 /** Every Prisma entry settlement could reach on the app's real client, swapped for a spy that records and throws. */
 const db = prisma as unknown as Record<string, unknown>;
-const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "lifeSettings", "taskTemplate", "taskInstance", "activityEvent", "restDay", "masteryLedgerEntry"] as const;
+const ENTRIES = [
+  "$transaction",
+  "$executeRaw",
+  "$queryRaw",
+  "lifeSettings",
+  "taskTemplate",
+  "taskInstance",
+  "activityEvent",
+  "restDay",
+  "masteryLedgerEntry",
+  // Roadmap (F16 seam 8): the roadmap step's real writers would read these; every call here injects them.
+  "roadmap",
+  "roadmapRun",
+  "roadmapMilestone",
+  "roadmapItem",
+  "roadmapMeasure",
+  "roadmapReading",
+  "roadmapAcceptance",
+  "roadmapQuestWeek",
+] as const;
 const savedEntries = ENTRIES.map((k) => [k, db[k]] as const);
 const touchedReal: string[] = [];
 function spyOnRealClient() {
@@ -995,6 +1026,61 @@ function restoreRealClient() {
 const WRITE_ENV: SettleEnv = { XTNL_LIFE_JUDGE: "1", XTNL_DUTY_LAUNCH_DAY: L };
 const DEV_ENV: SettleEnv = { NODE_ENV: "development", XTNL_DUTY_LAUNCH_DAY: L };
 const USER = "u-settle-check";
+
+/** The roadmap step's writers, quiet: every chain and cron call injects them, so the real ones never run here. */
+const NO_ROADMAP: RoadmapStepDeps = {
+  freeze: async () => ({ froze: 0, skipped: null }),
+  readings: async () => ({ written: 0, reaches: 0, skipped: null }),
+  finalize: async () => ({ finalized: 0, skipped: null }),
+};
+
+type RoadmapPart = "freeze" | "readings" | "finalize";
+
+/**
+ * Roadmap writers that record each call in `order` ('freeze:<source>', 'readings:<caller>',
+ * 'finalize'), with the env and instant they were handed; `fail` makes that part throw.
+ * `returned` makes those parts return their failure as `error` (with nothing written), as the
+ * real writers do: they never throw (roadmap-types ReadingsRun / QuestFreezeRun / QuestFinalizeRun).
+ */
+function roadmapRecorder(order: string[], fail?: RoadmapPart, returned: readonly RoadmapPart[] = []) {
+  const envs: unknown[] = [];
+  const instants: number[] = [];
+  const seen = (what: string, env: unknown, now: Date) => {
+    order.push(what);
+    envs.push(env);
+    instants.push(now.getTime());
+  };
+  const gone = (part: RoadmapPart) => (returned.includes(part) ? { error: `${part} caught` } : {});
+  const deps: RoadmapStepDeps = {
+    freeze: async (_u, now, source, o) => {
+      seen(`freeze:${source}`, o.env, now);
+      if (fail === "freeze") throw new Error("freeze boom");
+      return returned.includes("freeze") ? { froze: 0, skipped: null, ...gone("freeze") } : { froze: 1, skipped: null };
+    },
+    readings: async (_u, now, o) => {
+      seen(`readings:${o.caller}`, o.env, now);
+      if (fail === "readings") throw new Error("readings boom");
+      return returned.includes("readings") ? { written: 0, reaches: 0, skipped: null, ...gone("readings") } : { written: 2, reaches: 0, skipped: null };
+    },
+    finalize: async (_u, now, o) => {
+      seen("finalize", o.env, now);
+      if (fail === "finalize") throw new Error("finalize boom");
+      return returned.includes("finalize") ? { finalized: 0, skipped: null, ...gone("finalize") } : { finalized: 1, skipped: null };
+    },
+  };
+  return { deps, envs, instants };
+}
+
+/** Runs f with console.error held (the expected failures log), restoring it after. */
+async function quietly<T>(f: () => Promise<T>): Promise<T> {
+  const err = console.error;
+  console.error = () => {};
+  try {
+    return await f();
+  } finally {
+    console.error = err;
+  }
+}
 
 async function executor(): Promise<void> {
   console.log("— §3 chunk grouping and statement count —");
@@ -1245,7 +1331,7 @@ async function executor(): Promise<void> {
     const pv = await settleLifeDays(USER, at(d(3)), { env: previewEnv, client: preview.client() });
     check("a Preview deployment (NODE_ENV production, VERCEL_ENV 'preview') writes nothing", preview.writes === 0 && !pv.wrote, JSON.stringify({ ...pv, plans: pv.plans.length }));
     const previewChain = new FakeDb(d(-1), [tpl("stretch")]);
-    await maybeMaintainLife(USER, at(d(3)), { env: previewEnv, client: previewChain.client(), judge: async () => {} });
+    await maybeMaintainLife(USER, at(d(3)), { env: previewEnv, client: previewChain.client(), judge: async () => {}, roadmap: NO_ROADMAP });
     check("…and its maintenance chain reads nothing for settlement", previewChain.reads.length === 0 && previewChain.writes === 0);
     const before = new FakeDb(d(-1), [tpl("stretch")]);
     const br = await settleLifeDays(USER, at(d(-1)), { env: WRITE_ENV, client: before.client() });
@@ -1293,7 +1379,7 @@ async function executor(): Promise<void> {
   {
     const dev = new FakeDb(d(-1), [tpl("stretch")]);
     let judged = 0;
-    await maybeMaintainLife(USER, at(d(3)), { env: DEV_ENV, client: dev.client(), judge: async () => void (judged += 1) });
+    await maybeMaintainLife(USER, at(d(3)), { env: DEV_ENV, client: dev.client(), judge: async () => void (judged += 1), roadmap: NO_ROADMAP });
     check("writes off: maybeMaintainLife reads nothing and writes nothing for settlement", dev.reads.length === 0 && dev.writes === 0, JSON.stringify(dev.reads));
     eq("…and still runs the judge step (which has its own gate)", judged, 1);
 
@@ -1303,16 +1389,17 @@ async function executor(): Promise<void> {
       env: WRITE_ENV,
       client: live.client(),
       judge: async () => void order.push(`judge after ${live.transactions.length} settlement transaction(s)`),
+      roadmap: NO_ROADMAP,
     });
     check("settles first, then judges", live.cursor === d(1) && order.length === 1 && order[0] === "judge after 1 settlement transaction(s)", JSON.stringify(order));
 
     const caughtUp = new FakeDb(d(1), [tpl("stretch")]);
-    await maybeMaintainLife(USER, at(d(3)), { env: WRITE_ENV, client: caughtUp.client(), judge: async () => {} });
+    await maybeMaintainLife(USER, at(d(3)), { env: WRITE_ENV, client: caughtUp.client(), judge: async () => {}, roadmap: NO_ROADMAP });
     check("a cursor already caught up costs one settings read and nothing else", caughtUp.reads.length === 1 && caughtUp.writes === 0, JSON.stringify(caughtUp.reads));
 
     const flight = new FakeDb(d(-1), [tpl("stretch")]);
     let calls = 0;
-    const opts = { env: WRITE_ENV, client: flight.client(), judge: async () => void (calls += 1) };
+    const opts = { env: WRITE_ENV, client: flight.client(), judge: async () => void (calls += 1), roadmap: NO_ROADMAP };
     const a = maybeMaintainLife(USER, at(d(3)), opts);
     const b = maybeMaintainLife(USER, at(d(3)), opts);
     await Promise.all([a, b]);
@@ -1325,7 +1412,7 @@ async function executor(): Promise<void> {
     console.error = () => {};
     let threw = false;
     try {
-      await maybeMaintainLife(USER, at(d(3)), { env: WRITE_ENV, client: broken.client(), judge: async () => void (after += 1) });
+      await maybeMaintainLife(USER, at(d(3)), { env: WRITE_ENV, client: broken.client(), judge: async () => void (after += 1), roadmap: NO_ROADMAP });
     } catch {
       threw = true;
     } finally {
@@ -1371,6 +1458,7 @@ async function executor(): Promise<void> {
         return { launched: true, committed: [] };
       },
       launchFinished: async () => true,
+      roadmap: NO_ROADMAP,
     });
     check("authorized: settles, then judges, and answers 200", ok.status === 200 && seen.join() === "settle,judge" && settleEnv?.XTNL_LIFE_JUDGE === "1", JSON.stringify(seen));
 
@@ -1393,6 +1481,7 @@ async function executor(): Promise<void> {
         askedFor = day;
         return false;
       },
+      roadmap: NO_ROADMAP,
     });
     const body = (await unfinished.json()) as { judge: { skipped?: string } };
     check(
@@ -1419,10 +1508,291 @@ async function executor(): Promise<void> {
         return { launched: true, committed: [] };
       },
       launchFinished: async () => true,
+      roadmap: NO_ROADMAP,
     }).finally(() => {
       console.error = err;
     });
     check("a settlement failure still judges (BODY, CRAFT, CARE never wait on it) and answers 500", bad.status === 500 && seen2.join() === "judge");
+  }
+
+  console.log("— §4b the roadmap step in the chain (roadmap.md F16 seam 8) —");
+  {
+    const order: string[] = [];
+    const live = new FakeDb(d(-1), [tpl("stretch")]);
+    const r = roadmapRecorder(order);
+    const now = at(d(3));
+    await maybeMaintainLife(USER, now, {
+      env: WRITE_ENV,
+      client: live.client(),
+      judge: async () => void order.push(`judge after ${live.transactions.length} settlement transaction(s)`),
+      roadmap: r.deps,
+    });
+    eq(
+      "settle → judge → roadmap: the chain freezes the week (RENDER, its fallback), records readings (CHAIN), then finalises",
+      order,
+      ["judge after 1 settlement transaction(s)", "freeze:RENDER", "readings:CHAIN", "finalize"]
+    );
+    check(
+      "…every roadmap writer is handed the chain's own env and instant, so its own gate agrees",
+      r.envs.length === 3 && r.envs.every((e) => e === WRITE_ENV) && r.instants.every((t) => t === now.getTime())
+    );
+
+    // Duty inert: no launch day at all (DUTY_LAUNCH_DAY is null in code; no XTNL_DUTY_LAUNCH_DAY here).
+    const inertOrder: string[] = [];
+    const inert = new FakeDb(null, [tpl("stretch")]);
+    const ri = roadmapRecorder(inertOrder);
+    await maybeMaintainLife(USER, at(d(3)), { env: { XTNL_LIFE_JUDGE: "1" }, client: inert.client(), judge: async () => void inertOrder.push("judge"), roadmap: ri.deps });
+    check(
+      "while Duty is inert (no launch day, no cursor) settlement writes nothing, and the roadmap step still runs after the judge",
+      inert.writes === 0 && inertOrder.join() === "judge,freeze:RENDER,readings:CHAIN,finalize" && (DUTY_LAUNCH_DAY != null || inert.reads.length === 0),
+      JSON.stringify({ inertOrder, reads: inert.reads, writes: inert.writes })
+    );
+
+    // Writes off: a local dev server (NODE_ENV development) and a Vercel Preview build.
+    for (const [label, env] of [
+      ["NODE_ENV development, no XTNL_LIFE_JUDGE", DEV_ENV],
+      ["a Vercel Preview (NODE_ENV production, VERCEL_ENV preview)", { NODE_ENV: "production", VERCEL_ENV: "preview", XTNL_DUTY_LAUNCH_DAY: L } as SettleEnv],
+    ] as const) {
+      const offOrder: string[] = [];
+      const off = new FakeDb(d(-1), [tpl("stretch")]);
+      const ro = roadmapRecorder(offOrder);
+      await maybeMaintainLife(USER, at(d(3)), { env, client: off.client(), judge: async () => void offOrder.push("judge"), roadmap: ro.deps });
+      const report = await runRoadmapStep(USER, at(d(3)), { env, source: "RENDER", caller: "CHAIN", deps: ro.deps });
+      check(
+        `writes off (${label}): the roadmap step calls no writer and reports WRITES_OFF`,
+        offOrder.join() === "judge" &&
+          report.freeze?.skipped === "WRITES_OFF" &&
+          report.readings?.skipped === "WRITES_OFF" &&
+          report.finalize?.skipped === "WRITES_OFF" &&
+          report.errors.length === 0,
+        JSON.stringify({ offOrder, report })
+      );
+    }
+
+    // A part that throws: reported with its message, the later parts still run, nothing throws.
+    for (const part of ["freeze", "readings", "finalize"] as const) {
+      const failOrder: string[] = [];
+      const rf = roadmapRecorder(failOrder, part);
+      const report: RoadmapStepReport = await quietly(() => runRoadmapStep(USER, at(d(3)), { env: WRITE_ENV, source: "RENDER", caller: "CHAIN", deps: rf.deps }));
+      check(
+        `a failed ${part} is null in the report with its message, and every other part still runs`,
+        failOrder.join() === "freeze:RENDER,readings:CHAIN,finalize" &&
+          report[part] === null &&
+          report.errors.length === 1 &&
+          report.errors[0] === `${part}: ${part} boom` &&
+          (["freeze", "readings", "finalize"] as const).filter((x) => x !== part).every((x) => report[x] !== null),
+        JSON.stringify(report)
+      );
+    }
+
+    // A part that RETURNS its failure (the real writers never throw: review Lens 1, R1 handoff 2,
+    // lane 0 G2): the result is kept, and its message joins errors all the same.
+    for (const part of ["freeze", "readings", "finalize"] as const) {
+      const retOrder: string[] = [];
+      const rr = roadmapRecorder(retOrder, undefined, [part]);
+      const report: RoadmapStepReport = await runRoadmapStep(USER, at(d(3)), { env: WRITE_ENV, source: "RENDER", caller: "CHAIN", deps: rr.deps });
+      check(
+        `a ${part} that returns its failure as error (never throws) keeps its result, and 'error' reaches the report's errors`,
+        retOrder.join() === "freeze:RENDER,readings:CHAIN,finalize" &&
+          report[part] !== null &&
+          (report[part] as { error?: string }).error === `${part} caught` &&
+          JSON.stringify(report.errors) === JSON.stringify([`${part}: ${part} caught`]),
+        JSON.stringify(report)
+      );
+    }
+    {
+      // Mixed: freeze and finalize return errors, readings throws; errors keep the parts' order.
+      const mixOrder: string[] = [];
+      const rm = roadmapRecorder(mixOrder, "readings", ["freeze", "finalize"]);
+      const report: RoadmapStepReport = await quietly(() => runRoadmapStep(USER, at(d(3)), { env: WRITE_ENV, source: "RENDER", caller: "CHAIN", deps: rm.deps }));
+      eq(
+        "returned and thrown failures together: errors read freeze, readings, finalize in the step's order",
+        report.errors,
+        ["freeze: freeze caught", "readings: readings boom", "finalize: finalize caught"]
+      );
+      const missing: RoadmapStepDeps = {
+        freeze: async () => ({ froze: 0, skipped: "MISSING_TABLE" }),
+        readings: async () => ({ written: 0, reaches: 0, skipped: "MISSING_TABLE" }),
+        finalize: async () => ({ finalized: 0, skipped: "MISSING_TABLE", error: "  " }),
+      };
+      const none = await runRoadmapStep(USER, at(d(3)), { env: WRITE_ENV, source: "RENDER", caller: "CHAIN", deps: missing });
+      check(
+        "a missing table (life_roadmap not applied) is a skip, never an error; a blank error reports nothing",
+        none.errors.length === 0 && none.readings?.skipped === "MISSING_TABLE" && none.freeze?.skipped === "MISSING_TABLE",
+        JSON.stringify(none)
+      );
+    }
+    let threw = false;
+    const chainFail: string[] = [];
+    try {
+      await quietly(() =>
+        maybeMaintainLife(USER, at(d(3)), { env: WRITE_ENV, client: new FakeDb(d(1), [tpl("stretch")]).client(), judge: async () => {}, roadmap: roadmapRecorder(chainFail, "readings").deps })
+      );
+    } catch {
+      threw = true;
+    }
+    check("a roadmap failure never fails the chain (maybeMaintainLife resolves; finalisation still ran)", !threw && chainFail.join() === "freeze:RENDER,readings:CHAIN,finalize");
+  }
+
+  console.log("— §5b the roadmap step in the life cron —");
+  {
+    const auth = () => new Request("https://x.test/api/cron/life", { headers: { authorization: "Bearer k" } });
+    // The cron's run just after the Monday turn: 04:15 on a life Monday (L + 7 is a Monday).
+    const monday = d(7);
+    const turn = new Date(dayStartOf(monday).getTime() + 15 * 60_000);
+    const order: string[] = [];
+    const r = roadmapRecorder(order);
+    const env: SettleEnv = { CRON_SECRET: "k", XTNL_LIFE_JUDGE: "1" };
+    const res = await runLifeCron(auth(), {
+      env,
+      now: () => turn,
+      userId: () => USER,
+      settle: async (): Promise<SettleResult> => {
+        order.push("settle");
+        return { launched: true, wrote: false, cursorBefore: L, cursorAfter: L, plans: [], refused: null };
+      },
+      judge: async () => {
+        order.push("judge");
+        return { launched: true, committed: [] };
+      },
+      launchFinished: async () => true,
+      roadmap: r.deps,
+    });
+    const body = (await res.json()) as { roadmap: RoadmapStepReport };
+    check(
+      "the cron runs settle → judge → roadmap: on a Monday at 04:15 it freezes the week (CRON) before it records readings (LIFE_CRON), then finalises",
+      res.status === 200 &&
+        order.join() === "settle,judge,freeze:CRON,readings:LIFE_CRON,finalize" &&
+        weekKeyOf(monday) !== weekKeyOf(addDays(monday, -1)) &&
+        r.instants.every((t) => t === turn.getTime()) &&
+        r.envs.every((e) => e === env),
+      JSON.stringify(order)
+    );
+    eq("…and its JSON carries the roadmap step's report", body.roadmap, { freeze: { froze: 1, skipped: null }, readings: { written: 2, reaches: 0, skipped: null }, finalize: { finalized: 1, skipped: null }, errors: [] });
+
+    const failOrder: string[] = [];
+    const failing = await quietly(() =>
+      runLifeCron(auth(), {
+        env,
+        now: () => turn,
+        userId: () => USER,
+        settle: async (): Promise<SettleResult> => ({ launched: true, wrote: false, cursorBefore: L, cursorAfter: L, plans: [], refused: null }),
+        judge: async () => ({ launched: true, committed: [] }),
+        launchFinished: async () => true,
+        roadmap: roadmapRecorder(failOrder, "readings").deps,
+      })
+    );
+    const failBody = (await failing.json()) as { roadmap: RoadmapStepReport };
+    check(
+      "a roadmap failure leaves the cron at 200 when settle and the judge passed, reported in its JSON (finalisation still ran)",
+      failing.status === 200 && failBody.roadmap.readings === null && failBody.roadmap.errors.join() === "readings: readings boom" && failOrder.join() === "freeze:CRON,readings:LIFE_CRON,finalize",
+      JSON.stringify(failBody.roadmap)
+    );
+
+    // The real writers never throw: a freeze (R6) or readings (R1) failure comes back as `error`.
+    // It must still reach the cron JSON's errors (F16 seam 8: "logged and reported there").
+    const retOrder: string[] = [];
+    const returning = await runLifeCron(auth(), {
+      env,
+      now: () => turn,
+      userId: () => USER,
+      settle: async (): Promise<SettleResult> => ({ launched: true, wrote: false, cursorBefore: L, cursorAfter: L, plans: [], refused: null }),
+      judge: async () => ({ launched: true, committed: [] }),
+      launchFinished: async () => true,
+      roadmap: roadmapRecorder(retOrder, undefined, ["freeze", "readings"]).deps,
+    });
+    const retBody = (await returning.json()) as { roadmap: RoadmapStepReport };
+    check(
+      "a freeze and a readings failure returned as error (not thrown) show in the cron JSON's errors, at 200, with their results kept",
+      returning.status === 200 &&
+        JSON.stringify(retBody.roadmap.errors) === JSON.stringify(["freeze: freeze caught", "readings: readings caught"]) &&
+        retBody.roadmap.freeze?.error === "freeze caught" &&
+        retBody.roadmap.readings?.error === "readings caught" &&
+        retBody.roadmap.finalize?.finalized === 1 &&
+        retOrder.join() === "freeze:CRON,readings:LIFE_CRON,finalize",
+      JSON.stringify(retBody.roadmap)
+    );
+
+    const offOrder: string[] = [];
+    const off = await runLifeCron(auth(), {
+      env: { CRON_SECRET: "k", NODE_ENV: "development" },
+      now: () => turn,
+      userId: () => USER,
+      settle: async (): Promise<SettleResult> => ({ launched: false, wrote: false, cursorBefore: null, cursorAfter: null, plans: [], refused: "Duty has not started." }),
+      judge: async () => ({ launched: true, committed: [] }),
+      launchFinished: async () => true,
+      roadmap: roadmapRecorder(offOrder).deps,
+    });
+    const offBody = (await off.json()) as { roadmap: RoadmapStepReport };
+    check(
+      "with writes off the cron's roadmap step calls no writer and reports WRITES_OFF",
+      off.status === 200 && offOrder.length === 0 && offBody.roadmap.readings?.skipped === "WRITES_OFF" && offBody.roadmap.freeze?.skipped === "WRITES_OFF",
+      JSON.stringify(offBody.roadmap)
+    );
+
+    const badOrder: string[] = [];
+    const bad = await quietly(() =>
+      runLifeCron(auth(), {
+        env,
+        now: () => turn,
+        userId: () => USER,
+        settle: async () => {
+          throw new Error("boom");
+        },
+        judge: async () => ({ launched: true, committed: [] }),
+        launchFinished: async () => true,
+        roadmap: roadmapRecorder(badOrder).deps,
+      })
+    );
+    check("a settlement failure still answers 500, and the roadmap step still runs (it never waits on Duty)", bad.status === 500 && badOrder.join() === "freeze:CRON,readings:LIFE_CRON,finalize");
+  }
+
+  console.log("— §5c the degrade cron's roadmap readings —");
+  {
+    const now = at(d(3));
+    const calls: { caller?: string; env: unknown; now: number }[] = [];
+    const readings: RoadmapStepDeps["readings"] = async (_u, n, o) => {
+      calls.push({ caller: o.caller, env: o.env, now: n.getTime() });
+      return { written: 1, reaches: 0, skipped: null };
+    };
+    const on = await recordRoadmapAfterDegrade(USER, now, { env: WRITE_ENV, readings });
+    check(
+      "with writes on, the degrade cron records roadmap readings (caller DEGRADE_CRON, its env and instant) and reports them",
+      calls.length === 1 && calls[0].caller === "DEGRADE_CRON" && calls[0].env === WRITE_ENV && calls[0].now === now.getTime() && on.readings?.written === 1 && on.errors.length === 0
+    );
+    const offCalls = calls.length;
+    const offDev = await recordRoadmapAfterDegrade(USER, now, { env: DEV_ENV, readings });
+    const offPreview = await recordRoadmapAfterDegrade(USER, now, { env: { NODE_ENV: "production", VERCEL_ENV: "preview" }, readings });
+    check(
+      "with writes off (a dev server, a Preview) it records nothing and reports WRITES_OFF",
+      calls.length === offCalls && offDev.readings?.skipped === "WRITES_OFF" && offPreview.readings?.skipped === "WRITES_OFF"
+    );
+    let threw = false;
+    let failed: Awaited<ReturnType<typeof recordRoadmapAfterDegrade>> | null = null;
+    try {
+      failed = await quietly(() =>
+        recordRoadmapAfterDegrade(USER, now, {
+          env: WRITE_ENV,
+          readings: async () => {
+            throw new Error("degrade boom");
+          },
+        })
+      );
+    } catch {
+      threw = true;
+    }
+    check("a roadmap failure never fails the degrade cron: no throw, reported in its JSON", !threw && failed?.readings === null && failed.errors.join() === "readings: degrade boom");
+    const caught = await recordRoadmapAfterDegrade(USER, now, {
+      env: WRITE_ENV,
+      readings: async () => ({ written: 0, reaches: 0, skipped: null, error: "pool timeout" }),
+    });
+    check(
+      "a readings failure the writer returns as error (it never throws) is reported in the degrade JSON's errors too, its result kept",
+      caught.readings?.error === "pool timeout" && JSON.stringify(caught.errors) === JSON.stringify(["readings: pool timeout"]),
+      JSON.stringify(caught)
+    );
+    const skippedOnly = await recordRoadmapAfterDegrade(USER, now, { env: WRITE_ENV, readings: async () => ({ written: 0, reaches: 0, skipped: "MISSING_TABLE" }) });
+    check("…while a missing table is a skip with no error", skippedOnly.errors.length === 0 && skippedOnly.readings?.skipped === "MISSING_TABLE");
   }
 }
 
@@ -1438,6 +1808,37 @@ function staticChecks(): void {
   const exported = [...route.matchAll(/^export\s+(?:async\s+)?(?:function|const)\s+(\w+)/gm)].map((m) => m[1]);
   eq("route.ts exports only GET and its segment config", exported.sort(), ["GET", "dynamic"]);
   check("route.ts sets no maxDuration (Fluid's 300 s default)", !/maxDuration/.test(route.replace(/\/\*[\s\S]*?\*\//g, "")));
+
+  console.log("— §5c the degrade route and the roadmap step's gate (static) —");
+  const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const degrade = strip(readFileSync(join(root, "src/app/api/cron/degrade/route.ts"), "utf8"));
+  const step = degrade.indexOf("recordRoadmapAfterDegrade(userId, new Date())");
+  check(
+    "the degrade route records roadmap readings after it degrades and judges quotas, and reports them in its JSON",
+    step > 0 && degrade.indexOf("degradeOverdueIdeas()") < step && degrade.indexOf("enforceWeeklyQuotas(userId)") < step && /NextResponse\.json\(\{[^}]*\broadmap\b[^}]*\}\)/.test(degrade)
+  );
+  eq(
+    "the degrade route still exports only GET and its segment config",
+    [...degrade.matchAll(/^export\s+(?:async\s+)?(?:function|const)\s+(\w+)/gm)].map((m) => m[1]).sort(),
+    ["GET", "dynamic"]
+  );
+  const settlementSrc = strip(readFileSync(join(root, "src/lib/settlement.ts"), "utf8"));
+  const stepFn = settlementSrc.slice(settlementSrc.indexOf("export async function runRoadmapStep("), settlementSrc.indexOf("export interface DegradeRoadmapReport"));
+  check(
+    "the roadmap step is gated by settlementWritesEnabled only: never by DUTY_LAUNCH_DAY, the launch or the settlement cursor",
+    /if \(!settlementWritesEnabled\(ctx\.env\)\)/.test(stepFn) && !/dutyLaunchDay|isDutyLaunched|DUTY_LAUNCH_DAY|settledThroughDay|readCursor|cursor/.test(stepFn)
+  );
+  const chain = settlementSrc.slice(settlementSrc.indexOf("export function maybeMaintainLife("), settlementSrc.indexOf("export function cronAuthorized("));
+  const cron = settlementSrc.slice(settlementSrc.indexOf("export async function runLifeCron("), settlementSrc.indexOf("export const XTNL_IDEA_PROJECT_REF"));
+  check(
+    "the chain and the cron run the roadmap step after the judge, and the cron's status is still settle's and the judge's alone",
+    chain.indexOf("runRoadmapStep(") > chain.indexOf("maybeJudgeWeeks)(userId, now)") &&
+      /source: "RENDER", caller: "CHAIN"/.test(chain) &&
+      cron.indexOf("runRoadmapStep(") > cron.indexOf("judgeClosedWeeks)(userId, now)") &&
+      /source: "CRON", caller: "LIFE_CRON"/.test(cron) &&
+      (cron.match(/failed = true/g) ?? []).length === 2 &&
+      /Response\.json\(\{ settle, judge, roadmap \}, \{ status: failed \? 500 : 200 \}\)/.test(cron)
+  );
 
   console.log("— §6 duty-launch.ts and the shared lock (static) —");
   const launch = readFileSync(join(root, "scripts/duty-launch.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

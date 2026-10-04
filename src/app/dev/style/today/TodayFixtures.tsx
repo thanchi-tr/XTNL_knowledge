@@ -15,7 +15,23 @@ import { MakeUpCard, OwedRow, OwedSummary, type MakeUp, type MakeUpState } from 
 import { RepairAsk, WelcomeBack, YesterdaySettled } from "@/components/today/m2/Notices";
 import { RecordYesterdaySheet, RestControls, type DidAnswer } from "@/components/today/m2/Sheets";
 import { WeekCard, WeekRunner, WeekTrack } from "@/components/today/m2/WeekRunner";
-import { DAY_AWAY, DAY_FULL, DAY_KEPT, DAY_MORNING, fixtureBoard } from "./fixtures";
+import { WeekQuests } from "@/components/roadmap/WeekQuests";
+import { weekQuestsViewOf } from "@/lib/roadmap-quests";
+import type { WeekQuestsView } from "@/lib/roadmap-types";
+import { DAY_AWAY, DAY_FULL, DAY_KEPT, DAY_MORNING, QUEST_FIXTURES, fixtureBoard, fixtureRoadmapBoard, type QuestFixture } from "./fixtures";
+
+/**
+ * A week quests fixture as the card renders it: roadmap-quests'
+ * weekQuestsViewOf over made-up inputs (it brands each figure). null until
+ * lane R6 lands that builder; the page then says so instead of drawing.
+ */
+function questViewOf(f: QuestFixture): WeekQuestsView | null {
+  try {
+    return weekQuestsViewOf(f.input);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * /dev/style/today — L1's fixtures: every Today state and the M2-ready
@@ -23,6 +39,12 @@ import { DAY_AWAY, DAY_FULL, DAY_KEPT, DAY_MORNING, fixtureBoard } from "./fixtu
  * the return and settled notices, the repair ask, the weekly runner and
  * its week card), so the M2 lanes only wire data. Every number on this
  * page is a labelled fixture.
+ *
+ * Roadmap (lane T, roadmap.md F23): ROADMAP goal cards (measured, stated 0
+ * for knowledge only or a lineage already paid, reset-archived, replaced by
+ * Start again) and the week quests card's six states (open, partial, all
+ * done, compact, writes off, practice-only), the first beside the Day
+ * ledger's Quest ring. Pure fixtures only; never the user's roadmap.
  */
 
 const STRETCH: MakeUp = {
@@ -47,6 +69,8 @@ const OWED_STACK: MakeUp[] = [
 
 export function TodayFixtures() {
   const board = useMemo(() => fixtureBoard(), []);
+  const roadmapBoard = useMemo(() => fixtureRoadmapBoard(), []);
+  const questStates = useMemo(() => QUEST_FIXTURES.map((f) => ({ ...f, view: questViewOf(f) })), []);
   const [muState, setMuState] = useState<MakeUpState>("open");
   const [ySheet, setYSheet] = useState(false);
   const [answers, setAnswers] = useState<Record<string, DidAnswer>>({});
@@ -200,6 +224,49 @@ export function TodayFixtures() {
       <SectionHeader title="Goals (M5 payout)" aside="launched: the stated MP, Close, and a goal carried past its due day" />
       <div className="dev-grid">
         <GoalsStrip goals={board.goals} busy={false} onProgress={() => undefined} launched onClose={() => undefined} onReschedule={() => undefined} />
+      </div>
+
+      <SectionHeader
+        title="Roadmap goals"
+        aside="measured from stored readings · stated 0 (knowledge only; already paid) · measures removed by a reset · replaced by Start again (one open milestone in real use)"
+      />
+      <div className="dev-grid">
+        <GoalsStrip goals={roadmapBoard.goals} busy={false} onProgress={() => undefined} launched onClose={() => undefined} onReschedule={() => undefined} />
+      </div>
+
+      <SectionHeader title="Week quests" aside="open · partial · all done · compact · writes off · practice-only (the card under the goals)" />
+      {questStates.some((q) => !q.view) && (
+        <p className="t-meta dev-banner">The week quests views are built by roadmap-quests (lane R6) and drawn by WeekQuests (lane R5); until both land, the states below are listed but not drawn.</p>
+      )}
+      <div className="dev-grid">
+        {/* At 932 the first card sits beside the Day ledger's Quest ring, as on the board: two quests, never confused. */}
+        <DayLedger
+          streak={{ count: 24, kept: true }}
+          caption={
+            <>
+              <b>Kept today.</b> Safe until 04:00.
+            </>
+          }
+          freezes={{ banked: 2 }}
+          fullDay={DAY_KEPT}
+          settles
+          xp={12.3}
+          pts={9.6}
+          planned={planned}
+          publish={false}
+        />
+        {questStates.map((q) => (
+          <div key={q.key} className="dev-quest" data-state={q.key}>
+            <p className="t-eyebrow">{q.title}</p>
+            {q.view ? (
+              <div className="rm-quests-slot" data-compact={q.compact ? "1" : undefined}>
+                <WeekQuests variant="today" view={q.view} />
+              </div>
+            ) : (
+              <p className="t-meta">Not drawn yet.</p>
+            )}
+          </div>
+        ))}
       </div>
 
       <SectionHeader title="Sheets (M2)" aside="record yesterday · close the day · plan time off" />

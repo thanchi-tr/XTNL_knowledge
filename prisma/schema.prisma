@@ -935,3 +935,327 @@ model WeightGoal {
 
   @@schema("public")
 }
+
+// ── Roadmap: an Aim, its drafts, milestones, measures and week quests ─────
+// (migration life_roadmap; docs/life-plan/roadmap.md revision 3, F1)
+//
+// An Aim the user writes, the structure Gemini (or the app) drafts for it,
+// the milestones the user accepts and starts, the measures code sets, the
+// readings code writes forward one life day at a time, the acceptance log,
+// and each life week's frozen week quests. Additive: eight new tables, no
+// existing table is altered, and the only foreign keys run between these
+// tables. Field, Domain, Idea and TaskTemplate are referenced by plain TEXT
+// ids and read tolerantly (a removed row reads "Domain removed"). Status and
+// kind columns are TEXT, typed by the unions in src/lib/roadmap-types.ts.
+// Nothing here pays: a started milestone becomes an ordinary MID goal
+// (TaskTemplate krMetric 'ROADMAP'), and only GOAL_RULES pay it.
+
+/// One Aim. At most one DRAFT or ACTIVE per user (a claim-first guard under
+/// pg_advisory_xact_lock(hashtext('roadmap:' || userId))).
+model Roadmap {
+  id                 String              @id @default(cuid())
+  userId             String
+  /// The user's words, shown verbatim everywhere and never rewritten (at most 140 characters).
+  aim                String
+  /// The Area Field; null for a life-track Area (a practice-only aim).
+  fieldId            String?
+  /// The Domains the user chose at intake (plain ids; no foreign key).
+  domainIds          String[]            @default([])
+  /// CRAFT | BODY | CARE | DUTY: the track the practices count toward.
+  track              String              @default("CRAFT")
+  /// The life day the plan starts (the intake day).
+  startDay           DateTime            @db.Date
+  /// The aim's date, at most SPAN_MAX_DAYS (1,080) after startDay.
+  targetDay          DateTime            @db.Date
+  hoursPerWeek       Int
+  /// YOURS, asked only when no pace is measured. Null: new cards are not counted until a pace is measured.
+  newCardsPerWeek    Int?
+  /// YOURS "hours this usually takes" (the aim check), with its source note.
+  typicalHours       Int?
+  typicalHoursSource String?
+  /// YOURS: {lines: string[], source: string | null}.
+  syllabus           Json?
+  /// NEW | BASICS | WORKING | STRONG.
+  startPoint         String
+  /// LIGHT | STEADY | PUSH.
+  intensity          String              @default("STEADY")
+  practicesAllowed   Boolean             @default(true)
+  constraints        String?
+  examLabel          String?
+  /// DRAFT | ACTIVE | DONE | ARCHIVED.
+  status             String              @default("DRAFT")
+  /// The accepted version; 0 before the first acceptance. A draft or re-plan writes its milestones at version + 1.
+  version            Int                 @default(0)
+  /// Set at the first acceptance (the end-state anchor); cleared only by that acceptance's Undo.
+  firstAcceptedDay   DateTime?           @db.Date
+  /// Set once, when the aim is reached on confirmed readings; never cleared.
+  reachedDay         DateTime?           @db.Date
+  doneAt             DateTime?
+  /// The user's typed reason when marked done before the aim was reached.
+  doneReason         String?
+  archivedAt         DateTime?
+  archiveReason      String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  runs               RoadmapRun[]
+  milestones         RoadmapMilestone[]
+  acceptances        RoadmapAcceptance[]
+  questWeeks         RoadmapQuestWeek[]
+
+  @@index([userId, status])
+  @@schema("public")
+}
+
+/// One drafting run: a Gemini call (claimed RUNNING, finished in after()),
+/// a reuse, or the in-house starter or manual builder. GEMINI runs count
+/// toward ROADMAP_DRAFTS_PER_DAY (any status but REUSED).
+model RoadmapRun {
+  id            String    @id @default(cuid())
+  roadmapId     String
+  roadmap       Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  userId        String
+  /// The life day it was claimed (the cap's day).
+  day           DateTime  @db.Date
+  /// The version its milestones are written at.
+  version       Int
+  /// GEMINI | INHOUSE | MANUAL.
+  kind          String
+  /// RUNNING | OK | PARTIAL | FAILED | CAPPED | REUSED.
+  status        String
+  model         String?
+  modelVersion  String?
+  promptVersion Int?
+  seedBase      Int?
+  inputHash     String?
+  /// The exact prompt lines sent, plus the server-only keymap and the sorted domain-id hash.
+  pack          Json?
+  /// The raw replies (at most 32 KB each), unedited.
+  samples       Json?
+  /// The ValidationReport: every drop, flag and note with its reason.
+  report        Json?
+  usage         Json?
+  responseIds   String[]  @default([])
+  finishReasons String[]  @default([])
+  latencyMs     Int?
+  error         String?
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+
+  @@index([userId, day])
+  @@index([userId, inputHash])
+  @@index([roadmapId, status])
+  @@schema("public")
+}
+
+/// One milestone of one version. Rows of an accepted version that are
+/// PLANNED, STARTING or STARTED change only through guarded transitions
+/// (updateMany on the expected status). CLOSED, DROPPED and REACHED are
+/// derived (the goal's closedScore and archivedAt, and reachedDay), never stored.
+model RoadmapMilestone {
+  id              String             @id @default(cuid())
+  roadmapId       String
+  roadmap         Roadmap            @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  version         Int
+  /// Stable across versions and "Start again": a re-plan keeps it for a carried position.
+  lineageId       String
+  ord             Int
+  /// Never contains a target (the target lives in the measure line, rendered at read time).
+  title           String
+  /// GEMINI | CODE | USER | SYLLABUS.
+  titleOrigin     String
+  /// PENDING | KEPT | CHECKED | EDITED | REMOVED.
+  titleDecision   String             @default("PENDING")
+  /// Null on LATER rows.
+  windowStart     DateTime?          @db.Date
+  dueDay          DateTime?          @db.Date
+  /// DRAFT | PLANNED | STARTING | STARTED | LATER | SUPERSEDED | DISCARDED.
+  status          String             @default("DRAFT")
+  /// The MID goal (a TaskTemplate id, krMetric 'ROADMAP') Start created; no foreign key.
+  goalId          String?            @unique
+  startedDay      DateTime?          @db.Date
+  startingAt      DateTime?
+  /// Set once on a confirmed reach; never cleared.
+  reachedDay      DateTime?          @db.Date
+  /// The day g first reached 1 on a milestone with a self-reported part, until confirmed or cleared.
+  reachPendingDay DateTime?          @db.Date
+  overAccepted    Boolean            @default(false)
+  /// The acceptance's per-milestone snapshot; after Start, its StartSnapshot.
+  feasibility     Json?
+  /// 1 to 5 on scheduled rows (min(place, RANK_MILESTONE_MAX)); null on LATER rows. Written only by acceptCore on DRAFT rows.
+  rankIndex       Int?
+  createdAt       DateTime           @default(now())
+  items           RoadmapItem[]
+  measures        RoadmapMeasure[]
+  questWeeks      RoadmapQuestWeek[]
+
+  @@index([roadmapId, version, ord])
+  @@index([lineageId])
+  @@schema("public")
+}
+
+/// One Domain, Topic, Practice, Step or Checkpoint of a milestone, with its
+/// provenance (origin and decision) and the checker's flags and notes.
+model RoadmapItem {
+  id              String           @id @default(cuid())
+  milestoneId     String
+  milestone       RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  lineageId       String
+  /// DOMAIN | TOPIC | PRACTICE | STEP | CHECKPOINT.
+  kind            String
+  ord             Int
+  label           String
+  /// The text exactly as the model returned it (at most 200 characters).
+  rawLabel        String?
+  /// GEMINI | CODE | USER | SYLLABUS.
+  origin          String
+  /// PENDING | KEPT | CHECKED | EDITED | REMOVED.
+  decision        String           @default("PENDING")
+  decidedAt       DateTime?
+  /// A resolved Domain (a DOMAIN item's; a TOPIC's Domain). No foreign key.
+  domainId        String?
+  /// A proposed new Domain's name, until the user creates or maps it.
+  proposedName    String?
+  /// The syllabus line index a topic covers.
+  syllabusRef     Int?
+  /// A practice's method (DELIBERATE_PRACTICE | READING | PROJECT_WORK | COACHED_SESSION | WORKOUT | WRITING).
+  method          String?
+  sessionsPerWeek Int?
+  /// D15 | D20 | D30 | D45 | D60 | D90 | D120.
+  durationBand    String?
+  /// A recurrence.ts rule: 'DAILY' or 'TARGET:<n>/W', or fixed days the user picked.
+  rule            String?
+  /// WORKED_OUT | YOURS (sessions, band and rule).
+  planSource      String?
+  /// MOCK_TEST | PERFORMANCE_CHECK | SELF_TEST.
+  checkpointKind  String?
+  /// The user's own (YOURS) checkpoint scale and bar.
+  outOf           Float?
+  bar             Float?
+  addToToday      Boolean          @default(true)
+  /// The TaskTemplate Start created for a practice or step. No foreign key.
+  templateId      String?
+  flags           String[]         @default([])
+  notes           String[]         @default([])
+  createdAt       DateTime         @default(now())
+
+  @@index([milestoneId])
+  @@index([templateId])
+  @@index([domainId])
+  @@schema("public")
+}
+
+/// What a milestone's progress is judged by: CARDS_AT_LEVEL and
+/// PRACTICE_KEPT pay (g is their minimum, with the steps' share);
+/// CHECKPOINT is context only. measureKey carries no target.
+model RoadmapMeasure {
+  id            String           @id @default(cuid())
+  milestoneId   String
+  milestone     RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  /// CARDS_AT_LEVEL | PRACTICE_KEPT | CHECKPOINT.
+  kind          String
+  /// PAYS | CONTEXT.
+  role          String
+  /// {domainIds} | {itemLineageIds, templateIds} | {itemLineageIds} (a checkpoint's one lineage).
+  scope         Json
+  minLevel      Int?
+  target        Float
+  /// WORKED_OUT | YOURS.
+  targetSource  String
+  fittedTarget  Float?
+  /// SCOPE | FIELD | YOURS | NONE.
+  rateSource    String?
+  /// The high-water baseline set at acceptance or Start.
+  baseline      Float?
+  baselineDay   DateTime?        @db.Date
+  unit          String?
+  itemLineageId String?
+  measureKey    String?
+  createdAt     DateTime         @default(now())
+
+  @@index([milestoneId])
+  @@index([measureKey])
+  @@schema("public")
+}
+
+/// A forward-written reading: one row per measureKey per life day. COMPUTED
+/// rows are upserted for today only, guarded on source and observedAt;
+/// SELF rows (checkpoint logs) are append-only under their own key space.
+/// PROFICIENCY|r:<roadmapId> rows hold each ACTIVE roadmap's Proficiency.
+/// Raw INSERTs supply their own id (no database default).
+model RoadmapReading {
+  id         String   @id @default(cuid())
+  userId     String
+  measureKey String
+  day        DateTime @db.Date
+  value      Float
+  detail     Json?
+  /// COMPUTED | SELF.
+  source     String   @default("COMPUTED")
+  /// When the computation started: an older computation never overwrites a newer one.
+  observedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, measureKey, day])
+  @@index([userId, day])
+  @@schema("public")
+}
+
+/// One acceptance of one version. Never updated, except to set undoneAt once.
+model RoadmapAcceptance {
+  id                 String    @id @default(cuid())
+  roadmapId          String
+  roadmap            Roadmap   @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  version            Int
+  day                DateTime  @db.Date
+  acceptedAt         DateTime  @default(now())
+  previousVersion    Int
+  /// The plan's per-milestone snapshot, each with its per-week plan.
+  feasibility        Json
+  /// [{measureKey, target, baseline, baselineDay, label}] as accepted.
+  endState           Json
+  /// The review-spacing multiplier m at acceptance.
+  intervalMultiplier Float
+  overAccepted       Boolean   @default(false)
+  undoneAt           DateTime?
+
+  @@index([roadmapId, version])
+  @@schema("public")
+}
+
+/// One life week's week quests for one started milestone, frozen once
+/// ('rq:<milestoneId>:<weekStart>', ON CONFLICT DO NOTHING). quests, basis,
+/// state, cappedBy, generator and source are never updated; results and
+/// finalizedAt are set once, after the week has settled. Week quests pay
+/// nothing. Raw INSERTs supply their own id (no database default).
+model RoadmapQuestWeek {
+  id          String           @id @default(cuid())
+  userId      String
+  roadmapId   String
+  roadmap     Roadmap          @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  milestoneId String
+  milestone   RoadmapMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  /// The life week's Monday.
+  weekStart   DateTime         @db.Date
+  dedupeKey   String
+  /// CRON | START | RENDER.
+  source      String
+  /// OPEN | HELD | PAST_DUE.
+  state       String           @default("OPEN")
+  /// WEEK_QUEST_GENERATOR_VERSION.
+  generator   Int
+  /// WeekQuestSpec[] as issued; [] for an empty set.
+  quests      Json
+  /// string[]: what produced each count.
+  basis       Json
+  /// CATCHUP | CAPACITY | null.
+  cappedBy    String?
+  /// {closedDay, rows: [{ord, progress, done}], heldAfterFreeze}; null until final.
+  results     Json?
+  finalizedAt DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([roadmapId, weekStart])
+  @@index([milestoneId])
+  @@schema("public")
+}

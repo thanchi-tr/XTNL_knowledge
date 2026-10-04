@@ -9,4 +9,6 @@
   .dev-today .dev-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
   .dev-today .dev-runner { margin-bottom: 28px; overflow: hidden; }
   .dev-today .dev-runner .wr { min-height: 0; padding-bottom: 12px; }
+  /* Roadmap (lane T, F23): each week quests state under its label. */
+  .dev-today .dev-quest { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 }

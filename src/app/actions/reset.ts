@@ -5,8 +5,11 @@ import { getCurrentUserId } from "@/lib/user";
 import { invalidateAll } from "@/lib/cache";
 import { domainLevel, fieldLevel } from "@/lib/xp";
 import { KNOWLEDGE_SOURCES } from "@/lib/activity";
-import { lifeResetOrder, type LifeResetTable, type ResetScope, type ResetResult } from "@/lib/reset-scopes";
+import { ROADMAP_RESET_EFFECT, ROADMAP_RESET_TABLES, lifeResetOrder, resetArchiveReason, type LifeResetTable, type ResetScope, type ResetResult } from "@/lib/reset-scopes";
 import { isMissingRestDayTable } from "@/lib/rest-rules";
+import { isMissingRoadmapTable, type RoadmapStatus } from "@/lib/roadmap-types";
+import { todayKey } from "@/lib/life-day";
+import { shortDate, weekdayName } from "@/lib/today-board";
 import { confirmsPhrase, resetSpecOf } from "@/components/settings/settings-model";
 
 /**
@@ -37,6 +40,12 @@ function lifeDeleteOp(table: LifeResetTable, userId: string) {
       return prisma.restDay.deleteMany({ where: { userId } });
     case "activityEvents":
       return prisma.activityEvent.deleteMany({ where: { userId } });
+    case "roadmapReadings":
+      // Every reading of the user's roadmaps: measures, PROFICIENCY and the self-logged checkpoints.
+      return prisma.roadmapReading.deleteMany({ where: { userId } });
+    case "roadmaps":
+      // Cascades to the runs, milestones, items, measures, acceptances and quest weeks.
+      return prisma.roadmap.deleteMany({ where: { userId } });
     case "lifeSettings":
       return prisma.lifeSettings.deleteMany({ where: { userId } });
   }
@@ -53,7 +62,12 @@ function lifeDeleteOp(table: LifeResetTable, userId: string) {
  *
  * Before the life_duty migration is applied the RestDay table does not
  * exist: the whole array rolls back on it (P2021 / 42P01), and the reset runs
- * again without it, so a deploy that lands first never half-resets.
+ * again without it, so a deploy that lands first never half-resets. The
+ * roadmap's tables (roadmap.md F16 seam 11: its readings, and the Roadmap
+ * rows whose delete cascades to the rest of it) are retried away the same
+ * way while life_roadmap is not applied (isMissingRoadmapTable). Each retry
+ * drops one missing group, so the loop ends within three runs, and a skipped
+ * table reports 0.
  */
 async function deleteLifeRows(userId: string): Promise<Record<string, number>> {
   const run = async (tables: readonly LifeResetTable[]) => {
@@ -64,11 +78,47 @@ async function deleteLifeRows(userId: string): Promise<Record<string, number>> {
     });
     return deleted;
   };
+  let withRestDays = true;
+  let withRoadmaps = true;
+  for (;;) {
+    try {
+      const deleted = await run(lifeResetOrder(withRestDays, withRoadmaps));
+      if (!withRestDays) deleted.restDays = 0;
+      if (!withRoadmaps) for (const table of ROADMAP_RESET_TABLES) deleted[table] = 0;
+      return deleted;
+    } catch (err) {
+      if (withRestDays && isMissingRestDayTable(err)) withRestDays = false;
+      else if (withRoadmaps && isMissingRoadmapTable(err)) withRoadmaps = false;
+      else throw err;
+    }
+  }
+}
+
+/** The open roadmap statuses (decision 15: at most one DRAFT or ACTIVE per user). */
+const OPEN_ROADMAP: RoadmapStatus[] = ["DRAFT", "ACTIVE"];
+
+/**
+ * 'ideas' and 'knowledge' (roadmap.md F16 seam 11): the open roadmap's
+ * measures count cards and Domains this reset removes, so it is archived
+ * with "measures removed by a reset on <day>" (reset-scopes.ts
+ * resetArchiveReason). Its readings, quest weeks and Aim rank stay as
+ * history; no week quest set is frozen for it again, and its open milestone
+ * goal stays on Today with no series, so g is null and it pays 0, "not
+ * measured". Like the rest of the reset this is the user's own typed
+ * decision, so it runs wherever the ideas are deleted. 0 while the
+ * life_roadmap migration is not applied.
+ */
+async function archiveRoadmapsForReset(userId: string, now: Date): Promise<number> {
+  const today = todayKey(now);
   try {
-    return await run(lifeResetOrder(true));
+    const res = await prisma.roadmap.updateMany({
+      where: { userId, status: { in: OPEN_ROADMAP } },
+      data: { status: "ARCHIVED" satisfies RoadmapStatus, archivedAt: now, archiveReason: resetArchiveReason(`${weekdayName(today)} ${shortDate(today)}`) },
+    });
+    return res.count;
   } catch (err) {
-    if (!isMissingRestDayTable(err)) throw err;
-    return { ...(await run(lifeResetOrder(false))), restDays: 0 };
+    if (isMissingRoadmapTable(err)) return 0;
+    throw err;
   }
 }
 
@@ -78,6 +128,21 @@ async function countRestDays(userId: string): Promise<number> {
     return await prisma.restDay.count({ where: { userId } });
   } catch (err) {
     if (isMissingRestDayTable(err)) return 0;
+    throw err;
+  }
+}
+
+/**
+ * The danger zone's roadmap counts (roadmap.md F16 seam 11): every roadmap
+ * ('life' and 'everything' delete them) and the open ones ('ideas' and
+ * 'knowledge' archive them). Both 0 while life_roadmap is not applied.
+ */
+async function countRoadmaps(userId: string): Promise<{ roadmaps: number; openRoadmaps: number }> {
+  try {
+    const rows = await prisma.roadmap.findMany({ where: { userId }, select: { status: true } });
+    return { roadmaps: rows.length, openRoadmaps: rows.filter((r) => (OPEN_ROADMAP as string[]).includes(r.status)).length };
+  } catch (err) {
+    if (isMissingRoadmapTable(err)) return { roadmaps: 0, openRoadmaps: 0 };
     throw err;
   }
 }
@@ -121,6 +186,11 @@ export async function resetKnowledgeBase(scope: ResetScope, confirmation: string
   // transaction here, so if it fails nothing else has been deleted yet.
   // Their ledger delete takes the knowledge rows with it.
   if (scope === "everything") Object.assign(deleted, await deleteLifeRows(userId));
+
+  // ── The roadmap (roadmap.md F16 seam 11) ────────────────────────────
+  // 'ideas' and 'knowledge' archive the open roadmap before its cards go, so
+  // a failure here deletes nothing; 'everything' deleted it with the life rows.
+  if (ROADMAP_RESET_EFFECT[scope] === "archive") deleted.roadmapsArchived = await archiveRoadmapsForReset(userId, new Date());
 
   // ── Ideas, always ───────────────────────────────────────────────────
   // IdeaEnrichment cascades from Idea, so it is counted before the delete
@@ -228,6 +298,7 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     taskInstances,
     activityEvents,
     restDays,
+    roadmapCounts,
   ] = await Promise.all([
     prisma.idea.count(),
     prisma.ideaEnrichment.count(),
@@ -243,6 +314,8 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     prisma.activityEvent.count({ where: { userId } }),
     // M2: declared rest, sick and vacation days (the 'life' scope deletes them); 0 before life_duty is applied.
     countRestDays(userId),
+    // Roadmap: 'life' and 'everything' delete every roadmap, 'ideas' and 'knowledge' archive the open one.
+    countRoadmaps(userId),
   ]);
   return {
     ideas,
@@ -257,6 +330,8 @@ export async function getResetPreview(): Promise<Record<string, number>> {
     tasks,
     taskInstances,
     activityEvents,
+    roadmaps: roadmapCounts.roadmaps,
+    openRoadmaps: roadmapCounts.openRoadmaps,
     restDays,
   };
 }

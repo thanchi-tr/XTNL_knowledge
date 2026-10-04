@@ -19,6 +19,10 @@
  *
  *   npx tsx scripts/duty-actions-check.ts
  */
+// tasks.ts and settlement.ts load the roadmap's modules (roadmap-readings, roadmap-quests-server,
+// throughput-server) and, through them, gemini.ts (roadmap.md F16 seam 22; the transitive rule in
+// roadmap-contract-check): first, so no check can reach a model whatever .env holds.
+import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Prisma } from "@prisma/client";
@@ -72,7 +76,16 @@ import {
   vacationBudgetOf,
   type RestRowLite,
 } from "../src/lib/rest-rules";
-import { LIFE_RESET_ORDER, lifeResetOrder } from "../src/lib/reset-scopes";
+import {
+  LIFE_RESET_ORDER,
+  RESET_ARCHIVE_NOTE,
+  RESET_SCOPES,
+  ROADMAP_RESET_EFFECT,
+  ROADMAP_RESET_TABLES,
+  isResetArchiveReason,
+  lifeResetOrder,
+  resetArchiveReason,
+} from "../src/lib/reset-scopes";
 import { countsForStreakOf, foldStreakDays } from "../src/lib/streak-curve";
 import type { ActivityInput } from "../src/lib/life-types";
 import type { DutyBoard } from "../src/lib/duty-view";
@@ -119,6 +132,19 @@ const dishes = tpl({});
 const stretch = tpl({ id: "tpl-stretch", title: "stretch 15m", normTitle: "stretch", band: "STANDARD", mvv: "stretch 5m" });
 const DISHES_DEBT = debtFor(dishes);
 const STRETCH_DEBT = debtFor(stretch);
+
+// ═══ No model (roadmap.md F16 seam 22) ════════════════════════════════════
+
+console.log("— no model can be reached —");
+check(
+  "_no-model ran before any roadmap module loaded: ROADMAP_CHECK=1 and both Gemini keys blank",
+  process.env.ROADMAP_CHECK === "1" && process.env.GEMINI_API_KEY === "" && process.env.GOOGLE_API_KEY === ""
+);
+{
+  const self = code(read("scripts/duty-actions-check.ts"));
+  const first = self.search(/^import\s+"\.\/_no-model";/m);
+  check("…and it is this file's first import (every module after it loads with the keys already blank)", first >= 0 && self.search(/^import\s/m) === first);
+}
 
 // ═══ F2 The launch gates of the actions ═══════════════════════════════════
 
@@ -1046,13 +1072,23 @@ console.log("— F18 reset —");
 {
   check("the reset plan lists RestDay before LifeSettings", LIFE_RESET_ORDER.indexOf("restDays") >= 0 && LIFE_RESET_ORDER.indexOf("restDays") < LIFE_RESET_ORDER.indexOf("lifeSettings"));
   check(
-    "the reset plan is in foreign-key order: TaskInstance, TaskTemplate, RestDay, ActivityEvent, LifeSettings",
-    json(LIFE_RESET_ORDER) === json(["taskInstances", "tasks", "restDays", "activityEvents", "lifeSettings"])
+    "the reset plan is in foreign-key order: TaskInstance, TaskTemplate, RestDay, ActivityEvent, the roadmap's readings, Roadmap, LifeSettings",
+    json(LIFE_RESET_ORDER) === json(["taskInstances", "tasks", "restDays", "activityEvents", "roadmapReadings", "roadmaps", "lifeSettings"])
   );
   const reset = code(read("src/app/actions/reset.ts"));
   check(
-    "the 'life' scope deletes through LIFE_RESET_ORDER (lifeResetOrder(true)), RestDay included",
-    /tables\.map\(\(table\) => lifeDeleteOp\(table, userId\)\)/.test(reset) && /return await run\(lifeResetOrder\(true\)\);/.test(reset) && /prisma\.restDay\.deleteMany\(\{ where: \{ userId \} \}\)/.test(reset)
+    "the 'life' scope deletes through LIFE_RESET_ORDER (lifeResetOrder(true, true) first), RestDay and the roadmap included",
+    /tables\.map\(\(table\) => lifeDeleteOp\(table, userId\)\)/.test(reset) &&
+      /let withRestDays = true;\s*let withRoadmaps = true;/.test(reset) &&
+      /await run\(lifeResetOrder\(withRestDays, withRoadmaps\)\)/.test(reset) &&
+      /prisma\.restDay\.deleteMany\(\{ where: \{ userId \} \}\)/.test(reset)
+  );
+  check(
+    "roadmap (F16 seam 11): 'life' deletes the user's readings (PROFICIENCY included) and Roadmap rows, whose delete cascades to the rest",
+    /case "roadmapReadings":\s*return prisma\.roadmapReading\.deleteMany\(\{ where: \{ userId \} \}\);/.test(reset) &&
+      /case "roadmaps":\s*return prisma\.roadmap\.deleteMany\(\{ where: \{ userId \} \}\);/.test(reset) &&
+      json(ROADMAP_RESET_TABLES) === json(["roadmapReadings", "roadmaps"]) &&
+      /ON DELETE CASCADE/.test(read("prisma/migrations/20261101000000_life_roadmap/migration.sql"))
   );
   check("getResetPreview counts RestDay", /prisma\.restDay\.count\(\{ where: \{ userId \} \}\)/.test(reset) && /countRestDays\(userId\),/.test(reset) && /restDays,\s*\};/.test(reset));
 
@@ -1069,10 +1105,67 @@ console.log("— F18 reset —");
       !isMissingRestDayTable(new Error("boom")) &&
       !isMissingRestDayTable(null)
   );
-  check("without the table the reset runs the same order minus RestDay", json(lifeResetOrder(false)) === json(["taskInstances", "tasks", "activityEvents", "lifeSettings"]) && lifeResetOrder(true) === LIFE_RESET_ORDER);
   check(
-    "the reset retries without RestDay only on a missing RestDay table, and reports 0 rest days",
-    /if \(!isMissingRestDayTable\(err\)\) throw err;\s*return \{ \.\.\.\(await run\(lifeResetOrder\(false\)\)\), restDays: 0 \};/.test(reset)
+    "without RestDay, or without the roadmap tables, or without both, the reset runs the same order minus them",
+    json(lifeResetOrder(false)) === json(["taskInstances", "tasks", "activityEvents", "roadmapReadings", "roadmaps", "lifeSettings"]) &&
+      json(lifeResetOrder(true, false)) === json(["taskInstances", "tasks", "restDays", "activityEvents", "lifeSettings"]) &&
+      json(lifeResetOrder(false, false)) === json(["taskInstances", "tasks", "activityEvents", "lifeSettings"]) &&
+      lifeResetOrder(true) === LIFE_RESET_ORDER &&
+      lifeResetOrder(true, true) === LIFE_RESET_ORDER
+  );
+  check(
+    "the reset retries without RestDay only on a missing RestDay table, without the roadmap only on a missing roadmap table, and reports 0 for each",
+    /if \(withRestDays && isMissingRestDayTable\(err\)\) withRestDays = false;\s*else if \(withRoadmaps && isMissingRoadmapTable\(err\)\) withRoadmaps = false;\s*else throw err;/.test(reset) &&
+      /if \(!withRestDays\) deleted\.restDays = 0;/.test(reset) &&
+      /if \(!withRoadmaps\) for \(const table of ROADMAP_RESET_TABLES\) deleted\[table\] = 0;/.test(reset)
+  );
+  {
+    // A missing roadmap table is never read as a missing RestDay, so each retry drops the right group
+    // (roadmap-contract-check pins isMissingRoadmapTable itself, a RestDay error included).
+    const roadmapMissing = known("P2021", "The table `public.RoadmapReading` does not exist in the current database.", { modelName: "RoadmapReading", table: "public.RoadmapReading" });
+    const roadmapRaw = known("P2010", 'Raw query failed. Code: `42P01`. Message: `relation "Roadmap" does not exist`', { code: "42P01", message: 'relation "Roadmap" does not exist' });
+    check(
+      "roadmap: a missing Roadmap* table (P2021 or 42P01) is never read as a missing RestDay",
+      !isMissingRestDayTable(roadmapMissing) && !isMissingRestDayTable(roadmapRaw)
+    );
+  }
+  check(
+    "roadmap: getResetPreview counts every roadmap and the open ones, 0 (not an error) before the migration",
+    /countRoadmaps\(userId\),/.test(reset) &&
+      /roadmaps: roadmapCounts\.roadmaps,\s*openRoadmaps: roadmapCounts\.openRoadmaps,/.test(reset) &&
+      /if \(isMissingRoadmapTable\(err\)\) return \{ roadmaps: 0, openRoadmaps: 0 \};\s*throw err;/.test(reset)
+  );
+  check(
+    "roadmap: 'ideas' and 'knowledge' archive the open roadmap; 'life' and 'everything' delete it",
+    json(ROADMAP_RESET_EFFECT) === json({ ideas: "archive", knowledge: "archive", life: "delete", everything: "delete" })
+  );
+  const archive = reset.slice(reset.indexOf("async function archiveRoadmapsForReset("));
+  check(
+    "roadmap: the archive sets ARCHIVED on DRAFT and ACTIVE roadmaps with 'measures removed by a reset on <day>', and is 0 before the migration",
+    /const OPEN_ROADMAP: RoadmapStatus\[\] = \["DRAFT", "ACTIVE"\];/.test(reset) &&
+      /where: \{ userId, status: \{ in: OPEN_ROADMAP \} \}/.test(archive) &&
+      /status: "ARCHIVED" satisfies RoadmapStatus, archivedAt: now, archiveReason: resetArchiveReason\(/.test(archive) &&
+      /if \(isMissingRoadmapTable\(err\)\) return 0;\s*throw err;/.test(archive) &&
+      resetArchiveReason("Mon 5 Oct") === "measures removed by a reset on Mon 5 Oct" &&
+      RESET_ARCHIVE_NOTE === "measures removed by a reset" &&
+      isResetArchiveReason(resetArchiveReason("Mon 5 Oct")) &&
+      !isResetArchiveReason("Done with this aim") &&
+      !isResetArchiveReason(null)
+  );
+  {
+    const body = reset.slice(reset.indexOf("export async function resetKnowledgeBase"));
+    const archiveAt = body.indexOf('if (ROADMAP_RESET_EFFECT[scope] === "archive") deleted.roadmapsArchived = await archiveRoadmapsForReset(userId, new Date());');
+    check(
+      "roadmap: the archive runs before any idea is deleted (a failure deletes nothing), after 'life' has returned and after 'everything' deleted it",
+      archiveAt > 0 && archiveAt < body.indexOf("prisma.idea.deleteMany") && archiveAt > body.indexOf('if (scope === "everything") Object.assign(deleted, await deleteLifeRows(userId));') && archiveAt > body.indexOf('if (scope === "life")')
+    );
+  }
+  check(
+    "roadmap: the scopes' blurbs say so: 'archives your roadmap' for ideas and knowledge, 'deletes your roadmap' for life and everything",
+    /archives your roadmap/.test(RESET_SCOPES.ideas.blurb) &&
+      /archives your roadmap/.test(RESET_SCOPES.knowledge.blurb) &&
+      /deletes your roadmap/.test(RESET_SCOPES.life.blurb) &&
+      /deletes your roadmap/.test(RESET_SCOPES.everything.blurb)
   );
   check("the danger zone's RestDay count is 0, not an error, before the migration", /if \(isMissingRestDayTable\(err\)\) return 0;\s*throw err;/.test(reset));
   const boardRead = code(read("src/lib/tasks.ts"));

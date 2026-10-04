@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { embedText, nameNewDomain } from "./gemini";
+import { cleanModelDomainName, embedText, nameNewDomain } from "./gemini";
 import { assignDomainComposition, fieldComposition } from "./attribute-assignment";
 import { toVectorLiteral } from "./vector";
 import { SIMILARITY_NOVELTY_MAX, SIMILARITY_SATURATION_MIN, SIMILARITY_N_SIMILAR_MIN } from "./xp";
@@ -129,14 +129,20 @@ export async function routeFromNearest(
  * it fails or runs past 8 s, `fallbackDomainName` names the Domain from the
  * synthesis tags (`tags`, when synthesis worked) or the content's first
  * words, and that name goes through the same existing-Domain match.
+ *
+ * Whichever names it, the name is cleaned by the createDomain rules before
+ * it is matched or stored (cleanModelDomainName: one line, no control
+ * characters or angle brackets, whitespace collapsed, at most 80 characters;
+ * roadmap.md F1), since createDomain's own validateName never sees it.
  */
 export async function createNoveltyDomain(fieldId: string, fieldName: string, contentText: string, tags: readonly string[] = []) {
-  const name = await modelOr(
+  const raw = await modelOr(
     () => nameNewDomain(fieldName, contentText),
     IDEA_NAMING_TIMEOUT_MS,
     () => fallbackDomainName(fieldName, tags, contentText),
     "domain-discovery: naming"
   );
+  const name = cleanModelDomainName(raw) || cleanModelDomainName(fallbackDomainName(fieldName, tags, contentText)) || "Notes";
 
   const existing = await prisma.domain.findFirst({
     where: { fieldId, name: { equals: name, mode: "insensitive" } },

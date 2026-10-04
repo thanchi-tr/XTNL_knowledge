@@ -27,8 +27,21 @@ function MpText({ text }: { text: string }) {
   );
 }
 
+/** 'measures removed by a reset' → 'Measures removed by a reset' (a line of its own). */
+function capitalised(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
 /** The Close sheet's state: loading the preview, the preview (null: not open any more), or the preview failing. */
 export type GoalClosePreview = { state: "loading" } | { state: "ready"; payout: GoalPayout | null } | { state: "error"; error: string };
+
+/** A roadmap milestone's goal, for its Close sheet: why it states 0, and why it is never measured again (F15, F16 seam 4). */
+export interface GoalCloseRoadmap {
+  /** "knowledge is paid by reviews" (after "Pays nothing ·"). */
+  zeroReason: string | null;
+  /** "measures removed by a reset", "roadmap archived" or "replaced by Start again" (the preview then pays 0, "not measured"). */
+  note: string | null;
+}
 
 /**
  * Close a goal (M5, launched only): the exact figure closing now pays and
@@ -36,6 +49,13 @@ export type GoalClosePreview = { state: "loading" } | { state: "ready"; payout: 
  * Closing is final and settled once (0 included); the server decides again
  * as it writes, and the board says so if that differs. The kit's dismiss
  * button is named 'Cancel' here, so it never sounds like the Close action.
+ *
+ * A roadmap milestone's goal adds, in ink: why it states 0 ('Pays nothing ·
+ * knowledge is paid by reviews'), its note when it is never measured again
+ * ('Measures removed by a reset', 'Replaced by Start again'), and, on a server with
+ * writes off, the payout's readingNote (goals.ts: "not recorded on this
+ * server", roadmap F10) — its g was worked out live and recorded nowhere,
+ * and the close itself refuses there.
  */
 export function GoalCloseSheet({
   open,
@@ -45,6 +65,7 @@ export function GoalCloseSheet({
   error,
   onConfirm,
   onClose,
+  roadmap = null,
 }: {
   open: boolean;
   title: string;
@@ -54,8 +75,11 @@ export function GoalCloseSheet({
   error: string | null;
   onConfirm: () => void;
   onClose: () => void;
+  /** A ROADMAP goal's zero reason and reset note (null for every other goal). */
+  roadmap?: GoalCloseRoadmap | null;
 }) {
   const copy = preview.state === "ready" ? goalCloseCopy(preview.payout) : null;
+  const readingNote = preview.state === "ready" ? (preview.payout?.readingNote?.trim() ?? "") : "";
   return (
     <Sheet
       open={open}
@@ -90,6 +114,9 @@ export function GoalCloseSheet({
               </p>
             )}
             {copy.depth && <p className="t-meta">{copy.depth}</p>}
+            {roadmap?.zeroReason && <p className="t-meta">Pays nothing · {roadmap.zeroReason}</p>}
+            {roadmap?.note && <p className="t-meta">{capitalised(roadmap.note)}</p>}
+            {readingNote && <p className="t-meta">Live figure · {readingNote}</p>}
           </>
         )}
         {error && (

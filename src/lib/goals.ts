@@ -32,6 +32,19 @@
  *                 closedGoalReading(input, closeDay, why) — a closed goal measured as of its close (U5)
  *   Added by the phase B review (compatible)
  *                 GOAL_ALREADY_CLOSED — the refusal a replayed close gets; Today refreshes on it
+ *   Added by roadmap lane 0 (types only; docs/life-plan/roadmap-contracts.md)
+ *                 RoadmapSeriesPoint · RoadmapGoalEntry · GoalProgressInput.readings?
+ *   Added by roadmap lane L (behaviour; docs/life-plan/roadmap.md F16 seam 1, compatible)
+ *                 goalProgress · goalProgressLabel: the 'ROADMAP' branch, read from the stored series
+ *                 roadmapPointAsOf(readings, asOf) — the series point a day reads · ROADMAP_CAPTION
+ *                 statedPayoutCopy(h, 0) reads 'pays nothing' · statedPayoutLine(h, stated, zeroReason?)
+ *                 closeDecision: 'it states 0 MP' is decided before the bar and age gates
+ *                 closedGoalReading: a ROADMAP goal reads its stored closedScore (g at the close)
+ *                 GoalInput.readingNote? → GoalPayout.readingNote? ('not recorded on this server')
+ *                 GoalLadderItem.roadmap? (the goal's RoadmapGoalEntry: the ladder's chip, note and "measured" time)
+ *   Added by the roadmap fix round (lane L, compatible)
+ *                 GoalInput.lineagePaidOn? · lineagePaidOnOf(mints, goalIds) — at most one goal of a
+ *                   milestone lineage pays: closeDecision refuses 'this milestone already paid on 3 Mar'
  */
 import { addDays, daysBetween, weekStartKeyOf, type DayKey } from "./life-day";
 import {
@@ -68,6 +81,38 @@ export interface GoalProgressRow {
   qty: number;
 }
 
+/**
+ * One point of a roadmap milestone's stored series (roadmap lane 0 type;
+ * docs/life-plan/roadmap.md F10, F16 seam 1): g on a life day, as the
+ * minimum over its paying measures' last readings ≤ that day, with the
+ * binding part's class and label for the caption ("tested by your reviews
+ * · slowest: cards at level 6+"). Built by roadmap-measures.ts
+ * milestoneGoalSeries from stored readings only.
+ */
+export interface RoadmapSeriesPoint {
+  day: DayKey;
+  /** 0..1, before the steps' share (goals.ts applies it). */
+  g: number;
+  /** ISO time of the binding reading ("measured 09:12"). */
+  observedAt: string;
+  bindingClass: "MEASURED" | "SELF_REPORTED";
+  bindingLabel: string;
+}
+
+/**
+ * What a surface knows about an open ROADMAP goal beyond the template
+ * (roadmap lane 0 type; BoardData.roadmapGoals, keyed by goal id): its stored
+ * series, "Roadmap · milestone 2 of 3", the "pays nothing · …" reason, and
+ * the "measures removed by a reset" note.
+ */
+export interface RoadmapGoalEntry {
+  series: readonly RoadmapSeriesPoint[];
+  ord: number;
+  of: number;
+  zeroReason: string | null;
+  note: string | null;
+}
+
 /** What goalProgress reads. The Today board (phase B) builds this from its own data. */
 export interface GoalProgressInput {
   /** null reads as CHILDREN (the board's default). REVIEWS, IDEAS, WORKOUTS and RUN_KM give g = null. */
@@ -75,6 +120,13 @@ export interface GoalProgressInput {
   krTarget: number | null;
   steps: readonly GoalStep[];
   progress: readonly GoalProgressRow[];
+  /**
+   * ROADMAP goals only (roadmap lane 0 type; lane L reads it in the ROADMAP
+   * branch, F16 seam 1): the stored series. g = the last point with day ≤
+   * asOf, then the minimum with the steps' done share; null with no point.
+   * Absent reads as no points.
+   */
+  readings?: readonly RoadmapSeriesPoint[];
 }
 
 /** One goal decision row ('mp:GOAL:<id>') as goals-server.ts reads it fresh. */
@@ -109,6 +161,20 @@ export interface GoalInput extends GoalProgressInput {
   goalMints: readonly GoalMintRow[];
   /** Σ capped MP (CAPPED_REASONS) already minted in the close day's life week. */
   cappedUsedThisWeek: number;
+  /**
+   * ROADMAP goals only (roadmap lane L): NOT_RECORDED_HERE when `readings`
+   * carries a point computed live on a server that records nothing (F10). It
+   * is passed through to GoalPayout.readingNote, so the Close sheet says so.
+   */
+  readingNote?: string | null;
+  /**
+   * ROADMAP goals only (roadmap fix round, lane L): the first day another
+   * goal of this milestone's lineage closed paying (a dropped milestone and
+   * its "Start again" copy share a lineage; lineagePaidOnOf). The close then
+   * pays 0, "this milestone already paid on 3 Mar", whatever this goal
+   * states, so a lineage never pays twice. Absent or null: no other paid.
+   */
+  lineagePaidOn?: DayKey | null;
 }
 
 // ── Outputs ───────────────────────────────────────────────────────────────
@@ -132,6 +198,8 @@ export interface GoalPayout {
   why: string | null;
   /** Track depth it adds: pays > 0 ? min(GOAL_DEPTH[h], 2 − the track's goal depth) : 0. */
   depth: number;
+  /** ROADMAP only: GoalInput.readingNote, present when g was computed live and recorded nowhere. */
+  readingNote?: string;
 }
 
 /** A closed goal, from its 'mp:GOAL:<id>' row and the template. */
@@ -161,6 +229,14 @@ export interface GoalLadderItem {
   /** Open goals: what closing now would pay. Closed goals: null. */
   preview: GoalPayout | null;
   closed: GoalClosed | null;
+  /**
+   * Open ROADMAP goals with a stored-series entry only (F16 seam 13): the
+   * entry the board gets too (BoardData.roadmapGoals), for the ladder's chip
+   * "Roadmap · milestone 2 of 3", its "measured 09:12" (the series point
+   * roadmapPointAsOf reads at goalAsOf), the zero reason (already folded into
+   * `copy` by statedPayoutLine) and the reset note.
+   */
+  roadmap?: RoadmapGoalEntry;
 }
 
 /** Open goals (LONG → MID → SHORT, then by due day) and goals closed in the last 30 days (newest first). */
@@ -188,11 +264,30 @@ export function goalPercent(g: number): number {
   return Math.floor(Math.max(0, Math.min(1, g)) * 100 + 1e-9);
 }
 
-/** 'pays ⬡ 1 when done' (SHORT); 'pays ⬡ 6 × progress from 70%' (MID, LONG with its own stated). */
+/**
+ * 'pays ⬡ 1 when done' (SHORT); 'pays ⬡ 6 × progress from 70%' (MID, LONG
+ * with its own stated); 'pays nothing' for a goal stated at 0 (a roadmap
+ * milestone that is knowledge only, a token practice or an already paid
+ * lineage; a hand-edited 0), whose caller appends the reason (statedPayoutLine).
+ */
 export function statedPayoutCopy(horizon: Horizon, stated: number = statedGoalMp(horizon)): string {
-  const mp = String(round2(stated));
+  const rounded = round2(stated);
+  if (!(rounded > 0)) return "pays nothing";
+  const mp = String(rounded);
   if (GOAL_RULES[horizon].binary) return `pays ⬡ ${mp} when done`;
   return `pays ⬡ ${mp} × progress from ${Math.round(payBar(horizon) * 100)}%`;
+}
+
+/**
+ * statedPayoutCopy with a 0-stated goal's reason after it: 'pays nothing ·
+ * knowledge is paid by reviews'. A reason already written 'pays nothing · …'
+ * is used as it is; a goal that states MP ignores the reason.
+ */
+export function statedPayoutLine(horizon: Horizon, stated: number = statedGoalMp(horizon), zeroReason?: string | null): string {
+  const copy = statedPayoutCopy(horizon, stated);
+  const reason = zeroReason?.trim();
+  if (copy !== "pays nothing" || !reason) return copy;
+  return reason.startsWith(copy) ? reason : `${copy} · ${reason}`;
 }
 
 // ── Lane A (F6) ───────────────────────────────────────────────────────────
@@ -212,9 +307,32 @@ export function progressQtyAsOf(progress: readonly GoalProgressRow[], asOf: DayK
 }
 
 /**
+ * The point of a ROADMAP goal's stored series that a day reads: the latest
+ * point dated on or before `asOf` (by day, then observedAt), or null when
+ * there is none. Points with no finite g are not readings and are skipped.
+ */
+export function roadmapPointAsOf(readings: readonly RoadmapSeriesPoint[] | undefined, asOf: DayKey): RoadmapSeriesPoint | null {
+  let best: RoadmapSeriesPoint | null = null;
+  for (const p of readings ?? []) {
+    if (!p || typeof p.day !== "string" || p.day > asOf || !Number.isFinite(p.g)) continue;
+    if (!best || p.day > best.day || (p.day === best.day && (p.observedAt ?? "") > (best.observedAt ?? ""))) best = p;
+  }
+  return best;
+}
+
+/** The caption of a ROADMAP goal's binding part (Provenance): cards tested by reviews, or the user's own ticks. */
+export const ROADMAP_CAPTION = {
+  MEASURED: "tested by your reviews",
+  SELF_REPORTED: "from your ticks",
+} as const satisfies Record<RoadmapSeriesPoint["bindingClass"], string>;
+
+/**
  * g in 0..1 as of `asOf` (use goalAsOf): CHILDREN = done steps (completedDay
  * ≤ asOf) ÷ steps, null with no steps; MANUAL = Σ progress qty (day ≤ asOf)
- * ÷ krTarget, null with no target; any other metric null.
+ * ÷ krTarget, null with no target; ROADMAP = the stored series point asOf
+ * reads (roadmapPointAsOf), then the minimum with the steps' done share when
+ * steps exist, null with no point (it pays 0, "not measured"); any other
+ * metric null.
  */
 export function goalProgress(input: GoalProgressInput, asOf: DayKey): number | null {
   const metric: KrMetric = input.krMetric ?? "CHILDREN";
@@ -226,6 +344,13 @@ export function goalProgress(input: GoalProgressInput, asOf: DayKey): number | n
     const target = input.krTarget;
     if (target == null || !Number.isFinite(target) || target <= 0) return null;
     return clamp01(progressQtyAsOf(input.progress, asOf) / target);
+  }
+  if (metric === "ROADMAP") {
+    // Stored readings only (roadmap.md decision 7): no surface appends a live value here.
+    const point = roadmapPointAsOf(input.readings, asOf);
+    if (!point) return null;
+    const { done, total } = stepsDoneAsOf(input.steps, asOf);
+    return total > 0 ? Math.min(clamp01(point.g), clamp01(done / total)) : clamp01(point.g);
   }
   // REVIEWS, IDEAS, WORKOUTS, RUN_KM: not measured in M5.
   return null;
@@ -279,6 +404,30 @@ export function goalDepthAdded(mints: readonly GoalMintRow[], key: string): numb
 
 const daysText = (n: number): string => (n === 0 ? "today" : n === 1 ? "1 day ago" : `${n.toLocaleString("en-GB")} days ago`);
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** '2026-03-03' → '3 Mar' (the roadmap's "already paid on 3 Mar"), read from the key itself, so no zone can shift it. */
+function dayMonthText(day: DayKey): string {
+  const [, m, d] = day.split("-").map(Number);
+  const month = MONTHS[(m ?? 0) - 1];
+  return month && Number.isFinite(d) ? `${d} ${month}` : day;
+}
+
+/**
+ * The first day one of `goalIds` closed paying (its 'mp:GOAL:<id>' row with
+ * qty > 0 under a goal reason), or null. goals-server passes the other goals
+ * of a ROADMAP goal's milestone lineage, read with the goal's decision rows
+ * (readGoalCloseInput keeps every paying one, of any age), so a lineage
+ * whose dropped row or "Start again" copy already paid states it here.
+ */
+export function lineagePaidOnOf(mints: readonly GoalMintRow[], goalIds: readonly string[]): DayKey | null {
+  if (goalIds.length === 0) return null;
+  const keys = new Set(goalIds.map(goalMintKey));
+  let first: DayKey | null = null;
+  for (const m of mints) if (keys.has(m.key) && isPaying(m) && (first === null || m.day < first)) first = m.day;
+  return first;
+}
+
 /**
  * What a close's limit gate and (SHORT) cap trim counted: the paying rows of
  * this goal's reason in its window — the close day's life week (SHORT), or
@@ -323,11 +472,14 @@ export function goalLimitWindow(input: GoalInput): GoalLimitWindow {
  * and pays 0:
  *   1. not launched                 'before life MP began'
  *   2. g null                       'not measured: add a step or a number'
- *   3. g below the bar              'not finished' (SHORT) / 'below 70%'
- *   4. lifetime < 3 / 21 / 90 days  'set 5 days ago; it pays once 21 days old'
- *   5. SHORT: 2 already paid in the close day's life week
- *   6. MID: 2 paid in the days (today − 30, today]
- *   7. LONG: 1 paid in the days (today − 91, today]
+ *                                   ('not measured yet' for a ROADMAP goal: no stored reading)
+ *   3. stated 0                     'it states 0 MP'
+ *      ROADMAP: its lineage paid    'this milestone already paid on 3 Mar' (lineagePaidOn)
+ *   4. g below the bar              'not finished' (SHORT) / 'below 70%'
+ *   5. lifetime < 3 / 21 / 90 days  'set 5 days ago; it pays once 21 days old'
+ *   6. SHORT: 2 already paid in the close day's life week
+ *   7. MID: 2 paid in the days (today − 30, today]
+ *   8. LONG: 1 paid in the days (today − 91, today]
  * Then SHORT pays stated within the 8 MP life-week cap (trimmed, or 0 'the
  * life week's 8 MP cap is reached'); MID and LONG pay scaled. depth = pays >
  * 0 ? min(GOAL_DEPTH[h], 2 − the track's goal depth) : 0. Goals never pay XP.
@@ -338,11 +490,20 @@ export function closeDecision(input: GoalInput): GoalPayout {
   const stated = typeof input.goalMp === "number" && Number.isFinite(input.goalMp) && input.goalMp >= 0 ? input.goalMp : statedGoalMp(h);
   const g = goalProgress(input, goalAsOf(input.today, input.dueDay));
   const scaled = g == null ? 0 : rule.binary ? (g >= 1 - 1e-9 ? stated : 0) : round2(stated * g);
-  const base = { horizon: h, track: input.track, reason: goalReasonOf(h), stated, bar: rule.bar, scaled, g };
+  const note = input.readingNote ? { readingNote: input.readingNote } : {};
+  const base = { horizon: h, track: input.track, reason: goalReasonOf(h), stated, bar: rule.bar, scaled, g, ...note };
   const refuse = (why: string): GoalPayout => ({ ...base, pays: 0, why, depth: 0 });
 
   if (!isLaunched(input.today, input.launchDay)) return refuse("before life MP began");
-  if (g == null) return refuse("not measured: add a step or a number");
+  if (g == null) return refuse(input.krMetric === "ROADMAP" ? "not measured yet" : "not measured: add a step or a number");
+  // A goal stated at 0 pays nothing at any progress, so it says that before the bar and age gates:
+  // it never reads 'below 70%', which would imply it pays from 70%. Roadmap milestones state 0 on
+  // purpose when they are knowledge only (reviews already pay for cards), carry a token practice,
+  // or belong to a lineage that already paid (roadmap.md decision 8); a hand-edited 0 reads the same.
+  if (!(round2(stated) > 0)) return refuse("it states 0 MP");
+  // At most one goal of a milestone lineage pays (roadmap.md F15 "a paid lineage states 0"; the fix
+  // round's backstop at the one place that mints, for a dropped milestone, its copy and an unarchive).
+  if (input.lineagePaidOn) return refuse(`this milestone already paid on ${dayMonthText(input.lineagePaidOn)}`);
   if (g + 1e-9 < rule.bar) return refuse(rule.binary ? "not finished" : `below ${Math.round(rule.bar * 100)}%`);
   const lifetime = daysBetween(input.createdDay, input.today);
   if (lifetime < rule.minLifetimeDays) return refuse(`set ${daysText(Math.max(0, lifetime))}; it pays once ${rule.minLifetimeDays} days old`);
@@ -363,7 +524,7 @@ export function closeDecision(input: GoalInput): GoalPayout {
     }
   }
 
-  // A goal stated at 0 (never by the table; only a hand-edited goalMp) pays nothing and says so.
+  // Past the bar a stated goal scales above 0; this only catches a stated amount that rounds away.
   if (!(scaled > 0)) return refuse("it states 0 MP");
   let pays = scaled;
   let why: string | null = null;
@@ -394,7 +555,13 @@ export function goalCloseMint(goal: { id: string; track: Track }, payout: GoalPa
   };
 }
 
-/** '3 of 5 steps', '4 of 12 books', '7 books so far', 'no steps yet', 'not measured'. */
+/**
+ * '3 of 5 steps', '4 of 12 books', '7 books so far', 'no steps yet', 'not
+ * measured'. A ROADMAP goal names the part that sets its g, with that part's
+ * evidence: 'tested by your reviews · slowest: cards at level 6+', 'from your
+ * ticks · slowest: Backtest sessions', or 'from your ticks · slowest: 1 of 3
+ * steps' when the steps bind; 'not measured yet' with no stored reading.
+ */
 export function goalProgressLabel(
   input: GoalProgressInput & { krUnit?: string | null },
   asOf: DayKey
@@ -402,14 +569,26 @@ export function goalProgressLabel(
   const metric: KrMetric = input.krMetric ?? "CHILDREN";
   const fmt = (n: number) => (Number.isInteger(n) ? n.toLocaleString("en-GB") : n.toFixed(1));
   const unit = input.krUnit ? ` ${input.krUnit}` : "";
+  const stepsText = (done: number, total: number) => `${done} of ${total} step${total === 1 ? "" : "s"}`;
   if (metric === "CHILDREN") {
     const { done, total } = stepsDoneAsOf(input.steps, asOf);
-    return total > 0 ? `${done} of ${total} step${total === 1 ? "" : "s"}` : "no steps yet";
+    return total > 0 ? stepsText(done, total) : "no steps yet";
   }
   if (metric === "MANUAL") {
     const qty = progressQtyAsOf(input.progress, asOf);
     const target = input.krTarget;
     return target != null && Number.isFinite(target) && target > 0 ? `${fmt(qty)} of ${fmt(target)}${unit}` : `${fmt(qty)}${unit} so far`;
+  }
+  if (metric === "ROADMAP") {
+    const point = roadmapPointAsOf(input.readings, asOf);
+    if (!point) return "not measured yet";
+    // The steps are a part of g too; they bind only when strictly below the measures (ties keep the measure).
+    const { done, total } = stepsDoneAsOf(input.steps, asOf);
+    if (total > 0 && done / total < clamp01(point.g)) return `${ROADMAP_CAPTION.SELF_REPORTED} · slowest: ${stepsText(done, total)}`;
+    // Anything but MEASURED reads as the weaker class, never as tested.
+    const caption = point.bindingClass === "MEASURED" ? ROADMAP_CAPTION.MEASURED : ROADMAP_CAPTION.SELF_REPORTED;
+    const label = typeof point.bindingLabel === "string" ? point.bindingLabel.trim() : "";
+    return label ? `${caption} · slowest: ${label}` : caption;
   }
   return "not measured";
 }
@@ -420,14 +599,20 @@ export function goalProgressLabel(
  * ticked or numbers logged after the close move neither. g is null — no
  * percentage shown — when it cannot be measured, or when the close itself
  * was decided unmeasured (its why starts 'not measured'), even if a step was
- * added since.
+ * added since. A ROADMAP goal is not re-derived: it reads its stored
+ * closedScore, the g its close paid from (roadmap.md F16 seam 1).
  */
 export function closedGoalReading(
-  input: GoalProgressInput & { krUnit?: string | null; dueDay: DayKey | null },
+  input: GoalProgressInput & { krUnit?: string | null; dueDay: DayKey | null; closedScore?: number | null },
   closeDay: DayKey,
   why: string | null
 ): { g: number | null; progressLabel: string; asOf: DayKey } {
   const asOf = goalAsOf(closeDay, input.dueDay);
+  if (input.krMetric === "ROADMAP") {
+    const score = input.closedScore;
+    const g = why?.startsWith("not measured") || score == null || !Number.isFinite(score) ? null : clamp01(score);
+    return { g, progressLabel: g == null ? "not measured" : "as measured at the close", asOf };
+  }
   const measured = goalProgress(input, asOf);
   return { g: measured == null || why?.startsWith("not measured") ? null : measured, progressLabel: goalProgressLabel(input, asOf), asOf };
 }

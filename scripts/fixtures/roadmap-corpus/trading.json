@@ -1,0 +1,119 @@
+{
+  "aim": "trading",
+  "about": "The mockups' aim (final-roadmap-draft.html): a Field Area with every blocking flag an English aim can trip. EUR/USD makes it a credential aim under isCredentialAim's acronym rule (lead open point 4), so the alarm rate leaves it out. Not sent by the probe.",
+  "probe": false,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_trading",
+  "input": {
+    "intake": {
+      "aim": "Become a consistently profitable systematic EUR/USD trader",
+      "fieldId": "fld_trading",
+      "track": "CRAFT",
+      "domainIds": ["d_tr_backtest", "d_tr_sysdev", "d_tr_risk"],
+      "targetDay": "2027-05-16",
+      "hoursPerWeek": 8,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "WORKING",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": "No money for paid courses or signals. Evenings only.",
+      "examLabel": null
+    },
+    "areaName": "Trading",
+    "domains": [
+      { "id": "d_tr_backtest", "name": "Algorithmic Backtesting", "fieldId": "fld_trading", "cards": 46, "atSix": 19, "atTop": 0, "chosen": true },
+      { "id": "d_tr_sysdev", "name": "Quantitative System Dev", "fieldId": "fld_trading", "cards": 33, "atSix": 9, "atTop": 0, "chosen": true },
+      { "id": "d_tr_risk", "name": "Risk Management", "fieldId": "fld_trading", "cards": 38, "atSix": 15, "atTop": 1, "chosen": true },
+      { "id": "d_tr_forex", "name": "Forex 101", "fieldId": "fld_trading", "cards": 55, "atSix": 30, "atTop": 4, "chosen": false },
+      { "id": "d_tr_psych", "name": "Market Psychology", "fieldId": "fld_trading", "cards": 21, "atSix": 6, "atTop": 0, "chosen": false },
+      { "id": "d_tr_sizing", "name": "Position Sizing", "fieldId": "fld_trading", "cards": 12, "atSix": 4, "atTop": 0, "chosen": false },
+      { "id": "d_tr_scalp", "name": "Scalping", "fieldId": "fld_trading", "cards": 9, "atSix": 1, "atTop": 0, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-20" },
+      { "start": "2026-12-21", "end": "2027-02-28" },
+      { "start": "2027-03-01", "end": "2027-05-16" }
+    ]
+  },
+  "library": [
+    { "id": "d_tr_backtest", "name": "Algorithmic Backtesting", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 46, "titles": ["Walk-forward analysis splits", "In-sample vs out-of-sample", "Robustness of a backtest", "Overfitting a strategy"], "tags": ["backtest", "validation"] },
+    { "id": "d_tr_sysdev", "name": "Quantitative System Dev", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 33, "titles": ["Spread cost per trade", "Slippage model"], "tags": ["execution"] },
+    { "id": "d_tr_risk", "name": "Risk Management", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 38, "titles": ["Risk per trade", "Expectancy"], "tags": ["risk"] },
+    { "id": "d_tr_forex", "name": "Forex 101", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 55, "titles": ["Pip value"], "tags": ["fx"] },
+    { "id": "d_tr_psych", "name": "Market Psychology", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 21, "titles": ["Tilt", "Discipline after a loss"], "tags": ["psychology"] },
+    { "id": "d_tr_sizing", "name": "Position Sizing", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 12, "titles": ["Fixed fractional sizing", "Kelly criterion"], "tags": ["sizing"] },
+    { "id": "d_tr_scalp", "name": "Scalping", "fieldId": "fld_trading", "fieldName": "Trading", "cards": 9, "titles": ["Order book"], "tags": ["scalping"] },
+    { "id": "d_ma_prob", "name": "Probability Theory", "fieldId": "fld_maths", "fieldName": "Mathematics", "cards": 40, "titles": ["Conditional probability"], "tags": ["probability"] },
+    { "id": "d_ma_stats", "name": "Statistics", "fieldId": "fld_maths", "fieldName": "Mathematics", "cards": 25, "titles": ["Variance"], "tags": ["statistics"] }
+  ],
+  "drafts": [
+    {
+      "id": "draft-mixed-3",
+      "about": "Every blocking flag kind except LANGUAGE_UNCHECKED and AIM_STEP_EARLY, the notes CHECK_LINK and ADDED_TO_SCOPE's opposite (outside scope), a proposed Domain, a contained match and a cross-Field exact match.",
+      "newDomainClaims": { "1:0": [], "2:0": [], "2:1": [] },
+      "reply": {
+        "milestones": [
+          {
+            "title": "Backtests that hold up",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": ["Execution cost modelling"],
+            "topics": [
+              { "label": "Walk-forward testing", "domain": "D1", "claims": [] },
+              { "label": "Look-ahead and survivorship bias", "domain": "D1", "claims": [] },
+              { "label": "Spread and slippage on EUR/USD", "domain": "D2", "claims": [] },
+              { "label": "Essential robustness checks", "domain": "D1", "claims": ["syllabus"] },
+              { "label": "Overfitting, from the Kestrel backtesting course", "domain": "D1", "claims": ["resource", "proper-noun"] },
+              { "label": "Execution costs in practice", "domain": "N1", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Drill reading backtest reports", "method": "DELIBERATE_PRACTICE", "claims": [] },
+              { "name": "Rebuild one strategy test from scratch", "method": "PROJECT_WORK", "claims": ["number"] }
+            ],
+            "steps": [
+              { "title": "Write the entry and exit rules of your EUR/USD system", "claims": ["about-you"] },
+              { "title": "Trade the system profitably and consistently", "claims": [] }
+            ],
+            "checkpoint": { "label": "Explain a backtest report aloud", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Risk and position sizing",
+            "titleClaims": [],
+            "domains": ["D6", "D5"],
+            "newDomains": ["Risk management basics", "Probability theory"],
+            "topics": [
+              { "label": "Expectancy and its spread", "domain": "N2", "claims": [] },
+              { "label": "Order-flow basics", "domain": "D7", "claims": [] },
+              { "label": "Sizing with the Kelly criterion", "domain": "D6", "claims": ["proper-noun"] }
+            ],
+            "practices": [
+              { "name": "Size practice trades by hand", "method": "DELIBERATE_PRACTICE", "claims": [] },
+              { "name": "Hard workout to max heart rate before the London open", "method": "WORKOUT", "claims": ["health", "proper-noun"] }
+            ],
+            "steps": [{ "title": "Set a fixed risk per trade rule", "claims": [] }],
+            "checkpoint": { "label": "Size ten historical trades by hand", "kind": "PERFORMANCE_CHECK", "claims": ["number"] }
+          },
+          {
+            "title": "Forward-testing on a demo account",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [{ "label": "Recommended forward-test length", "domain": "D1", "claims": ["syllabus"] }],
+            "practices": [
+              { "name": "Code the rules in MetaTrader", "method": "PROJECT_WORK", "claims": ["proper-noun"] },
+              { "name": "Weekly trade review", "method": "WRITING", "claims": [] }
+            ],
+            "steps": [
+              { "title": "Join a funded-trader challenge", "claims": ["constraint"] },
+              { "title": "Run the system on a demo account", "claims": [] }
+            ],
+            "checkpoint": null
+          }
+        ]
+      }
+    }
+  ]
+}

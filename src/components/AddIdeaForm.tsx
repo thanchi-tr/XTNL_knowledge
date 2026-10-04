@@ -113,6 +113,9 @@ interface Props {
   draftId?: string;
   /** Today's focus Field (daily-focus.ts): new ideas there pay this multiplier. */
   focus?: { fieldId: string; fieldName: string; multiplier: number } | null;
+  /** /add?field=&domain= (roadmap F21), validated by the page against the user's own Fields: a manual placement to start from. */
+  initialFieldId?: string | null;
+  initialDomainId?: string | null;
 }
 
 // DIAGRAM isn't offered: authoring hotspots over an image needs a real editor.
@@ -185,15 +188,15 @@ interface CreatedInfo {
   basis: FieldBasis | null;
 }
 
-export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialAnswer = "", draftId, focus = null }: Props) {
+export function AddIdeaForm({ fields, vocabulary, initialQuestion = "", initialAnswer = "", draftId, focus = null, initialFieldId = null, initialDomainId = null }: Props) {
   const ids = { q: useId(), a: useId(), field: useId(), domain: useId(), cloze: useId() };
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isPreviewing, startPreview] = useTransition();
   const [distractorsPending, startDistractors] = useTransition();
 
-  const [fieldId, setFieldId] = useState<string>(AUTO_FIELD);
-  const [domainId, setDomainId] = useState<string>(AUTO_DOMAIN);
+  const [fieldId, setFieldId] = useState<string>(initialFieldId ?? AUTO_FIELD);
+  const [domainId, setDomainId] = useState<string>(initialFieldId && initialDomainId ? initialDomainId : AUTO_DOMAIN);
   const [collectionLabel, setCollectionLabel] = useState<CollectionLabel>("BOOK");
   const [questionType, setQuestionType] = useState<CreatableQuestionType>("SHORT");
 

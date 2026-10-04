@@ -73,6 +73,8 @@ import {
 } from "./duty-plan";
 import { DUTY_READ_AHEAD_DAYS, DUTY_READ_BACK_DAYS, type DutyBoard, type SettledFact } from "./duty-view";
 import { isMissingRestDayTable } from "./rest-rules";
+import { loadRoadmapGoalSeries } from "./roadmap-readings";
+import { isMissingRoadmapTable, isSupersededRow, type PositionRow } from "./roadmap-types";
 import {
   EpochSet,
   HISTORY_DAYS,
@@ -95,6 +97,7 @@ import {
   placementOf,
   planAutoCompletions,
   planCompletion,
+  roadmapGoalIdsOf,
   ruleOf,
   shortDate,
   statsFor,
@@ -210,6 +213,8 @@ const TEMPLATE_SELECT = {
   sortOrder: true,
   goalMp: true,
   closedScore: true,
+  // Roadmap (F16 seam 3): a roadmap goal is 'rm:<milestoneId>', its practices and steps 'rm:<id>:p<i>' / ':s<i>'.
+  captureKey: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 /** What every template read selects. Exported for duty.ts (the make-up's pricing read). */
@@ -310,6 +315,8 @@ export function toBoardTemplate(r: TemplateRow, now: Date): BoardTemplate {
     closedScore: r.closedScore,
     // M2: the rule over time (duty-rule.ts ruleOn reads it per day).
     pendingChange: parsePendingChange(r.pendingChange),
+    // Roadmap (F16 seam 3): the capture key, so the board can tell a roadmap row ('rm:…') from the rest.
+    captureKey: r.captureKey,
   };
 }
 
@@ -768,15 +775,38 @@ function loadDueNow(day: DayKey, now: Date): Promise<number> {
  * Everything the Today board is built from, for one life day: templates,
  * recent instances, per-habit history folded into stats, the day's ledger
  * and the review queue's size. Cached per day under the life, activity and
- * ideas tags, since a review changes the quest and a tick changes the rest.
+ * ideas tags, since a review changes the quest and a tick changes the rest,
+ * and under 'roadmap' for the open roadmap goals' stored series.
  */
 export async function loadTodayBoard(userId: string, day: DayKey, now: Date = new Date()): Promise<BoardData> {
-  return cached(`today:${userId}:${day}`, ["life", "activity", "ideas"], async () => {
+  return cached(`today:${userId}:${day}`, ["life", "activity", "ideas", "roadmap"], async () => {
     const [read, dueNow] = await Promise.all([loadBoardCore(userId, day, now), loadDueNow(day, now)]);
     // M2: BoardData.duty (duty-view.ts DutyBoard), read in the same wave.
-    const data = { ...read.core, dueNow, duty: read.duty };
-    return data;
+    // Roadmap (F16 seam 3): BoardData.roadmapGoals, the stored series of the open ROADMAP goals.
+    const roadmapGoals = await loadBoardRoadmapGoals(userId, read.core.templates, day);
+    return { ...read.core, dueNow, duty: read.duty, roadmapGoals };
   });
+}
+
+/**
+ * BoardData.roadmapGoals (roadmap.md F16 seam 3): the open ROADMAP goals'
+ * stored series, with ord and of ("Roadmap · milestone 2 of 3"), the zero
+ * reason and the reset note (roadmap-readings loadRoadmapGoalSeries). One
+ * query, and only when such a goal is open (today-board roadmapGoalIdsOf;
+ * none while ROADMAP_GOALS_LIVE is off), so every other board pays nothing.
+ * A missing table (life_roadmap not applied) or any other failure reads as
+ * none, never as a failed board: the goal then reads "not measured yet",
+ * since a ROADMAP goal's g comes from stored readings only.
+ */
+async function loadBoardRoadmapGoals(userId: string, templates: readonly BoardTemplate[], day: DayKey): Promise<NonNullable<BoardData["roadmapGoals"]>> {
+  const ids = roadmapGoalIdsOf(templates);
+  if (ids.length === 0) return {};
+  try {
+    return await loadRoadmapGoalSeries(userId, ids, day);
+  } catch (err) {
+    if (!isMissingRoadmapTable(err)) console.error("Today board: the roadmap goals' series failed to load; they read as not measured.", err);
+    return {};
+  }
 }
 
 export interface TodayCounts {
@@ -973,15 +1003,67 @@ export async function loadActiveTitles(userId: string, now: Date = new Date()): 
  * An idea draft keeps its answer ('idea: Q :: A') as its note, whole: the
  * title is the question. How a line is stored (its kind, days, Must, inbox
  * and note) is capture-shape.ts captureShapeOf, which the sheet can import.
+ *
+ * `link` (roadmap Start only; docs/life-plan/roadmap.md decision 14, F16
+ * seam 5): structure instead of text. An explicit `parentId` replaces the
+ * '^name' match, and `goal` replaces captureGoalFields' metric, target, unit
+ * and stated MP; the horizon still comes from horizonFor (linkedGoalFields,
+ * linkedParentOf). A ROADMAP goal must come out MID, or nothing is written.
  */
 export async function createTemplateCore(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date }
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink }
 ): Promise<CreatedTask> {
   const w = await insertCapture(userId, parsed, opts);
   if (!wantsDoneNowTick(parsed, w.t)) return w.created;
   return tickUnlessResent(userId, w);
+}
+
+/**
+ * A roadmap Start's structure for one capture (roadmap lane 0 type; lane G
+ * wires it, F16 seam 5): an explicit parent goal replaces the '^name' match,
+ * and the goal override replaces captureGoalFields' metric and MP (the
+ * horizon still comes from horizonFor).
+ */
+export interface CaptureLink {
+  parentId?: string;
+  goal?: { krMetric: KrMetric; krTarget: number | null; krUnit: string | null; goalMp: number };
+}
+
+/**
+ * The parent a linked capture names outright (F16 seam 5), or null when the
+ * '^name' match decides as before. A goal never takes a parent (the same rule
+ * as the '^name' match), so a link's parentId on a goal capture is ignored.
+ * Pure; capture-server-check holds it.
+ */
+export function linkedParentOf(kind: TaskKind, link: CaptureLink | null | undefined): string | null {
+  const id = link?.parentId?.trim();
+  return id && kind !== "GOAL" ? id : null;
+}
+
+/**
+ * A goal capture's columns with a roadmap link's override applied (F16 seam
+ * 5): the link's krMetric, krTarget, krUnit and goalMp replace what
+ * captureGoalFields read from the title (so a milestone named 'read 12
+ * books' is still measured by its roadmap, never as MANUAL), while the
+ * horizon stays horizonFor's. Any other kind, or no `goal`, is unchanged.
+ * Throws, before anything is written, on a stated MP that is not a finite
+ * number ≥ 0, on a ROADMAP goal whose horizon is not MID (a roadmap
+ * milestone is always a Mid goal: decision 8, F15), or on a ROADMAP goal
+ * stating anything but 0 or statedGoalMp('MID') (the roadmap adds no MP
+ * reason, cap or limit; balance-horizon 3e). Pure.
+ */
+export function linkedGoalFields(kind: TaskKind, base: CaptureGoalFields, link: CaptureLink | null | undefined): CaptureGoalFields {
+  const g = link?.goal;
+  if (kind !== "GOAL" || !g) return base;
+  if (typeof g.goalMp !== "number" || !Number.isFinite(g.goalMp) || g.goalMp < 0) throw new Error("A linked goal needs a stated MP of 0 or more.");
+  if (g.krTarget != null && !Number.isFinite(g.krTarget)) throw new Error("A linked goal's target must be a number.");
+  if (g.krMetric === "ROADMAP" && base.horizon !== "MID") throw new Error("A roadmap milestone is a Mid goal: tag it Mid, with its due day more than 30 days away.");
+  if (g.krMetric === "ROADMAP" && g.goalMp !== 0 && g.goalMp !== statedGoalMp("MID")) {
+    throw new Error(`A roadmap milestone states ${statedGoalMp("MID")} MP or nothing.`);
+  }
+  return { horizon: base.horizon, krMetric: g.krMetric, krTarget: g.krTarget, krUnit: g.krUnit, goalMp: g.goalMp };
 }
 
 /** What insertCapture wrote, and what a later done-now tick needs from it. */
@@ -1003,7 +1085,7 @@ interface InsertedCapture {
 async function insertCapture(
   userId: string,
   parsed: ParsedCapture,
-  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date }
+  opts: { rawText: string; captureSource: CaptureSource; captureKey?: string | null; now?: Date; link?: CaptureLink }
 ): Promise<InsertedCapture> {
   const now = opts.now ?? new Date();
   const today = todayKey(now);
@@ -1018,11 +1100,12 @@ async function insertCapture(
 
   const { kind, recurrence, startDay, dueDay, dueKind, compulsory, inbox, note } = captureShapeOf(parsed, today);
 
-  // '^name': the same matcher and the same list the chip previewed.
-  let parentId: string | null = null;
-  if (parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
+  // A roadmap Start (F16 seam 5) names its parent goal and the goal's measure outright; checked before the write.
+  const goal = linkedGoalFields(kind, captureGoalFields(kind, title, parsed.horizon, dueDay, today), opts.link);
+  // '^name': the same matcher and the same list the chip previewed, unless the link named the parent.
+  let parentId: string | null = linkedParentOf(kind, opts.link);
+  if (!parentId && parsed.parentHint && kind !== "GOAL") parentId = matchParentGoal(parsed.parentHint, await loadOpenGoals(userId))?.id ?? null;
 
-  const goal = captureGoalFields(kind, title, parsed.horizon, dueDay, today);
   const autoMetric = parsed.autoMetric && kind !== "GOAL" ? parsed.autoMetric : null;
   const autoTarget =
     autoMetric && parsed.autoTarget != null && Number.isFinite(parsed.autoTarget)
@@ -1786,8 +1869,15 @@ export async function againCore(userId: string, templateId: string, opts: Comple
  * refused from the read, and by the settled-day guard at write time), and a
  * make-up is undone by undoMakeUpCore (its repayment is reversed too), so it
  * is answered with MAKE_UP_UNDO_ELSEWHERE for the action to route.
+ *
+ * The result names the tick's template, so the action's after() can hand it
+ * to the roadmap's practice writer (F16 seam 6) without another read.
  */
-export async function undoCompletionCore(userId: string, instanceId: string, now: Date = new Date()): Promise<LifeResult<{ instanceId: string; xp: number }>> {
+export async function undoCompletionCore(
+  userId: string,
+  instanceId: string,
+  now: Date = new Date()
+): Promise<LifeResult<{ instanceId: string; xp: number; templateId: string }>> {
   const [inst, events, settings] = await Promise.all([
     prisma.taskInstance.findFirst({
       where: { id: instanceId, userId },
@@ -1801,7 +1891,7 @@ export async function undoCompletionCore(userId: string, instanceId: string, now
     prisma.lifeSettings.findUnique({ where: { userId }, select: { settledThroughDay: true, epochDay: true } }),
   ]);
   if (!inst) return fail("That tick no longer exists.");
-  if (!isDoneStatus(inst.status)) return ok({ instanceId, xp: 0 });
+  if (!isDoneStatus(inst.status)) return ok({ instanceId, xp: 0, templateId: inst.templateId });
   if (inst.source.startsWith("auto:")) return fail("Your reviews completed this one; it can't be undone.");
   if (inst.source === "make-up") return fail(MAKE_UP_UNDO_ELSEWHERE);
   const instDay = keyOfDateColumn(inst.day);
@@ -1814,7 +1904,7 @@ export async function undoCompletionCore(userId: string, instanceId: string, now
 
   const undone = new Set(events.filter((e) => e.source === "UNDO" && e.dedupeKey?.startsWith("undo:")).map((e) => e.dedupeKey!.slice(5)));
   const ev = events.find((e) => e.source === "TASK" && !undone.has(e.id));
-  if (!ev) return ok({ instanceId, xp: 0 });
+  if (!ev) return ok({ instanceId, xp: 0, templateId: inst.templateId });
   if (!canUndo(ev.occurredAt, now)) {
     return fail(`Too late to undo: a tick can be undone for ${UNDO_WINDOW_MS / 60_000} minutes, on the same day.`);
   }
@@ -1853,7 +1943,18 @@ export async function undoCompletionCore(userId: string, instanceId: string, now
   } finally {
     invalidate("life", "activity");
   }
-  return ok({ instanceId, xp: -ev.xp });
+  return ok({ instanceId, xp: -ev.xp, templateId: inst.templateId });
+}
+
+/**
+ * The template an instance belongs to, or null. One indexed read, for the
+ * one path whose result does not name it: a make-up's Undo, routed to
+ * duty.ts undoMakeUpCore, whose after() still hands the template to the
+ * roadmap's practice writer (F16 seam 6).
+ */
+export async function templateIdOfInstance(userId: string, instanceId: string): Promise<string | null> {
+  const row = await prisma.taskInstance.findFirst({ where: { id: instanceId, userId }, select: { templateId: true } });
+  return row?.templateId ?? null;
 }
 
 // ── Skip, reschedule, archive ─────────────────────────────────────────────
@@ -1951,6 +2052,8 @@ const RULE_SELECT = {
   archivedAt: true,
   createdAt: true,
   pendingChange: true,
+  /** Read, never compared (ruleWhere): an unarchive's roadmap check keys on it (unarchiveCore). */
+  krMetric: true,
 } satisfies Prisma.TaskTemplateSelect;
 
 type RuleReadRow = Prisma.TaskTemplateGetPayload<{ select: typeof RULE_SELECT }>;
@@ -2014,15 +2117,25 @@ const RULE_EDIT_ATTEMPTS = 3;
  * Reads the template, plans the edit (duty-plan.ts planRuleEdit: the
  * classifier, one pending change per template, prior segments for a
  * strengthening) and writes it compare-and-set; a row that moved under it
- * is read and planned again, a few times at most.
+ * is read and planned again, a few times at most. `refusalOf` (optional)
+ * reads more about the row it read and may refuse the edit before any write
+ * (unarchiveCore's roadmap check).
  */
-async function applyRuleEdit(userId: string, templateId: string, edit: RuleEdit, now: Date): Promise<LifeResult<RuleChangeOutcome>> {
+async function applyRuleEdit(
+  userId: string,
+  templateId: string,
+  edit: RuleEdit,
+  now: Date,
+  refusalOf?: (row: RuleReadRow) => Promise<string | null>
+): Promise<LifeResult<RuleChangeOutcome>> {
   const today = todayKey(now);
   const launched = isDutyLaunched(today);
   for (let attempt = 1; attempt <= RULE_EDIT_ATTEMPTS; attempt++) {
     const row = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId }, select: RULE_SELECT });
     if (!row) return fail("That task no longer exists.");
     if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel")) return fail("That task is archived.");
+    const refusal = refusalOf ? await refusalOf(row) : null;
+    if (refusal) return fail(refusal);
     const plan = planRuleEdit(ruleRowOf(row), edit, { today, now, launched });
     if (!plan.ok) return fail(plan.error);
     const out: RuleChangeOutcome = { templateId, effect: plan.value.effect, effectiveDay: plan.value.effectiveDay };
@@ -2058,10 +2171,101 @@ export async function archiveCore(
  * never deleted anything). The undo for Archive and for the inbox's Drop: it
  * also cancels a pending archive. A strengthening, so never retroactive: a
  * must's archived days stay unowed (duty-plan.ts planRuleEdit).
+ *
+ * A roadmap milestone's goal (krMetric ROADMAP; roadmap.md F15, F22): the
+ * unarchive undoes the milestone's DROPPED, but never into a second open
+ * milestone, so it is refused (roadmapUnarchiveRefusalOf) when its "Start
+ * again" copy has started (that copy replaced it: one goal per lineage
+ * pays), or while another milestone of the roadmap is under way (Start is
+ * one milestone at a time). Only an archived ROADMAP goal pays the extra
+ * read; a missing roadmap table reads as no roadmap.
  */
 export async function unarchiveCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<null>> {
-  const res = await applyRuleEdit(userId, templateId, { kind: "unarchive" }, now);
+  const res = await applyRuleEdit(userId, templateId, { kind: "unarchive" }, now, async (row) =>
+    row.archivedAt && row.krMetric === "ROADMAP" ? roadmapUnarchiveRefusalOf(await loadRoadmapUnarchiveFacts(userId, templateId)) : null
+  );
   return res.ok ? ok(null) : res;
+}
+
+// ── Unarchive of a roadmap milestone's goal (roadmap.md F15, F22) ─────────
+
+/** Unarchive's answer when the milestone's "Start again" copy has started: the copy replaced this goal (roadmap-types isSupersededRow). */
+export const ROADMAP_UNARCHIVE_REPLACED = "This milestone was started again: its newer goal replaced this one.";
+/** Unarchive's answer while another milestone of the same roadmap is under way: Start is one milestone at a time. */
+export const ROADMAP_UNARCHIVE_OTHER_LIVE = "Another milestone of this roadmap is under way. Close or drop it first.";
+
+/** A roadmap milestone row as unarchive reads it: the position columns and its goal. */
+export type UnarchiveMilestoneRow = PositionRow & { goalId: string | null };
+
+/** What unarchive reads about the milestone a ROADMAP goal belongs to. */
+export interface RoadmapUnarchiveFacts {
+  /** The milestone whose goal is being unarchived. */
+  row: UnarchiveMilestoneRow;
+  /** Its roadmap's status: only an ACTIVE roadmap starts or measures a milestone. */
+  roadmapStatus: string;
+  /** Every milestone row of that roadmap (the row itself included). */
+  rows: readonly UnarchiveMilestoneRow[];
+  /** The goal ids among `rows` that are open: neither closed nor archived. */
+  openGoalIds: ReadonlySet<string>;
+}
+
+/**
+ * Why a ROADMAP goal must stay archived, or null when unarchiving it is
+ * fine (pure; capture-server-check holds it):
+ *   - its milestone is superseded (isSupersededRow: a newer STARTING or
+ *     STARTED row of its lineage, its "Start again" copy once started). The
+ *     copy replaced it; reopening it would let two goals of one lineage pay
+ *     (review Lens 1, lineage paid twice). A copy still PLANNED supersedes
+ *     nothing, so an Undo right after Drop still works;
+ *   - its roadmap is ACTIVE and another milestone (not superseded) is
+ *     STARTING, or STARTED with an open goal: Start's own rule
+ *     (STARTED_ELSEWHERE), so quests and readings never see two open
+ *     milestones.
+ * No facts (not a roadmap goal's milestone, or no roadmap table): null.
+ */
+export function roadmapUnarchiveRefusalOf(facts: RoadmapUnarchiveFacts | null): string | null {
+  if (!facts) return null;
+  if (isSupersededRow(facts.row, facts.rows)) return ROADMAP_UNARCHIVE_REPLACED;
+  if (facts.roadmapStatus !== "ACTIVE") return null;
+  const live = facts.rows.some(
+    (m) =>
+      m.id !== facts.row.id &&
+      (m.status === "STARTING" || (m.status === "STARTED" && m.goalId != null && facts.openGoalIds.has(m.goalId))) &&
+      !isSupersededRow(m, facts.rows)
+  );
+  return live ? ROADMAP_UNARCHIVE_OTHER_LIVE : null;
+}
+
+/**
+ * The facts roadmapUnarchiveRefusalOf decides from: the goal's milestone
+ * with every row of its roadmap (one query), then which of the other STARTED
+ * rows' goals are open (one more, only when it can change the answer: the
+ * row is not already replaced, the roadmap is ACTIVE and another row is
+ * STARTED). Null when the goal has no milestone or the roadmap tables are
+ * missing (life_roadmap not applied); any other failure throws, so the
+ * action answers "Couldn't save that" and the goal stays archived.
+ */
+async function loadRoadmapUnarchiveFacts(userId: string, goalId: string): Promise<RoadmapUnarchiveFacts | null> {
+  const POSITION = { id: true, lineageId: true, version: true, status: true, rankIndex: true, createdAt: true, goalId: true } as const;
+  try {
+    const m = await prisma.roadmapMilestone.findFirst({
+      where: { goalId, roadmap: { userId } },
+      select: { ...POSITION, roadmap: { select: { status: true, milestones: { select: POSITION } } } },
+    });
+    if (!m) return null;
+    const { roadmap, ...row } = m;
+    const others =
+      roadmap.status === "ACTIVE" && !isSupersededRow(row, roadmap.milestones)
+        ? roadmap.milestones.flatMap((r) => (r.id !== row.id && r.status === "STARTED" && r.goalId ? [r.goalId] : []))
+        : [];
+    const open = others.length
+      ? await prisma.taskTemplate.findMany({ where: { userId, id: { in: others }, archivedAt: null, closedScore: null }, select: { id: true } })
+      : [];
+    return { row, roadmapStatus: roadmap.status, rows: roadmap.milestones, openGoalIds: new Set(open.map((t) => t.id)) };
+  } catch (err) {
+    if (isMissingRoadmapTable(err)) return null;
+    throw err;
+  }
 }
 
 /** 'Not a must' (the drawer, F3): deferred 7 days once launched and past the 60-minute typo grace. */
@@ -2552,12 +2756,22 @@ export async function renameCore(userId: string, templateId: string, title: stri
 
 const GOAL_OP_RE = /^[A-Za-z0-9:_-]{4,64}$/;
 
+/** What '+1' on a roadmap milestone's goal answers (F16 seam 5): its g comes from stored readings, never from taps. */
+export const ROADMAP_GOAL_PROGRESS_REFUSAL = "This goal is measured from your records.";
+
+/** Why a goal takes no '+1', or null when it does. A ROADMAP goal never does. Pure; capture-server-check holds it. */
+export function goalProgressRefusalOf(goal: { krMetric: string | null }): string | null {
+  return goal.krMetric === "ROADMAP" ? ROADMAP_GOAL_PROGRESS_REFUSAL : null;
+}
+
 /**
  * '+1' on a goal measured by hand: a GOAL_PROGRESS row with its qty. Counts
  * for the day's streak (it is real work); pays nothing until M5. Progress
  * only goes up: a negative 'correction' would keep a streak alive on zero
  * net progress, so it waits for a proper undo. `opId`, one per tap, makes
  * a tap that reaches the server twice count once ('goal:<tpl>:<opId>').
+ * A roadmap milestone's goal (krMetric ROADMAP) is refused before any
+ * write: it is measured from its readings (goalProgressRefusalOf).
  */
 export async function goalProgressCore(
   userId: string,
@@ -2569,8 +2783,13 @@ export async function goalProgressCore(
   const n = goalProgressQty(qty);
   if (n === null) return fail(Number.isFinite(qty) && qty < 0 ? "Progress can only be added." : "Nothing to add.");
   // A closed goal (M5) takes no more progress: its close measured it for good.
-  const goal = await prisma.taskTemplate.findFirst({ where: { id: templateId, userId, kind: "GOAL", archivedAt: null, closedScore: null }, select: { id: true } });
+  const goal = await prisma.taskTemplate.findFirst({
+    where: { id: templateId, userId, kind: "GOAL", archivedAt: null, closedScore: null },
+    select: { id: true, krMetric: true },
+  });
   if (!goal) return fail("That goal is closed or no longer exists.");
+  const refusal = goalProgressRefusalOf(goal);
+  if (refusal) return fail(refusal);
   const key = opId && GOAL_OP_RE.test(opId) ? `goal:${templateId}:${opId}` : null;
   const row = await recordActivity(userId, {
     source: "GOAL_PROGRESS",

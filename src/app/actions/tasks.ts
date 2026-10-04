@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/user";
 import type { CaptureSpan } from "@/lib/capture-parse";
 import type { DayKey } from "@/lib/life-day";
@@ -8,8 +9,10 @@ import { applySizing } from "@/lib/life-sizing";
 import { captureSnapshot, detectCelebrations, type CaptureOptions } from "@/lib/celebrations";
 import type { CelebrationEvent } from "@/lib/celebration-types";
 import { withMoments } from "@/lib/today-board";
-import { closeGoalCore, readGoalCloseInput, rescheduleGoalCore } from "@/lib/goals-server";
+import { closeGoalCore, prepareRoadmapGoalClose, rescheduleGoalCore } from "@/lib/goals-server";
 import { closeDecision, type GoalPayout } from "@/lib/goals";
+import { lifeWritesEnabled } from "@/lib/life-economy";
+import { recordPracticeForTemplate } from "@/lib/roadmap-readings";
 import { createFromCapture, type CapturedItem } from "./capture";
 import {
   againCore,
@@ -23,6 +26,7 @@ import {
   setBandOverrideCore,
   setDailyCapacityCore,
   skipCore,
+  templateIdOfInstance,
   unarchiveCore,
   undoCaptureCore,
   undoCompletionCore,
@@ -56,8 +60,14 @@ import { MAKE_UP_UNDO_ELSEWHERE } from "@/lib/duty-plan";
  *
  * Goals (M5): closeGoal pays a goal's stated MP once, within the gates in
  * goals.ts (closeGoal returns its moments too); previewGoalClose is the same
- * decision, read-only; rescheduleGoal moves only the due day. No UI calls
+ * decision, read-only (a roadmap milestone's preview records its readings
+ * first: F16 seam 6); rescheduleGoal moves only the due day. No UI calls
  * them until the Today integration (phase B).
+ *
+ * Roadmap (docs/life-plan/roadmap.md F16 seam 6): every completion and undo
+ * hands its template to the roadmap's practice writer in after()
+ * (recordPracticeAfter), so a started milestone's practice and step ticks
+ * reach its readings, Proficiency and week quests at once.
  */
 
 export type TaskActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -76,6 +86,30 @@ async function run<T>(label: string, opts: TaskActionOptions | undefined, fn: (u
     console.error(`${label} failed:`, err);
     return { ok: false, error: "Couldn't save that. Try again." };
   }
+}
+
+/**
+ * Roadmap (F16 seam 6): after a completion or an undo, the roadmap's practice
+ * writer (roadmap-readings recordPracticeForTemplate) re-reads that
+ * template's milestone: its PRACTICE_KEPT reading, its steps share, the
+ * reach rules and Proficiency, so an undo clears a pending reach. It returns
+ * at once for any template outside its cached scope map (everything but a
+ * started milestone's practices and steps), so this hook needs no
+ * captureKey and the tick pays no read for it. Scheduled for every template,
+ * only where life writes are on (decision 13), after the response; it never
+ * fails the tick. A function stands for a template id read only then (the
+ * make-up's Undo, whose result does not name it).
+ */
+function recordPracticeAfter(userId: string, templateId: string | (() => Promise<string | null>)): void {
+  if (!lifeWritesEnabled()) return;
+  after(async () => {
+    try {
+      const id = typeof templateId === "function" ? await templateId() : templateId;
+      if (id) await recordPracticeForTemplate(userId, id);
+    } catch (err) {
+      console.error("[roadmap] the practice reading after a tick failed", err);
+    }
+  });
 }
 
 /** A write's value plus L3's moments for it (T1s the board ignores: it chimes its own). */
@@ -150,8 +184,8 @@ export async function completeTask(
   if (!isId(templateId)) return noId();
   const day = input?.day;
   const cleanDay = day === "yesterday" || day === "today" || (typeof day === "string" && DAY_KEY_RE.test(day)) ? day : "today";
-  return run("completeTask", opts, (userId) =>
-    aroundTick(
+  return run("completeTask", opts, async (userId) => {
+    const res = await aroundTick(
       userId,
       { scope: "tick", templateIds: [templateId] },
       () =>
@@ -161,8 +195,10 @@ export async function completeTask(
           mvv: input?.mvv === true,
         }),
       (v) => !v.duplicate
-    )
-  );
+    );
+    if (res.ok) recordPracticeAfter(userId, templateId);
+    return res;
+  });
 }
 
 /**
@@ -174,9 +210,15 @@ export async function undoCompletion(instanceId: string, opts?: TaskActionOption
   if (!isId(instanceId)) return noId();
   return run("undoCompletion", opts, async (userId) => {
     const res = await undoCompletionCore(userId, instanceId);
-    if (res.ok || res.error !== MAKE_UP_UNDO_ELSEWHERE) return res;
+    if (res.ok) {
+      recordPracticeAfter(userId, res.value.templateId);
+      return { ok: true as const, value: { instanceId: res.value.instanceId, xp: res.value.xp } };
+    }
+    if (res.error !== MAKE_UP_UNDO_ELSEWHERE) return res;
     const undone = await undoMakeUpCore(userId, instanceId);
-    return undone.ok ? { ok: true as const, value: { instanceId, xp: undone.value.xp } } : undone;
+    if (!undone.ok) return undone;
+    recordPracticeAfter(userId, () => templateIdOfInstance(userId, instanceId));
+    return { ok: true as const, value: { instanceId, xp: undone.value.xp } };
   });
 }
 
@@ -204,8 +246,8 @@ export async function againTask(
   opts?: TaskActionOptions
 ): Promise<TaskActionResult<WithCelebrations<Completion>>> {
   if (!isId(templateId)) return noId();
-  return run("againTask", opts, (userId) =>
-    aroundTick(
+  return run("againTask", opts, async (userId) => {
+    const res = await aroundTick(
       userId,
       { scope: "tick", templateIds: [templateId] },
       () =>
@@ -214,8 +256,10 @@ export async function againTask(
           mvv: input?.mvv === true,
         }),
       (v) => !v.duplicate
-    )
-  );
+    );
+    if (res.ok) recordPracticeAfter(userId, templateId);
+    return res;
+  });
 }
 
 /** Moves a one-off to tomorrow or a given day; on a repeating task, 'tomorrow' skips today. */
@@ -321,12 +365,33 @@ export async function closeGoal(goalId: string, opts?: TaskActionOptions): Promi
   );
 }
 
-/** What closing a goal now would pay, and why: read-only (the Close sheet's figure). null when the goal is not open. */
+/** The Close sheet's answer when what closing pays could not be worked out now (nothing was closed). */
+const PREVIEW_RETRY = "Couldn't work out what closing pays now. Try again.";
+
+/**
+ * What closing a goal now would pay, and why (the Close sheet's figure). null
+ * when the goal is not open. Read-only for every goal but a roadmap
+ * milestone's (F16 seam 6): goals-server prepareRoadmapGoalClose first
+ * records its readings for today, where writes are on, so the preview and the
+ * close decide from the same values; where they are off it decides from live
+ * values labelled "not recorded on this server". Any other goal comes back
+ * exactly as readGoalCloseInput reads it.
+ *
+ * A milestone's readings that cannot be worked out now (prepareRoadmapGoalClose
+ * throws where the close would refuse with GOAL_CLOSE_RETRY: a database
+ * failure, a refusal that is not final) answer PREVIEW_RETRY, never "Couldn't
+ * save that": the preview saves nothing the user asked for.
+ */
 export async function previewGoalClose(goalId: string): Promise<TaskActionResult<GoalPayout | null>> {
   if (!isId(goalId)) return noId();
   return run("previewGoalClose", undefined, async (userId) => {
-    const input = await readGoalCloseInput(userId, goalId, new Date());
-    return { ok: true as const, value: input ? closeDecision(input) : null };
+    try {
+      const prep = await prepareRoadmapGoalClose(userId, goalId, new Date());
+      return { ok: true as const, value: prep.input ? closeDecision(prep.input) : null };
+    } catch (err) {
+      console.error("previewGoalClose failed:", err);
+      return { ok: false as const, error: PREVIEW_RETRY };
+    }
   });
 }
 

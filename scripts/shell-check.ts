@@ -160,6 +160,52 @@ check(
   check("nav: every sub-page sits in its own section", SECTIONS.every((s) => s.subs.every((x) => sectionOf(x.href) === s.id)));
 }
 
+// ── roadmap (lane Y, F16 seam 10 and F23): the Roadmap sub, "Set an aim", the fixtures page, the strip at 344 ──
+// nav.ts is lane L's (seam 10), and YouTabs.tsx and you.css are in no lane: what the strip still lacks is a
+// WARN naming its handoff until it lands, and anything else wrong is a FAIL.
+{
+  const you = SECTIONS.find((s) => s.id === "you");
+  const labels = (you?.subs ?? []).map((s) => s.label);
+  const want = ["Sheet", "Roadmap", "Skills", "Loadout", "Moments", "Stats", "Settings"];
+  const navProblems: string[] = [];
+  if (labels.join(", ") !== want.join(", ")) navProblems.push(`You subs read "${labels.join(", ")}"`);
+  const roadmapSub = you?.subs.find((s) => s.label === "Roadmap");
+  if (roadmapSub && roadmapSub.href !== "/you/roadmap") navProblems.push(`the Roadmap sub links to ${roadmapSub.href}`);
+  const title = (p: string) => {
+    const t = titleFor(p);
+    return `${t.eyebrow ?? ""} · ${t.title}`;
+  };
+  if (title("/you/roadmap") !== "You · Roadmap") navProblems.push(`/you/roadmap is titled "${title("/you/roadmap")}"`);
+  if (title("/you/roadmap/new") !== "You · Set an aim") navProblems.push(`/you/roadmap/new is titled "${title("/you/roadmap/new")}"`);
+  if (activeSub("/you/roadmap/new") !== "/you/roadmap") navProblems.push(`/you/roadmap/new lights ${activeSub("/you/roadmap/new")}`);
+  if (activeSub("/you/roadmap") !== "/you/roadmap") navProblems.push(`/you/roadmap lights ${activeSub("/you/roadmap")}`);
+  const dev = DEV_STYLE_PAGES.find((p) => p.href === "/dev/style/roadmap");
+  if (!dev) navProblems.push("no DEV_STYLE_PAGES entry for /dev/style/roadmap");
+  else if (dev.label !== "Roadmap fixtures") navProblems.push(`the roadmap fixtures entry is labelled "${dev.label}"`);
+  if (titleFor("/dev/style/roadmap").title !== "Roadmap fixtures") navProblems.push(`/dev/style/roadmap is titled "${titleFor("/dev/style/roadmap").title}"`);
+  // Nothing pending: lane L landed nav.ts's seam 10. (The fixtures page itself is R5's; the
+  // "every /dev/style page in the strip exists" check above holds it.)
+  checkPending("nav (roadmap): You subs Sheet, Roadmap, Skills, Loadout, Moments, Stats, Settings; 'Set an aim'; the roadmap fixtures entry", navProblems, {});
+  // The settled page (/you, Sheet) keeps its title; Roadmap is a sub, not a section.
+  eq("nav (roadmap): /you stays Character, and /you/roadmap sits in You", [titleFor("/you").title, sectionOf("/you/roadmap"), sectionOf("/you/roadmap/new")], ["Character", "you", "you"]);
+
+  // At 344 the content is 312 px. A tab is its label (≥ 7 px a character at 600 14px, a lower bound)
+  // plus 28 px of padding, with 4 px gaps: seven tabs need far more than 312, so the strip scrolls,
+  // and the current tab can sit out of view unless the strip scrolls it in and shows that more is there.
+  const widthAt = (names: readonly string[]) => names.reduce((w, n) => w + n.length * 7 + 28, 0) + 4 * (names.length - 1);
+  check(`tabs at 344 (roadmap): the You strip (${widthAt(want)} px at least) is wider than the 312 px content, so it scrolls`, widthAt(want) > 312);
+  const tabs = read("src/components/home/YouTabs.tsx");
+  const youCss = cssRules(read("src/components/home/you.css"));
+  const stripProblems: string[] = [];
+  if (!/scrollIntoView\(|\.scrollLeft\s*=|\.scrollTo\(/.test(tabs)) stripProblems.push("YouTabs never scrolls the current tab into view");
+  if (!youCss.some((r) => /\.you-tabs/.test(r.selector) && /mask-image|linear-gradient/.test(r.body))) stripProblems.push("the You tab strip has no scroll cue");
+  const lead = "the lead: YouTabs.tsx and you.css are in no lane (roadmap F16 seam 10 says shell-check asserts both)";
+  checkPending("tabs at 344 (roadmap): the current tab is scrolled into view, and the strip keeps a scroll cue", stripProblems, {
+    "YouTabs never scrolls the current tab into view": lead,
+    "the You tab strip has no scroll cue": lead,
+  });
+}
+
 // ── the pre-paint script agrees with parsePrefs/resolveMotion ──────────────
 for (const raw of [null, "", "{}", "not json", '{"motion":"calm"}', '{"motion":"still","theme":"vellum"}', '{"motion":"full"}', '{"motion":"bogus","theme":"x"}', '{"motion":"system"}']) {
   for (const reduce of [false, true]) {

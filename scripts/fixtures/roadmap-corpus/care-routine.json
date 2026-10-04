@@ -1,0 +1,67 @@
+{
+  "aim": "care-routine",
+  "about": "A Care aim on a life track: the user's own word \"mum\" capitalised in a label is theirs, not a name to check.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": null,
+  "input": {
+    "intake": {
+      "aim": "Keep a steady weekly care routine for my mum",
+      "fieldId": null,
+      "track": "CARE",
+      "domainIds": [],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 3,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": "I work full time, so weekends only",
+      "examLabel": null
+    },
+    "areaName": "Care",
+    "domains": [],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [],
+  "drafts": [
+    {
+      "id": "care-routine-a",
+      "about": "One spelled number in a step; everything else plain.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "A routine that sticks",
+            "titleClaims": [],
+            "practices": [
+              { "name": "Weekly visit with Mum", "method": "PROJECT_WORK", "claims": [] },
+              { "name": "Call to check in", "method": "PROJECT_WORK", "claims": [] }
+            ],
+            "steps": [
+              { "title": "Set up a shared calendar", "claims": [] },
+              { "title": "List her regular appointments", "claims": [] }
+            ],
+            "checkpoint": null
+          },
+          {
+            "title": "Sharing the load",
+            "titleClaims": [],
+            "practices": [{ "name": "Plan the week's errands together", "method": "PROJECT_WORK", "claims": [] }],
+            "steps": [
+              { "title": "Ask a sibling to cover one visit a month", "claims": ["number"] },
+              { "title": "Agree a backup plan with family", "claims": [] }
+            ],
+            "checkpoint": { "label": "Review how the month went", "kind": "SELF_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

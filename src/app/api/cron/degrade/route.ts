@@ -4,6 +4,7 @@ import { decayStaleMastery } from "@/lib/mastery";
 import { purgeExpiredDebuffs } from "@/lib/debuffs";
 import { purgeExpiredBoons } from "@/lib/boons";
 import { enforceWeeklyQuotas } from "@/lib/field-quota";
+import { recordRoadmapAfterDegrade } from "@/lib/settlement";
 import { getCurrentUserId } from "@/lib/user";
 
 // Never statically cache/prerender a Cron endpoint.
@@ -17,14 +18,19 @@ export const dynamic = "force-dynamic";
  * (local dev), so long as you understand that means anyone with the URL can
  * trigger it once it's deployed.
  *
- * Three jobs, in order of consequence:
+ * Five jobs, in order of consequence:
  *   1. Degrade Ideas whose grace period lapsed unattended.
  *   2. Erode idle mastery points (`decayStaleMastery` — no-ops entirely
  *      while the balance is being saved toward something still locked).
  *   3. Judge last week's Field contribution quotas, once per week — the
  *      job runs daily but `enforceWeeklyQuotas` no-ops for the rest of the
  *      week once it has ruled.
- *   4. Delete expired debuff rows, which are already inert by then.
+ *   4. Record roadmap readings (docs/life-plan/roadmap.md F16 seam 8), so a
+ *      card degraded here lowers a milestone's g, its week quest's RAISE
+ *      and the aim's Proficiency the same day. Only where life writes are
+ *      on (settlement.ts recordRoadmapAfterDegrade); it never throws, so a
+ *      roadmap failure is reported in the JSON's `roadmap` and fails nothing.
+ *   5. Delete expired debuff rows, which are already inert by then.
  *
  * Each is independently idempotent per day, so a double-invocation cannot
  * double-charge. Quota enforcement runs *before* the purge so the Stagnation
@@ -44,7 +50,9 @@ export async function GET(request: Request) {
   const results = await degradeOverdueIdeas();
   const decay = await decayStaleMastery(userId);
   const quota = await enforceWeeklyQuotas(userId);
+  // After the degrade and the quota judge: the readings see today's lowered levels.
+  const roadmap = await recordRoadmapAfterDegrade(userId, new Date());
   const [debuffsPurged, boonsPurged] = await Promise.all([purgeExpiredBoons(), purgeExpiredDebuffs()]);
 
-  return NextResponse.json({ degraded: results.length, results, decay, quota, debuffsPurged, boonsPurged });
+  return NextResponse.json({ degraded: results.length, results, decay, quota, roadmap, debuffsPurged, boonsPurged });
 }

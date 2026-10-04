@@ -1,0 +1,84 @@
+{
+  "aim": "ielts",
+  "about": "A language exam named by its acronym (credential, no exam label, no syllabus): a band claim with a number, an official source with a place name.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_english",
+  "input": {
+    "intake": {
+      "aim": "Reach IELTS 7 in the academic test",
+      "fieldId": "fld_english",
+      "track": "CRAFT",
+      "domainIds": ["d_en_vocab", "d_en_essay"],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 7,
+      "newCardsPerWeek": 20,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "WORKING",
+      "intensity": "PUSH",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "English",
+    "domains": [
+      { "id": "d_en_vocab", "name": "Academic Vocabulary", "fieldId": "fld_english", "cards": 60, "atSix": 25, "atTop": 3, "chosen": true },
+      { "id": "d_en_essay", "name": "Essay Structure", "fieldId": "fld_english", "cards": 15, "atSix": 4, "atTop": 0, "chosen": true },
+      { "id": "d_en_gram", "name": "Grammar", "fieldId": "fld_english", "cards": 40, "atSix": 20, "atTop": 2, "chosen": false },
+      { "id": "d_en_listen", "name": "Listening", "fieldId": "fld_english", "cards": 8, "atSix": 1, "atTop": 0, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [
+    { "id": "d_en_vocab", "name": "Academic Vocabulary", "fieldId": "fld_english", "fieldName": "English", "cards": 60, "titles": ["Hedging language", "Reading for gist and detail"], "tags": ["vocabulary"] },
+    { "id": "d_en_essay", "name": "Essay Structure", "fieldId": "fld_english", "fieldName": "English", "cards": 15, "titles": ["Linking words", "Thesis statements", "Answering the question asked"], "tags": ["writing"] },
+    { "id": "d_en_gram", "name": "Grammar", "fieldId": "fld_english", "fieldName": "English", "cards": 40, "titles": ["Conditionals"], "tags": ["grammar"] },
+    { "id": "d_en_listen", "name": "Listening", "fieldId": "fld_english", "fieldName": "English", "cards": 8, "titles": ["Listening for numbers"], "tags": ["listening", "audio"] }
+  ],
+  "drafts": [
+    {
+      "id": "ielts-a",
+      "about": "Two milestones; a proposed Domain; a coached practice (no constraint excludes it).",
+      "newDomainClaims": { "1:0": [] },
+      "reply": {
+        "milestones": [
+          {
+            "title": "Writing that scores",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": ["Task response"],
+            "topics": [
+              { "label": "Linking words for arguments", "domain": "D2", "claims": [] },
+              { "label": "Band 7 descriptors for writing", "domain": "D2", "claims": ["number", "syllabus"] },
+              { "label": "Answering the whole question", "domain": "N1", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Write timed essays", "method": "WRITING", "claims": [] },
+              { "name": "Speaking practice with a tutor", "method": "COACHED_SESSION", "claims": [] }
+            ],
+            "steps": [{ "title": "Collect phrases for giving opinions", "claims": [] }],
+            "checkpoint": { "label": "Practice test essay", "kind": "MOCK_TEST", "claims": [] }
+          },
+          {
+            "title": "Under exam conditions",
+            "titleClaims": [],
+            "domains": ["D1", "D4"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Reading for gist", "domain": "D1", "claims": [] },
+              { "label": "Listening with the official Cambridge audio", "domain": "D4", "claims": ["resource", "proper-noun", "syllabus"] }
+            ],
+            "practices": [{ "name": "Shadow podcast episodes daily", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Sit the IELTS test", "claims": [] }],
+            "checkpoint": { "label": "Timed listening section", "kind": "SELF_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

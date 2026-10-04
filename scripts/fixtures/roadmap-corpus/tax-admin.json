@@ -1,0 +1,64 @@
+{
+  "aim": "tax-admin",
+  "about": "A Duty aim on a life track: an official source named by acronym, a requirement claim (\"standard\").",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": null,
+  "input": {
+    "intake": {
+      "aim": "Get on top of my tax admin before the deadline",
+      "fieldId": null,
+      "track": "DUTY",
+      "domainIds": [],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 2,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "NEW",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Duty",
+    "domains": [],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [],
+  "drafts": [
+    {
+      "id": "tax-admin-a",
+      "about": "Two claims, both caught; the rest plain admin.",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Paperwork together",
+            "titleClaims": [],
+            "practices": [{ "name": "Weekly receipts sort", "method": "PROJECT_WORK", "claims": [] }],
+            "steps": [
+              { "title": "Gather last year's payslips", "claims": [] },
+              { "title": "Download the official ATO income statement", "claims": ["syllabus", "proper-noun"] }
+            ],
+            "checkpoint": null
+          },
+          {
+            "title": "Lodged on time",
+            "titleClaims": [],
+            "practices": [{ "name": "Monthly admin hour", "method": "PROJECT_WORK", "claims": [] }],
+            "steps": [
+              { "title": "Lodge the return", "claims": [] },
+              { "title": "Claim the standard deduction", "claims": ["syllabus"] }
+            ],
+            "checkpoint": { "label": "Check nothing is missing", "kind": "SELF_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

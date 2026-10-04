@@ -31,10 +31,26 @@
  *       the gate as settledFor (the launch script's early cursor); a reset after launch
  *   §9b the cheap check: maybeJudgeWeeks returns without a judge read while only a gated DUTY is
  *       missing, and judges once settlement has passed the Sunday (Prisma entries are spies)
+ *   §10 roadmap goals (docs/life-plan/roadmap.md F16 seam 1; roadmap lane G's cases of lane L's
+ *       goals.ts): g from the stored series (null with none, the last reading ≤ the day, the due
+ *       day's on a late close, the minimum with steps), 'pays nothing' at 0, 'it states 0 MP'
+ *       before the bar and age gates, closedGoalReading from closedScore, the binding caption
+ *   §10b a ROADMAP close whose readings fail (fix round): a throw or a refusal that is not final
+ *       fails the close with no transaction (never a permanent 0); a final refusal closes it
+ *       unmeasured, g null, pays 0 (every Prisma entry a spy; lane L's closeGoalCore)
+ *   §10c the ROADMAP close path (fix round 2: lane L's G-L1 cases, `lineages` injected per G-L2):
+ *       closing: true and R1's reach ops after the reading upserts in the one transaction; the
+ *       preview's own transaction; the g paid must be the g R1 judged; one due day (the goal's,
+ *       else the milestone's); a lineage pays once (lineagePaidOn, the in-transaction lineage
+ *       guard and its GOAL_CLOSE_STALE, a superseded row); a failed lineage read is
+ *       GOAL_CLOSE_RETRY; writes off (every Prisma entry a spy; reads injected). §10 adds the
+ *       pure lineagePaidOnOf and closeDecision cases
  *
  * §6 builds Prisma ops without running them (Prisma queries are lazy), so no
  * database is ever reached.
  */
+// tasks.ts and goals-server.ts read the roadmap's modules (roadmap.md F16 seam 22): no check can reach a model.
+import "./_no-model";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ATTRIBUTES, computeAttributeScores, type Composition as FullComposition } from "../src/lib/attributes";
@@ -52,7 +68,17 @@ import { instanceOutcome, outcomesOf } from "../src/lib/habit";
 import { FULL_DAY_MP } from "../src/lib/full-day";
 import { lifeMintData, mintLifeMasteryOps } from "../src/lib/mastery";
 import { prisma } from "../src/lib/prisma";
-import { GOAL_CLOSE_BEFORE_LAUNCH, closeGoalCore } from "../src/lib/goals-server";
+import {
+  GOAL_CLOSE_BEFORE_LAUNCH,
+  GOAL_CLOSE_RETRY,
+  GOAL_CLOSE_STALE,
+  closeGoalCore,
+  prepareRoadmapGoalClose,
+  type GoalCloseDeps,
+  type GoalLineage,
+} from "../src/lib/goals-server";
+import type { ReadingOps } from "../src/lib/roadmap-readings";
+import { NOT_RECORDED_HERE, ROADMAP_WRITES_OFF, type RoadmapWriteOpts } from "../src/lib/roadmap-types";
 import {
   BACKFILL_PREFIX,
   BODY_EFFORT_MINUTES,
@@ -139,10 +165,12 @@ import {
   goalPercent,
   goalProgress,
   goalProgressLabel,
+  lineagePaidOnOf,
   statedPayoutCopy,
   trackGoalDepth,
   type GoalInput,
   type GoalMintRow,
+  type RoadmapSeriesPoint,
 } from "../src/lib/goals";
 import {
   dutyGated,
@@ -1179,7 +1207,13 @@ console.log("\n§8 review fixes");
   const closeCore = goalsSrv.slice(goalsSrv.indexOf("export async function closeGoalCore"), goalsSrv.indexOf("const RESCHEDULE_MAX_DAYS"));
   check(
     "C3: a close's transaction opens with the life-mint lock, then (when it pays) the guard, before any write",
-    /\$transaction\(\[\s*lifeMintLockOp\(userId\),\s*\.\.\.\(payout\.pays > 0 \? \[closeGuardOp\(userId, input\.id, goalLimitWindow\(input\)\)\] : \[\]\),\s*prisma\.taskTemplate\.updateMany/.test(closeCore)
+    /\$transaction\(\[\s*lifeMintLockOp\(userId\),\s*\.\.\.\(payout\.pays > 0 \? \[closeGuardOp\(userId, input\.id, goalLimitWindow\(input\)\)\] : \[\]\),\s*(?:\.\.\.roadmapOps,\s*)?prisma\.taskTemplate\.updateMany/.test(closeCore)
+  );
+  // Roadmap (F16 seam 2, lane L's goals-server; pinned by lane G): a ROADMAP close writes today's readings
+  // and its reach transition in the same array, after the lock and the guard and before closedScore.
+  check(
+    "roadmap: a ROADMAP close's reading upserts ride in its transaction after the lock and the guard, before the closedScore update",
+    /closeGuardOp\(userId, input\.id, goalLimitWindow\(input\)\)\] : \[\]\),\s*\.\.\.roadmapOps,\s*prisma\.taskTemplate\.updateMany/.test(closeCore)
   );
   check("C3: a lost race returns 'Something changed; try again.'", /isStaleGuard\(err\)\) return \{ ok: false, error: GOAL_CLOSE_STALE \}/.test(closeCore) && /GOAL_CLOSE_STALE = "Something changed; try again\."/.test(goalsSrv));
   check(
@@ -1782,11 +1816,635 @@ async function cheapCheck(): Promise<void> {
   }
 }
 
+// ── §10 roadmap goals (roadmap.md F16 seam 1: lane G's cases of lane L's goals.ts) ──
+console.log("\n§10 roadmap goals");
+{
+  const CREATED = "2026-10-05";
+  const day = (n: number): DayKey => addDays(CREATED, n);
+  /** A stored series point (roadmap-measures milestoneGoalSeries' shape): g on a day, with its binding part. */
+  const pt = (n: number, g: number, o: Partial<RoadmapSeriesPoint> = {}): RoadmapSeriesPoint => ({
+    day: day(n),
+    g,
+    observedAt: `${day(n)}T09:12:00.000Z`,
+    bindingClass: "MEASURED",
+    bindingLabel: "cards at level 6+",
+    ...o,
+  });
+  /** A roadmap milestone's MID goal: krMetric ROADMAP, stated 6, due in 60 days, closed on day 25. */
+  const rm = (o: Partial<GoalInput> = {}): GoalInput => ({
+    id: "rm-goal",
+    horizon: "MID",
+    track: "CRAFT",
+    goalMp: 6,
+    krMetric: "ROADMAP",
+    krTarget: null,
+    steps: [],
+    progress: [],
+    readings: [],
+    dueDay: day(60),
+    createdDay: CREATED,
+    today: day(25),
+    launchDay: CREATED,
+    goalMints: [],
+    cappedUsedThisWeek: 0,
+    ...o,
+  });
+  const steps = (done: number, total: number) => Array.from({ length: total }, (_, i) => ({ completedDay: i < done ? day(4) : null }));
+
+  const none = closeDecision(rm());
+  check(
+    "ROADMAP: no stored reading reads g null (an empty or absent series), and the close pays 0, 'not measured'",
+    goalProgress(rm(), day(25)) === null && goalProgress({ ...rm(), readings: undefined }, day(25)) === null && none.g === null && none.pays === 0 && /^not measured/.test(none.why ?? ""),
+    none.why ?? ""
+  );
+  const series = [pt(3, 0.3), pt(10, 0.5), pt(20, 0.9)];
+  const asOf = [2, 3, 15, 30].map((n) => goalProgress(rm({ readings: series }), day(n)));
+  check(
+    "ROADMAP: g is the last stored reading on or before the day (null before the first, held across gaps)",
+    JSON.stringify(asOf) === JSON.stringify([null, 0.3, 0.5, 0.9]),
+    JSON.stringify(asOf)
+  );
+  const late = rm({ dueDay: day(30), today: day(34), readings: [pt(28, 0.75), pt(33, 1)] });
+  const lateClose = closeDecision(late);
+  check(
+    "ROADMAP: a close after the due day reads the due day's last reading (0.75), never one recorded after it (1.0)",
+    goalAsOf(late.today, late.dueDay) === day(30) && lateClose.g === 0.75 && lateClose.pays === 4.5,
+    `${lateClose.g} ${lateClose.pays}`
+  );
+  check(
+    "ROADMAP: with steps, g is the minimum of the reading and the steps' done share (0.8 and 1 of 2 → 0.5)",
+    goalProgress(rm({ readings: [pt(10, 0.8)], steps: steps(1, 2) }), day(20)) === 0.5
+  );
+  check(
+    "ROADMAP: 2 of 2 steps done and a 0.4 reading read 0.4, not 1.0 (the CHILDREN fallback); steps alone, with no reading, read null",
+    goalProgress(rm({ readings: [pt(10, 0.4)], steps: steps(2, 2) }), day(20)) === 0.4 && goalProgress(rm({ readings: [], steps: steps(2, 2) }), day(20)) === null
+  );
+  eq("statedPayoutCopy(MID, 0) reads 'pays nothing' (its caller appends the reason)", statedPayoutCopy("MID", 0), "pays nothing");
+  check("…and a goal that states MP reads as before", statedPayoutCopy("MID", 6) === "pays ⬡ 6 × progress from 70%" && statedPayoutCopy("SHORT") === "pays ⬡ 1 when done");
+  const zero = closeDecision(rm({ goalMp: 0, readings: [pt(20, 0.5)] }));
+  const zeroYoung = closeDecision(rm({ goalMp: 0, readings: [pt(2, 0.5)], today: day(3) }));
+  check(
+    "closeDecision: a goal stated at 0 at 50% reads 'it states 0 MP', never 'below 70%', and before the 21-day gate too",
+    zero.pays === 0 && zero.why === "it states 0 MP" && zeroYoung.pays === 0 && zeroYoung.why === "it states 0 MP",
+    `${zero.why} / ${zeroYoung.why}`
+  );
+  check(
+    "…a hand-edited 0 on a MANUAL goal reads the same",
+    closeDecision(rm({ krMetric: "MANUAL", krTarget: 10, goalMp: 0, progress: [{ day: CREATED, qty: 5 }], readings: undefined })).why === "it states 0 MP"
+  );
+  check(
+    "…while launch and measurement still come first: 'before life MP began', and 'not measured' with no reading",
+    closeDecision(rm({ goalMp: 0, launchDay: null, readings: [pt(20, 0.5)] })).why === "before life MP began" && /^not measured/.test(closeDecision(rm({ goalMp: 0 })).why ?? "")
+  );
+  const paying = closeDecision(rm({ readings: [pt(24, 0.8)] }));
+  check(
+    "a milestone stated at 6 pays like any MID (no new reason, cap or limit): g 0.8 at 25 days pays 4.8 under GOAL_MID",
+    paying.pays === 4.8 && paying.reason === "GOAL_MID" && paying.why === null && paying.stated === 6,
+    `${paying.pays} ${paying.reason} ${paying.why}`
+  );
+  const closedInput = { ...rm({ readings: [pt(20, 1)] }), krUnit: null, closedScore: 0.4 };
+  const closed = closedGoalReading(closedInput, day(25), null);
+  const closedUnmeasured = closedGoalReading({ ...closedInput, closedScore: 0 }, day(25), "not measured yet");
+  check(
+    "closedGoalReading: a closed ROADMAP goal reads its stored closedScore (0.4), not the series (1.0); one closed unmeasured reads null",
+    closed.g === 0.4 && closedUnmeasured.g === null,
+    `${closed.g} / ${closedUnmeasured.g}`
+  );
+  check(
+    "goalProgressLabel: the binding part's evidence and label ('tested by your reviews · slowest: …', 'from your ticks · slowest: …')",
+    goalProgressLabel(rm({ readings: [pt(10, 0.5)] }), day(20)) === "tested by your reviews · slowest: cards at level 6+" &&
+      goalProgressLabel(rm({ readings: [pt(10, 0.5, { bindingClass: "SELF_REPORTED", bindingLabel: "Backtest sessions" })] }), day(20)) === "from your ticks · slowest: Backtest sessions"
+  );
+
+  // Round 2 (G-L1 a, lane L's goals.ts): at most one goal of a milestone lineage pays. A dropped
+  // milestone's goal and its "Start again" copy share a lineage; lineagePaidOnOf finds the first day
+  // another goal of it paid, and closeDecision then pays 0 whatever this goal's g.
+  const paid = (goalId: string, on: DayKey, qty: number, reason = "GOAL_MID"): GoalMintRow => ({ key: goalMintKey(goalId), templateId: goalId, track: "CRAFT", reason, day: on, qty });
+  check("lineagePaidOnOf: no other goal in the lineage reads null, whatever the rows", lineagePaidOnOf([paid("orig", day(10), 6)], []) === null);
+  check(
+    "lineagePaidOnOf: the earliest paying row among the other goals only (an unrelated goal's earlier pay is not the lineage's)",
+    lineagePaidOnOf([paid("orig", day(15), 6), paid("copy-2", day(12), 4.2), paid("unrelated", day(1), 6)], ["orig", "copy-2"]) === day(12)
+  );
+  check(
+    "lineagePaidOnOf: a 0 row (a goal closed for nothing) and a row under a non-goal reason are not pays",
+    lineagePaidOnOf([paid("orig", day(10), 0), paid("orig", day(11), 6, "WEEK_KEPT")], ["orig"]) === null
+  );
+  const lineagePaid = closeDecision(rm({ readings: [pt(24, 0.9)], lineagePaidOn: "2026-10-20" }));
+  check(
+    "closeDecision: a lineage another goal paid pays 0, 'this milestone already paid on 20 Oct', and still reports the g it measured",
+    lineagePaid.pays === 0 && lineagePaid.why === "this milestone already paid on 20 Oct" && lineagePaid.g === 0.9 && lineagePaid.depth === 0,
+    JSON.stringify(lineagePaid)
+  );
+  check(
+    "…it reads before the bar (a lineage-paid goal at 50% reads 'already paid', never 'below 70%')",
+    closeDecision(rm({ readings: [pt(24, 0.5)], lineagePaidOn: "2026-10-20" })).why === "this milestone already paid on 20 Oct"
+  );
+  check(
+    "…after 'it states 0 MP' (a 0-stated copy) and 'not measured yet' (no reading), which read first",
+    closeDecision(rm({ goalMp: 0, readings: [pt(24, 0.9)], lineagePaidOn: "2026-10-20" })).why === "it states 0 MP" &&
+      closeDecision(rm({ lineagePaidOn: "2026-10-20" })).why === "not measured yet"
+  );
+  check(
+    "…lineagePaidOn null or absent changes nothing (6 × 0.8 = 4.8)",
+    JSON.stringify(closeDecision(rm({ readings: [pt(24, 0.8)], lineagePaidOn: null }))) === JSON.stringify(paying)
+  );
+  check(
+    "…the day reads without zero padding, from the key itself ('1 Dec', '3 Mar')",
+    closeDecision(rm({ readings: [pt(24, 0.9)], lineagePaidOn: "2026-12-01" })).why === "this milestone already paid on 1 Dec" &&
+      closeDecision(rm({ readings: [pt(24, 0.9)], lineagePaidOn: "2026-03-03" })).why === "this milestone already paid on 3 Mar"
+  );
+}
+
+// ── §10b a ROADMAP close whose readings fail (fix round: review Lens 1; roadmap-contracts §9.4 item 1) ──
+// readingOpsFor returns {ok: false, reason, final: true} only for the deterministic cases (no roadmap or
+// milestone, an ARCHIVED or DRAFT roadmap, a missing table, a superseded row) and rethrows anything else.
+// closeGoalCore closes unmeasured (g null, pays 0) only on a final refusal; a throw or a refusal that is
+// not final fails the close and writes nothing, so a transient database error never closes a milestone
+// at 0 for good. Every Prisma entry the close could reach is a spy: a write the close must not make fails
+// the case instead of reaching the shared database. Lane L's goals-server owns the behaviour (L1).
+async function roadmapCloseFailures(): Promise<void> {
+  console.log("\n§10b a ROADMAP close whose readings fail");
+  const db = prisma as unknown as Record<string, unknown>;
+  const ENTRIES = ["$transaction", "$executeRaw", "$queryRaw", "taskTemplate", "activityEvent", "masteryLedgerEntry", "roadmapMilestone", "roadmapReading"] as const;
+  const saved = ENTRIES.map((k) => [k, db[k]] as const);
+  const touched: string[] = [];
+  const quiet = console.error;
+  const CREATED = "2026-10-05";
+  const NOW = new Date(Date.UTC(2026, 9, 31, 3)); // Sat 31 Oct, day 26 of a goal due on day 60
+  const WRITES_ON = { XTNL_LIFE_JUDGE: "1" };
+  const input: GoalInput = {
+    id: "rm-goal",
+    horizon: "MID",
+    track: "CRAFT",
+    goalMp: 6,
+    krMetric: "ROADMAP",
+    krTarget: null,
+    steps: [],
+    progress: [],
+    readings: [{ day: addDays(CREATED, 20), g: 0.9, observedAt: `${addDays(CREATED, 20)}T09:12:00.000Z`, bindingClass: "MEASURED", bindingLabel: "cards at level 6+" }],
+    dueDay: addDays(CREATED, 60),
+    createdDay: CREATED,
+    today: addDays(CREATED, 26),
+    launchDay: CREATED,
+    goalMints: [],
+    cappedUsedThisWeek: 0,
+  };
+  const throwing = (name: string) => () => {
+    touched.push(name);
+    throw new Error(`database reached: ${name}`);
+  };
+  /** Every entry a spy that throws (`recording` false), or one that records and hands back a token (true). */
+  const install = (recording: boolean) => {
+    const entry = (name: string) => (recording ? (...args: unknown[]) => (touched.push(name), { op: name, args }) : throwing(name));
+    for (const k of ENTRIES) db[k] = k.startsWith("$") ? entry(k) : new Proxy({}, { get: (_t, m) => entry(`${k}.${String(m)}`) });
+    if (recording) {
+      db.$transaction = async (ops: unknown[]) => {
+        touched.push(`$transaction(${ops.length})`);
+        return ops.map(() => 1);
+      };
+    }
+  };
+  /** Its lineage as lane L's loadGoalLineages reads it: a lone milestone unless a fixture says otherwise. */
+  const lone: GoalLineage = { milestoneDueDay: input.dueDay, otherGoalIds: [], superseded: false };
+  const attempt = async (
+    readingOps: () => Promise<ReadingOps>,
+    lineage: GoalLineage = lone
+  ): Promise<{ ok: boolean; error?: string; threw?: string; payout?: { g: number | null; pays: number } }> => {
+    try {
+      return await closeGoalCore("u", input.id, NOW, CREATED, { env: WRITES_ON, readInput: async () => input, readingOps, lineages: async () => ({ [input.id]: lineage }) });
+    } catch (err) {
+      return { ok: false, threw: (err as Error).message };
+    }
+  };
+  console.error = () => {};
+  try {
+    install(false);
+    touched.length = 0;
+    const thrown = await attempt(async () => {
+      throw Object.assign(new Error("Timed out fetching a new connection from the connection pool."), { code: "P2024" });
+    });
+    check(
+      "a readings failure that throws (a pool timeout) fails the close with GOAL_CLOSE_RETRY: no transaction, nothing read or written, never a 0 close",
+      !thrown.ok && thrown.error === GOAL_CLOSE_RETRY && touched.length === 0,
+      `${JSON.stringify(thrown)} | ${touched.join()}`
+    );
+
+    touched.length = 0;
+    const transient = await attempt(async () => ({ ok: false, reason: "Can't reach database server at db:5432" }) as ReadingOps);
+    check(
+      "a refusal that is not final (a transient failure in words) fails the close too, with GOAL_CLOSE_RETRY: no transaction, the goal stays open",
+      !transient.ok && transient.error === GOAL_CLOSE_RETRY && touched.length === 0,
+      `${JSON.stringify(transient)} | ${touched.join()}`
+    );
+
+    install(true);
+    touched.length = 0;
+    const final = await attempt(async () => ({ ok: false, reason: "replaced by Start again", final: true }) as unknown as ReadingOps);
+    check(
+      "a final refusal (a superseded row, an archived roadmap) closes unmeasured: one transaction, g null, pays 0",
+      final.ok && final.payout?.g === null && final.payout?.pays === 0 && touched.filter((t) => t.startsWith("$transaction")).length === 1 && touched.includes("taskTemplate.updateMany"),
+      `${JSON.stringify(final)} | ${touched.join()}`
+    );
+
+    // The pair of tasks.ts unarchiveCore's refusal: a goal whose milestone a started "Start again" copy
+    // replaced (isSupersededRow) is never measured: no reading is worked out, and its close pays 0.
+    touched.length = 0;
+    let measured = false;
+    const replaced = await attempt(
+      async () => {
+        measured = true;
+        throw new Error("a superseded milestone was measured");
+      },
+      { milestoneDueDay: input.dueDay, otherGoalIds: ["rm-goal-copy"], superseded: true }
+    );
+    check(
+      "a superseded milestone's goal (its 'Start again' copy started) closes unmeasured without a reading: g null, pays 0, one transaction",
+      replaced.ok && !measured && replaced.payout?.g === null && replaced.payout?.pays === 0 && touched.filter((t) => t.startsWith("$transaction")).length === 1,
+      `${JSON.stringify(replaced)} | ${touched.join()}`
+    );
+  } finally {
+    console.error = quiet;
+    for (const [k, v] of saved) db[k] = v;
+  }
+}
+
+// ── §10c the ROADMAP close path: one transaction, one g, one due day, one pay per lineage ──
+// Round 2 (roadmap-contracts §11.4 item 8): lane L's close-path cases (G-L1 a–h), ported from its
+// scratch check so the money path is pinned in the repo. Lane L's goals-server owns the behaviour;
+// these inject `readInput`, `readingOps` and `lineages` (G-L2), so no milestone or reading is read.
+// Every Prisma entry the close could reach is a spy: the op builders a close may make ($executeRaw,
+// taskTemplate.updateMany, activityEvent.create, masteryLedgerEntry.create) hand back labelled
+// tokens, any other entry throws, and $transaction records the array it is given instead of running it.
+async function roadmapClosePath(): Promise<void> {
+  console.log("\n§10c the ROADMAP close path: one transaction, one g, one due day, one pay per lineage");
+  const db = prisma as unknown as Record<string, unknown>;
+  const ENTRIES = [
+    "$transaction",
+    "$executeRaw",
+    "$queryRaw",
+    "$executeRawUnsafe",
+    "$queryRawUnsafe",
+    "taskTemplate",
+    "activityEvent",
+    "masteryLedgerEntry",
+    "roadmap",
+    "roadmapMilestone",
+    "roadmapReading",
+  ] as const;
+  const saved = ENTRIES.map((k) => [k, db[k]] as const);
+  const quiet = console.error;
+  type Token = { op: string; sql?: string; values?: unknown[]; args?: unknown[] };
+  const BUILDERS = new Set(["taskTemplate.updateMany", "activityEvent.create", "masteryLedgerEntry.create"]);
+  /** What the close did: reads it must not make, the transactions it ran, and what readingOpsFor saw. */
+  const seen = {
+    reads: [] as string[],
+    txs: [] as unknown[][],
+    readingCalls: 0,
+    opts: null as (RoadmapWriteOpts & { closing?: boolean }) | null,
+    fault: null as ((ops: unknown[]) => Error | null) | null,
+  };
+  const refuse = (name: string) => () => {
+    seen.reads.push(name);
+    throw new Error(`database reached: ${name}`);
+  };
+  for (const k of ENTRIES) {
+    db[k] = k.startsWith("$")
+      ? refuse(k)
+      : new Proxy(
+          {},
+          {
+            get: (_t, m) => {
+              const name = `${k}.${String(m)}`;
+              return BUILDERS.has(name) ? (...args: unknown[]): Token => ({ op: name, args }) : refuse(name);
+            },
+          }
+        );
+  }
+  db.$executeRaw = (strings: TemplateStringsArray, ...values: unknown[]): Token => ({ op: "$executeRaw", sql: strings.join("?").replace(/\s+/g, " "), values });
+  db.$transaction = async (ops: unknown[]) => {
+    seen.txs.push(ops);
+    const fault = seen.fault?.(ops) ?? null;
+    if (fault) throw fault;
+    return ops.map(() => 1);
+  };
+
+  // readingOpsFor's ops, as sentinels: today's reading upserts and R1's guarded reach op.
+  const READING = { sentinel: "reading" };
+  const PROFICIENCY = { sentinel: "proficiency" };
+  const REACH = { sentinel: "reach" };
+  const TOKEN_LABEL: Record<string, string> = { "taskTemplate.updateMany": "close", "activityEvent.create": "decision", "masteryLedgerEntry.create": "ledger" };
+  const labelOf = (o: unknown): string => {
+    if (o === READING || o === PROFICIENCY || o === REACH) return (o as { sentinel: string }).sentinel;
+    const t = o as Token | null;
+    if (t?.op === "$executeRaw") {
+      const sql = t.sql ?? "";
+      return /pg_advisory_xact_lock/.test(sql) ? "lock" : /CASE WHEN EXISTS/.test(sql) ? "lineage" : /SELECT COUNT\(\*\)/.test(sql) ? "guard" : "raw";
+    }
+    return (t && TOKEN_LABEL[t.op]) ?? "?";
+  };
+  const labels = (ops: unknown[] | undefined): string => (ops ?? []).map(labelOf).join(",");
+  /** The `data` a labelled builder token was called with (the close's update, the decision row). */
+  const dataOf = (ops: unknown[] | undefined, label: string): Record<string, unknown> | undefined => {
+    const token = (ops ?? []).find((o) => labelOf(o) === label) as Token | undefined;
+    return (token?.args?.[0] as { data?: Record<string, unknown> } | undefined)?.data;
+  };
+
+  const CREATED = "2026-10-05";
+  const day = (n: number): DayKey => addDays(CREATED, n);
+  const NOW = new Date(Date.UTC(2026, 9, 31, 3)); // Sat 31 Oct, 14:00 in Sydney: day 26 of a goal due on day 60
+  const TODAY = day(26);
+  const WRITES_ON: GoalCloseDeps["env"] = { XTNL_LIFE_JUDGE: "1" };
+  const WRITES_OFF: GoalCloseDeps["env"] = { NODE_ENV: "development" };
+  const pt = (d: DayKey, g: number): RoadmapSeriesPoint => ({ day: d, g, observedAt: `${d}T09:12:00.000Z`, bindingClass: "MEASURED", bindingLabel: "cards at level 6+" });
+  const goal = (o: Partial<GoalInput> = {}): GoalInput => ({
+    id: "rm-goal",
+    horizon: "MID",
+    track: "CRAFT",
+    goalMp: 6,
+    krMetric: "ROADMAP",
+    krTarget: null,
+    steps: [],
+    progress: [],
+    readings: [pt(day(20), 0.4)],
+    dueDay: day(60),
+    createdDay: CREATED,
+    today: TODAY,
+    launchDay: CREATED,
+    goalMints: [],
+    cappedUsedThisWeek: 0,
+    ...o,
+  });
+  const paidRow = (goalId: string, on: DayKey, qty: number): GoalMintRow => ({ key: goalMintKey(goalId), templateId: goalId, track: "CRAFT", reason: "GOAL_MID", day: on, qty });
+  /** readingOpsFor's answer: ok with today's two upserts and R1's reach op unless the case overrides it. */
+  type Fake = Partial<Extract<ReadingOps, { ok: true }>> | { ok: false; reason: string; final?: boolean } | "throw";
+  const lineage = (otherGoalIds: string[], o: Partial<GoalLineage> = {}): GoalLineage => ({ milestoneDueDay: day(60), otherGoalIds, superseded: false, ...o });
+  const depsOf = (
+    input: GoalInput,
+    fake: Fake,
+    o: { env?: GoalCloseDeps["env"]; lineage?: GoalLineage; lineages?: GoalCloseDeps["lineages"] } = {}
+  ): GoalCloseDeps => ({
+    env: o.env ?? WRITES_ON,
+    readInput: async () => structuredClone(input),
+    // A lone milestone (its lineage of one) unless the case names one, as loadGoalLineages reads it.
+    lineages: o.lineages ?? (async () => ({ [input.id]: o.lineage ?? { milestoneDueDay: input.dueDay, otherGoalIds: [], superseded: false } })),
+    readingOps: async (_u, _g, _n, opts) => {
+      seen.readingCalls++;
+      seen.opts = opts;
+      if (fake === "throw") throw Object.assign(new Error("Can't reach database server at db:5432"), { code: "P1001" });
+      if ("ok" in fake && fake.ok === false) return fake as unknown as ReadingOps;
+      return { ok: true, ops: [READING, PROFICIENCY], rows: [], point: pt(TODAY, 0.4), reach: { kind: "none" }, live: false, reachOps: [REACH], ...fake } as unknown as ReadingOps;
+    },
+  });
+  const close = (input: GoalInput, fake: Fake, o?: Parameters<typeof depsOf>[2]) => closeGoalCore("u", input.id, NOW, CREATED, depsOf(input, fake, o));
+  const preview = (input: GoalInput, fake: Fake, o?: Parameters<typeof depsOf>[2]) => prepareRoadmapGoalClose("u", input.id, NOW, depsOf(input, fake, o));
+  const settles = (p: Promise<unknown>) => p.then(
+    () => "resolved",
+    () => "threw"
+  );
+  const fresh = () => {
+    seen.reads.length = 0;
+    seen.txs.length = 0;
+    seen.readingCalls = 0;
+    seen.opts = null;
+    seen.fault = null;
+  };
+  const show = (x: unknown) => `${JSON.stringify(x)} | tx ${seen.txs.map((t) => `[${labels(t)}]`).join(" ")}${seen.reads.length ? ` | read ${seen.reads.join()}` : ""}`;
+
+  console.error = () => {};
+  try {
+    // (d) closing: true, (e) R1's reach ops after the reading upserts, in the close's one transaction.
+    fresh();
+    const pays = await close(goal(), { point: pt(TODAY, 0.9), g: 0.9 });
+    const tx = seen.txs[0];
+    check(
+      "close: readingOpsFor gets {env, closing: true}, so its PROFICIENCY row counts the reach this close confirms",
+      seen.opts?.closing === true && seen.opts?.env === WRITES_ON,
+      JSON.stringify(seen.opts)
+    );
+    check(
+      "close: pays from the reading it records (6 × 0.9 = 5.4); closedScore and the 'mp:GOAL:<id>' row carry that g and that pay",
+      pays.ok && pays.payout.g === 0.9 && pays.payout.pays === 5.4 && dataOf(tx, "close")?.closedScore === 0.9 && dataOf(tx, "decision")?.qty === 5.4 && dataOf(tx, "decision")?.dedupeKey === goalMintKey("rm-goal"),
+      show(pays)
+    );
+    check(
+      "close (pays): one transaction — the lock, the limit guard, today's readings, R1's reach op (res.reachOps), then the close, its decision row and ledger entry",
+      seen.txs.length === 1 && labels(tx) === "lock,guard,reading,proficiency,reach,close,decision,ledger" && seen.reads.length === 0,
+      show(pays)
+    );
+    fresh();
+    await close(goal(), { point: pt(TODAY, 0.9), g: 0.9, reachOps: [] });
+    check("close: with no reach op from R1 none is added (the close never builds a reach op of its own)", labels(seen.txs[0]) === "lock,guard,reading,proficiency,close,decision,ledger", show(null));
+    fresh();
+    const below = await close(goal(), { point: pt(TODAY, 0.4), g: 0.4 });
+    check(
+      "close (pays 0, below 70%): no limit guard, but its readings and R1's reach op (clearing a pending reach) still ride its one transaction",
+      below.ok && below.payout.pays === 0 && below.payout.why === "below 70%" && labels(seen.txs[0]) === "lock,reading,proficiency,reach,close,decision",
+      show(below)
+    );
+
+    fresh();
+    const prep = await preview(goal(), { point: pt(TODAY, 0.9), g: 0.9 });
+    check("preview: readingOpsFor gets no `closing`", seen.opts != null && !("closing" in seen.opts), JSON.stringify(seen.opts));
+    check(
+      "preview: records today's readings in a transaction of their own, never a reach op (only a close confirms or clears one)",
+      seen.txs.length === 1 && labels(seen.txs[0]) === "reading,proficiency" && prep.written === 2 && prep.refused === null && !prep.live,
+      show(prep.written)
+    );
+    fresh();
+    const afterPrep = await close(goal(), { point: pt(TODAY, 0.9), g: 0.9 });
+    check(
+      "preview and close decide the same payout from the same values",
+      prep.input != null && afterPrep.ok && JSON.stringify(closeDecision(prep.input)) === JSON.stringify(afterPrep.payout),
+      show(afterPrep)
+    );
+
+    // (c) The g the close pays from is the g R1 judged the reach on, or the close is refused.
+    fresh();
+    const split = await close(goal({ readings: [] }), { point: pt(TODAY, 1), g: 0.2, reachOps: [] });
+    check(
+      "the g paid must be the g R1 judged its reach on: paying g 1 against a reach judged on g 0.2 is refused, GOAL_CLOSE_RETRY, nothing written",
+      !split.ok && split.error === GOAL_CLOSE_RETRY && seen.txs.length === 0,
+      show(split)
+    );
+    fresh();
+    const agree = await close(goal({ readings: [] }), { point: pt(TODAY, 1), g: 1 });
+    check("…one g on both sides: g 1 pays 6 and applies R1's reach op (the reach confirmed)", agree.ok && agree.payout.pays === 6 && labels(seen.txs[0]).includes("reach"), show(agree));
+    fresh();
+    const share = await close(goal({ readings: [], steps: [{ completedDay: day(4) }, { completedDay: null }] }), { point: pt(TODAY, 0.9), g: 0.5 });
+    check(
+      "…the steps' share counts on both sides (a 0.9 point and 1 of 2 steps read 0.5, R1's g): closed at g 0.5, below 70%",
+      share.ok && share.payout.g === 0.5 && share.payout.why === "below 70%",
+      show(share)
+    );
+    fresh();
+    const bothNull = await close(goal({ readings: [] }), { point: null, g: null });
+    check(
+      "…both unmeasured agree (null and null): closes at 0, 'not measured yet'",
+      bothNull.ok && bothNull.payout.g === null && bothNull.payout.pays === 0 && bothNull.payout.why === "not measured yet",
+      show(bothNull)
+    );
+
+    // (g) One due day: milestoneDueDayOf(the milestone's, the goal's).
+    const DUE = day(20); // the milestone's own due day, already past (20 Oct)
+    const series = [pt(day(19), 0.6), pt(day(23), 1)]; // a reading stored after that due day
+    fresh();
+    const noGoalDue = await close(goal({ dueDay: null, readings: series }), { point: pt(DUE, 0.75), g: 0.75 }, { lineage: lineage([], { milestoneDueDay: DUE }) });
+    check(
+      "one due day: a goal with none takes its milestone's (20 Oct, past) and pays 6 × 0.75 = 4.5 as of it, never the 1.0 stored after it",
+      noGoalDue.ok && noGoalDue.payout.g === 0.75 && noGoalDue.payout.pays === 4.5,
+      show(noGoalDue)
+    );
+    fresh();
+    const noDueAtAll = await close(goal({ dueDay: null, readings: series }), { point: pt(DUE, 0.75), g: 0.75 }, { lineage: lineage([], { milestoneDueDay: null }) });
+    check(
+      "…without that due day the close would read the later 1.0 against R1's 0.75: refused (GOAL_CLOSE_RETRY), never paid",
+      !noDueAtAll.ok && noDueAtAll.error === GOAL_CLOSE_RETRY && seen.txs.length === 0,
+      show(noDueAtAll)
+    );
+    fresh();
+    const rescheduled = await close(goal({ dueDay: day(60), readings: [pt(day(19), 0.6)] }), { point: pt(TODAY, 0.9), g: 0.9 }, { lineage: lineage([], { milestoneDueDay: DUE }) });
+    check(
+      "…the goal's own due day wins (a Reschedule moves only the goal's): due on day 60, not the milestone's past 20 Oct, so today's 0.9 pays 5.4",
+      rescheduled.ok && rescheduled.payout.g === 0.9 && rescheduled.payout.pays === 5.4,
+      show(rescheduled)
+    );
+
+    // (a, b, h) At most one goal of a milestone lineage pays.
+    fresh();
+    const paidBefore = await close(goal({ goalMints: [paidRow("rm-goal-orig", day(15), 6)] }), { point: pt(TODAY, 1), g: 1 }, { lineage: lineage(["rm-goal-orig"]) });
+    check(
+      "drop → Start again → unarchive: the other goal of the lineage paid on 20 Oct, so this close pays 0, 'this milestone already paid on 20 Oct'",
+      paidBefore.ok && paidBefore.payout.pays === 0 && paidBefore.payout.g === 1 && paidBefore.payout.why === "this milestone already paid on 20 Oct" && dataOf(seen.txs[0], "decision")?.qty === 0,
+      show(paidBefore)
+    );
+    check(
+      "…it pays nothing, so no limit or lineage guard; its readings and reach op are still recorded",
+      labels(seen.txs[0]) === "lock,reading,proficiency,reach,close,decision",
+      show(null)
+    );
+    fresh();
+    const firstPay = await close(goal({ goalMints: [paidRow("rm-goal-orig", day(15), 0)] }), { point: pt(TODAY, 1), g: 1 }, { lineage: lineage(["rm-goal-orig"]) });
+    const firstTx = seen.txs[0];
+    check(
+      "…the other goal's 0 row is no pay: this close pays 6, and its transaction re-checks the lineage after the lock and the limit guard, before the readings",
+      firstPay.ok && firstPay.payout.pays === 6 && labels(firstTx) === "lock,guard,lineage,reading,proficiency,reach,close,decision,ledger",
+      show(firstPay)
+    );
+    const guard = (firstTx ?? []).find((o) => labelOf(o) === "lineage") as Token | undefined;
+    const named = (guard?.values ?? []).flatMap((v) => (v && typeof v === "object" && "values" in v ? (v as { values: unknown[] }).values : [v]));
+    check(
+      "…the lineage guard names the other goals' decision keys only, never this goal's own",
+      named.includes(goalMintKey("rm-goal-orig")) && !named.includes(goalMintKey("rm-goal")),
+      JSON.stringify(named)
+    );
+    fresh();
+    await close(goal(), { point: pt(TODAY, 1), g: 1 });
+    check("…a lineage of one: no lineage guard", seen.txs.length === 1 && !labels(seen.txs[0]).includes("lineage"), show(null));
+    fresh();
+    seen.fault = (ops) => (ops.some((o) => labelOf(o) === "lineage") ? new Error("Raw query failed. Code: `22012`. Message: `division by zero`") : null);
+    const raced = await close(goal(), { point: pt(TODAY, 1), g: 1 }, { lineage: lineage(["rm-goal-orig"]) });
+    check(
+      "…the lineage guard trips (the other goal paid between the read and the commit): GOAL_CLOSE_STALE, 'Something changed; try again.', all rolled back",
+      !raced.ok && raced.error === GOAL_CLOSE_STALE && GOAL_CLOSE_STALE === "Something changed; try again." && seen.txs.length === 1,
+      show(raced)
+    );
+    fresh();
+    const supPrep = await preview(goal(), { point: pt(TODAY, 1), g: 1 }, { lineage: lineage(["rm-goal-copy"], { superseded: true }) });
+    check(
+      "superseded (its 'Start again' copy started): the preview reads 'replaced by Start again', g null, pays 0, and computes or writes no reading",
+      supPrep.refused === "replaced by Start again" && supPrep.written === 0 && supPrep.input != null && closeDecision(supPrep.input).g === null && closeDecision(supPrep.input).pays === 0 && seen.readingCalls === 0 && seen.txs.length === 0,
+      show(supPrep.refused)
+    );
+    fresh();
+    const sup = await close(goal(), { point: pt(TODAY, 1), g: 1 }, { lineage: lineage(["rm-goal-copy"], { superseded: true }) });
+    check(
+      "…and its close: unmeasured, pays 0, with no reading, reach op or guard in its one transaction",
+      sup.ok && sup.payout.g === null && sup.payout.pays === 0 && seen.readingCalls === 0 && labels(seen.txs[0]) === "lock,close,decision",
+      show(sup)
+    );
+
+    // (f) A failed lineage read, and the preview's side of GOAL_CLOSE_RETRY.
+    const failing: GoalCloseDeps["lineages"] = async () => {
+      throw Object.assign(new Error("Timed out fetching a new connection from the connection pool."), { code: "P2024" });
+    };
+    fresh();
+    const lineageFails = await close(goal(), { point: pt(TODAY, 1), g: 1 }, { lineages: failing });
+    check(
+      "the lineage read failing: GOAL_CLOSE_RETRY, the readings never worked out, nothing written",
+      !lineageFails.ok && lineageFails.error === GOAL_CLOSE_RETRY && seen.readingCalls === 0 && seen.txs.length === 0,
+      show(lineageFails)
+    );
+    fresh();
+    const prepFails = [
+      await settles(preview(goal(), {}, { lineages: failing })),
+      await settles(preview(goal(), "throw")),
+      await settles(preview(goal(), { ok: false, reason: "connection reset" })),
+    ];
+    check(
+      "the preview throws wherever the close would refuse with GOAL_CLOSE_RETRY (a failed lineage read, readingOpsFor throwing, a refusal not for good), writing nothing",
+      prepFails.join() === "threw,threw,threw" && seen.txs.length === 0,
+      `${prepFails.join()} | ${show(null)}`
+    );
+    fresh();
+    const finalPrep = await preview(goal(), { ok: false, reason: "measures removed by a reset", final: true });
+    check(
+      "a final refusal: the preview says why, decides g null and pays 0 ('not measured yet'), and writes nothing",
+      finalPrep.refused === "measures removed by a reset" && finalPrep.input != null && closeDecision(finalPrep.input).why === "not measured yet" && seen.txs.length === 0,
+      show(finalPrep.refused)
+    );
+
+    // Writes off: a dev server sharing the database never mints a roadmap close.
+    fresh();
+    const off = await close(goal(), {}, { env: WRITES_OFF });
+    check(
+      "writes off: a ROADMAP close is refused with ROADMAP_WRITES_OFF before any reading is worked out or anything written",
+      !off.ok && off.error === ROADMAP_WRITES_OFF && seen.readingCalls === 0 && seen.txs.length === 0,
+      show(off)
+    );
+    fresh();
+    const offPrep = await preview(goal(), { point: pt(TODAY, 0.9), g: 0.9 }, { env: WRITES_OFF });
+    check(
+      "writes off: the preview shows live values labelled 'not recorded on this server' and writes nothing, even when R1 handed it upserts",
+      seen.txs.length === 0 && offPrep.live && offPrep.note === NOT_RECORDED_HERE && offPrep.written === 0 && offPrep.input != null && closeDecision(offPrep.input).readingNote === NOT_RECORDED_HERE,
+      show(offPrep.note)
+    );
+    fresh();
+    const liveFromR1 = await close(goal(), { point: pt(TODAY, 0.9), g: 0.9, live: true, ops: [], reachOps: [] });
+    check(
+      "a value R1 computed live (its writes off where this server's are on) is never paid from: ROADMAP_WRITES_OFF, nothing written",
+      !liveFromR1.ok && liveFromR1.error === ROADMAP_WRITES_OFF && seen.txs.length === 0,
+      show(liveFromR1)
+    );
+    const manual = goal({ krMetric: "MANUAL", krTarget: 1, readings: undefined, progress: [{ day: day(3), qty: 1 }] });
+    const noLineage: GoalCloseDeps["lineages"] = async () => {
+      throw new Error("an ordinary goal reads no lineage");
+    };
+    fresh();
+    const offManual = await close(manual, {}, { env: WRITES_OFF, lineages: noLineage });
+    check(
+      "writes off: an ordinary goal still closes (M5 unchanged), reading no lineage or readings and adding no roadmap op",
+      offManual.ok && offManual.payout.pays === 6 && seen.readingCalls === 0 && labels(seen.txs[0]) === "lock,guard,close,decision,ledger",
+      show(offManual)
+    );
+    fresh();
+    const manualPrep = await preview(manual, {}, { lineages: noLineage });
+    check(
+      "an ordinary goal's preview comes back exactly as read, with no lineage or readings read and nothing written",
+      seen.readingCalls === 0 && JSON.stringify(manualPrep.input) === JSON.stringify(manual) && manualPrep.written === 0 && !manualPrep.live && seen.txs.length === 0
+    );
+  } finally {
+    console.error = quiet;
+    for (const [k, v] of saved) db[k] = v;
+  }
+}
+
 // ── lane A appends §2b and §4–§7 above this line ─────────────────────────
 
 closeBeforeLaunch()
   .then(cheapCheck)
-  .catch((err) => check("§8b and §9b ran", false, String(err)))
+  .then(roadmapCloseFailures)
+  .then(roadmapClosePath)
+  .catch((err) => check("§8b, §9b, §10b and §10c ran", false, String(err)))
   .finally(() => {
     console.log(failed ? `\n${failed} failed, ${passed} passed` : `\nall ${passed} pass`);
     process.exit(failed ? 1 : 0);

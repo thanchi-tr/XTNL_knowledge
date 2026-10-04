@@ -59,6 +59,7 @@ import {
 import { keptWeekBonusPercent } from "@/lib/life-tracks";
 import { longDayLabel, mpFigure } from "@/components/home/sheet-math";
 import { CurrencyGlyph } from "@/components/ui/Icon";
+import { SectionHeader } from "@/components/ui/Tabs";
 import { FULL_DAY_MP, QUEST_CAP } from "@/lib/full-day";
 import {
   BAND_BASE,
@@ -117,6 +118,62 @@ import { CATEGORY_LABEL, CATEGORY_TRACK, DURATION_BAND_MINUTES, LIFE_RULE_COUNT 
 import { HABIT_ALPHA, HABIT_RUNGS } from "@/lib/habit";
 import { SIZING_PROMPT_VERSION, TASK_SIZING_MODEL } from "@/lib/gemini";
 import { BANDS, CATEGORIES, DURATION_BANDS, TRACKS, type PayMode, type PriceInput, type Timing } from "@/lib/life-types";
+import {
+  ADHERENCE_FLOOR,
+  ADHERENCE_MIN_BAND,
+  ADHERENCE_MIN_JUDGED,
+  ADHERENCE_MIN_MINUTES,
+  AIM_RANKS,
+  CALIBRATION_WEEKS,
+  CARD_WRITE_MIN,
+  DECLARED_FACTOR,
+  INTENSITY,
+  KEEP_SHARE,
+  LEVEL_WEIGHT,
+  MAX_MILESTONES,
+  MILESTONE_MAX_DAYS,
+  MILESTONE_MIN_DAYS,
+  MILESTONE_TARGET_DAYS,
+  MIN_INCREMENT_CARDS_FLOOR,
+  MIN_INCREMENT_SHARE,
+  PARAGON_MIN_MILESTONES,
+  PASS_SHARE_MIN_REVIEWS,
+  PASS_SHARE_WINDOW_DAYS,
+  PRACTICE_BUDGET_SHARE,
+  PRACTICE_PAY_FLOOR_MIN,
+  PRACTICE_PAY_SHARE,
+  RAMP_ALLOWANCE,
+  RAMP_FLOOR_MIN,
+  RANK_MILESTONE_MAX,
+  RANK_NEW_DAYS,
+  RANK_TOP,
+  REACH_CONFIRM_DAYS,
+  REVIEW_SECONDS,
+  ROADMAP_DRAFTS_PER_DAY,
+  ROADMAP_REUSE_DAYS,
+  SPAN_MAX_DAYS,
+  SPAN_MIN_DAYS,
+  START_MIN_DAYS_TO_DUE,
+  THRESHOLDS,
+  THRESHOLD_SPAN_SHARE,
+  TIME_FITS_MAX,
+  TIME_TIGHT_MAX,
+  TOP_LEVEL,
+  WEEK_QUESTS_PER_WEEK_MAX,
+  WEEK_QUEST_ADD_MIN_CAP,
+  WEEK_QUEST_CATCHUP_FACTOR,
+  WEEK_QUEST_CHECKPOINT_FROM,
+  WEEK_QUEST_FINAL_LAG_DAYS,
+  WEEK_QUEST_ROWS_TODAY,
+  aimRankName,
+  floorBase,
+  floorStrict,
+  milestoneCountFor,
+  rankIndexAt,
+  topRankIndexOf,
+  type ProficiencyParts,
+} from "@/lib/roadmap-types";
+import { proficiencyOf } from "@/lib/roadmap-proficiency";
 
 export const metadata: Metadata = { title: "How a day is judged" };
 
@@ -382,6 +439,382 @@ function TracksRules() {
         at {GOAL_DEPTH_CAP} per track. Goals never pay XP.
       </p>
     </Card>
+  );
+}
+
+// ─── Roadmap (roadmap.md F16 seam 12) ──────────────────────────────────────
+
+/** What each week quest kind asks and what checks it (F14): the row's first words, never "Quest n of N". */
+const WEEK_QUEST_KIND_ROWS: { row: string; asks: string; by: string }[] = [
+  { row: "Bring … cards to the level", asks: "cards in the milestone's Domains brought to its level", by: "tested by your reviews" },
+  { row: "Add … cards", asks: "new cards filed in its Domains", by: "counted by the app; it doesn't judge them" },
+  { row: "Practice · … sessions", asks: "each of its practices' planned sessions", by: "from your ticks" },
+  { row: "Step: …", asks: "its next one-off step", by: "you ticked it" },
+  { row: "Checkpoint: … · log your score", asks: "its checkpoint, near the window's end", by: "you logged it · doesn't move your progress" },
+];
+
+/** 1/3 for a share that is one part in n. */
+const oneIn = (share: number) => `1/${Math.round(1 / share)}`;
+
+/** A share to one decimal at most: 60%, 62.5%. */
+const sharePct = (n: number) => `${Number((n * 100).toFixed(1))}%`;
+
+/**
+ * The shares Proficiency's own formula (roadmap-proficiency.ts proficiencyOf)
+ * gives a plan with these parts, read off a one-of-each basis: the table
+ * below can't drift from what the roadmap computes (a Field Area without
+ * practice reads cards 80% / milestones 20%).
+ */
+function proficiencySharesOf(withCards: boolean, withPractice: boolean): ProficiencyParts {
+  return proficiencyOf({
+    basis: {
+      basisVersion: 1,
+      cards: withCards ? [{ measureKey: "rules|cards", domainIds: [], level: TOP_LEVEL, target: 1 }] : [],
+      practice: withPractice ? [{ itemLineageId: "rules|practice", planned: 1 }] : [],
+      scheduled: 1,
+    },
+    cardLevels: {},
+    kept: {},
+    reached: 0,
+    reachedOnTicks: false,
+  }).shares;
+}
+
+const PROFICIENCY_PARTS = ["cards", "practice", "milestones"] as const;
+
+/** Every part; a Field Area without practice; a track Area (practice, no cards). Short labels: the table fits 344 px. */
+const PROFICIENCY_SHARE_ROWS: { label: string; shares: ProficiencyParts }[] = [
+  { label: "All three", shares: proficiencySharesOf(true, true) },
+  { label: "No practice", shares: proficiencySharesOf(true, false) },
+  { label: "No cards", shares: proficiencySharesOf(false, true) },
+];
+
+/**
+ * The roadmap's published rules: an aim and its milestones, the realism
+ * checks, what a milestone pays, week quests, Proficiency and the Aim rank.
+ * Every number is read from roadmap-types.ts (the frozen contract the
+ * planner, the week quests, Proficiency and the Aim rank compute with) or
+ * life-economy.ts, and every table is worked out by the same helpers, so the
+ * page cannot publish a rule the roadmap does not apply. They are policy,
+ * not facts. scripts/you-check.ts holds that no figure here is typed by hand,
+ * that week quests are never a bare "quest", and that the Proficiency and Aim
+ * rank cards keep their words apart from mastery and pay.
+ */
+function RoadmapRules({ edge, judgeDay }: { edge: string; judgeDay: string }) {
+  const mid = GOAL_RULES.MID;
+  const fewest = milestoneCountFor(0);
+  const levels = Array.from({ length: TOP_LEVEL }, (_, i) => i + 1);
+  const plans = Array.from({ length: MAX_MILESTONES }, (_, i) => i + 1).map((n) => ({
+    n,
+    gives: Array.from({ length: n }, (_, j) => aimRankName(rankIndexAt(j + 1))),
+    top: topRankIndexOf(n),
+  }));
+  return (
+    <>
+      <Card title="Aims and milestones" sub="Policy, not facts: how the app plans toward an aim" wide>
+        <p>
+          An aim is set {SPAN_MIN_DAYS} to {SPAN_MAX_DAYS.toLocaleString("en-GB")} days ahead, in your own words, with the hours a week you give
+          it. Gemini, when it is set up, drafts words only: milestone titles, topics, practices, steps, a checkpoint and
+          which of your Domains each milestone needs. It writes no number. Code sets every date, level, target, session
+          count and duration. A word Gemini wrote keeps its label until you check it or change its words, and a number in
+          its words is struck through, never rewritten: that item can only be edited or removed. Nothing reaches Today in
+          its words without your tap. At most {ROADMAP_DRAFTS_PER_DAY} Gemini drafts a day, a failed one included; the
+          same request within {ROADMAP_REUSE_DAYS} days reuses the last one, and a reused draft doesn&apos;t count. Without
+          Gemini the plan is built from your numbers or written by you, with the same checks.
+        </p>
+        <Formula>
+          milestones = clamp(round(days ÷ {MILESTONE_TARGET_DAYS}), {fewest}, {MAX_MILESTONES})
+        </Formula>
+        <p>
+          Each milestone spans {MILESTONE_MIN_DAYS} to {MILESTONE_MAX_DAYS} days and ends on a Sunday; the last ends on the
+          aim&apos;s date. Its card level is one of {THRESHOLDS.join(", ")}: the first is the highest a new card can reach in{" "}
+          {pct(THRESHOLD_SPAN_SHARE)} of the days to its due day, never below where you said you start, and levels never
+          fall along the plan.
+        </p>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="row" className="t-eyebrow">
+                  Level
+                </th>
+                {THRESHOLDS.map((l) => (
+                  <td key={l} className="num ink-2">
+                    {l}+
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row" className="t-eyebrow">
+                  Days, every review passed
+                </th>
+                {THRESHOLDS.map((l) => (
+                  <td key={l} className="num">
+                    {floorBase(l)}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row" className="t-eyebrow">
+                  Days at the earliest
+                </th>
+                {THRESHOLDS.map((l) => (
+                  <td key={l} className="num">
+                    {floorStrict(l)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="t-meta">
+          The fewest days a new card needs to reach each level at base review spacing, and with the luckiest interval; a
+          loadout that stretches spacing stretches them too.
+        </p>
+        <Formula>target = baseline + ⌊intensity × (expected − baseline)⌋</Formula>
+        <p>
+          Intensity is Light {pct(INTENSITY.LIGHT)}, Steady {pct(INTENSITY.STEADY)} or Push {pct(INTENSITY.PUSH)} of the
+          gain your reviews can be expected to bring by the due day. A milestone asks at least max(
+          {MIN_INCREMENT_CARDS_FLOOR}, ⌈{MIN_INCREMENT_SHARE} × baseline⌉) cards above its baseline, or its level steps
+          down. A practice counts {pct(KEEP_SHARE)} of its planned sessions, rest and vacation days excused.
+        </p>
+        <p>
+          A milestone&apos;s progress is the lowest of its parts, read from stored readings: its Domains&apos; cards at its
+          level (tested by your reviews), the sessions you ticked and the steps you did. With no reading it is not
+          measured, and nothing is invented in its place.
+        </p>
+      </Card>
+
+      <Card title="Is the plan realistic?" sub="What the app checks, and what it can't">
+        <Formula>available = min(your hours × A, ramp cap), over the days not held</Formula>
+        <ul className="rules-bullets">
+          <li>
+            A is how often you keep recurring tasks of {BAND_META[ADHERENCE_MIN_BAND].label} or harder and{" "}
+            {ADHERENCE_MIN_MINUTES} minutes or more, never below {ADHERENCE_FLOOR}. Until {ADHERENCE_MIN_JUDGED} of them are
+            judged it is {DECLARED_FACTOR}, and the time check reads Unverified.
+          </li>
+          <li>
+            Once {CALIBRATION_WEEKS} weeks of your tracked time are measured, a plan may add at most max({RAMP_FLOOR_MIN} min,{" "}
+            {pct(RAMP_ALLOWANCE)} of your median tracked week) on top of it: the ramp cap.
+          </li>
+          <li>
+            App-tracked time, worst calendar week: up to {pct(TIME_FITS_MAX)} of the time available Fits, up to{" "}
+            {pct(TIME_TIGHT_MAX)} is Tight, more is Over. A review counts {REVIEW_SECONDS} s and a new card {CARD_WRITE_MIN}{" "}
+            min (assumed: neither is timed); practices get {pct(PRACTICE_BUDGET_SHARE)} of the time left. It counts only what
+            the app tracks: reviews, new cards and the plan&apos;s practices. Time to study the material elsewhere isn&apos;t
+            estimated.
+          </li>
+          <li>
+            Reach discounts each pass a card still needs by your pass share, measured over {PASS_SHARE_WINDOW_DAYS} days
+            once you have {PASS_SHARE_MIN_REVIEWS} reviews; until then it is the best case, and says so. The pass share reads
+            high: a lapse by neglect isn&apos;t logged.
+          </li>
+          <li>
+            A target code fitted reads Fitted, with its arithmetic and no verdict. A target you type reads Fits, Tight (only
+            in the best case), Over (beyond it) or Impossible (faster than the review schedule allows). Impossible blocks the
+            plan; Over needs your &quot;keep it over&quot; switch, and shows for good.
+          </li>
+          <li>
+            The aim itself is checked only against your own &quot;hours this usually takes&quot; figure and its source.
+            Without one it reads &quot;Aim not checked&quot;.
+          </li>
+        </ul>
+      </Card>
+
+      <Card title="What a milestone pays" sub="Only through the Mid goal rules above">
+        <p>
+          Starting a milestone makes it a {mid.name} goal on Today. It states{" "}
+          <span className="cur">
+            <CurrencyGlyph kind="mp" />
+            {mpFigure(mid.stated)}
+            <span className="sr-only"> MP</span>
+          </span>{" "}
+          × progress from {pct(mid.bar)} only when the practices it adds plan at least {PRACTICE_PAY_FLOOR_MIN} minutes a
+          week, those minutes are at least {oneIn(PRACTICE_PAY_SHARE)} of its planned tracked minutes, and the milestone has
+          never paid before. Otherwise it pays nothing and says why: knowledge is paid by reviews, so a milestone of cards
+          alone pays nothing.
+        </p>
+        <ul className="rules-bullets">
+          <li>
+            The Mid limits apply as to any goal: at most {mid.maxPaying} paying in {mid.windowDays} days, shared with your
+            own goals, and only once it is {mid.minLifetimeDays} days old.
+          </li>
+          <li>Start needs at least {START_MIN_DAYS_TO_DUE} days to the milestone&apos;s due day.</li>
+          <li>
+            Once started, its due day is its goal&apos;s: a Reschedule on Today moves it, and progress, pay and reach are
+            all judged on that one day.
+          </li>
+          <li>
+            A milestone pays once. Started again after a drop, it is still the same milestone: once the copy starts, the
+            dropped goal is never measured again and pays nothing, and if the dropped goal was brought back and paid first,
+            the copy pays nothing and names the day it paid.
+          </li>
+          <li>Progress comes from your records alone; no button adds to it. The aim itself pays nothing.</li>
+        </ul>
+      </Card>
+
+      <Card title="Week quests (not the daily review quest)" sub="This week's actions for the milestone you started" wide>
+        <p>
+          The daily review quest above is unchanged. Week quests slice the milestone you started into this life week, Monday{" "}
+          {edge} to Monday {edge}. Each is checked from the app&apos;s own records: none has a checkbox, and none pays.
+        </p>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="col" className="t-eyebrow">
+                  Row
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Asks for
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Checked by
+                </th>
+              </tr>
+              {WEEK_QUEST_KIND_ROWS.map((r) => (
+                <tr key={r.row}>
+                  <td className="b">{r.row}</td>
+                  <td className="ink-1">{r.asks}</td>
+                  <td className="ink-2">{r.by}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          <li>
+            Each count is the gap left ÷ the weeks left. Bring asks at most what can be expected to reach the level this week
+            at the pass rate stored when the milestone started. A card that was due anyway counts: passing its review is the
+            step.
+          </li>
+          <li>
+            Add asks at most max({WEEK_QUEST_ADD_MIN_CAP}, ⌈{WEEK_QUEST_CATCHUP_FACTOR} × the new cards a week the plan
+            needed at Start⌉), so missed weeks never pile up (the catch-up cap), and at most what the week&apos;s time holds
+            at {CARD_WRITE_MIN} min a card after practices, reviews and your other Fields&apos; weekly quotas (the capacity
+            cap). A card added in the aim&apos;s own Field counts toward that Field&apos;s weekly quota too.
+          </li>
+          <li>
+            Sessions ask for the plan&apos;s own count, and missed ones never carry into the next week. A step shows once the
+            window passes its share, and always in the milestone&apos;s last week; the checkpoint once{" "}
+            {pct(WEEK_QUEST_CHECKPOINT_FROM)} of the window has passed, and its score never moves progress.
+          </li>
+          <li>
+            A week holds at most {WEEK_QUESTS_PER_WEEK_MAX} week quests, and Today shows {WEEK_QUEST_ROWS_TODAY} before the
+            rest. The set is fixed just after Monday {edge} and never changes mid-week; its results are written from the{" "}
+            {judgeDay} {edge} after its Sunday ({WEEK_QUEST_FINAL_LAG_DAYS} days on), once late ticks and make-ups are in.
+          </li>
+          <li>Week quests pay nothing, add nothing to Today&apos;s counts or the bell, never read red, and never link to Review.</li>
+        </ul>
+      </Card>
+
+      <Card title="Proficiency" sub="One figure per aim: what you hold now, measured, so it can fall">
+        <Formula>Proficiency = Σ share × part, over the parts present</Formula>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="col" className="t-eyebrow">
+                  Parts present
+                </th>
+                {PROFICIENCY_PARTS.map((k) => (
+                  <th key={k} scope="col" className="t-eyebrow">
+                    {k}
+                  </th>
+                ))}
+              </tr>
+              {PROFICIENCY_SHARE_ROWS.map((r) => (
+                <tr key={r.label}>
+                  <th scope="row" className="t-eyebrow">
+                    {r.label}
+                  </th>
+                  {PROFICIENCY_PARTS.map((k) => {
+                    const share = r.shares[k];
+                    return (
+                      <td key={k} className={share == null ? "num ink-2" : "num"}>
+                        {share == null ? "—" : sharePct(share)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          <li>
+            Cards, tested by your reviews: for each end target of T cards at level L, the T best cards in its Domains give Σ
+            weight(min(level, L)) ÷ (T × weight(L)). A card above L counts as L; a missing card counts nothing.
+          </li>
+          <li>Practice, from your ticks: Σ min(kept, planned) ÷ Σ planned, practice by practice.</li>
+          <li>Milestones: reached ÷ scheduled. A reach that rests on ticks counts once it has held {REACH_CONFIRM_DAYS} days.</li>
+          <li>
+            A plan without practice (a Field Area with no practices), or without cards (a track Area), renormalises the
+            shares over the parts it has, as the table shows.
+          </li>
+        </ul>
+        <p>
+          A level&apos;s weight is the days of review spacing a card has come through to reach it, at base spacing. A card
+          just written, or passed once, weighs nothing, so writing cards alone moves nothing.
+        </p>
+        <Samples head={["level", "weight"]} rows={levels.map((l) => [String(l), String(LEVEL_WEIGHT(l))])} />
+        <p>
+          It shows as a whole percentage, rounded down, from the day&apos;s stored reading. A slipped card lowers it the same
+          day. A re-plan changes it as a change of plan, shown with the figure before it, never as a gain. It pays nothing
+          and sets no goal&apos;s progress.
+        </p>
+      </Card>
+
+      <Card title="Aim rank" sub="A record of the milestones you reached: kept for good, and it pays nothing">
+        <p className="ink-0">{AIM_RANKS.join(" → ")}</p>
+        <p>
+          Every aim starts at {aimRankName(0)}. Reaching the milestone at place j in the plan gives the Aim rank at place
+          min(j, {RANK_MILESTONE_MAX}); reaching the aim gives the Aim rank {aimRankName(RANK_TOP)} on a plan that has had{" "}
+          {PARAGON_MIN_MILESTONES} or more milestones.
+        </p>
+        <div className="rules-scroll">
+          <table className="rules-table">
+            <tbody>
+              <tr>
+                <th scope="col" className="t-eyebrow">
+                  Milestones
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Each one reached gives
+                </th>
+                <th scope="col" className="t-eyebrow">
+                  Top rank on this plan
+                </th>
+              </tr>
+              {plans.map((p) => (
+                <tr key={p.n}>
+                  <td className="num">{p.n}</td>
+                  <td className="ink-1">{p.gives.join(" · ")}</td>
+                  <td className="ink-1">
+                    {aimRankName(p.top)}
+                    {p.top === RANK_TOP ? ", with the aim" : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="rules-bullets">
+          <li>A reach that rests on ticks counts once it has held {REACH_CONFIRM_DAYS} days, so an undone tick leaves nothing behind.</li>
+          <li>A re-plan never raises a milestone&apos;s Aim rank, and moving milestones to Later never lifts the others.</li>
+          <li>
+            A milestone dropped and started again keeps its place and counts once: a plan&apos;s milestones are counted by
+            place, never by row, so starting one again never adds a milestone to the plan or lifts the top rank on this
+            plan.
+          </li>
+          <li>
+            The rank is kept for good: a slipped card lowers Proficiency, never the Aim rank. A new Aim rank is marked on the
+            Aim card for {RANK_NEW_DAYS} days.
+          </li>
+          <li>It is not a title, and it pays nothing.</li>
+        </ul>
+      </Card>
+    </>
   );
 }
 
@@ -833,6 +1266,13 @@ export default async function RulesPage() {
           </Card>
         )}
       </div>
+
+      <section aria-labelledby="rules-roadmap" style={{ marginTop: 28 }}>
+        <SectionHeader id="rules-roadmap" title="Roadmap" aside="policy, not facts · read from the code that plans" />
+        <div className="rules-grid">
+          <RoadmapRules edge={edge} judgeDay={WEEKDAY_AFTER_SUNDAY[WEEK_QUEST_FINAL_LAG_DAYS % WEEKDAY_AFTER_SUNDAY.length]} />
+        </div>
+      </section>
     </div>
   );
 }

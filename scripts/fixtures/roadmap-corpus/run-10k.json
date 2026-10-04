@@ -1,0 +1,65 @@
+{
+  "aim": "run-10k",
+  "about": "A Body aim on a life track (practice only): no Domains, no topics, a practice in every milestone, HEALTH words read on every label.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": null,
+  "input": {
+    "intake": {
+      "aim": "Run a sub-50 10K",
+      "fieldId": null,
+      "track": "BODY",
+      "domainIds": [],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 4,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Body",
+    "domains": [],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [],
+  "drafts": [
+    {
+      "id": "run-10k-a",
+      "about": "A statement about the person in a checkpoint, an all-out effort word (HEALTH).",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Easy aerobic base",
+            "titleClaims": [],
+            "practices": [
+              { "name": "Easy runs at conversation pace", "method": "WORKOUT", "claims": [] },
+              { "name": "Strides after easy runs", "method": "WORKOUT", "claims": [] }
+            ],
+            "steps": [{ "title": "Find a flat loop near home", "claims": [] }],
+            "checkpoint": { "label": "Timed run on your usual route", "kind": "PERFORMANCE_CHECK", "claims": ["about-you"] }
+          },
+          {
+            "title": "Race pace",
+            "titleClaims": [],
+            "practices": [
+              { "name": "Tempo runs", "method": "WORKOUT", "claims": [] },
+              { "name": "Interval session at max effort", "method": "WORKOUT", "claims": ["health"] },
+              { "name": "Mobility and stretching", "method": "WORKOUT", "claims": [] }
+            ],
+            "steps": [{ "title": "Enter a local race", "claims": [] }],
+            "checkpoint": { "label": "Time trial over the race distance", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

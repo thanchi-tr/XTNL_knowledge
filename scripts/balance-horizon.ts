@@ -26,7 +26,17 @@
  * one run, DUTY and the full days in a later one) every mint and the trimmed
  * set equal a single run's; 3d a held week mints nothing. Assertions 1 and 2
  * already price the full cap, so full days inside it change neither.
+ *
+ * The roadmap (docs/life-plan/roadmap.md F16 seam 14) adds 3e–3g: no MP
+ * reason, cap or limit, so the worst case is M2's to the fourth decimal; a
+ * started milestone states only statedGoalMp('MID') or 0 (roadmap-economy
+ * statedForMilestone, and tasks.ts linkedGoalFields at the write); and week
+ * quests, Proficiency and the Aim rank write no ledger row (no roadmap module
+ * holds a ledger writer). It imports roadmap modules, so _no-model is first.
  */
+import "./_no-model";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SKILL_POOL, requiredAttributeScore } from "../src/lib/skill-pool";
 import { IDEA_MASTERY_POINTS, REVIEW_MASTERY_PER_LEVEL } from "../src/lib/mastery";
 import { MASTERY_LEVEL, MAX_LEVEL, baseIntervalDays } from "../src/lib/xp";
@@ -52,7 +62,9 @@ import { meetsRequirements } from "../src/lib/skill-gates";
 import { TRACKS, type Band, type Horizon, type Track } from "../src/lib/life-types";
 import { addDays, weekKeyOf, type DayKey } from "../src/lib/life-day";
 import { planWeeks, type WeekJudgeState, type WeekPlan, type WeekTaskRow } from "../src/lib/life-weeks";
-import { weekRowKey } from "../src/lib/life-economy";
+import { CAPPED_REASONS, LIFE_MP_REASONS, RESERVED_MP_REASONS, statedGoalMp, weekRowKey } from "../src/lib/life-economy";
+import { statedForMilestone, type StatedInput } from "../src/lib/roadmap-economy";
+import { captureGoalFields, linkedGoalFields } from "../src/lib/tasks";
 
 /** A committed player: reviews daily, never misses, adds steadily. */
 const REVIEWS_PER_DAY = 25;
@@ -525,6 +537,83 @@ function lifeBlock(pool: number, knowledgePerDay: number): number {
     "3d. a held week mints nothing",
     heldTracks.length === TRACKS.length && heldTracks.every((t) => t.held && !t.kept) && mintsOf(heldWeek).length === 0 && weekKeyOf(CAP_MONDAY) === heldWeek[0]?.weekKey,
     `6 rest days, nothing done: ${heldTracks.map((t) => `${t.track} ${t.held ? "held" : t.kept ? "kept" : "not kept"}`).join(", ")}; ${mintsOf(heldWeek).length} mints`,
+  );
+
+  // 3e (roadmap F16 seam 14). The roadmap adds no MP reason, cap or limit: a started milestone is an
+  // ordinary MID goal under GOAL_RULES, so the worst case is M2's exactly.
+  const json = (x: unknown) => JSON.stringify(x);
+  const reasonsKept =
+    json(LIFE_MP_REASONS) === json(["LIFE_WEEK_KEPT", "LIFE_FULL_DAY", "GOAL_SHORT", "GOAL_MID", "GOAL_LONG"]) &&
+    json(RESERVED_MP_REASONS) === json(["LIFE_PR"]) &&
+    json(CAPPED_REASONS) === json(["LIFE_WEEK_KEPT", "GOAL_SHORT", "LIFE_FULL_DAY"]) &&
+    json(Object.keys(GOAL_RULES).sort()) === json(["LONG", "MID", "SHORT"]) &&
+    [...LIFE_MP_REASONS, ...RESERVED_MP_REASONS].every((r) => !/ROADMAP|AIM|QUEST|PROFICIEN|RANK|MILESTONE/i.test(r));
+  check(
+    "3e. the roadmap adds no MP reason, cap or limit, so the worst case is unchanged",
+    reasonsKept && Math.round(worst * 1e4) === 17626,
+    `reasons ${LIFE_MP_REASONS.join(", ")} (reserved ${RESERVED_MP_REASONS.join(", ")}); worst ${fmt(worst, 4)} MP/day = M2's 1.7626`,
+  );
+
+  // 3f. The roadmap path states only 0 or statedGoalMp('MID'): the pure rule over a grid, and the write's guard.
+  const mid = statedGoalMp("MID");
+  const grid: StatedInput[] = [];
+  for (const practiceMinutesPerWeek of [0, 15, 59, 60, 90, 300])
+    for (const plannedTrackedMinutesPerWeek of [60, 120, 240, 600, 1200])
+      for (const hasCards of [true, false])
+        for (const lineagePaidOn of [null, "2026-09-01"]) grid.push({ practiceMinutesPerWeek, plannedTrackedMinutesPerWeek, hasCards, lineagePaidOn });
+  let stated: number[] | null = null;
+  let pending: string | null = null;
+  try {
+    stated = grid.map((g) => statedForMilestone(g).stated);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/^Not yet:/.test(msg)) pending = msg;
+    else throw err;
+  }
+  const today = "2026-10-05";
+  const goalFields = captureGoalFields("GOAL", "Milestone 1", "MID", addDays(today, 60), today);
+  const writes = (goalMp: number, fields = goalFields) => {
+    try {
+      return linkedGoalFields("GOAL", fields, { goal: { krMetric: "ROADMAP", krTarget: null, krUnit: null, goalMp } }).goalMp;
+    } catch {
+      return null;
+    }
+  };
+  const longFields = captureGoalFields("GOAL", "Milestone 1", null, addDays(today, 183), today);
+  const guarded =
+    writes(mid) === mid && writes(0) === 0 && writes(GOAL_RULES.LONG.stated) === null && writes(1) === null && writes(mid, longFields) === null && longFields.horizon === "LONG";
+  if (pending) {
+    // A lane-0 shell until lane R4 lands statedForMilestone: printed, never passed off as checked.
+    console.log(`  PENDING 3f. statedForMilestone states only 0 or ${mid}: ${pending} (lane R4's shell; green at integration)`);
+  }
+  check(
+    `3f. a roadmap milestone states only 0 or ${mid} (MID): ${pending ? "the write's guard" : "the rule over a grid and the write's guard"}`,
+    guarded && (stated == null || stated.every((x) => x === 0 || x === mid)),
+    (stated ? `${grid.length} inputs → {${[...new Set(stated)].sort((a, b) => a - b).join(", ")}}; ` : "") +
+      `tasks.ts linkedGoalFields writes ${mid} or 0, refuses ${GOAL_RULES.LONG.stated} and 1, and refuses a ROADMAP goal that is not MID`,
+  );
+
+  // 3g. Week quests, Proficiency and the Aim rank write no ledger row: no roadmap module holds a ledger writer.
+  // Reads stay allowed (Start reads the 'mp:GOAL:*' rows to know whether a lineage paid); only writes are matched.
+  const ROOT = join(__dirname, "..");
+  const roadmapFiles: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(name)) roadmapFiles.push(rel);
+    }
+  };
+  for (const name of readdirSync(join(ROOT, "src/lib"))) if (/^(roadmap-|throughput)[\w-]*\.ts$/.test(name)) roadmapFiles.push(`src/lib/${name}`);
+  walk("src/components/roadmap");
+  const LEDGER_WRITERS =
+    /\b(recordActivity|activityOp|activityData|mintLifeMasteryOps|lifeMintData|mintIdeaMasteryOp|mintReviewFractionOp)\s*\(|\b(masteryLedgerEntry|capitalLedgerEntry)\s*\.\s*(create|createMany|upsert|update|updateMany)\b|\bactivityEvent\s*\.\s*(create|createMany|upsert)\b|INSERT\s+INTO\s+"(ActivityEvent|MasteryLedgerEntry|CapitalLedgerEntry)"|from\s+["']\.\/(mastery|capital)["']/;
+  const offenders = roadmapFiles.filter((rel) => LEDGER_WRITERS.test(readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")));
+  const questFiles = roadmapFiles.filter((f) => /roadmap-(quests|proficiency)/.test(f));
+  check(
+    "3g. week quests, Proficiency and the Aim rank write no ledger row (no roadmap module holds a ledger writer)",
+    offenders.length === 0 && questFiles.length >= 3,
+    offenders.length ? `ledger writers in ${offenders.join(", ")}` : `${roadmapFiles.length} roadmap files read, none mints or writes the ledger (${questFiles.join(", ")} included)`,
   );
 
   check(

@@ -1,0 +1,75 @@
+{
+  "aim": "python-cert",
+  "about": "A programming certificate (credential by the word certificate): a version number, a brand with inner capitals, a question bank named by acronym, an official-objectives claim.",
+  "probe": true,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_prog",
+  "input": {
+    "intake": {
+      "aim": "Earn an entry-level Python programming certificate",
+      "fieldId": "fld_prog",
+      "track": "CRAFT",
+      "domainIds": ["d_pr_basics", "d_pr_ds"],
+      "targetDay": "2027-02-07",
+      "hoursPerWeek": 6,
+      "newCardsPerWeek": null,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Programming",
+    "domains": [
+      { "id": "d_pr_basics", "name": "Python Basics", "fieldId": "fld_prog", "cards": 50, "atSix": 22, "atTop": 3, "chosen": true },
+      { "id": "d_pr_ds", "name": "Data Structures", "fieldId": "fld_prog", "cards": 20, "atSix": 6, "atTop": 0, "chosen": true },
+      { "id": "d_pr_test", "name": "Testing", "fieldId": "fld_prog", "cards": 10, "atSix": 2, "atTop": 0, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-06" },
+      { "start": "2026-12-07", "end": "2027-02-07" }
+    ]
+  },
+  "library": [
+    { "id": "d_pr_basics", "name": "Python Basics", "fieldId": "fld_prog", "fieldName": "Programming", "cards": 50, "titles": ["Syntax of a for loop", "String formatting"], "tags": ["python", "syntax"] },
+    { "id": "d_pr_ds", "name": "Data Structures", "fieldId": "fld_prog", "fieldName": "Programming", "cards": 20, "titles": ["Lists vs tuples", "Dict lookups", "Sets and membership"], "tags": ["lists", "dicts", "sets"] },
+    { "id": "d_pr_test", "name": "Testing", "fieldId": "fld_prog", "fieldName": "Programming", "cards": 10, "titles": ["Unit tests with assert"], "tags": ["testing"] }
+  ],
+  "drafts": [
+    {
+      "id": "python-cert-a",
+      "about": "Credential draft: bulk keep off by design.",
+      "newDomainClaims": { "2:0": ["syllabus"] },
+      "reply": {
+        "milestones": [
+          {
+            "title": "Core Python",
+            "titleClaims": [],
+            "domains": ["D1"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Python 3 syntax essentials", "domain": "D1", "claims": ["number"] },
+              { "label": "Lists, dicts and sets", "domain": "D2", "claims": [] }
+            ],
+            "practices": [{ "name": "Solve LeetCode easy problems", "method": "DELIBERATE_PRACTICE", "claims": ["resource", "proper-noun"] }],
+            "steps": [{ "title": "Write a small command line tool", "claims": [] }],
+            "checkpoint": { "label": "Timed practice quiz", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Exam readiness",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": ["Official exam objectives"],
+            "topics": [{ "label": "The official exam objectives", "domain": "N1", "claims": ["syllabus"] }],
+            "practices": [{ "name": "Mock exams from the PCEP question bank", "method": "DELIBERATE_PRACTICE", "claims": ["resource", "proper-noun"] }],
+            "steps": [{ "title": "Book the exam", "claims": [] }],
+            "checkpoint": { "label": "Full practice exam", "kind": "MOCK_TEST", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

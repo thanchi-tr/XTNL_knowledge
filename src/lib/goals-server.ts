@@ -6,11 +6,43 @@
  *
  * Spec: docs/life-plan/m5-refit.md F6; contract: docs/life-plan/m5-contracts.md §7.
  *
- *   readGoalCloseInput(userId, goalId, now)  → GoalInput | null (one round trip)
+ *   readGoalCloseInput(userId, goalId, now, deps?) → GoalInput | null (one round trip; a ROADMAP goal
+ *                                              adds one read of its stored series)
  *   closeGoalCore(userId, goalId, now)       → {ok, payout} | {ok: false, error} ('Already closed.' on a replay); refused before launch
+ *   prepareRoadmapGoalClose(userId, goalId, now) → the close preview's input, a ROADMAP goal's
+ *                                              readings recorded first (live and labelled with writes off)
+ *   loadGoalLineages(userId, goalIds)        → each ROADMAP goal's milestone lineage (fix round)
  *   rescheduleGoalCore(userId, goalId, day)  → {ok} | {ok: false, error}
- *   loadGoalLadder(userId, now?)             → GoalLadder, cached 'goalLadder:<user>' on ['life', 'activity']
+ *   loadGoalLadder(userId, now?)             → GoalLadder, cached 'goalLadder:<user>' on ['life', 'activity', 'roadmap', 'ideas']
+ *   loadGoalLadderUncached(userId, now, deps?) → the same, uncached (for checks that inject the roadmap reads)
  *   stateGoalMp(userId)                      → rows updated (the launch script)
+ *
+ * scripts/goals-close-check.ts pins this file's roadmap behaviour (lane L's
+ * check): every Prisma entry a spy, the roadmap reads injected (GoalCloseDeps,
+ * GoalSeriesLoader, GoalLadderDeps).
+ *
+ * ROADMAP goals (roadmap milestones; docs/life-plan/roadmap.md F10, F16 seam
+ * 2, lane L): g is read from the milestone's stored readings, never a live
+ * value. The preview first records today's readings (prepareRoadmapGoalClose);
+ * the close computes them again (readingOpsFor with `closing`), writes them
+ * inside its own transaction and pays from exactly those values, confirming
+ * or clearing a pending reach in the same transaction with R1's guarded
+ * reach ops. A server with writes off (lifeWritesEnabled) refuses the close,
+ * so a dev server sharing the database never mints; its preview shows the
+ * live values as "not recorded on this server".
+ *
+ * The fix round (roadmap-contracts.md §9.4 items 1 to 4):
+ *   - Only a final refusal (no milestone, an archived or draft roadmap, a
+ *     missing table, a superseded row) closes the goal unmeasured: g null,
+ *     pays 0. Any other failure to work out the readings refuses the close
+ *     with GOAL_CLOSE_RETRY and writes nothing; the preview throws.
+ *   - One due day: milestoneDueDayOf(the milestone's, the goal's).
+ *   - The g the close pays from must be the g R1 judged its reach on; if
+ *     they differ the close is refused (GOAL_CLOSE_RETRY), never paid.
+ *   - At most one goal of a milestone lineage pays: a superseded row
+ *     (isSupersededRow) is never measured, a lineage another goal already
+ *     paid pays 0 (goals.ts lineagePaidOn), and a paying close's transaction
+ *     re-checks the lineage after the life-mint lock.
  *
  * House rules kept here: closing is explicit and final; one close writes
  * exactly one 'mp:GOAL:<id>' decision row (qty = MP paid, 0 allowed), sink
@@ -44,6 +76,7 @@ import {
   isDayKey,
   isLaunched,
   lifeLaunchDay,
+  lifeWritesEnabled,
   parseMintDetail,
   round2,
   statedGoalMp,
@@ -60,7 +93,8 @@ import {
   goalLimitWindow,
   goalProgress,
   goalProgressLabel,
-  statedPayoutCopy,
+  lineagePaidOnOf,
+  statedPayoutLine,
   type GoalInput,
   type GoalLadder,
   type GoalLadderItem,
@@ -69,14 +103,18 @@ import {
   type GoalPayout,
   type GoalProgressRow,
   type GoalStep,
+  type RoadmapGoalEntry,
+  type RoadmapSeriesPoint,
 } from "./goals";
-import type { Horizon, KrMetric, Track } from "./life-types";
+import { KR_METRICS, type Horizon, type KrMetric, type Track } from "./life-types";
+import { loadRoadmapGoalSeries, readingOpsFor, type ReadingOps, type ReadingRow } from "./roadmap-readings";
+import { NOT_RECORDED_HERE, ROADMAP_WRITES_OFF, isMissingRoadmapTable, isSupersededRow, milestoneDueDayOf, type RoadmapWriteOpts } from "./roadmap-types";
 
 const HORIZONS: readonly Horizon[] = ["SHORT", "MID", "LONG"];
-const KR_METRICS: readonly KrMetric[] = ["CHILDREN", "MANUAL", "REVIEWS", "IDEAS", "WORKOUTS", "RUN_KM"];
 
 /** A stored horizon; none reads as MID, as the Today board files it. */
 const horizonOf = (h: string | null): Horizon => (HORIZONS.includes(h as Horizon) ? (h as Horizon) : "MID");
+/** A stored metric through the one whitelist (life-types KR_METRICS), so 'ROADMAP' never reads as CHILDREN. */
 const metricOf = (m: string | null): KrMetric | null => (KR_METRICS.includes(m as KrMetric) ? (m as KrMetric) : null);
 /** A goal's stored track; an unreadable one reads as DUTY rather than failing the close. */
 const trackOf = (t: string | null): Track => (isTrack(t) ? t : "DUTY");
@@ -117,6 +155,15 @@ export const GOAL_CLOSE_STALE = "Something changed; try again.";
 export const GOAL_CLOSE_BEFORE_LAUNCH = "Goals can be closed once life counts.";
 
 /**
+ * The error a ROADMAP close gets when its milestone's readings could not be
+ * worked out now (a database or code failure, a refusal that is not final,
+ * or a g that disagrees with the reach R1 judged): nothing is written, and
+ * trying again decides it afresh. Never "closed at 0": that is only for a
+ * final refusal (roadmap-contracts.md §9.4 item 1).
+ */
+export const GOAL_CLOSE_RETRY = "Couldn't close; try again.";
+
+/**
  * Fails the close's transaction (division by zero) unless, after the
  * life-mint lock, the paying rows of this goal's reason in its limit window
  * (its own row excluded) still number what closeDecision counted and, for a
@@ -152,14 +199,24 @@ function closeGuardOp(userId: string, goalId: string, w: GoalLimitWindow) {
 }
 
 /**
+ * The stored series of open ROADMAP goals, keyed by goal id: roadmap-readings
+ * loadRoadmapGoalSeries by default. Checks inject a fixture (no database).
+ */
+export type GoalSeriesLoader = (userId: string, goalIds: readonly string[], today: DayKey) => Promise<Record<string, RoadmapGoalEntry>>;
+
+/**
  * Everything closeDecision needs for one open goal, fresh, in one round trip:
  * the goal (own user, kind GOAL, not archived, not closed), its one-off steps
  * (non-recurring, non-goal, non-archived children), Σ GOAL_PROGRESS by day,
  * the goal decision rows (every one dated in the last 91 days plus every
  * paying one, which covers this track's depth), and the capped MP already in
- * the close day's life week. Null when the goal is not open.
+ * the close day's life week. Null when the goal is not open. A ROADMAP goal
+ * also carries its milestone's stored series (`readings`), read once more
+ * (`deps.series`, loadRoadmapGoalSeries by default) only for such a goal; a
+ * goal whose roadmap a reset archived has none, so its g is null and it pays
+ * 0, "not measured".
  */
-export async function readGoalCloseInput(userId: string, goalId: string, now: Date): Promise<GoalInput | null> {
+export async function readGoalCloseInput(userId: string, goalId: string, now: Date, deps: { series?: GoalSeriesLoader } = {}): Promise<GoalInput | null> {
   const today = todayKey(now);
   const monday = weekStartKeyOf(today);
   const [goal, steps, progress, mints, week] = await Promise.all([
@@ -187,15 +244,18 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
     }),
   ]);
   if (!goal) return null;
+  const krMetric = metricOf(goal.krMetric);
+  const readings = krMetric === "ROADMAP" ? ((await (deps.series ?? loadRoadmapGoalSeries)(userId, [goal.id], today))[goal.id]?.series ?? []) : null;
   return {
     id: goal.id,
     horizon: horizonOf(goal.horizon),
     track: trackOf(goal.track),
     goalMp: goal.goalMp,
-    krMetric: metricOf(goal.krMetric),
+    krMetric,
     krTarget: goal.krTarget,
     steps: steps.map((s): GoalStep => ({ completedDay: s.completedAt ? dayKeyOf(s.completedAt) : null })),
     progress: progress.map((p): GoalProgressRow => ({ day: keyOfDateColumn(p.day), qty: p._sum.qty ?? 0 })),
+    ...(readings ? { readings } : {}),
     dueDay: goal.dueDay ? keyOfDateColumn(goal.dueDay) : null,
     createdDay: dayKeyOf(goal.createdAt),
     today,
@@ -203,6 +263,231 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
     goalMints: goalMintRows(mints),
     cappedUsedThisWeek: cappedSum(week),
   };
+}
+
+/** A ROADMAP goal's milestone lineage, as the close and the ladder read it (fix round). */
+export interface GoalLineage {
+  /** The milestone's own due day: milestoneDueDayOf falls back to it when the goal has none. */
+  milestoneDueDay: DayKey | null;
+  /** The other goals of its lineage (a dropped milestone and its "Start again" copy share one lineageId). */
+  otherGoalIds: string[];
+  /** A newer STARTING or STARTED row of its lineage replaced it (roadmap-types isSupersededRow): never measured, pays 0. */
+  superseded: boolean;
+}
+
+/** The refusal that leaves a superseded milestone's goal unmeasured (R1's words for the same rule). */
+const SUPERSEDED_REASON = "replaced by Start again";
+
+/**
+ * Each ROADMAP goal's milestone lineage, keyed by goal id, in two queries
+ * made only for such goals: the milestones holding these goals (the user's
+ * roadmaps only), then every row of their lineages. A goal with no milestone
+ * is left out; a missing roadmap table reads as {} (isMissingRoadmapTable).
+ */
+export async function loadGoalLineages(userId: string, goalIds: readonly string[]): Promise<Record<string, GoalLineage>> {
+  const ids = Array.from(new Set(goalIds));
+  if (ids.length === 0) return {};
+  try {
+    const own = await prisma.roadmapMilestone.findMany({
+      where: { goalId: { in: ids }, roadmap: { userId } },
+      select: { goalId: true, roadmapId: true, lineageId: true, dueDay: true },
+    });
+    if (own.length === 0) return {};
+    const rows = await prisma.roadmapMilestone.findMany({
+      where: { OR: own.map((o) => ({ roadmapId: o.roadmapId, lineageId: o.lineageId })) },
+      select: { id: true, roadmapId: true, lineageId: true, version: true, status: true, createdAt: true, goalId: true },
+    });
+    const out: Record<string, GoalLineage> = {};
+    for (const o of own) {
+      if (!o.goalId) continue;
+      const lineage = rows.filter((r) => r.roadmapId === o.roadmapId && r.lineageId === o.lineageId);
+      const self = lineage.find((r) => r.goalId === o.goalId);
+      out[o.goalId] = {
+        milestoneDueDay: o.dueDay ? keyOfDateColumn(o.dueDay) : null,
+        otherGoalIds: lineage.flatMap((r) => (r.goalId && r.goalId !== o.goalId ? [r.goalId] : [])),
+        superseded: self ? isSupersededRow(self, lineage) : false,
+      };
+    }
+    return out;
+  } catch (err) {
+    if (isMissingRoadmapTable(err)) return {};
+    throw err;
+  }
+}
+
+/** What the ROADMAP close path reads through; checks inject them (no database). */
+export interface GoalCloseDeps extends RoadmapWriteOpts {
+  /** readGoalCloseInput by default. */
+  readInput?: (userId: string, goalId: string, now: Date) => Promise<GoalInput | null>;
+  /** roadmap-readings readingOpsFor by default; the close passes `closing: true`, the preview does not. */
+  readingOps?: (userId: string, goalId: string, now: Date, opts: RoadmapWriteOpts & { closing?: boolean }) => Promise<ReadingOps>;
+  /** loadGoalLineages by default (a check with no database injects `async () => ({})` or its fixture). */
+  lineages?: (userId: string, goalIds: readonly string[]) => Promise<Record<string, GoalLineage>>;
+}
+
+/** A ROADMAP goal's readings computed now, for its close preview and its close. */
+interface RoadmapCloseReadings {
+  /** The close input: its series carrying the point computed now (seriesWith), its one due day, its lineage's pay. */
+  input: GoalInput;
+  /** Today's reading upserts (PROFICIENCY included); [] when live or unmeasured. */
+  ops: Prisma.PrismaPromise<unknown>[];
+  /** R1's guarded reach ops for the close (confirm at g = 1, clear below); [] for the preview, when live or unmeasured. */
+  reachOps: Prisma.PrismaPromise<unknown>[];
+  /** The other goals of the milestone's lineage: a paying close re-checks them in its transaction. */
+  otherGoalIds: string[];
+  rows: readonly ReadingRow[];
+  point: RoadmapSeriesPoint | null;
+  /** Computed where writes are off: written nowhere, labelled NOT_RECORDED_HERE. */
+  live: boolean;
+  /** The final refusal that left it unmeasured (an archived roadmap, a superseded row); null when measured. */
+  refused: string | null;
+}
+
+/**
+ * A series with the point computed now in place of any stored point of its
+ * day, so the preview and the close decide from exactly the values they
+ * record. With no point (nothing measurable now), g reads null as of today;
+ * a goal past its due day still reads its stored points up to that day,
+ * because progress after the due day never counts (goalAsOf).
+ */
+function seriesWith(series: readonly RoadmapSeriesPoint[], point: RoadmapSeriesPoint | null, asOf: DayKey, today: DayKey): RoadmapSeriesPoint[] {
+  if (point) return [...series.filter((p) => p.day !== point.day), point];
+  return asOf < today ? series.filter((p) => p.day <= asOf) : [];
+}
+
+/** readingOpsFor's deterministic refusal (roadmap-contracts.md §9.4 item 1): only this closes a goal unmeasured. */
+function isFinalRefusal(res: Extract<ReadingOps, { ok: false }>): boolean {
+  return "final" in res && res.final === true;
+}
+
+/**
+ * Two g values are one reading: both unmeasured, or equal within float noise
+ * and R1's binding tie tolerance (G_EPSILON, 1e-9), far below any figure the
+ * close shows or pays from.
+ */
+const sameG = (a: number | null, b: number | null): boolean => (a == null || b == null ? a == null && b == null : Math.abs(a - b) <= 1e-6);
+
+/**
+ * Today's readings for one ROADMAP goal (roadmap-readings readingOpsFor),
+ * folded into its close input with the milestone's one due day and its
+ * lineage's pay. Unmeasured (series emptied: g null, pays 0, "not measured
+ * yet", in the preview and the close alike) only for a final refusal or a
+ * superseded row. Throws, so the close refuses with GOAL_CLOSE_RETRY and
+ * writes nothing, on anything else: readingOpsFor throwing, a refusal that
+ * is not final, or a g that is not the g R1 judged the reach on (the two due
+ * days disagreeing, say), because the close never pays from a value other
+ * than the one it records and judges.
+ */
+async function roadmapCloseReadings(userId: string, input: GoalInput, now: Date, deps: GoalCloseDeps, closing: boolean): Promise<RoadmapCloseReadings> {
+  const lineage = (await (deps.lineages ?? loadGoalLineages)(userId, [input.id]))[input.id] ?? null;
+  const otherGoalIds = lineage?.otherGoalIds ?? [];
+  const lineagePaidOn = lineagePaidOnOf(input.goalMints, otherGoalIds);
+  const based: GoalInput = {
+    ...input,
+    dueDay: milestoneDueDayOf(lineage?.milestoneDueDay ?? null, input.dueDay),
+    ...(lineagePaidOn ? { lineagePaidOn } : {}),
+  };
+  const unmeasured = (refused: string): RoadmapCloseReadings => ({
+    input: { ...based, readings: [] },
+    ops: [],
+    reachOps: [],
+    otherGoalIds,
+    rows: [],
+    point: null,
+    live: false,
+    refused,
+  });
+  // Never measured again, whatever its goal does (an unarchive included): no reading is computed or written.
+  if (lineage?.superseded) return unmeasured(SUPERSEDED_REASON);
+
+  const res = await (deps.readingOps ?? readingOpsFor)(userId, input.id, now, closing ? { env: deps.env, closing: true } : { env: deps.env });
+  if (!res.ok) {
+    if (!isFinalRefusal(res)) throw new Error(`the milestone's readings were refused but not for good: ${res.reason}`);
+    return unmeasured(res.reason);
+  }
+  // Both gates: R1's own and this server's, so a value computed live is never written or paid from.
+  const live = res.live || !lifeWritesEnabled(deps.env);
+  const readings = seriesWith(input.readings ?? [], res.point, goalAsOf(based.today, based.dueDay), based.today);
+  const next: GoalInput = { ...based, readings, ...(live ? { readingNote: NOT_RECORDED_HERE } : {}) };
+  if (res.g !== undefined) {
+    const paid = goalProgress(next, goalAsOf(next.today, next.dueDay));
+    if (!sameG(paid, res.g)) throw new Error(`the close would pay from g ${String(paid)}, but its reach was judged on g ${String(res.g)}`);
+  }
+  return {
+    input: next,
+    ops: live ? [] : res.ops,
+    reachOps: closing && !live ? (res.reachOps ?? []) : [],
+    otherGoalIds,
+    rows: res.rows,
+    point: res.point,
+    live,
+    refused: null,
+  };
+}
+
+/**
+ * Fails a paying ROADMAP close's transaction (division by zero) when one of
+ * the other goals of its milestone's lineage holds a paying 'mp:GOAL:<id>'
+ * row by now, after the life-mint lock: two goals of one lineage never both
+ * pay, even closed at once. The close is refused with GOAL_CLOSE_STALE, and
+ * trying again reads the other's pay (lineagePaidOn) and pays 0.
+ */
+function lineageGuardOp(userId: string, otherGoalIds: readonly string[]) {
+  return prisma.$executeRaw`
+    SELECT 1 / (CASE WHEN EXISTS (SELECT 1 FROM "ActivityEvent"
+      WHERE "userId" = ${userId} AND "source" = 'MP_MINT' AND "qty" > 0
+        AND "dedupeKey" IN (${Prisma.join(otherGoalIds.map(goalMintKey))}))
+    THEN 0 ELSE 1 END)
+  `;
+}
+
+/** prepareRoadmapGoalClose's result: what the Close sheet's preview decides from, and what it recorded. */
+export interface RoadmapGoalClosePrep {
+  /** The goal's close input (today's point in a ROADMAP goal's series); null when the goal is not open. */
+  input: GoalInput | null;
+  /** The point computed now (before the steps' share); null when not measured or not a ROADMAP goal. */
+  point: RoadmapSeriesPoint | null;
+  /** The rows computed now: recorded where writes are on, else shown live. */
+  rows: readonly ReadingRow[];
+  /** Reading rows the preview wrote (unchanged values write nothing). */
+  written: number;
+  /** Computed on a server with writes off: nothing written. */
+  live: boolean;
+  /** NOT_RECORDED_HERE when live, else null (also on input.readingNote, so the payout carries it). */
+  note: string | null;
+  /** The final refusal that left it unmeasured (an archived roadmap, a superseded row): g then reads null, "not measured". */
+  refused: string | null;
+}
+
+/**
+ * The close preview's input (F10, F16 seam 2). For a ROADMAP goal it first
+ * computes the milestone's readings and Proficiency (roadmap-readings
+ * readingOpsFor), writes them where writes are on, and returns the input with
+ * them, so the preview and the close read the same values. With writes off
+ * it writes nothing and returns the live values, labelled "not recorded on
+ * this server". Any other goal comes back exactly as readGoalCloseInput reads
+ * it, so the preview can call this for every goal:
+ *   const prep = await prepareRoadmapGoalClose(userId, goalId, now);
+ *   … prep.input ? closeDecision(prep.input) : null
+ * No reach transition is applied here: only the close confirms or clears one.
+ * Where the close would refuse with GOAL_CLOSE_RETRY (the readings could not
+ * be worked out now), this throws rather than preview a figure the close
+ * cannot pay.
+ */
+export async function prepareRoadmapGoalClose(userId: string, goalId: string, now: Date, deps: GoalCloseDeps = {}): Promise<RoadmapGoalClosePrep> {
+  const read = await (deps.readInput ?? readGoalCloseInput)(userId, goalId, now);
+  if (!read || read.krMetric !== "ROADMAP") return { input: read, point: null, rows: [], written: 0, live: false, note: null, refused: null };
+  const r = await roadmapCloseReadings(userId, read, now, deps, false);
+  let written = 0;
+  if (r.ops.length > 0) {
+    try {
+      const results: unknown[] = await prisma.$transaction(r.ops);
+      written = results.reduce<number>((n, x) => n + (typeof x === "number" ? x : 0), 0);
+    } finally {
+      invalidate("roadmap");
+    }
+  }
+  return { input: r.input, point: r.point, rows: r.rows, written, live: r.live, note: r.live ? NOT_RECORDED_HERE : null, refused: r.refused };
 }
 
 /**
@@ -215,28 +500,59 @@ export async function readGoalCloseInput(userId: string, goalId: string, now: Da
  * landed in between rolls all back: GOAL_CLOSE_STALE. A close that pays
  * nothing needs no guard: other writes only ever raise the counts it was
  * refused on. Writes only sink-NONE rows; never a TRACK row, never XP.
+ *
+ * A ROADMAP goal (F10, F16 seam 2) is refused where writes are off
+ * (ROADMAP_WRITES_OFF): a dev server sharing the database never mints. Else
+ * its milestone's readings are computed again now (readingOpsFor with
+ * `closing`, so the PROFICIENCY row counts the reach this close confirms),
+ * and their upserts ride in the same transaction (after the lock and the
+ * guard, before the closedScore update) with R1's guarded reach ops
+ * (confirmed at g = 1, cleared below) and, when it pays, the lineage guard.
+ * The close pays from exactly those values. A final refusal (an archived
+ * roadmap) or a superseded row closes it unmeasured: g null, pays 0. Any
+ * other failure to work out the readings refuses the close with
+ * GOAL_CLOSE_RETRY before anything is written.
  */
 export async function closeGoalCore(
   userId: string,
   goalId: string,
   now: Date,
-  launchDay: DayKey | null = lifeLaunchDay()
+  launchDay: DayKey | null = lifeLaunchDay(),
+  deps: GoalCloseDeps = {}
 ): Promise<{ ok: true; payout: GoalPayout } | { ok: false; error: string }> {
   // M5 stays inert while life does not count: a server action is reachable
   // whatever the UI renders, so a close before launch is refused here, before
   // any read or write (it would otherwise record a permanent 0 decision).
   if (!isLaunched(todayKey(now), launchDay)) return { ok: false, error: GOAL_CLOSE_BEFORE_LAUNCH };
-  const input = await readGoalCloseInput(userId, goalId, now);
-  if (!input) {
+  const read = await (deps.readInput ?? readGoalCloseInput)(userId, goalId, now);
+  if (!read) {
     const closed = await prisma.taskTemplate.findFirst({ where: { id: goalId, userId, kind: "GOAL", closedScore: { not: null } }, select: { id: true } });
     return { ok: false, error: closed ? GOAL_ALREADY_CLOSED : "That goal no longer exists." };
   }
+  const isRoadmap = read.krMetric === "ROADMAP";
+  if (isRoadmap && !lifeWritesEnabled(deps.env)) return { ok: false, error: ROADMAP_WRITES_OFF };
+  let roadmap: RoadmapCloseReadings | null = null;
+  if (isRoadmap) {
+    try {
+      roadmap = await roadmapCloseReadings(userId, read, now, deps, true);
+    } catch (err) {
+      // A transient failure never closes the milestone at 0 for good: nothing is written.
+      console.error("[roadmap] closeGoal: the milestone's readings could not be worked out; nothing was written", err);
+      return { ok: false, error: GOAL_CLOSE_RETRY };
+    }
+  }
+  // Never pay from a value this close does not record (readingOpsFor saw writes off where this server did not).
+  if (roadmap?.live) return { ok: false, error: ROADMAP_WRITES_OFF };
+  const input = roadmap ? roadmap.input : read;
   const payout = closeDecision(input);
   const mint = goalCloseMint({ id: input.id, track: input.track }, payout, input.today);
+  const lineageGuard = roadmap && payout.pays > 0 && roadmap.otherGoalIds.length > 0 ? [lineageGuardOp(userId, roadmap.otherGoalIds)] : [];
+  const roadmapOps = roadmap ? [...lineageGuard, ...roadmap.ops, ...roadmap.reachOps] : [];
   try {
     await prisma.$transaction([
       lifeMintLockOp(userId),
       ...(payout.pays > 0 ? [closeGuardOp(userId, input.id, goalLimitWindow(input))] : []),
+      ...roadmapOps,
       prisma.taskTemplate.updateMany({
         where: { id: goalId, userId, kind: "GOAL", closedScore: null },
         data: { closedScore: payout.g ?? 0, completedAt: now },
@@ -249,6 +565,7 @@ export async function closeGoalCore(
     throw err;
   } finally {
     invalidate("life", "progress", "activity");
+    if (isRoadmap) invalidate("roadmap");
   }
   return { ok: true, payout };
 }
@@ -295,7 +612,19 @@ const GOAL_SELECT = {
   completedAt: true,
 } as const;
 
-async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLadder> {
+/** What the ladder's open ROADMAP goals read through; checks inject them (no database). */
+export interface GoalLadderDeps {
+  /** loadRoadmapGoalSeries by default. */
+  series?: GoalSeriesLoader;
+  /** loadGoalLineages by default. */
+  lineages?: (userId: string, goalIds: readonly string[]) => Promise<Record<string, GoalLineage>>;
+}
+
+/**
+ * loadGoalLadder without the cache. Exported for checks, which inject the
+ * roadmap reads (`deps`) and spy the rest; every page reads loadGoalLadder.
+ */
+export async function loadGoalLadderUncached(userId: string, now: Date, deps: GoalLadderDeps = {}): Promise<GoalLadder> {
   const today = todayKey(now);
   const monday = weekStartKeyOf(today);
   const closedSince = dayStartOf(addDays(today, -LADDER_CLOSED_DAYS));
@@ -340,27 +669,52 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
   const whyOf = new Map(mintRows.map((r) => [r.dedupeKey ?? "", parseMintDetail(r.detail).why]));
   const cappedUsedThisWeek = cappedSum(week);
   const launchDay = lifeLaunchDay();
+  // Open ROADMAP goals read their milestone's stored series and lineage, only when such a goal exists
+  // (one wave, side by side), so the ladder's preview is the close's: one due day, a superseded row
+  // unmeasured, a lineage another goal paid at 0. A closed one reads its closedScore instead
+  // (closedGoalReading), so it needs neither. The lineage is a backstop the close re-reads, so a
+  // failed read is logged and the ladder still renders.
+  const roadmapIds = open.filter((g) => metricOf(g.krMetric) === "ROADMAP").map((g) => g.id);
+  const [roadmapOf, lineageOf]: [Record<string, RoadmapGoalEntry>, Record<string, GoalLineage>] =
+    roadmapIds.length > 0
+      ? await Promise.all([
+          (deps.series ?? loadRoadmapGoalSeries)(userId, roadmapIds, today),
+          (deps.lineages ?? loadGoalLineages)(userId, roadmapIds).catch((err: unknown) => {
+            console.error("[roadmap] the goal ladder's lineage read failed", err);
+            return {};
+          }),
+        ])
+      : [{}, {}];
 
   const itemOf = (g: (typeof open)[number], isOpen: boolean): GoalLadderItem => {
     const horizon = horizonOf(g.horizon);
     const track = trackOf(g.track);
     const stated = typeof g.goalMp === "number" && Number.isFinite(g.goalMp) ? g.goalMp : statedGoalMp(horizon);
-    const dueDay = g.dueDay ? keyOfDateColumn(g.dueDay) : null;
-    const input: GoalInput = {
+    const krMetric = metricOf(g.krMetric);
+    const openRoadmap = isOpen && krMetric === "ROADMAP";
+    const entry = openRoadmap ? roadmapOf[g.id] : undefined;
+    const lineage = openRoadmap ? lineageOf[g.id] : undefined;
+    const goalDue = g.dueDay ? keyOfDateColumn(g.dueDay) : null;
+    const dueDay = openRoadmap ? milestoneDueDayOf(lineage?.milestoneDueDay ?? null, goalDue) : goalDue;
+    const lineagePaidOn = lineage ? lineagePaidOnOf(goalMints, lineage.otherGoalIds) : null;
+    const input: GoalInput & { closedScore: number | null } = {
       id: g.id,
       horizon,
       track,
       goalMp: g.goalMp,
-      krMetric: metricOf(g.krMetric),
+      krMetric,
       krTarget: g.krTarget,
       steps: stepsOf.get(g.id) ?? [],
       progress: progressOf.get(g.id) ?? [],
+      ...(openRoadmap ? { readings: lineage?.superseded ? [] : (entry?.series ?? []) } : {}),
       dueDay,
+      ...(lineagePaidOn ? { lineagePaidOn } : {}),
       createdDay: dayKeyOf(g.createdAt),
       today,
       launchDay,
       goalMints,
       cappedUsedThisWeek,
+      closedScore: g.closedScore,
     };
     if (isOpen) {
       const asOf = goalAsOf(today, dueDay);
@@ -373,7 +727,7 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
         horizon,
         track,
         stated,
-        copy: statedPayoutCopy(horizon, stated),
+        copy: statedPayoutLine(horizon, stated, entry?.zeroReason),
         g: g01,
         progressLabel,
         dueDay,
@@ -381,6 +735,8 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
         carried: pastDue && g01 != null && g01 < 1 ? g01 : null,
         preview: closeDecision(input),
         closed: null,
+        // The board's entry, for the ladder's chip, note and "measured" time; none (a missing table) draws no chip.
+        ...(entry ? { roadmap: entry } : {}),
       };
     }
     // A closed goal reads as it stood when it was closed (g as of min(close day,
@@ -397,7 +753,7 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
       horizon,
       track,
       stated,
-      copy: statedPayoutCopy(horizon, stated),
+      copy: statedPayoutLine(horizon, stated),
       g: reading.g,
       progressLabel: reading.progressLabel,
       dueDay,
@@ -426,12 +782,15 @@ async function loadGoalLadderUncached(userId: string, now: Date): Promise<GoalLa
  * The You sheet's goals: open ones (LONG → MID → SHORT, then by due day, each
  * with its g, progress label, stated payout copy, Carried figure when past
  * due, and what closing now would pay) and those closed in the last 30 days
- * (newest first, with what they paid and why). Cached on ['life', 'activity']:
- * ticks, progress and closes invalidate it.
+ * (newest first, with what they paid and why). Cached on ['life', 'activity',
+ * 'roadmap', 'ideas']: ticks, progress and closes invalidate it, and so do a
+ * ROADMAP goal's readings and the reviews and cards that move them. An open
+ * ROADMAP goal's preview is the close's: its milestone's one due day, no g
+ * once superseded, and 0 once another goal of its lineage paid.
  */
 export async function loadGoalLadder(userId: string, now?: Date): Promise<GoalLadder> {
   const at = now ?? new Date();
-  return cached(`goalLadder:${userId}:${todayKey(at)}`, ["life", "activity"], () => loadGoalLadderUncached(userId, at));
+  return cached(`goalLadder:${userId}:${todayKey(at)}`, ["life", "activity", "roadmap", "ideas"], () => loadGoalLadderUncached(userId, at));
 }
 
 /**

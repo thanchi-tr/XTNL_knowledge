@@ -77,7 +77,7 @@ const EPITHETS: Record<Attribute, string> = {
  * unrelated attributes, so by the time one is held the account level band
  * has stopped being the interesting fact about the player.
  */
-const TRANSCENDENT_RANKS: readonly { min: number; name: string; blurb: string }[] = [
+export const TRANSCENDENT_RANKS: readonly { min: number; name: string; blurb: string }[] = [
   { min: 1, name: "Ascendant", blurb: "One path walked to its absolute end." },
   { min: 2, name: "Transcendent", blurb: "More than one path finished entirely." },
   { min: 4, name: "Mythic", blurb: "Mastery that no longer belongs to a single discipline." },

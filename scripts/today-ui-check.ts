@@ -25,8 +25,20 @@
  * the tick as a checkbox). They read the files as text; nothing runs a
  * browser, a server or a database.
  *
+ * The roadmap (roadmap.md F16 seams 4, 16, 17; F17; lane T) adds: the week
+ * quests slot inside .o9 after the goals (data-compact while Close the day
+ * is prominent), the seek from a week quest row, the page's one wave and
+ * fallback freeze, ROADMAP goal cards, the review quest's markup pinned
+ * byte for byte, and the fixture states. The fix round adds, card by card:
+ * a goal never measured again reads 'not measured · pays nothing' with its
+ * note (never '× progress'), a paid lineage's reason keeps its day, and the
+ * card never says 'not recorded on this server' (stored readings only). It
+ * imports roadmap-events, so scripts/_no-model.ts comes first (F16 seam
+ * 22): no check reaches a model.
+ *
  *   npx tsx scripts/today-ui-check.ts
  */
+import "./_no-model";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
@@ -47,7 +59,9 @@ import {
   moveBlockOf,
   onRestMustsIn,
   questOf,
+  seekPlaceOf,
   statsFor,
+  weekQuestsShownOnToday,
   withMoments,
   type BoardData,
   type BoardInstance,
@@ -246,7 +260,9 @@ import {
 } from "../src/components/today/board-ui";
 import { GoalsStrip } from "../src/components/today/GoalsStrip";
 import { GOAL_ALREADY_CLOSED, type GoalPayout } from "../src/lib/goals";
-import { fixtureBoard } from "../src/app/dev/style/today/fixtures";
+import { QUEST_FIXTURES, fixtureBoard, fixtureRoadmapBoard, fixtureRoadmapBoardData } from "../src/app/dev/style/today/fixtures";
+import { NextUp } from "../src/components/today/NextUp";
+import { SEEK_TEMPLATE_EVENT, onSeekTemplate, seekTemplate } from "../src/components/roadmap/roadmap-events";
 
 const TZ = "Australia/Sydney";
 // Thursday 1 October 2026 (AEST; Sydney's DST starts Sunday 4 October).
@@ -2133,7 +2149,11 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
       (quick.match(/CAPTURED_EVENT, \{ detail: item \}/g) ?? []).length === 2
   );
   // TodayBoard flashes one row at a time (one `seek`), so the last capture is the one to show.
-  check("flash: the board seeks one capture at a time (so the sheet holds the last one)", /const \[seek, setSeek\] = useState<\{ id: string; at: number \} \| null>/.test(read("src/components/today/TodayBoard.tsx")));
+  // (A week quest row's seek shares the one slot, marked `sought`: roadmap F17.)
+  check(
+    "flash: the board seeks one capture at a time (so the sheet holds the last one)",
+    /const \[seek, setSeek\] = useState<\{ id: string; at: number(; sought\?: boolean)? \} \| null>/.test(read("src/components/today/TodayBoard.tsx"))
+  );
 
   // U13: the toast's '·' is its own aria-hidden span, outside every link and button.
   const body = renderToStaticMarkup(
@@ -2645,6 +2665,269 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   check("MakeUpCard: a written-off card's rail is quiet (never kept)", /\.makeup\[data-state="written-off"\]::before \{ background: var\(--line-ctl\); \}/.test(today));
   check("MakeUpCard: 'Accept the loss' is the quiet third action", /onAcceptLoss && \([\s\S]*?Accept the loss/.test(read("src/components/today/m2/MakeUpCard.tsx")));
   check("CloseDaySheet: no rested-bonus promise (decision 33 defers it)", !/rested bonus/i.test(read("src/components/today/CloseDaySheet.tsx")));
+}
+
+// ═══ Roadmap on Today (roadmap.md F16 seams 4, 16, 17, 18; F17; lane T) ═══
+// The week quests card is quiet: inside .o9 after the goals, one line while
+// Close the day is prominent, never an Ask, a count or a link into Review.
+// A ROADMAP goal names the evidence of the part that sets its g.
+{
+  const code = (src: string) =>
+    src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+  const boardSrc = code(read("src/components/today/TodayBoard.tsx"));
+
+  // F16 seam 16: the slot inside .o9, directly after GoalsStrip, carrying data-compact while Close the day is prominent.
+  const o9 = /<div className="o9">([\s\S]*?)<\/div>\s*<section className="card today-side-rows o10"/.exec(boardSrc)?.[1] ?? "";
+  const slotTag = /<div className="rm-quests-slot"[^>]*>/.exec(o9)?.[0] ?? "";
+  check(
+    "week quests: the slot sits inside .o9, after GoalsStrip, holding the page's card",
+    o9.indexOf("<GoalsStrip") >= 0 && o9.indexOf("<GoalsStrip") < o9.indexOf('className="rm-quests-slot"') && /\{questsSlot\}\s*<\/div>/.test(o9),
+    o9.slice(0, 80)
+  );
+  check(
+    "week quests: the slot carries data-compact while Close the day is prominent (the same rule as the end-cap)",
+    slotTag.includes('data-compact={prominent ? "1" : undefined}') && /const prominent = closeDayProminent\(clock\);/.test(boardSrc) && boardSrc.includes('data-prominent={prominent ? "1" : undefined}'),
+    slotTag
+  );
+  check(
+    "week quests: the evening rule — compact from 18:00 until the 04:00 edge, not at 17:59 or 04:00",
+    closeDayProminent(at(TODAY, 18)) && closeDayProminent(at("2026-10-02", 3, 59)) && !closeDayProminent(at(TODAY, 17, 59)) && !closeDayProminent(at("2026-10-02", 4))
+  );
+  check("week quests: the slot carries no data-template-id (the board's own lookups can never find it)", slotTag.length > 0 && !slotTag.includes("data-template-id"));
+  // The slot only renders: it never reaches buildBoard, the counts, the Asks or Next up.
+  const slotLines = boardSrc.split("\n").filter((l) => l.includes("questsSlot"));
+  const allowed = [/^\s*questsSlot\?: ReactNode;\s*$/, /questsSlot = null \}: Props\) \{/, /\{questsSlot != null && questsSlot !== false && \($/, /^\s*\{questsSlot\}\s*$/];
+  check(
+    "week quests: questsSlot is only typed, received and drawn (no count, no Ask, no buildBoard input)",
+    slotLines.length === 4 && slotLines.every((l) => allowed.some((r) => r.test(l))),
+    slotLines.map((l) => l.trim()).join(" | ")
+  );
+  check(
+    "week quests: no quest word reaches the board's counts or Asks (buildBoard, todayCountsOf, todayAsksOf untouched)",
+    !/weekQuest|WeekQuest|questsSlot/.test(code(read("src/components/today/board-ui.ts"))) && !/weekQuest|WeekQuest|roadmap/i.test(code(read("src/lib/notifications.ts")))
+  );
+
+  // F16 seam 16: the seek listener; F17: a PRACTICE or STEP row on Today seeks its task, opening Anytime when needed.
+  check(
+    "seek: the board listens with onSeekTemplate and runs its own seek, marked as sought",
+    /useEffect\(\(\) => onSeekTemplate\(\(\{ templateId \}\) => setSeek\(\{ id: templateId, at: Date\.now\(\), sought: true \}\)\), \[\]\);/.test(boardSrc) &&
+      boardSrc.includes('from "@/components/roadmap/roadmap-events"')
+  );
+  const flash = /function flashSought\(el: HTMLElement\) \{([\s\S]*?)\n\}/.exec(boardSrc)?.[1] ?? "";
+  check(
+    "seek: a found row is flashed (sought: outlined and focused, never called 'just added'), else its place opens (Anytime) or the Inbox flashes",
+    /if \(seek\.sought\) flashSought\(el\);\s*else setJustAdded\(seek\.id\);/.test(boardSrc) &&
+      /const place = seekPlaceOf\(current, seek\.id\);[\s\S]*?place\.open === "anytime"\) \{\s*setAnytimeOpen\(true\);/.test(boardSrc) &&
+      flash.includes('setAttribute("data-just-added", "1")') &&
+      // Focus goes to the row's title (the drawer's opener), never its tick: no stray key completes the task.
+      flash.includes('querySelector<HTMLElement>(".r-open")?.focus({ preventScroll: true })') &&
+      !/querySelector[^\n]*\bbutton\b/.test(flash) &&
+      !flash.includes("setJustAdded"),
+    flash.trim().slice(0, 120)
+  );
+  const practice = tpl({ id: "rgp", title: "Backtest", recurrence: "TARGET:3/W", track: "CRAFT" });
+  const step = tpl({ id: "rgs", title: "Set a maximum daily loss", track: "CRAFT" });
+  const seekBoard = board(TODAY, [practice, step]);
+  check(
+    "seek: a step waiting in Anytime opens Anytime; the practice is found where the board files it; an unknown id gives up",
+    seekPlaceOf(seekBoard, "rgs").open === "anytime" && seekPlaceOf(seekBoard, "rgp").found && seekPlaceOf(seekBoard, "rgp").open !== "inbox" && !seekPlaceOf(seekBoard, "gone").found,
+    JSON.stringify([seekPlaceOf(seekBoard, "rgs"), seekPlaceOf(seekBoard, "rgp")])
+  );
+  {
+    // The event itself, through lane 0's helpers, on a stand-in window (nothing else here touches it).
+    const g = globalThis as { window?: unknown };
+    const had = "window" in g;
+    const before = g.window;
+    g.window = new EventTarget();
+    const got: string[] = [];
+    try {
+      const off = onSeekTemplate(({ templateId }) => got.push(templateId));
+      seekTemplate("rgp");
+      seekTemplate("bad id with spaces");
+      off();
+      seekTemplate("rgs");
+    } finally {
+      if (had) g.window = before;
+      else delete g.window;
+    }
+    check("seek: a row's seekTemplate reaches the board's listener once, a bad id never, and nothing after unsubscribing", got.join() === "rgp" && SEEK_TEMPLATE_EVENT === "xtnl:seek-template", got.join());
+  }
+
+  // F16 seam 17: the page loads the week in the board's one wave, with no Suspense, and freezes a missing week after the response.
+  const page = code(read("src/app/today/page.tsx"));
+  const wave = /await Promise\.all\(\[([\s\S]*?)\]\);/.exec(page)?.[1] ?? "";
+  check(
+    "page: loadWeekQuests joins loadTodayBoard in one Promise.all (a failure reads as no card), with no Suspense or fallback",
+    /loadTodayBoard\(userId, day, now\)/.test(wave) && /loadWeekQuests\(userId, now\)\.catch\(\(\) => null\)/.test(wave) && !/Suspense/.test(page)
+  );
+  check(
+    "page: the card is <WeekQuests variant=\"today\"> passed as questsSlot, only for an OPEN week with a quest",
+    /quests && weekQuestsShownOnToday\(quests\.view\) \? <WeekQuests variant="today" view=\{quests\.view\} \/> : null/.test(page) && page.includes("questsSlot={questsSlot}")
+  );
+  check(
+    "page: a week not yet frozen is frozen after the response (RENDER), never on a writes-off server",
+    /if \(quests && !quests\.frozen && !quests\.view\.writesOff\) \{\s*after\(\(\) => freezeWeekQuests\(userId, now, "RENDER"\)\);\s*\}/.test(page)
+  );
+  // F16 seam 3: the board's own read carries the stored series (one query, only for an open ROADMAP goal), so
+  // Today and the weekly review's goals check-in read the same g; the page queries nothing of its own.
+  const tasksSrc = code(read("src/lib/tasks.ts"));
+  check(
+    "board read: loadTodayBoard attaches roadmapGoals (today-board roadmapGoalIdsOf → loadRoadmapGoalSeries) under the 'roadmap' tag; the page adds no query",
+    /cached\(`today:\$\{userId\}:\$\{day\}`, \["life", "activity", "ideas", "roadmap"\]/.test(tasksSrc) &&
+      /const ids = roadmapGoalIdsOf\(templates\);\s*if \(ids\.length === 0\) return \{\};/.test(tasksSrc) &&
+      !/loadRoadmapGoalSeries/.test(page)
+  );
+  check(
+    "week quests: Today's card only for an OPEN week with a quest",
+    weekQuestsShownOnToday({ state: "OPEN", rows: [1] }) && !weekQuestsShownOnToday({ state: "OPEN", rows: [] }) && !weekQuestsShownOnToday({ state: "HELD", rows: [1] }) && !weekQuestsShownOnToday(null)
+  );
+
+  // The review quest keeps every word it has: Next up's quest card, byte for byte, and the Full-day ring's label.
+  const nuHtml = renderToStaticMarkup(
+    createElement(NextUp, { next: nextUpOf({ quest: { reviews: 6, target: 26, dueNow: 20, met: false, cap: 15 }, must: [] }), focus: null, bosses: [], quota: null, reviewHref: "/review" })
+  );
+  const NEXT_UP_QUEST_HTML =
+    '<section class="card today-hero" aria-labelledby="nu-h"><div class="hero-top"><span class="t-eyebrow">Next up · Quest</span><span class="t-meta num">about 3 min</span></div><h2 id="nu-h" class="t-display-m">Clear the review quest</h2><p class="t-meta">6 of 15 done · 15 cards of 26 due · paid in review points, 0 life XP</p><div class="segs hero-segs" role="img" aria-label="Quest: 6 of 15 reviewed"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><a class="btn btn-primary lg btn-block" aria-keyshortcuts="r" href="/review"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-study"></use></svg>Start review<span class="kbd" aria-hidden="true">R</span></a></section>';
+  check("review quest: Next up's quest card renders byte for byte as before the roadmap", nuHtml === NEXT_UP_QUEST_HTML, nuHtml.slice(0, 120));
+  const ring = fullDayOf({ musts: { kept: 1, total: 2 }, quest: { reviews: 6, target: 26, dueNow: 20 }, lifeDeeds: 1 }).rings.find((r) => r.kind === "quest");
+  check("review quest: the Full-day ring still reads 'Quest · 6 of 15'", ring?.label === "Quest" && ring.caption === "6 of 15", `${ring?.label} ${ring?.caption}`);
+  check(
+    "review quest: its files import nothing of the roadmap",
+    ["src/components/today/NextUp.tsx", "src/components/today/DayLedger.tsx", "src/components/today/board-ui.ts", "src/lib/full-day.ts", "src/lib/review-facts.ts"].every((f) => !/roadmap/i.test(code(read(f))))
+  );
+
+  // No week quest row links to Review or carries data-template-id (R5's component; a guard that holds before and after it lands).
+  const roadmapUi = readdirSync(join(ROOT, "src/components/roadmap"))
+    .filter((n) => n.endsWith(".tsx"))
+    .map((n) => code(read(`src/components/roadmap/${n}`)));
+  check(
+    "week quests: no roadmap component carries data-template-id or links to /review",
+    roadmapUi.length > 0 && roadmapUi.every((s) => !s.includes("data-template-id") && !/href=\{?["'`]\/review/.test(s))
+  );
+
+  // ROADMAP goals on the strip (seam 4): the evidence of the binding part and when it was measured, the
+  // chip, 'pays nothing · …' with its reason, the reset note in ink; never +1, never an owed tone.
+  const rmHtml = renderToStaticMarkup(
+    createElement(GoalsStrip, { goals: fixtureRoadmapBoard().goals, busy: false, onProgress: () => {}, launched: true, onClose: () => {}, onReschedule: () => {} })
+  );
+  check(
+    "roadmap goal: '23% · tested by your reviews · slowest: cards at level 6+ · measured 09:12', with its stated ⬡ 6",
+    rmHtml.includes(">23%<") && rmHtml.includes("· tested by your reviews · slowest: cards at level 6+ · measured 09:12") && rmHtml.includes("× progress from 70%"),
+    rmHtml.slice(0, 400)
+  );
+  check("roadmap goal: the quiet chip 'Roadmap · milestone 2 of 6'", rmHtml.includes('<span class="chip">Roadmap · milestone 2 of 6</span>'));
+  check("roadmap goal: a 0-stated milestone reads 'pays nothing · knowledge is paid by reviews'", rmHtml.includes("pays nothing · knowledge is paid by reviews"));
+  check(
+    "roadmap goal: a reset-archived one reads 'not measured', says 'measures removed by a reset', and draws no meter",
+    rmHtml.includes(">not measured<") && rmHtml.includes("measures removed by a reset") && (rmHtml.match(/role="meter"/g) ?? []).length === 3,
+    String((rmHtml.match(/role="meter"/g) ?? []).length)
+  );
+  check(
+    "roadmap goal: no +1 on a measured-from-records goal, no owed tone, a Close per goal",
+    !rmHtml.includes("Add one to") && !/owed/.test(rmHtml) && (rmHtml.match(/aria-label="Close [^"]*"/g) ?? []).length === 5
+  );
+  // The fix round, card by card (each goal is one `.goal` div keyed by its template id).
+  const rmCard = (id: string) => {
+    const at = rmHtml.indexOf(`data-template-id="${id}"`);
+    if (at < 0) return "";
+    const next = rmHtml.indexOf('<div class="goal"', at);
+    return rmHtml.slice(at, next < 0 ? undefined : next);
+  };
+  // Never measured again (an archived roadmap; a row replaced by Start again, roadmap-types isSupersededRow):
+  // its close pays 0 whatever it stated, so the card says 'pays nothing' and never offers '× progress'.
+  const gone = ["rm-reset", "rm-again"].map(rmCard);
+  check(
+    "roadmap goal: never measured again ('measures removed by a reset', 'replaced by Start again') reads 'not measured · pays nothing', the note in ink, no meter, no '× progress'",
+    gone.every((h) => h.includes(">not measured<") && h.includes("· pays nothing") && !h.includes("× progress") && !h.includes('role="meter"') && /<p class="t-meta goal-note">/.test(h)) &&
+      gone[0].includes(">measures removed by a reset<") &&
+      gone[1].includes(">replaced by Start again<") &&
+      gone[1].includes("Roadmap · milestone 4 of 6"),
+    gone.map((h) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140)).join(" | ")
+  );
+  check(
+    "roadmap goal: a measured goal keeps its stated rule ('pays ⬡ 6 × progress from 70%')",
+    rmCard("rm-goal").includes("× progress from 70%") && !rmCard("rm-goal").includes("pays nothing"),
+    rmCard("rm-goal").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)
+  );
+  {
+    // A milestone just started (no reading yet, no note) may still be measured: 'not measured yet', and its rule stands.
+    const fd = fixtureRoadmapBoardData();
+    const fresh = renderToStaticMarkup(
+      createElement(GoalsStrip, {
+        goals: buildBoard({ ...fd, roadmapGoals: { ...fd.roadmapGoals, "rm-goal": { series: [], ord: 2, of: 6, zeroReason: null, note: null } } }).goals,
+        busy: false,
+        onProgress: () => {},
+        launched: true,
+        onClose: () => {},
+        onReschedule: () => {},
+      })
+    );
+    const at = fresh.indexOf('data-template-id="rm-goal"');
+    const one = at < 0 ? "" : fresh.slice(at, fresh.indexOf('<div class="goal"', at));
+    check(
+      "roadmap goal: no reading yet reads 'not measured yet' with its stated rule (never 'pays nothing': a reading may still come)",
+      one.includes(">not measured yet<") && one.includes("× progress from 70%") && !one.includes("pays nothing"),
+      one.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)
+    );
+  }
+  // Before life counts nothing states MP: a never-measured goal reads 'pays through its steps' like every other goal.
+  const preHtml = renderToStaticMarkup(createElement(GoalsStrip, { goals: fixtureRoadmapBoard().goals, busy: false, onProgress: () => {}, launched: false }));
+  check(
+    "roadmap goal: before launch no card states a payout (not even 'pays nothing' for a goal never measured again)",
+    !preHtml.includes("pays nothing") && !preHtml.includes("× progress") && (preHtml.match(/pays through its steps/g) ?? []).length === 5
+  );
+  // Lens 2 minor (LINEAGE_PAID drops its date): the day it paid reaches the card.
+  check(
+    "roadmap goal: a paid lineage reads 'pays nothing · this milestone already paid on 18 Sep' beside its measured figure",
+    rmCard("rm-paid").includes("pays nothing · this milestone already paid on 18 Sep") && rmCard("rm-paid").includes(">55%<"),
+    rmCard("rm-paid").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)
+  );
+  // Contract §9.3 (writes off): Today's card shows the stored readings with their real 'measured' time, so it never
+  // says NOT_RECORDED_HERE; only the Close sheet's live figure (payout.readingNote, computed on the request) does.
+  check(
+    "roadmap goal: the strip and the board's card words never print 'not recorded on this server' (stored readings only)",
+    !/not recorded/i.test(code(read("src/components/today/GoalsStrip.tsx"))) &&
+      !/not recorded/i.test(/export function roadmapGoalCardOf[\s\S]*?\n\}/.exec(code(read("src/lib/today-board.ts")))?.[0] ?? "not recorded") &&
+      !/NOT_RECORDED_HERE/.test(code(read("src/lib/today-board.ts")))
+  );
+
+  // The Close sheet: the zero reason, the reset note and the payout's readingNote (a writes-off server's live figure).
+  const sheets = code(read("src/components/today/GoalSheets.tsx"));
+  check(
+    "close sheet: a ROADMAP goal adds 'Pays nothing · <reason>', its reset note and 'Live figure · not recorded on this server'",
+    sheets.includes("Pays nothing · {roadmap.zeroReason}") && sheets.includes("{capitalised(roadmap.note)}") && /preview\.payout\?\.readingNote/.test(sheets) && sheets.includes("Live figure · {readingNote}") &&
+      /roadmap=\{goalClose\?\.roadmap \?\? null\}/.test(boardSrc)
+  );
+
+  // F23 (lane T): /dev/style/today shows the six week quests states, compact in the board's own slot.
+  const fx = code(read("src/app/dev/style/today/TodayFixtures.tsx"));
+  check(
+    "fixture: the six states — open, partial, all done, compact, writes off, practice-only",
+    QUEST_FIXTURES.map((f) => f.key).join() === "open,partial,done,compact,writes-off,practice-only" &&
+      QUEST_FIXTURES.filter((f) => f.compact).map((f) => f.key).join() === "compact" &&
+      QUEST_FIXTURES.find((f) => f.key === "writes-off")?.input.writesOff === true &&
+      QUEST_FIXTURES.find((f) => f.key === "practice-only")?.input.set.quests.every((q) => q.kind === "PRACTICE") === true
+  );
+  check(
+    "fixture: each state is drawn by WeekQuests (variant today) in an rm-quests-slot, compact via data-compact; the views come from weekQuestsViewOf",
+    /<div className="rm-quests-slot" data-compact=\{q\.compact \? "1" : undefined\}>\s*<WeekQuests variant="today" view=\{q\.view\} \/>/.test(fx) && /return weekQuestsViewOf\(f\.input\);/.test(fx) && !/\b(measured|recorded|selfReported)\(/.test(fx)
+  );
+  const labels = QUEST_FIXTURES.flatMap((f) => f.input.set.quests.map((q) => q.label));
+  check(
+    "fixture: week quest labels start with their verb or name, never 'Quest', and hold no bare 'n of N'",
+    labels.every((l) => /^(Bring|Add|Step: |Checkpoint: |[A-Z])/.test(l) && !/^Quest/i.test(l) && !/\b\d+ of \d+\b/.test(l)),
+    labels.join(" | ")
+  );
+  check(
+    "fixture: the done state is all done, the open state none, the partial state some",
+    (() => {
+      const st = (k: string) => QUEST_FIXTURES.find((f) => f.key === k)!.input.progress;
+      return st("done").every((p) => p.done) && st("open").every((p) => !p.done && p.progress === 0) && st("partial").some((p) => p.done) && st("partial").some((p) => !p.done);
+    })()
+  );
 }
 
 // The async checks (withMoments) settle before the tally.

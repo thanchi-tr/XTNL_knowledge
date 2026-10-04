@@ -33,6 +33,18 @@
  *   launchDaysFor(target, env?) · launchApplyTooEarly(today, firstDutyDay)
  *                               the launch and rehearsal scripts' database and timing guards (pure)
  *
+ * Added by roadmap lane G (docs/life-plan/roadmap.md F16 seam 8; compatible):
+ *   RoadmapStepDeps · RoadmapStepContext · runRoadmapStep(userId, now, ctx)
+ *                               the third step of the chain and the life cron (settle → judge →
+ *                               roadmap): freeze this week's quest set, record readings, finalise
+ *                               settled weeks, each in its own try
+ *   DegradeRoadmapReport · recordRoadmapAfterDegrade(userId, now, ctx?)
+ *                               the degrade cron's readings, once it has degraded
+ *   MaintainOptions.roadmap · LifeCronDeps.roadmap   the checks' injected roadmap writers
+ *   The roadmap step is gated only by settlementWritesEnabled() (lifeWritesEnabled and the
+ *   VERCEL_ENV rule): never by DUTY_LAUNCH_DAY or the settlement cursor, so it runs while Duty
+ *   is inert. It never fails its caller, and the cron's status stays what settle and the judge set.
+ *
  * Shared-database safety (decision 2): dev and prod share one Supabase
  * database, so nothing here writes unless settlementWritesEnabled()
  * (production, or XTNL_LIFE_JUDGE=1 on the rehearsal server; never a Vercel
@@ -94,6 +106,9 @@ import {
   type TemplateHousekeepingOp,
 } from "./settlement-plan";
 import type { ActivityInput, ActivitySource, AutoMetric, InstanceSource, InstanceStatus, Receipt, Sink, TaskKind, Track } from "./life-types";
+import { recordRoadmapReadings, type ReadingsCaller } from "./roadmap-readings";
+import { finalizeQuestWeeks, freezeWeekQuests } from "./roadmap-quests-server";
+import { roadmapStepErrorsOf, type QuestFinalizeRun, type QuestFreezeRun, type ReadingsRun, type RoadmapStepReport, type RoadmapWriteOpts, type WeekQuestSource } from "./roadmap-types";
 
 /**
  * The variables settlement and the cron read. Defaults to process.env; the checks inject their own.
@@ -931,6 +946,121 @@ export interface MaintainOptions {
   client?: SettlementClient;
   /** The judge step; defaults to life-weeks-server maybeJudgeWeeks. */
   judge?: (userId: string, now: Date) => Promise<void>;
+  /** Roadmap lane G: the roadmap step's writers; each defaults to the real one (R6's freeze and finaliser, R1's readings). */
+  roadmap?: RoadmapStepDeps;
+}
+
+// ── The roadmap step (roadmap.md F16 seam 8: settle → judge → roadmap) ────
+
+/** The roadmap step's writers, injectable for the checks; each defaults to the real one. */
+export interface RoadmapStepDeps {
+  /** roadmap-quests-server freezeWeekQuests: this life week's set, inserted only when none exists. */
+  freeze?: (userId: string, now: Date, source: WeekQuestSource, opts: RoadmapWriteOpts) => Promise<QuestFreezeRun>;
+  /** roadmap-readings recordRoadmapReadings: readings, Proficiency and the reach rules (throttled for CHAIN). */
+  readings?: (userId: string, now: Date, opts: RoadmapWriteOpts & { caller?: ReadingsCaller }) => Promise<ReadingsRun>;
+  /** roadmap-quests-server finalizeQuestWeeks: the results of weeks that have settled, written once. */
+  finalize?: (userId: string, now: Date, opts: RoadmapWriteOpts) => Promise<QuestFinalizeRun>;
+}
+
+/** Where the roadmap step runs: the maintenance chain (a render's after()) or the life cron. */
+export interface RoadmapStepContext {
+  env: SettleEnv;
+  /** RENDER from the chain (its fallback freeze), CRON from the life cron (the freeze just after Monday 04:00). */
+  source: Extract<WeekQuestSource, "CRON" | "RENDER">;
+  caller: Extract<ReadingsCaller, "CHAIN" | "LIFE_CRON">;
+  deps?: RoadmapStepDeps;
+}
+
+/** A failure's message for a cron's report (never the stack). */
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * The roadmap step (F16 seam 8; decision 13): first this life week's quest
+ * set is frozen when none exists (F14: the cron's CRON freeze just after
+ * Monday 04:00, else the chain's RENDER fallback), then readings,
+ * Proficiency and the reach rules are recorded (F10), then the week quest
+ * results of every settled week are written once (F14). Each part sits in
+ * its own try: a failed part is null in the report with its message in
+ * errors, and the parts after it still run. Never throws.
+ *
+ * The writers never throw either (roadmap-types: a caught failure comes back
+ * as the result's `error`), so a try alone would report nothing. A part that
+ * returned an `error` keeps its result, and its message joins errors too
+ * (roadmapStepErrorsOf: "freeze: …", "readings: …", "finalize: …", in the
+ * parts' order), so the cron's JSON reports every roadmap failure (F16 seam
+ * 8). A missing table is `skipped: "MISSING_TABLE"`, never an error.
+ *
+ * Gated only by settlementWritesEnabled(env) (lifeWritesEnabled with the
+ * VERCEL_ENV rule): with writes off it reads and writes nothing and reports
+ * WRITES_OFF. It does not wait for Duty's launch or the settlement cursor:
+ * maybeSettle returns early while Duty is inert, and the roadmap still runs.
+ * Every writer is handed the same env, so its own gate agrees.
+ */
+export async function runRoadmapStep(userId: string, now: Date, ctx: RoadmapStepContext): Promise<RoadmapStepReport> {
+  if (!settlementWritesEnabled(ctx.env)) {
+    return {
+      freeze: { froze: 0, skipped: "WRITES_OFF" },
+      readings: { written: 0, reaches: 0, skipped: "WRITES_OFF" },
+      finalize: { finalized: 0, skipped: "WRITES_OFF" },
+      errors: [],
+    };
+  }
+  const opts: RoadmapWriteOpts = { env: ctx.env };
+  const deps = ctx.deps ?? {};
+  const report: RoadmapStepReport = { freeze: null, readings: null, finalize: null, errors: [] };
+  try {
+    report.freeze = await (deps.freeze ?? freezeWeekQuests)(userId, now, ctx.source, opts);
+    report.errors.push(...roadmapStepErrorsOf({ freeze: report.freeze }));
+  } catch (err) {
+    console.error("[roadmap] week quest freeze failed", err);
+    report.errors.push(`freeze: ${errorText(err)}`);
+  }
+  try {
+    report.readings = await (deps.readings ?? recordRoadmapReadings)(userId, now, { ...opts, caller: ctx.caller });
+    report.errors.push(...roadmapStepErrorsOf({ readings: report.readings }));
+  } catch (err) {
+    console.error("[roadmap] readings failed", err);
+    report.errors.push(`readings: ${errorText(err)}`);
+  }
+  try {
+    report.finalize = await (deps.finalize ?? finalizeQuestWeeks)(userId, now, opts);
+    report.errors.push(...roadmapStepErrorsOf({ finalize: report.finalize }));
+  } catch (err) {
+    console.error("[roadmap] week quest finalisation failed", err);
+    report.errors.push(`finalize: ${errorText(err)}`);
+  }
+  return report;
+}
+
+/** The degrade cron's roadmap report: its one roadmap writer, the readings. */
+export interface DegradeRoadmapReport {
+  readings: ReadingsRun | null;
+  errors: string[];
+}
+
+/**
+ * The degrade cron's roadmap step (F16 seam 8): once it has degraded cards
+ * and judged quotas, record roadmap readings (caller DEGRADE_CRON, never
+ * throttled), so a degradation reaches g, RAISE and Proficiency the same
+ * day. Gated by settlementWritesEnabled like the chain's step; never throws,
+ * so a roadmap failure never fails the degrade cron. A failure the writer
+ * caught and returned as `error` is reported in errors as "readings: …"
+ * (roadmapStepErrorsOf), like one it threw.
+ */
+export async function recordRoadmapAfterDegrade(
+  userId: string,
+  now: Date,
+  ctx: { env?: SettleEnv; readings?: RoadmapStepDeps["readings"] } = {}
+): Promise<DegradeRoadmapReport> {
+  const env = ctx.env ?? processEnv();
+  if (!settlementWritesEnabled(env)) return { readings: { written: 0, reaches: 0, skipped: "WRITES_OFF" }, errors: [] };
+  try {
+    const readings = await (ctx.readings ?? recordRoadmapReadings)(userId, now, { env, caller: "DEGRADE_CRON" });
+    return { readings, errors: roadmapStepErrorsOf({ readings }) };
+  } catch (err) {
+    console.error("[roadmap] readings after the degrade failed", err);
+    return { readings: null, errors: [`readings: ${errorText(err)}`] };
+  }
 }
 
 /** In-flight maintenance runs, one per user: two renders at once share one chain. */
@@ -957,10 +1087,12 @@ async function maybeSettle(userId: string, now: Date, opts: MaintainOptions): Pr
 
 /**
  * The after() entry for /today, /you and /today/week (decision 4): settle
- * first, then judge, in one single-flight chain per user. Never throws: a
- * failure is logged and the next render tries again. Settlement's own
- * failure never stops the judge (BODY, CRAFT and CARE are judged whatever
- * settlement is doing; decision 5).
+ * first, then judge, then the roadmap step (roadmap F16 seam 8), in one
+ * single-flight chain per user. Never throws: a failure is logged and the
+ * next render tries again. Settlement's own failure never stops the judge
+ * (BODY, CRAFT and CARE are judged whatever settlement is doing; decision
+ * 5), and neither stops the roadmap step, which runs whatever Duty's launch
+ * state, gated only by settlementWritesEnabled (runRoadmapStep).
  */
 export function maybeMaintainLife(userId: string, now: Date = new Date(), opts: MaintainOptions = {}): Promise<void> {
   try {
@@ -976,6 +1108,11 @@ export function maybeMaintainLife(userId: string, now: Date = new Date(), opts: 
         await (opts.judge ?? maybeJudgeWeeks)(userId, now);
       } catch (err) {
         console.error("[settlement] judge failed", err);
+      }
+      try {
+        await runRoadmapStep(userId, now, { env: opts.env ?? processEnv(), source: "RENDER", caller: "CHAIN", deps: opts.roadmap });
+      } catch (err) {
+        console.error("[settlement] roadmap step failed", err);
       }
     })().finally(() => {
       maintaining.delete(userId);
@@ -1012,6 +1149,8 @@ export interface LifeCronDeps {
   judge?: (userId: string, now: Date) => Promise<Pick<JudgeResult, "launched" | "committed">>;
   /** Whether the M5 launch script has finished for this life launch day; defaults to lifeLaunchFinished. */
   launchFinished?: (userId: string, lifeLaunchDay: DayKey) => Promise<boolean>;
+  /** Roadmap lane G: the roadmap step's writers (runRoadmapStep); each defaults to the real one. */
+  roadmap?: RoadmapStepDeps;
 }
 
 /**
@@ -1042,6 +1181,12 @@ export async function lifeLaunchFinished(
  * does not wait for it. A settlement failure does not stop the judge. Day
  * keys are computed at run time, so a Hobby-plan cron firing anywhere in its
  * hour is still right.
+ *
+ * Then the roadmap step (roadmap F16 seam 8, runRoadmapStep with source
+ * CRON): the week's quest set is frozen just after the Monday turn, before
+ * readings are recorded, then settled weeks are finalised. Its report is the
+ * JSON's roadmap; a roadmap failure is logged and reported there, and the
+ * status stays what settle and the judge set (200 when they passed).
  */
 export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Promise<Response> {
   const env = deps.env ?? processEnv();
@@ -1074,7 +1219,15 @@ export async function runLifeCron(request: Request, deps: LifeCronDeps = {}): Pr
     console.error("[cron/life] judge failed", err);
     judge = { error: err instanceof Error ? err.message : String(err) };
   }
-  return Response.json({ settle, judge }, { status: failed ? 500 : 200 });
+  let roadmap: RoadmapStepReport | { error: string };
+  try {
+    roadmap = await runRoadmapStep(userId, now, { env, source: "CRON", caller: "LIFE_CRON", deps: deps.roadmap });
+  } catch (err) {
+    // runRoadmapStep never throws; this only keeps the status settle's and the judge's.
+    console.error("[cron/life] roadmap step failed", err);
+    roadmap = { error: errorText(err) };
+  }
+  return Response.json({ settle, judge, roadmap }, { status: failed ? 500 : 200 });
 }
 
 // ── The launch and rehearsal scripts' database guard (pure) ──────────────

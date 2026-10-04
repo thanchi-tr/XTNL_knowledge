@@ -39,9 +39,11 @@ export type CacheTag =
   /** The life ledger and everything read from it: the daily streak, the Today board, day totals. */
   | "activity"
   /** Body weight readings and the weight goal (src/lib/weight-server.ts). */
-  | "weight";
+  | "weight"
+  /** The roadmap: Aim, milestones, readings, Proficiency and week quests (src/lib/roadmap-*.ts). */
+  | "roadmap";
 
-export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight"];
+export const ALL_TAGS: CacheTag[] = ["fields", "ideas", "progress", "life", "activity", "weight", "roadmap"];
 
 /**
  * Short by design. The cache exists to collapse the several round trips of

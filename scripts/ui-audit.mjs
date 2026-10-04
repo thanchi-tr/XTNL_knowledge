@@ -2,10 +2,39 @@
 /**
  * Gate 3 and 4 (redesign.md › Acceptance): a headless audit at REAL viewports
  * (344, 375, 932, 1440; not a device frame) of every route, against a running
- * server. It never starts one: run `next dev` or `next start` yourself.
+ * server. It never starts one: run the rehearsal server (or `next dev`) yourself.
  *
- *   node scripts/ui-audit.mjs [--base http://localhost:3000] [--routes /today,/review]
- *                             [--widths 344,375,932,1440] [--json out.json] [--chrome <path>]
+ *   node scripts/ui-audit.mjs [--base http://localhost:3100] [--routes all|real|fixtures|/today,/review]
+ *                             [--widths 344,375,932,1440] [--json out.json] [--chrome <path>] [--plan]
+ *
+ * Routes: `all` (the default) is every real route plus every fixture route;
+ * `fixtures` is the /dev/style pages only (every ?state= in R5's
+ * FIXTURE_STATES, 15 today, read from src/app/dev/style/roadmap/fixtures.ts;
+ * Today's quest states on /dev/style/today, the Aim card states on
+ * /dev/style/art/you, …); `real` is the app's own pages; or a comma list.
+ *
+ * Rehearsal only (roadmap.md F23): /today, /today/week, /you, /you/roadmap
+ * and /you/roadmap/new read the user's rows, and their render may write (the
+ * life chain's settle → judge → roadmap step in after(), a week quest
+ * freeze). The audit REFUSES them (exit 2, before Chrome starts) unless
+ * --base is the rehearsal server, http://localhost:3100 (local database,
+ * XTNL_LIFE_JUDGE=1). An audit never runs those routes against `next start`
+ * on the shared database, where lifeWritesEnabled() is true while VERCEL_ENV
+ * is unset. Off the rehearsal server the reduced-motion gate reads /dev/style.
+ * The default base is the rehearsal server; audit fixtures elsewhere with
+ * `--base http://localhost:3000 --routes fixtures`. A route must be a path
+ * ("/…"): anything else is refused (exit 2), since Git Bash rewrites a bare
+ * "/today" into "C:/Program Files/Git/today" (set MSYS_NO_PATHCONV=1).
+ *
+ * --plan prints the resolved base, routes and widths as JSON and exits 0
+ * without starting Chrome (after the guard, which still refuses): the
+ * roadmap contract check runs it.
+ *
+ * Recorded, not gated: the height of each Aim card ([data-aim-card="<key>"]
+ * boxes on /dev/style/art/you, and .rm-ac / .rm-ac-empty elsewhere) and of
+ * Today's week quests slot (.rm-quests-slot), per route × width; a NOTE line
+ * flags an Aim card taller than 470 px on a phone (F19: about 400, at most
+ * about 470).
  *
  * Fails (exit 1) on, per route × width:
  *   - horizontal overflow (scrollWidth > innerWidth)
@@ -23,48 +52,142 @@
  * CHROME or --chrome if it is not at the default Windows path.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
-const BASE = opt("base", "http://localhost:3000").replace(/\/$/, "");
-const ROUTES = opt(
-  "routes",
-  [
-    "/today",
-    "/today?capture=task",
-    "/today/rules",
-    "/today/week",
-    "/review",
-    "/review?view=run",
-    "/library",
-    "/add",
-    "/structure",
-    "/you",
-    "/skills",
-    "/you/loadout",
-    "/you/moments",
-    "/you/stats",
-    "/settings",
-    "/train",
-    "/dev/style",
-    "/dev/style/today",
-    ...["hub", "empty", "question", "correct", "seal", "miss", "boss", "recap", "boss-won"].map((s) => `/dev/style/review?state=${s}`),
-    "/dev/style/celebrate",
-    "/dev/style/art",
-    "/dev/style/settings",
-    "/dev/style/train",
-  ].join(",")
-).split(",");
+/** The rehearsal server (local database, XTNL_LIFE_JUDGE=1): the only base the rehearsal-only routes run against. */
+const REHEARSAL_BASES = ["http://localhost:3100", "http://127.0.0.1:3100", "http://[::1]:3100"];
+const BASE = opt("base", REHEARSAL_BASES[0]).replace(/\/+$/, "");
+const IS_REHEARSAL = REHEARSAL_BASES.includes(BASE);
+
+/** The app's own pages (they read the user's rows). */
+const REAL_ROUTES = [
+  "/today",
+  "/today?capture=task",
+  "/today/rules",
+  "/today/week",
+  "/review",
+  "/review?view=run",
+  "/library",
+  "/add",
+  "/structure",
+  "/you",
+  "/you/roadmap",
+  "/you/roadmap/new",
+  "/skills",
+  "/you/loadout",
+  "/you/moments",
+  "/you/stats",
+  "/settings",
+  "/train",
+];
+/**
+ * /dev/style/roadmap?state=… (roadmap F23): R5's FIXTURE_STATES, read from
+ * src/app/dev/style/roadmap/fixtures.ts so a state R5 adds is audited without
+ * an edit here (the same pattern roadmap-contract-check reads). The literal
+ * list is only the fallback when that file can't be read or parsed; --plan
+ * says which was used (`roadmapStatesFrom`), and the contract check requires
+ * "fixtures.ts".
+ */
+const ROADMAP_FIXTURE_STATES_FALLBACK = [
+  "empty",
+  "no-key",
+  "running",
+  "draft-mixed",
+  "draft-credential",
+  "accepted",
+  "active",
+  "behind",
+  "past-due",
+  "start-refit",
+  "body-practice",
+  "done",
+  "intake",
+  "active-replan",
+  "draft-live",
+];
+const roadmapFixtureStates = () => {
+  try {
+    const src = readFileSync(fileURLToPath(new URL("../src/app/dev/style/roadmap/fixtures.ts", import.meta.url)), "utf8");
+    const list = /export const FIXTURE_STATES = \[([\s\S]*?)\]/.exec(src);
+    const states = list ? [...list[1].matchAll(/"([\w-]+)"/g)].map((m) => m[1]) : [];
+    if (states.length > 0) return { states, from: "fixtures.ts" };
+  } catch {
+    /* fall back below */
+  }
+  console.error("ui-audit: couldn't read FIXTURE_STATES from src/app/dev/style/roadmap/fixtures.ts; using the built-in list");
+  return { states: ROADMAP_FIXTURE_STATES_FALLBACK, from: "fallback" };
+};
+const { states: ROADMAP_FIXTURE_STATES, from: ROADMAP_STATES_FROM } = roadmapFixtureStates();
+/** Pure fixture pages: they never read the user's rows. */
+const FIXTURE_ROUTES = [
+  "/dev/style",
+  "/dev/style/today",
+  ...["hub", "empty", "question", "correct", "seal", "miss", "boss", "recap", "boss-won"].map((s) => `/dev/style/review?state=${s}`),
+  "/dev/style/celebrate",
+  "/dev/style/art",
+  "/dev/style/art/you",
+  "/dev/style/settings",
+  "/dev/style/train",
+  ...ROADMAP_FIXTURE_STATES.map((s) => `/dev/style/roadmap?state=${s}`),
+];
+/** Their render may write (the life chain in after(), a week quest freeze): rehearsal server only (F23). */
+const REHEARSAL_ONLY = ["/today", "/today/week", "/you", "/you/roadmap", "/you/roadmap/new"];
+/** A route's page path, normalised so a query, a fragment, a trailing or doubled slash, case or %-encoding can't slip past the guard. */
+const pathOf = (route) => {
+  let p = route.split(/[?#]/)[0];
+  try {
+    p = decodeURIComponent(p);
+  } catch {
+    /* keep it as typed */
+  }
+  return p.replace(/\/{2,}/g, "/").replace(/\/+$/, "").toLowerCase() || "/";
+};
+
+const routesArg = opt("routes", "all");
+const ROUTES = (
+  routesArg === "all" ? [...REAL_ROUTES, ...FIXTURE_ROUTES] : routesArg === "fixtures" ? FIXTURE_ROUTES : routesArg === "real" ? REAL_ROUTES : routesArg.split(",")
+)
+  .map((r) => r.trim())
+  .filter(Boolean);
 const WIDTHS = opt("widths", "344,375,932,1440").split(",").map(Number);
 const JSON_OUT = opt("json", null);
 const CHROME = opt("chrome", process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe");
 const AT_REST_ROUTES = ["/today", "/review"];
+/** The reduced-motion gate's page: /today on the rehearsal server, else a fixture page (same root layout). */
+const MOTION_ROUTE = IS_REHEARSAL ? "/today" : "/dev/style";
+
+// The rehearsal-only guard runs before anything else, --plan included.
+// A route is a path on BASE. Git Bash rewrites a bare "/today" argument to "C:/Program Files/Git/today",
+// which would slip past the guard below and audit a 404: refuse anything that isn't a path.
+const notPaths = ROUTES.filter((r) => !r.startsWith("/"));
+if (notPaths.length) {
+  console.error(
+    `ui-audit: refused ${notPaths.join(", ")}: a route is a path starting with "/". ` +
+      `In Git Bash, set MSYS_NO_PATHCONV=1 (it rewrites "/today" into a Windows path).`
+  );
+  process.exit(2);
+}
+const refused = IS_REHEARSAL ? [] : ROUTES.filter((r) => REHEARSAL_ONLY.includes(pathOf(r)));
+if (refused.length) {
+  console.error(
+    `ui-audit: refused ${refused.join(", ")} against ${BASE}. These pages read your rows and their render may write ` +
+      `(the life chain, a week quest freeze): audit them only on the rehearsal server (--base ${REHEARSAL_BASES[0]}: ` +
+      `local database, XTNL_LIFE_JUDGE=1). For the fixture pages alone: --routes fixtures.`
+  );
+  process.exit(2);
+}
+if (args.includes("--plan")) {
+  console.log(JSON.stringify({ base: BASE, rehearsal: IS_REHEARSAL, motionRoute: MOTION_ROUTE, roadmapStatesFrom: ROADMAP_STATES_FROM, routes: ROUTES, widths: WIDTHS }));
+  process.exit(0);
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const profile = mkdtempSync(join(tmpdir(), "xtnl-ui-audit-"));
@@ -189,6 +312,19 @@ const AUDIT = `(() => {
     const t = a.effect && a.effect.getTiming();
     if (t && t.iterations === Infinity && a.playState === 'running') out.loops.push(a.animationName || a.id || 'anonymous');
   }
+  // Recorded, not gated: each Aim card's height (F19) and Today's week quests slot (F17).
+  out.heights = {};
+  document.querySelectorAll('[data-aim-card]').forEach((el) => {
+    if (vis(el)) out.heights['aim:' + el.getAttribute('data-aim-card')] = Math.round(el.getBoundingClientRect().height);
+  });
+  let nth = 0;
+  document.querySelectorAll('.rm-ac, .rm-ac-empty').forEach((el) => {
+    if (!vis(el) || el.closest('[data-aim-card]')) return;
+    out.heights['aim' + (nth++ ? ':' + nth : '')] = Math.round(el.getBoundingClientRect().height);
+  });
+  document.querySelectorAll('.rm-quests-slot').forEach((el, i) => {
+    if (vis(el)) out.heights['today-quests' + (i ? ':' + (i + 1) : '')] = Math.round(el.getBoundingClientRect().height);
+  });
   out.small = [...new Set(out.small)].slice(0, 30);
   out.tiny = [...new Set(out.tiny)].slice(0, 30);
   out.spill = [...new Set(out.spill)].slice(0, 30);
@@ -229,12 +365,12 @@ async function visit(url, { width, reduced = false, settle = 900 }) {
 
 // Motion gate: the first frame under prefers-reduced-motion is Still.
 {
-  await visit(`${BASE}/today`, { width: 375, reduced: true });
+  await visit(`${BASE}${MOTION_ROUTE}`, { width: 375, reduced: true });
   const first = await evaluate("window.__firstMotion");
   const ok = first === "still";
   if (!ok) failures++;
-  results.push({ route: "/today", width: 375, check: "reduced motion first frame", ok, detail: first });
-  console.log(`${ok ? "PASS" : "FAIL"} reduced-motion first frame is still (${first})`);
+  results.push({ route: MOTION_ROUTE, width: 375, check: "reduced motion first frame", ok, detail: first });
+  console.log(`${ok ? "PASS" : "FAIL"} reduced-motion first frame is still (${first}, ${MOTION_ROUTE})`);
 }
 
 for (const route of ROUTES) {
@@ -244,7 +380,7 @@ for (const route of ROUTES) {
     try {
       r = await evaluate(AUDIT);
     } catch (e) {
-      r = { overflow: 0, small: [], tiny: [], loops: [], spill: [], zoomInputs: [], evalError: String(e) };
+      r = { overflow: 0, small: [], tiny: [], loops: [], spill: [], zoomInputs: [], heights: {}, evalError: String(e) };
     }
     const path = route.split("?")[0];
     const loopsBad = AT_REST_ROUTES.includes(path) && !route.includes("?") ? r.loops : [];
@@ -261,6 +397,9 @@ for (const route of ROUTES) {
     if (!ok) failures++;
     results.push({ route, width, ok, ...r, errors, problems });
     console.log(`${ok ? "PASS" : "FAIL"} ${route} @${width}${ok ? "" : ` — ${problems.join("; ")}`}`);
+    const heights = Object.entries(r.heights ?? {});
+    if (heights.length) console.log(`      heights: ${heights.map(([k, h]) => `${k} ${h}px`).join(", ")}`);
+    for (const [k, h] of heights) if (k.startsWith("aim") && width < 600 && h > 470) console.log(`      NOTE: ${k} is ${h}px tall at ${width} (F19: about 400, at most about 470)`);
     if (!ok) {
       for (const s of r.spill.slice(0, 6)) console.log(`      spill: ${s}`);
       for (const s of r.small.slice(0, 6)) console.log(`      small: ${s}`);

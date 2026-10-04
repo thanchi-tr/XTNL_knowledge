@@ -1,0 +1,150 @@
+{
+  "aim": "japanese-work",
+  "about": "An English aim about a language (fix round, Lens 3). Draft a writes in the 'Heading: detail' register with a few slips the lexicons once missed: a name after a colon or full stop ('Basics: Anki review', 'Grammar. Tobira chapters'), a named resource as a label's first word ('Anki Decks'), non-Latin words in an English draft ('げんき', '先生', a whole Japanese label) and a non-digit number ('½ hour', 'Ⅳ'). Draft b is the same register with no claim, title-cased after a colon, so precision is printed honestly. Hand-written, not a probe aim: probe is false so the probe stays within its 10 calls.",
+  "probe": false,
+  "today": "2026-10-05",
+  "areaFieldId": "fld_japanese",
+  "input": {
+    "intake": {
+      "aim": "Speak Japanese confidently at work",
+      "fieldId": "fld_japanese",
+      "track": "CRAFT",
+      "domainIds": ["d_ja_keigo", "d_ja_bizvocab"],
+      "targetDay": "2027-05-16",
+      "hoursPerWeek": 5,
+      "newCardsPerWeek": 25,
+      "typicalHours": null,
+      "typicalHoursSource": null,
+      "syllabus": null,
+      "startPoint": "BASICS",
+      "intensity": "STEADY",
+      "practicesAllowed": true,
+      "constraints": null,
+      "examLabel": null
+    },
+    "areaName": "Japanese",
+    "domains": [
+      { "id": "d_ja_keigo", "name": "Keigo", "fieldId": "fld_japanese", "cards": 30, "atSix": 8, "atTop": 0, "chosen": true },
+      { "id": "d_ja_bizvocab", "name": "Business Vocabulary", "fieldId": "fld_japanese", "cards": 55, "atSix": 20, "atTop": 2, "chosen": true },
+      { "id": "d_ja_listen", "name": "Listening", "fieldId": "fld_japanese", "cards": 12, "atSix": 2, "atTop": 0, "chosen": false },
+      { "id": "d_ja_kanji", "name": "Kanji", "fieldId": "fld_japanese", "cards": 140, "atSix": 70, "atTop": 9, "chosen": false }
+    ],
+    "windows": [
+      { "start": "2026-10-05", "end": "2026-12-20" },
+      { "start": "2026-12-21", "end": "2027-02-28" },
+      { "start": "2027-03-01", "end": "2027-05-16" }
+    ]
+  },
+  "library": [
+    { "id": "d_ja_keigo", "name": "Keigo", "fieldId": "fld_japanese", "fieldName": "Japanese", "cards": 30, "titles": ["Humble verbs", "Honorific verbs"], "tags": ["keigo", "politeness"] },
+    { "id": "d_ja_bizvocab", "name": "Business Vocabulary", "fieldId": "fld_japanese", "fieldName": "Japanese", "cards": 55, "titles": ["Meeting phrases", "Email openings"], "tags": ["business"] },
+    { "id": "d_ja_listen", "name": "Listening", "fieldId": "fld_japanese", "fieldName": "Japanese", "cards": 12, "titles": ["Phone calls"], "tags": ["listening"] },
+    { "id": "d_ja_kanji", "name": "Kanji", "fieldId": "fld_japanese", "fieldName": "Japanese", "cards": 140, "titles": ["Office kanji"], "tags": ["kanji"] },
+    { "id": "d_wk_present", "name": "Presentations", "fieldId": "fld_work", "fieldName": "Work", "cards": 10, "titles": ["Opening a talk"], "tags": [] }
+  ],
+  "drafts": [
+    {
+      "id": "japanese-work-a",
+      "about": "Heading-style labels with slips: names after a colon or full stop, a first-word resource, non-Latin words, '½' and 'Ⅳ'. Most items are clean, so no alarm.",
+      "newDomainClaims": { "1:0": [], "3:0": ["resource", "proper-noun"], "3:1": [] },
+      "reply": {
+        "milestones": [
+          {
+            "title": "Foundations: polite forms",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": ["Self-introductions"],
+            "topics": [
+              { "label": "Keigo: humble and honorific verbs", "domain": "D1", "claims": [] },
+              { "label": "Vocabulary: Workplace greetings", "domain": "D2", "claims": [] },
+              { "label": "Basics: Genki chapter drills", "domain": "D1", "claims": ["resource", "proper-noun"] }
+            ],
+            "practices": [
+              { "name": "Shadow short dialogues", "method": "DELIBERATE_PRACTICE", "claims": [] },
+              { "name": "Basics: Anki review", "method": "DELIBERATE_PRACTICE", "claims": ["resource", "proper-noun"] }
+            ],
+            "steps": [{ "title": "Write a self-introduction", "claims": [] }],
+            "checkpoint": { "label": "Self-test: a short introduction", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Meetings and calls",
+            "titleClaims": [],
+            "domains": ["D3"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Grammar. Tobira chapters", "domain": "D1", "claims": ["resource", "proper-noun"] },
+              { "label": "Listening: phone call phrases", "domain": "D3", "claims": [] },
+              { "label": "敬語 in meetings", "domain": "D1", "claims": [] }
+            ],
+            "practices": [
+              { "name": "Practise with a 先生", "method": "COACHED_SESSION", "claims": [] },
+              { "name": "Read げんき textbook passages", "method": "READING", "claims": ["resource", "proper-noun"] },
+              { "name": "Do ½ hour listening drills", "method": "DELIBERATE_PRACTICE", "claims": ["number"] }
+            ],
+            "steps": [{ "title": "Lead a short team meeting", "claims": [] }],
+            "checkpoint": { "label": "Mock meeting with a colleague", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          },
+          {
+            "title": "Confident at work",
+            "titleClaims": [],
+            "domains": ["D2", "D3"],
+            "newDomains": ["Anki Decks", "Business Email"],
+            "topics": [
+              { "label": "ゲンキの教科書を読む", "domain": "D2", "claims": ["resource", "proper-noun"] },
+              { "label": "Polite refusals", "domain": "D2", "claims": [] },
+              { "label": "Unit Ⅳ business phrases", "domain": "D2", "claims": ["number", "resource"] }
+            ],
+            "practices": [{ "name": "Kanji drills", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Give a weekly update in Japanese", "claims": [] }],
+            "checkpoint": { "label": "Short presentation to the team", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          }
+        ]
+      }
+    },
+    {
+      "id": "japanese-work-b",
+      "about": "The same register with no claim: lower-case after a colon reads plain, a start word after a colon is plain, and a title-cased heading after a colon is a PROPER_NOUN (the precision cost of reading the spec's rule literally; printed, not asserted).",
+      "newDomainClaims": {},
+      "reply": {
+        "milestones": [
+          {
+            "title": "Foundations: Polite Forms",
+            "titleClaims": [],
+            "domains": ["D1", "D2"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Keigo: humble verbs", "domain": "D1", "claims": [] },
+              { "label": "Vocabulary: greetings at the office", "domain": "D2", "claims": [] }
+            ],
+            "practices": [{ "name": "Daily: Review new phrases aloud", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Write a self-introduction", "claims": [] }],
+            "checkpoint": { "label": "Self-test: introductions", "kind": "SELF_TEST", "claims": [] }
+          },
+          {
+            "title": "Meetings: listening and replying",
+            "titleClaims": [],
+            "domains": ["D3", "D1"],
+            "newDomains": [],
+            "topics": [
+              { "label": "Listening: phone calls", "domain": "D3", "claims": [] },
+              { "label": "Polite ways to disagree", "domain": "D1", "claims": [] }
+            ],
+            "practices": [{ "name": "Shadow recorded meetings", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Join a team meeting and take notes", "claims": [] }],
+            "checkpoint": { "label": "Summarise a meeting aloud", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          },
+          {
+            "title": "At work: presentations",
+            "titleClaims": [],
+            "domains": ["D2"],
+            "newDomains": ["Presentations"],
+            "topics": [{ "label": "Opening and closing a talk", "domain": "N1", "claims": [] }],
+            "practices": [{ "name": "Rehearse short updates", "method": "DELIBERATE_PRACTICE", "claims": [] }],
+            "steps": [{ "title": "Give a short update at work", "claims": [] }],
+            "checkpoint": { "label": "Present to the team", "kind": "PERFORMANCE_CHECK", "claims": [] }
+          }
+        ]
+      }
+    }
+  ]
+}

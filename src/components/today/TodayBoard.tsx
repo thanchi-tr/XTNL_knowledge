@@ -10,11 +10,11 @@ import {
   canUndo,
   dutyFloorOf,
   onRestMustsIn,
-  placeOf,
   projectRow,
   questOf,
   reflected,
   ruleOf,
+  seekPlaceOf,
   type BoardData,
   type BoardOp,
   type BoardRow,
@@ -58,7 +58,8 @@ import { TaskRow } from "./TaskRow";
 import { TaskDrawer, type DrawerRule, type DrawerWork } from "./TaskDrawer";
 import { NextUp } from "./NextUp";
 import { GOALS_HEADING_ID, GOAL_CLOSE_CHIP, GoalsStrip } from "./GoalsStrip";
-import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview } from "./GoalSheets";
+import { GoalCloseSheet, GoalRescheduleSheet, type GoalClosePreview, type GoalCloseRoadmap } from "./GoalSheets";
+import { onSeekTemplate } from "@/components/roadmap/roadmap-events";
 import { InboxSheet } from "./InboxSheet";
 import { CapacityPanel } from "./CapacityTile";
 import { ReceiptSheet } from "./ReceiptSheet";
@@ -170,6 +171,14 @@ interface Props {
    * show progress only: no stated MP and no Close.
    */
   launched?: boolean;
+  /**
+   * Roadmap (F16 seam 16, F17): the week quests card, rendered by the page
+   * (`<WeekQuests variant="today" …/>`) and drawn inside .o9 directly after
+   * the goals, in a wrapper that carries data-compact while Close the day is
+   * prominent. Quiet by design: it adds no Ask, no count and no row to the
+   * board; buildBoard and todayCountsOf never see it. Absent: no card.
+   */
+  questsSlot?: ReactNode;
 }
 
 /** The goal the Close sheet is open on: its preview, and the close's own refusal if it had one. */
@@ -180,6 +189,8 @@ interface GoalCloseTarget {
   error: string | null;
   /** False while the sheet slides away: the target stays so its title does not change mid-exit. */
   open: boolean;
+  /** A ROADMAP goal's zero reason and reset note, kept with the target so they do not vanish mid-exit. */
+  roadmap?: GoalCloseRoadmap | null;
 }
 
 /** The goal the Reschedule sheet is open on. */
@@ -240,6 +251,23 @@ const JUST_ADDED_MS = 1600;
 const ANYTIME_PLACES: ReadonlySet<PlaceLane> = new Set<PlaceLane>(["anytime", "later", "upcoming"]);
 /** The flash link a capture toast's 'View' writes: /today#t-<templateId>. */
 const FLASH_HASH = /^#t-([A-Za-z0-9_-]{1,64})$/;
+/** The week quests card sits 16 px under the goals inside .o9 (the board's own gap between sections). */
+const QUESTS_SLOT_STYLE = { marginTop: 16 } as const;
+
+/**
+ * A row a week quest asked for (SEEK_TEMPLATE_EVENT, roadmap F17): outlined
+ * for JUST_ADDED_MS like a found capture, but without 'just added' in its
+ * name (it was not). Focus moves to the row's title (the drawer's opener),
+ * never its tick, so a keyboard or screen reader lands on the task and no
+ * stray key completes it. The outline is the board's own [data-just-added]
+ * rule, set on the element directly because the row's React prop marks
+ * captures only.
+ */
+function flashSought(el: HTMLElement) {
+  el.setAttribute("data-just-added", "1");
+  window.setTimeout(() => el.removeAttribute("data-just-added"), JUST_ADDED_MS);
+  el.querySelector<HTMLElement>(".r-open")?.focus({ preventScroll: true });
+}
 
 function without<V>(record: Record<string, V>, key: string): Record<string, V> {
   const next = { ...record };
@@ -348,7 +376,7 @@ function declaredOf(duty: DutyBoard | null, today: DayKey): DeclaredDay[] {
  * launch the board is the pre-M2 board (debts, which only settlement
  * writes, render whenever they exist).
  */
-export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false }: Props) {
+export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footClock, launched = false, questsSlot = null }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -484,8 +512,12 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
   // up after SEEK_MS), scrolls it into view (smoothly only in Full motion)
   // and outlines it for JUST_ADDED_MS, with 'just added' in its name.
 
-  /** A capture to find: its template id, and when the search began. */
-  const [seek, setSeek] = useState<{ id: string; at: number } | null>(null);
+  /**
+   * A task to find: its template id, when the search began, and whether a
+   * week quest row asked for it (sought: flashed and focused, never called
+   * 'just added') rather than a capture landing.
+   */
+  const [seek, setSeek] = useState<{ id: string; at: number; sought?: boolean } | null>(null);
   /** The template whose row (or goal) is outlined right now. */
   const [justAdded, setJustAdded] = useState<string | null>(null);
   /** A capture went to the Inbox: its row flashes. */
@@ -522,6 +554,11 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     return () => window.cancelAnimationFrame(raf);
   }, [showCaptured]);
 
+  // A week quest row on Today (roadmap F17: PRACTICE and STEP rows are
+  // buttons, never '#t-' links, and carry no data-template-id) asks for its
+  // task: the same seek, which opens Anytime when the task is there.
+  useEffect(() => onSeekTemplate(({ templateId }) => setSeek({ id: templateId, at: Date.now(), sought: true })), []);
+
   // Look once the board has drawn: on every new board, and once Anytime opens.
   useEffect(() => {
     if (!seek) return;
@@ -530,19 +567,19 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       const el = boardRef.current?.querySelector<HTMLElement>(sel);
       if (el) {
         el.scrollIntoView({ block: "nearest", behavior: motionLevel() === "full" ? "smooth" : "instant" });
-        setJustAdded(seek.id);
+        if (seek.sought) flashSought(el);
+        else setJustAdded(seek.id);
         setSeek(null);
         return;
       }
-      // Not drawn yet. A '#t-' link names no place: once the data holds the
-      // template, open the place the board files it in.
-      const t = current.templates.find((x) => x.id === seek.id);
-      if (!t) return;
-      const lane = placeOf(t, current.today, current.instances.filter((i) => i.templateId === t.id), current.stats[t.id]?.lastDone ?? null).lane;
-      if (lane === "inbox") {
+      // Not drawn yet. A '#t-' link (or a week quest row) names no place:
+      // once the data holds the template, open the place the board files it in.
+      const place = seekPlaceOf(current, seek.id);
+      if (!place.found) return;
+      if (place.open === "inbox") {
         setInboxFlash(true);
         setSeek(null);
-      } else if (ANYTIME_PLACES.has(lane)) {
+      } else if (place.open === "anytime") {
         setAnytimeOpen(true);
       }
     });
@@ -927,6 +964,14 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
       .flat()
       .find((g) => g.template.id === goalId)?.template.title ?? "Goal";
 
+  /** A ROADMAP goal's zero reason and reset note, for its Close sheet (null for every other goal). */
+  const goalRoadmapOf = (goalId: string): GoalCloseRoadmap | null => {
+    const rm = Object.values(board.goals)
+      .flat()
+      .find((g) => g.template.id === goalId)?.roadmap;
+    return rm && (rm.zeroReason || rm.note) ? { zeroReason: rm.zeroReason, note: rm.note } : null;
+  };
+
   /**
    * Reads what closing now pays (read-only) into the open Close sheet, if it
    * is still open on this goal. A null preview means the goal is not open
@@ -965,7 +1010,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
     if (!launched) return;
     setError(null);
     setNotice(null);
-    setGoalClose({ id: goalId, title: goalTitleOf(goalId), preview: { state: "loading" }, error: null, open: true });
+    setGoalClose({ id: goalId, title: goalTitleOf(goalId), preview: { state: "loading" }, error: null, open: true, roadmap: goalRoadmapOf(goalId) });
     loadGoalPreview(goalId);
   }
 
@@ -1831,6 +1876,12 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
               onReschedule={openGoalResched}
               justAdded={justAdded}
             />
+            {/* Roadmap F17: the week quests card under the goals. Quiet: no Ask, no count, never red; one line while Close the day is prominent. */}
+            {questsSlot != null && questsSlot !== false && (
+              <div className="rm-quests-slot" data-compact={prominent ? "1" : undefined} style={QUESTS_SLOT_STYLE}>
+                {questsSlot}
+              </div>
+            )}
           </div>
 
           <section className="card today-side-rows o10" aria-label="Inbox and Anytime">
@@ -2044,6 +2095,7 @@ export function TodayBoard({ data, streak, nowIso, notices, focus, bosses, footC
         preview={goalClose?.preview ?? { state: "loading" }}
         busy={goalClosing}
         error={goalClose?.error ?? null}
+        roadmap={goalClose?.roadmap ?? null}
         onConfirm={confirmGoalClose}
         onClose={() => {
           if (!goalClosing) setGoalClose((c) => (c ? { ...c, open: false } : c));
