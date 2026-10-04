@@ -21,11 +21,12 @@
  *   - the dictionary: every group has two or more members, none is one
  *     letter or listed twice in its group, lookup is one hop; the stemmer;
  *   - FORMULA answers typed as LaTeX grade like mathjs;
- *   - the meaning judge (answer-judge.ts, with stand-in judges): asked only
- *     for a plain SHORT miss; it can turn a miss into a pass or confirm it;
- *     a failing or silent judge leaves the miss; never for lists, key
- *     words, case sensitive ideas, empty or oversized answers, other
- *     formats, or with XTNL_ANSWER_JUDGE=0;
+ *   - the in-house meaning check (meaning-match.ts): rewordings and
+ *     synonyms pass; swapped roles, half answers, other facts, a flipped
+ *     "not", a different number and kitchen-sink lists fail, with reasons;
+ *   - when it runs (answer-judge.ts): only for a plain SHORT miss; never for
+ *     lists, key words, case sensitive ideas, empty or oversized answers,
+ *     other formats, or with XTNL_ANSWER_JUDGE=0; no Gemini anywhere in it;
  *   - source guards: the review action grades through gradeReview with the
  *     idea's flag; the formula field and the diagram figure are in the
  *     card; the result says when meaning decided.
@@ -40,7 +41,8 @@ import {
 } from "../src/lib/short-answer";
 import { verifyAnswer } from "../src/lib/verification";
 import { dictionaryGroups, stem, synonymsOf, words } from "../src/lib/synonyms";
-import { gradeReview, judgeEligible, type AnswerJudge } from "../src/lib/answer-judge";
+import { gradeReview, judgeEligible } from "../src/lib/answer-judge";
+import { judgeByMeaning } from "../src/lib/meaning-match";
 
 let failed = 0;
 function check(name: string, ok: boolean) {
@@ -164,12 +166,14 @@ check("formula: \\sqrt and powers", verifyAnswer("FORMULA", "\\sqrt{x^2 + y^2}",
 // ── source guards ──
 const review = readFileSync("src/app/actions/review.ts", "utf8");
 check(
-  "review action grades through gradeReview with the idea's flag and the meaning judge",
-  /await gradeReview\(\s*\{ questionType: idea\.questionType, question: idea\.question, answer: idea\.answer, answerCaseSensitive: idea\.answerCaseSensitive, given: input\.userAnswer \},\s*\{ judge: judgeShortAnswer \}/.test(review) &&
-    !/verifyAnswer\(/.test(review)
+  "review action grades through gradeReview with the idea's flag (in house, no model call)",
+  /const \{ correct, judged \} = gradeReview\(\{ questionType: idea\.questionType, answer: idea\.answer, answerCaseSensitive: idea\.answerCaseSensitive, given: input\.userAnswer \}\)/.test(review) &&
+    !/verifyAnswer\(/.test(review) &&
+    !/gemini/.test(review)
 );
 const judgeSrc = readFileSync("src/lib/answer-judge.ts", "utf8");
 check("gradeReview runs the rules with the idea's flag first", /verifyAnswer\(input\.questionType, input\.given, input\.answer, \{ caseSensitive: input\.answerCaseSensitive \}\)/.test(judgeSrc));
+check("no Gemini anywhere in grading", !/gemini/i.test(judgeSrc.replace(/\/\*[\s\S]*?\*\//g, "")) && !/judgeShortAnswer/.test(readFileSync("src/lib/gemini.ts", "utf8")) && !/gemini/i.test(readFileSync("src/lib/meaning-match.ts", "utf8")));
 const display = readFileSync("src/lib/idea-display.ts", "utf8");
 check("results and library show a list answer readably", /case "SHORT":\s*return displayShortAnswer\(answer\)/.test(display));
 const card = readFileSync("src/components/workspace/SessionCard.tsx", "utf8");
@@ -178,52 +182,51 @@ check("review: a diagram card draws its image with numbered markers", /<DiagramF
 const panel = readFileSync("src/components/workspace/ResultPanel.tsx", "utf8");
 check("result: says when an answer was accepted or checked on meaning", panel.includes("Accepted on meaning") && panel.includes("Checked on meaning"));
 
-// ── the meaning judge (answer-judge.ts), with stand-in judges ──
-async function judgeChecks() {
-  const base = { questionType: "SHORT" as const, question: "In EUR/USD, which currency is the base and which is the quote?", answer: "EUR is the base currency, USD is the quote currency", answerCaseSensitive: false };
-  let asked = 0;
-  const yes: AnswerJudge = async () => {
-    asked++;
-    return { correct: true, reason: "Same fact, different words." };
-  };
-  const no: AnswerJudge = async () => {
-    asked++;
-    return { correct: false, reason: "The roles are swapped." };
-  };
-  const env = {};
+// ── the meaning check (meaning-match.ts) ──
+const fx = "EUR is the base currency, USD is the quote currency";
+const mito = "Producing ATP through cellular respiration — the cell's energy powerhouse";
+const means = (given: string, expected: string) => judgeByMeaning(given, expected).correct;
+check("meaning: a rewording with synonyms passes", means("the euro is the base and the US dollar is the quote", fx));
+check("meaning: terse and reordered passes", means("base EUR, quote USD", fx));
+check("meaning: swapped roles fail (every word is there)", !means("USD is the base, EUR is the quote", fx));
+check("meaning: swapped roles say why", judgeByMeaning("USD is the base, EUR is the quote", fx).reason === "The parts are paired differently from the answer.");
+check("meaning: half the answer fails and names what's missing", !means("EUR", fx) && judgeByMeaning("EUR", fx).reason.startsWith("Missing "));
+check("meaning: a paraphrase with a synonym verb passes", means("they make energy (ATP) for the cell via respiration", mito));
+check("meaning: a different fact fails", !means("they store genetic information", mito));
+check("meaning: negation flips it", !means("the market is not volatile", "The market is volatile") && means("the market is volatile", "the market is volatile"));
+check("meaning: n't counts as not", !means("prices don't increase", "Prices increase"));
+check("meaning: a different number fails", !means("an ATAR of 94.6", "94.65") && means("ATAR 94.65", "94.65"));
+check("meaning: an extra number fails when numbers matter", !means("94.65 or 95", "94.65"));
+check("meaning: a kitchen-sink answer fails", !means("euro dollar yen pound franc base quote spread pip lot leverage margin swap", fx));
+check("meaning: filler alone fails", !means("it is the one that is", fx));
+check("meaning: an answer with no content words is never judged as a pass", !means("anything", "the"));
+check("meaning: a single-concept synonym passes", means("rapid", "fast") && !means("slow", "fast"));
+check("meaning: a typo in a long word still counts", means("mitochondira", "Mitochondria"));
 
-  let r = await gradeReview({ ...base, given: "EUR is the base currency, USD is the quote currency" }, { judge: yes, env });
-  check("judge: a rule pass is never sent to the judge", r.correct && r.judged === null && asked === 0);
+// ── when it runs (answer-judge.ts) ──
+const base = { questionType: "SHORT" as const, answer: fx, answerCaseSensitive: false };
+const env = {};
+let r = gradeReview({ ...base, given: fx }, env);
+check("judge: a rule pass never runs the meaning check", r.correct && r.judged === null);
+r = gradeReview({ ...base, given: "the euro is the base and the US dollar is the quote" }, env);
+check("judge: a wording miss that means the same passes, with its reason", r.correct && r.judged?.reason === "Same meaning in different words.");
+r = gradeReview({ ...base, given: "USD is the base, EUR is the quote" }, env);
+check("judge: a miss stays a miss, with its reason", !r.correct && r.judged?.correct === false && r.judged.reason.length > 0);
+const skipped = [
+  gradeReview({ ...base, answer: "[EUR base, USD quote]", given: "nothing like it" }, env),
+  gradeReview({ ...base, answer: "|euro|", given: "dollar" }, env),
+  gradeReview({ ...base, answerCaseSensitive: true, given: "the euro is the base and the US dollar is the quote" }, env),
+  gradeReview({ ...base, given: "   " }, env),
+  gradeReview({ ...base, given: "?!" }, env),
+  gradeReview({ ...base, given: "x".repeat(601) }, env),
+  gradeReview({ ...base, questionType: "CLOZE", answer: JSON.stringify(["EUR"]), given: ["dollar"] }, env),
+  gradeReview({ ...base, given: "the euro is the base and the US dollar is the quote" }, { XTNL_ANSWER_JUDGE: "0" }),
+];
+check("judge: never runs for lists, key words, case sensitive, empty, symbols only, over 600 chars, other formats, or when switched off", skipped.every((g) => g.judged === null && !g.correct));
+check("judge: eligible for a plain SHORT miss", judgeEligible({ ...base, given: "the euro" }, env));
 
-  r = await gradeReview({ ...base, given: "the base is the euro and the dollar is the quote" }, { judge: yes, env });
-  check("judge: a wording miss the judge accepts passes, with its reason", r.correct && r.judged?.reason === "Same fact, different words." && asked === 1);
-
-  r = await gradeReview({ ...base, given: "USD is the base, EUR is the quote" }, { judge: no, env });
-  check("judge: a miss the judge rejects stays a miss, with its reason", !r.correct && r.judged?.correct === false && r.judged.reason === "The roles are swapped.");
-
-  r = await gradeReview({ ...base, given: "the euro" }, { judge: async () => Promise.reject(new Error("down")), env });
-  check("judge: a failing judge leaves the miss", !r.correct && r.judged === null);
-
-  r = await gradeReview({ ...base, given: "the euro" }, { judge: () => new Promise(() => {}), timeoutMs: 30, env });
-  check("judge: a judge that never answers leaves the miss", !r.correct && r.judged === null);
-
-  asked = 0;
-  await gradeReview({ ...base, answer: "[EUR base, USD quote]", given: "euro base" }, { judge: yes, env });
-  await gradeReview({ ...base, answer: "|euro|", given: "dollar" }, { judge: yes, env });
-  await gradeReview({ ...base, answerCaseSensitive: true, given: "eur is the base" }, { judge: yes, env });
-  await gradeReview({ ...base, given: "   " }, { judge: yes, env });
-  await gradeReview({ ...base, given: "?!" }, { judge: yes, env });
-  await gradeReview({ ...base, given: "x".repeat(601) }, { judge: yes, env });
-  await gradeReview({ ...base, questionType: "CLOZE", answer: JSON.stringify(["EUR"]), given: ["dollar"] }, { judge: yes, env });
-  await gradeReview({ ...base, given: "the euro" }, { judge: yes, env: { XTNL_ANSWER_JUDGE: "0" } });
-  check("judge: never asked for lists, key words, case sensitive, empty, symbols only, over 600 chars, other formats, or when switched off", asked === 0);
-  check("judge: eligible for a plain SHORT miss", judgeEligible({ ...base, given: "the euro" }, env));
+if (failed > 0) {
+  console.error(`\n${failed} check(s) failed`);
+  process.exit(1);
 }
-
-judgeChecks().then(() => {
-  if (failed > 0) {
-    console.error(`\n${failed} check(s) failed`);
-    process.exit(1);
-  }
-  console.log("\nshort-answer-check: all passed");
-});
+console.log("\nshort-answer-check: all passed");

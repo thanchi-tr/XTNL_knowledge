@@ -258,6 +258,17 @@ const GROUPS: readonly string[] = [
   "forex, fx, foreign exchange, currency trading",
   "eurusd, eur usd, euro dollar",
   "gbpusd, gbp usd, cable",
+  "eur, euro",
+  "usd, us dollar, american dollar, greenback",
+  "gbp, pound sterling, british pound, sterling",
+  "jpy, japanese yen, yen",
+  "aud, australian dollar, aussie dollar",
+  "cad, canadian dollar, loonie",
+  "chf, swiss franc",
+  "nzd, new zealand dollar, kiwi dollar",
+  "base currency, base",
+  "quote currency, counter currency, quote",
+  "currency pair, pair",
   "profit, gain, earnings",
   "return, yield",
   "risk, danger, hazard, peril",
@@ -577,6 +588,23 @@ export function synonymsOf(phrase: string): string[] {
 /** Every group, for the checks (each member a word list). */
 export function dictionaryGroups(): readonly string[][] {
   return index().members;
+}
+
+/** The groups a stemmed word or phrase (stems joined by spaces) belongs to. */
+export function groupsOfKey(key: string): readonly number[] {
+  return index().byKey.get(key) ?? [];
+}
+
+let LONGEST = 0;
+/** The most words in any dictionary member, for longest-first phrase reading. */
+export function longestPhrase(): number {
+  if (LONGEST === 0) LONGEST = Math.max(1, ...[...index().byKey.keys()].map((k) => k.split(" ").length));
+  return LONGEST;
+}
+
+/** Two stems are one typo apart, for words of five letters or more. */
+export function nearStems(a: string, b: string): boolean {
+  return a.length >= 5 && b.length >= 5 && levenshteinAtMostOne(a, b);
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import type { ReviewAnswer } from "@/lib/verification";
 import { gradeReview } from "@/lib/answer-judge";
-import { judgeShortAnswer, type AnswerJudgement } from "@/lib/gemini";
+import type { MeaningVerdict } from "@/lib/meaning-match";
 import { applyReviewResult, readReviewIdea, type ReviewOutcome } from "@/lib/srs";
 import { loadProgressionFresh } from "@/lib/skill-effects";
 import { displayAnswer } from "@/lib/idea-display";
@@ -54,8 +54,8 @@ export interface SubmitReviewResult {
   expected: string;
   /** The Idea's own premise (its "why"), when it has one. */
   explanation: string | null;
-  /** Set when the wording missed and the meaning judge decided (answer-judge.ts): its verdict and one-line reason. */
-  judged: AnswerJudgement | null;
+  /** Set when the wording missed and the meaning check decided (answer-judge.ts): its verdict and one-line reason. */
+  judged: MeaningVerdict | null;
   combo: ComboPaid;
   /** The one true sentence for this recall (review-facts.ts). */
   trueFact: TrueFact;
@@ -101,11 +101,8 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitRevi
     captureSnapshot(userId, { scope: "review" }).catch(() => null),
   ]);
 
-  // The rules, then for a plain SHORT miss the meaning judge (answer-judge.ts); a judge failure leaves the miss.
-  const { correct, judged } = await gradeReview(
-    { questionType: idea.questionType, question: idea.question, answer: idea.answer, answerCaseSensitive: idea.answerCaseSensitive, given: input.userAnswer },
-    { judge: judgeShortAnswer }
-  );
+  // The rules, then for a plain SHORT miss the in-house meaning check (answer-judge.ts).
+  const { correct, judged } = gradeReview({ questionType: idea.questionType, answer: idea.answer, answerCaseSensitive: idea.answerCaseSensitive, given: input.userAnswer });
   const outcome = await applyReviewResult(idea.id, correct, now, combo, { idea, progression });
 
   // After the write (and its leveling), so the diff sees it. Never fails the answer: the points are already in.
