@@ -1,0 +1,806 @@
+{
+  "aim": "ielts",
+  "pack": "ielts",
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "TDfDaqHoMc-c0-kP0aKdoQs",
+  "finishReason": "STOP",
+  "latencyMs": 2382,
+  "usage": {
+    "promptTokenCount": 776,
+    "candidatesTokenCount": 388,
+    "totalTokenCount": 1164,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 776
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"needs\": [\n    \"D3\",\n    \"D4\"\n  ],\n  \"stages\": {\n    \"FOUNDATION\": {\n      \"steps\": [\n        {\n          \"kind\": \"CHOOSE_MATERIAL\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SET_UP\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FAMILIAR\": {\n      \"steps\": [\n        {\n          \"kind\": \"OUTLINE\",\n          \"on\": \"D2\"\n        },\n        {\n          \"kind\": \"LIST_GAPS\",\n          \"on\": \"D3\"\n        }\n      ],\n      \"checkpoint\": \"MOCK_TEST\"\n    },\n    \"RETAINED\": {\n      \"steps\": [\n        {\n          \"kind\": \"EXPLAIN_ONCE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SMALL_PROJECT\",\n          \"on\": \"D4\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FLUENT\": {\n      \"steps\": [\n        {\n          \"kind\": \"BOOK_EXAM\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"MOCK_TEST\"\n    },\n    \"MASTERED\": {\n      \"steps\": [\n        {\n          \"kind\": \"FULL_ATTEMPT\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"PERFORMANCE_CHECK\"\n    }\n  }\n}",
+  "parsed": {
+    "needs": [
+      "D3",
+      "D4"
+    ],
+    "stages": {
+      "FOUNDATION": {
+        "steps": [
+          {
+            "kind": "CHOOSE_MATERIAL",
+            "on": "D1"
+          },
+          {
+            "kind": "SET_UP",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FAMILIAR": {
+        "steps": [
+          {
+            "kind": "OUTLINE",
+            "on": "D2"
+          },
+          {
+            "kind": "LIST_GAPS",
+            "on": "D3"
+          }
+        ],
+        "checkpoint": "MOCK_TEST"
+      },
+      "RETAINED": {
+        "steps": [
+          {
+            "kind": "EXPLAIN_ONCE",
+            "on": "D1"
+          },
+          {
+            "kind": "SMALL_PROJECT",
+            "on": "D4"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FLUENT": {
+        "steps": [
+          {
+            "kind": "BOOK_EXAM",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "MOCK_TEST"
+      },
+      "MASTERED": {
+        "steps": [
+          {
+            "kind": "FULL_ATTEMPT",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "PERFORMANCE_CHECK"
+      }
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-3",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-1",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_en_gram",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Grammar",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_en_listen",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Listening",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_en_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Choose your material for Academic Vocabulary",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Reach IELTS 7 in the academic test",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Academic Vocabulary, Essay Structure",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-6"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-6"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-7",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_en_essay",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Write an outline of Essay Structure",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-9",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "List what you still can't do in Academic Vocabulary, Essay Structure",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "MOCK_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Mock test: IELTS Academic",
+            "origin": "CODE",
+            "catalogKey": "MOCK_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-10"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-10"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-11",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_en_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Explain Academic Vocabulary to someone without notes",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_ONCE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Finish a small project with Academic Vocabulary, Essay Structure",
+            "origin": "CODE",
+            "catalogKey": "SMALL_PROJECT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Academic Vocabulary, Essay Structure",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-14"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-15",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Book IELTS Academic",
+            "origin": "CODE",
+            "catalogKey": "BOOK_EXAM"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-17",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "MOCK_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Mock test: IELTS Academic",
+            "origin": "CODE",
+            "catalogKey": "MOCK_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-17"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-17"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-18",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-19",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Do a full attempt at: Reach IELTS 7 in the academic test",
+            "origin": "CODE",
+            "catalogKey": "FULL_ATTEMPT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-20",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "PERFORMANCE_CHECK",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Performance check: Reach IELTS 7 in the academic test",
+            "origin": "CODE",
+            "catalogKey": "PERFORMANCE_CHECK"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-20"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-20"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "MASTERED",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Grammar",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        },
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Listening",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        }
+      ],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": true,
+    "credential": true,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [
+      "d_en_gram",
+      "d_en_listen"
+    ],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": []
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {
+      "D3": {
+        "plausible": null
+      },
+      "D4": {
+        "plausible": null
+      }
+    },
+    "stages": {
+      "FOUNDATION": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      },
+      "MASTERED": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

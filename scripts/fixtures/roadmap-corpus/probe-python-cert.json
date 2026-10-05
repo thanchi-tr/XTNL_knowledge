@@ -1,0 +1,1297 @@
+{
+  "aim": "python-cert",
+  "pack": "python-cert",
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "VTfDatjcO9a30-kP4K_omQY",
+  "finishReason": "STOP",
+  "latencyMs": 2929,
+  "usage": {
+    "promptTokenCount": 753,
+    "candidatesTokenCount": 695,
+    "totalTokenCount": 1448,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 753
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"needs\": [\n    \"D3\"\n  ],\n  \"stages\": {\n    \"FOUNDATION\": {\n      \"practices\": [\n        {\n          \"kind\": \"READ_AND_CARD\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SLOW_DRILLS\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"CHOOSE_MATERIAL\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SET_UP\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FAMILIAR\": {\n      \"practices\": [\n        {\n          \"kind\": \"RECALL_DRILLS\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"PROBLEM_SETS\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"OUTLINE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"LIST_GAPS\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"MOCK_TEST\"\n    },\n    \"RETAINED\": {\n      \"practices\": [\n        {\n          \"kind\": \"PROBLEM_SETS\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"BUILD_SOMETHING\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SMALL_PROJECT\",\n          \"on\": \"D2\"\n        },\n        {\n          \"kind\": \"EXPLAIN_ONCE\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FLUENT\": {\n      \"practices\": [\n        {\n          \"kind\": \"TIMED_PRACTICE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"MISTAKE_REVIEW\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"BOOK_EXAM\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"MOCK_TEST\"\n    },\n    \"MASTERED\": {\n      \"practices\": [\n        {\n          \"kind\": \"RUN_THROUGHS\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"RUN_THROUGHS\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"FULL_ATTEMPT\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"PERFORMANCE_CHECK\"\n    }\n  }\n}",
+  "parsed": {
+    "needs": [
+      "D3"
+    ],
+    "stages": {
+      "FOUNDATION": {
+        "practices": [
+          {
+            "kind": "READ_AND_CARD",
+            "on": "D1"
+          },
+          {
+            "kind": "SLOW_DRILLS",
+            "on": "D2"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "CHOOSE_MATERIAL",
+            "on": "D1"
+          },
+          {
+            "kind": "SET_UP",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FAMILIAR": {
+        "practices": [
+          {
+            "kind": "RECALL_DRILLS",
+            "on": "D1"
+          },
+          {
+            "kind": "PROBLEM_SETS",
+            "on": "D2"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "OUTLINE",
+            "on": "D1"
+          },
+          {
+            "kind": "LIST_GAPS",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "MOCK_TEST"
+      },
+      "RETAINED": {
+        "practices": [
+          {
+            "kind": "PROBLEM_SETS",
+            "on": "D1"
+          },
+          {
+            "kind": "BUILD_SOMETHING",
+            "on": "D2"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SMALL_PROJECT",
+            "on": "D2"
+          },
+          {
+            "kind": "EXPLAIN_ONCE",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FLUENT": {
+        "practices": [
+          {
+            "kind": "TIMED_PRACTICE",
+            "on": "D1"
+          },
+          {
+            "kind": "MISTAKE_REVIEW",
+            "on": "D2"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "BOOK_EXAM",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "MOCK_TEST"
+      },
+      "MASTERED": {
+        "practices": [
+          {
+            "kind": "RUN_THROUGHS",
+            "on": "D1"
+          },
+          {
+            "kind": "RUN_THROUGHS",
+            "on": "D2"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "FULL_ATTEMPT",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "PERFORMANCE_CHECK"
+      }
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-2",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-1",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_test",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Testing",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "READING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Study Python Basics",
+            "origin": "CODE",
+            "catalogKey": "READ_AND_CARD"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Data Structures",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Choose your material for Python Basics",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Earn an entry-level Python programming certificate",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Python Basics, Data Structures",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-3"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-3"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-4"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-4"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-7"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-7"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-8",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-9",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Python Basics",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Problem sets: Data Structures",
+            "origin": "CODE",
+            "catalogKey": "PROBLEM_SETS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Write an outline of Python Basics",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "List what you still can't do in Data Structures",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "MOCK_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Mock test: Python entry-level certificate",
+            "origin": "CODE",
+            "catalogKey": "MOCK_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-9"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-9"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-10"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-10"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-13"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-13"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-14",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-15",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Problem sets: Python Basics",
+            "origin": "CODE",
+            "catalogKey": "PROBLEM_SETS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "PROJECT_WORK",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Build something with Data Structures",
+            "origin": "CODE",
+            "catalogKey": "BUILD_SOMETHING"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-17",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Finish a small project with Data Structures",
+            "origin": "CODE",
+            "catalogKey": "SMALL_PROJECT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-18",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Explain Python Basics to someone without notes",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_ONCE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-19",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Python Basics, Data Structures",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-15"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-15"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-16"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-16"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-19"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-19"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-20",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-21",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Timed practice: Python Basics",
+            "origin": "CODE",
+            "catalogKey": "TIMED_PRACTICE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-22",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Go over your mistakes: Data Structures",
+            "origin": "CODE",
+            "catalogKey": "MISTAKE_REVIEW"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-23",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Book Python entry-level certificate",
+            "origin": "CODE",
+            "catalogKey": "BOOK_EXAM"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-24",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "MOCK_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Mock test: Python entry-level certificate",
+            "origin": "CODE",
+            "catalogKey": "MOCK_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-21"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-21"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-22"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-22"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-24"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-24"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-25",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-26",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_basics",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Full run-throughs: Python Basics",
+            "origin": "CODE",
+            "catalogKey": "RUN_THROUGHS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-27",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_pr_ds",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Full run-throughs: Data Structures",
+            "origin": "CODE",
+            "catalogKey": "RUN_THROUGHS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-28",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Do a full attempt at: Earn an entry-level Python programming certificate",
+            "origin": "CODE",
+            "catalogKey": "FULL_ATTEMPT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-29",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "PERFORMANCE_CHECK",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Performance check: Earn an entry-level Python programming certificate",
+            "origin": "CODE",
+            "catalogKey": "PERFORMANCE_CHECK"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-26"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-26"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-27"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-27"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-29"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-29"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "MASTERED",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Testing",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        }
+      ],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": true,
+    "credential": true,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [
+      "d_pr_test"
+    ],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": []
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {
+      "D3": {
+        "plausible": null
+      }
+    },
+    "stages": {
+      "FOUNDATION": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      },
+      "MASTERED": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

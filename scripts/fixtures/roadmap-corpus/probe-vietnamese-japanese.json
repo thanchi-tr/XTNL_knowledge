@@ -1,0 +1,767 @@
+{
+  "aim": "vietnamese-japanese",
+  "pack": "vietnamese-japanese",
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "WDfDaoOTN-Ow2roP1NXI0Ag",
+  "finishReason": "STOP",
+  "latencyMs": 2238,
+  "usage": {
+    "promptTokenCount": 684,
+    "candidatesTokenCount": 416,
+    "totalTokenCount": 1100,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 684
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"stages\": {\n    \"FOUNDATION\": {\n      \"steps\": [\n        {\n          \"kind\": \"CHOOSE_MATERIAL\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SET_UP\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FAMILIAR\": {\n      \"steps\": [\n        {\n          \"kind\": \"OUTLINE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"LIST_GAPS\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"RETAINED\": {\n      \"steps\": [\n        {\n          \"kind\": \"EXPLAIN_ONCE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SMALL_PROJECT\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FLUENT\": {\n      \"steps\": [\n        {\n          \"kind\": \"OUTLINE\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"EXPLAIN_ONCE\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"MASTERED\": {\n      \"steps\": [\n        {\n          \"kind\": \"FULL_ATTEMPT\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"FULL_ATTEMPT\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"PERFORMANCE_CHECK\"\n    }\n  }\n}",
+  "parsed": {
+    "stages": {
+      "FOUNDATION": {
+        "steps": [
+          {
+            "kind": "CHOOSE_MATERIAL",
+            "on": "D1"
+          },
+          {
+            "kind": "SET_UP",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FAMILIAR": {
+        "steps": [
+          {
+            "kind": "OUTLINE",
+            "on": "D1"
+          },
+          {
+            "kind": "LIST_GAPS",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "RETAINED": {
+        "steps": [
+          {
+            "kind": "EXPLAIN_ONCE",
+            "on": "D1"
+          },
+          {
+            "kind": "SMALL_PROJECT",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FLUENT": {
+        "steps": [
+          {
+            "kind": "OUTLINE",
+            "on": "D1"
+          },
+          {
+            "kind": "EXPLAIN_ONCE",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "MASTERED": {
+        "steps": [
+          {
+            "kind": "FULL_ATTEMPT",
+            "on": "D1"
+          },
+          {
+            "kind": "FULL_ATTEMPT",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "PERFORMANCE_CHECK"
+      }
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-1",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Choose your material for Từ vựng",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Nói tiếng Nhật trôi chảy trong công việc",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Từ vựng, Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-4"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-4"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-5",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Write an outline of Từ vựng",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_gram",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "List what you still can't do in Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Từ vựng, Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-8"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-8"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-9",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Explain Từ vựng to someone without notes",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_ONCE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_gram",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Finish a small project with Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "SMALL_PROJECT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Từ vựng, Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-12"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-12"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-13",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_vocab",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Write an outline of Từ vựng",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-15",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_jp_gram",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Explain Ngữ pháp to someone without notes",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_ONCE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Từ vựng, Ngữ pháp",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-16"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-16"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-17",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-18",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Do a full attempt at: Nói tiếng Nhật trôi chảy trong công việc",
+            "origin": "CODE",
+            "catalogKey": "FULL_ATTEMPT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-19",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "PERFORMANCE_CHECK",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Performance check: Nói tiếng Nhật trôi chảy trong công việc",
+            "origin": "CODE",
+            "catalogKey": "PERFORMANCE_CHECK"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-19"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-19"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "MASTERED",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [
+        {
+          "milestoneOrd": 5,
+          "kind": "STEP",
+          "label": "",
+          "code": "DUPLICATE",
+          "reason": "the same type twice in one stage"
+        }
+      ],
+      "flagged": [],
+      "notes": [],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": true,
+    "credential": false,
+    "nonEnglish": true,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": []
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {},
+    "stages": {
+      "FOUNDATION": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      },
+      "MASTERED": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

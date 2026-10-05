@@ -1,0 +1,593 @@
+{
+  "aim": "guitar",
+  "pack": "guitar",
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "TzfDau7BCtTbrfcP2NryyAs",
+  "finishReason": "STOP",
+  "latencyMs": 1794,
+  "usage": {
+    "promptTokenCount": 711,
+    "candidatesTokenCount": 273,
+    "totalTokenCount": 984,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 711
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"needs\": [\n    \"D3\"\n  ],\n  \"stages\": {\n    \"FOUNDATION\": {\n      \"steps\": [\n        {\n          \"kind\": \"CHOOSE_MATERIAL\",\n          \"on\": \"D1\"\n        },\n        {\n          \"kind\": \"SET_UP\",\n          \"on\": \"D2\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FAMILIAR\": {\n      \"steps\": [\n        {\n          \"kind\": \"LIST_GAPS\",\n          \"on\": \"D3\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"RETAINED\": {\n      \"steps\": [\n        {\n          \"kind\": \"OUTLINE\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"SELF_TEST\"\n    },\n    \"FLUENT\": {\n      \"steps\": [\n        {\n          \"kind\": \"FULL_ATTEMPT\",\n          \"on\": \"D1\"\n        }\n      ],\n      \"checkpoint\": \"PERFORMANCE_CHECK\"\n    }\n  }\n}",
+  "parsed": {
+    "needs": [
+      "D3"
+    ],
+    "stages": {
+      "FOUNDATION": {
+        "steps": [
+          {
+            "kind": "CHOOSE_MATERIAL",
+            "on": "D1"
+          },
+          {
+            "kind": "SET_UP",
+            "on": "D2"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FAMILIAR": {
+        "steps": [
+          {
+            "kind": "LIST_GAPS",
+            "on": "D3"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "RETAINED": {
+        "steps": [
+          {
+            "kind": "OUTLINE",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "SELF_TEST"
+      },
+      "FLUENT": {
+        "steps": [
+          {
+            "kind": "FULL_ATTEMPT",
+            "on": "D1"
+          }
+        ],
+        "checkpoint": "PERFORMANCE_CHECK"
+      }
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-2",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-1",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_mu_rhythm",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Rhythm",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_mu_chords",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Choose your material for Guitar Chords",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Play 20 songs on guitar from memory",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Guitar Chords, Music Theory",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-5"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-5"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-6",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "List what you still can't do in Guitar Chords, Music Theory",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Guitar Chords, Music Theory",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-8"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-8"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-9",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_mu_chords",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Write an outline of Guitar Chords",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Guitar Chords, Music Theory",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-11"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-11"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-12",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Do a full attempt at: Play 20 songs on guitar from memory",
+            "origin": "CODE",
+            "catalogKey": "FULL_ATTEMPT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "PERFORMANCE_CHECK",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "CHECKPOINT",
+            "label": "Performance check: Play 20 songs on guitar from memory",
+            "origin": "CODE",
+            "catalogKey": "PERFORMANCE_CHECK"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-14"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Rhythm",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        }
+      ],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": false,
+    "credential": false,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [
+      "d_mu_rhythm"
+    ],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": []
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {
+      "D3": {
+        "plausible": null
+      }
+    },
+    "stages": {
+      "FOUNDATION": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

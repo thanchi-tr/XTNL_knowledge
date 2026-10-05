@@ -1,0 +1,652 @@
+{
+  "aim": "run-10k",
+  "pack": "run-10k",
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "UDfDap3EPPns2roPz6Dd8Ag",
+  "finishReason": "STOP",
+  "latencyMs": 1754,
+  "usage": {
+    "promptTokenCount": 366,
+    "candidatesTokenCount": 324,
+    "totalTokenCount": 690,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 366
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"stages\": {\n    \"STAGE_1\": {\n      \"practices\": [\n        {\n          \"kind\": \"MOBILITY_SESSION\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SET_UP\"\n        }\n      ]\n    },\n    \"STAGE_2\": {\n      \"practices\": [\n        {\n          \"kind\": \"EASY_SESSION\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SET_UP\"\n        }\n      ]\n    },\n    \"STAGE_3\": {\n      \"practices\": [\n        {\n          \"kind\": \"TECHNIQUE_SESSION\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SET_UP\"\n        }\n      ]\n    },\n    \"STAGE_4\": {\n      \"practices\": [\n        {\n          \"kind\": \"EASY_SESSION\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SET_UP\"\n        }\n      ]\n    },\n    \"STAGE_5\": {\n      \"practices\": [\n        {\n          \"kind\": \"TECHNIQUE_SESSION\"\n        }\n      ],\n      \"steps\": [\n        {\n          \"kind\": \"SET_UP\"\n        }\n      ]\n    }\n  }\n}",
+  "parsed": {
+    "stages": {
+      "STAGE_1": {
+        "practices": [
+          {
+            "kind": "MOBILITY_SESSION"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SET_UP"
+          }
+        ]
+      },
+      "STAGE_2": {
+        "practices": [
+          {
+            "kind": "EASY_SESSION"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SET_UP"
+          }
+        ]
+      },
+      "STAGE_3": {
+        "practices": [
+          {
+            "kind": "TECHNIQUE_SESSION"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SET_UP"
+          }
+        ]
+      },
+      "STAGE_4": {
+        "practices": [
+          {
+            "kind": "EASY_SESSION"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SET_UP"
+          }
+        ]
+      },
+      "STAGE_5": {
+        "practices": [
+          {
+            "kind": "TECHNIQUE_SESSION"
+          }
+        ],
+        "steps": [
+          {
+            "kind": "SET_UP"
+          }
+        ]
+      }
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-1",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Mobility session",
+            "origin": "CODE",
+            "catalogKey": "MOBILITY_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-2"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-2"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_1",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-4",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-5"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-5"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_2",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-7",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-9",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-8"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-8"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_3",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-10",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Easy session",
+            "origin": "CODE",
+            "catalogKey": "EASY_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-11"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-11"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_4",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-13",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WORKOUT",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Technique session",
+            "origin": "CODE",
+            "catalogKey": "TECHNIQUE_SESSION"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-15",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "STEP",
+            "label": "Set up what you need for Run a sub-50 10K",
+            "origin": "CODE",
+            "catalogKey": "SET_UP"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-14"
+          }
+        ],
+        "notes": [
+          "HEALTH_LINE"
+        ],
+        "titleFlags": [],
+        "stage": "STAGE_5",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": false,
+    "credential": false,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": []
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {},
+    "stages": {
+      "STAGE_1": {
+        "practiceFit": null
+      },
+      "STAGE_2": {
+        "practiceFit": null
+      },
+      "STAGE_3": {
+        "practiceFit": null
+      },
+      "STAGE_4": {
+        "practiceFit": null
+      },
+      "STAGE_5": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

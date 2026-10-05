@@ -1,0 +1,26 @@
+{
+  "aim": "new-subject",
+  "pack": "new-subject",
+  "gapsLive": true,
+  "thinkingLow": false,
+  "note": "A real reply, unedited. The lead fills `labels`, sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": null,
+  "responseId": null,
+  "finishReason": null,
+  "latencyMs": 925,
+  "usage": null,
+  "error": "{\"error\":{\"code\":400,\"message\":\"Request contains an invalid argument.\",\"status\":\"INVALID_ARGUMENT\"}}",
+  "raw": null,
+  "parsed": null,
+  "integrity": null,
+  "validated": null,
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {},
+    "stages": {},
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}
