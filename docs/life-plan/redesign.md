@@ -316,6 +316,26 @@ OTHER
 - Icon: one 24 px stroke sprite (1.75, round) plus filled currency glyphs (c-xp spark, c-pts lozenge, c-mp hex nut), track sigils (Body triangle, Duty shield, Craft square, Care heart, Knowledge book) and held glyphs (freeze crystal, rest moon, sick cross, vacation case). Unicode glyph icons are removed.
 - Charts: ChartCard chrome uses line-1 grid, ink-2 labels and an overlay tooltip. A single series is ink-0. Several series are ink with dash patterns plus direct end labels. Review status uses signal tokens. palette.ts REVIEW_STATUS_COLORS and CHART_THEME point at tokens.
 
+GLYPHS (src/components/glyph/*; ui-motion.md §4, "fewer words, more motion")
+- One closed set of animated glyphs replaces explanatory sentences: stage (the cairn), rank (the notched medallion, no padlock), quest kind, evidence, provenance, safety, session kind, verdict, time and pace, misc, flame.
+- Each is a 24 × 24 currentColor path set in idle, active and done, told apart by shape (a here-ring, a started pip, a fill, a check badge), never by colour alone. Ink only: no gold, --mp, --xp, --owed or --light.
+- Static families are `<symbol>`s in a per-page GlyphDefs block; the kit sprite stays the home of i-, c-, s- and h-.
+- Composites: KindGlyph, ProvMark, HonestyChip (a glyph plus a short visible label, the full text one tap away and always in the DOM), InfoTip and the card Key (at most 3 per card), GlyphStat and StatRow (a compact figure with a spoken twin), GlyphLane, RankSeal, StageLadder, TimeBar, RouteRail, PipStrip, CapacityGauge. All text in them is HTML at 12 px or more.
+- Honesty survives every cut: "Gemini" stays visible on every Gemini mark, "not checked", "Not medical advice · ask a professional", ≈ / best case / calibrating / unverified marks and the verdict words stay visible. /dev/style/glyphs shows every glyph × state × motion level.
+
+SHADER SLOTS (src/components/fx/*, src/lib/shader/*; ui-motion.md §6)
+- Two hand-written WebGL1 programs: `horizon` (a soft dawn and air under the measured Proficiency band on the Aim card and the roadmap header) and `weave` (while a draft is written). No 3D library.
+- The SVG layers are the first paint and every state that does not loop. The measured marks (hairline, contours, walked path, front dot) are always server SVG on top; the shader draws no number.
+- /dev/style/fx shows every slot state.
+
+LINE STYLES (ui-motion.md D29; the lead's U2 = (a): the house meaning is kept)
+- dashed = calibrating or not yet counted (PromiseRing's calibrating track, the DaySeal and "Not counted yet" rings, EmblemCoin's locked rim, a pending milestone node);
+- dotted = from your ticks (self-reported);
+- ≈ = an estimate (an estimate never gets a dashed rim);
+- not checked = the balloon glyphs (the Gemini mark) and the dashed-check v.unv;
+- held = the kit HeldGlyph;
+- struck = avoided, dropped, closed or pays nothing.
+
 ## Motion
 
 PRINCIPLE: the end state is written first. Motion only shows the way there, only for what changed, and only once.
@@ -326,7 +346,7 @@ TOKENS
   - out (.16,1,.3,1): the default, also the framer ease;
   - in-out (.65,0,.35,1): sweeps, flights and glints;
   - stamp (.34,1.56,.64,1): pops, stamps, rolls and the ring overshoot.
-- Only transform, opacity and stroke-dashoffset animate. No width or height animation, no blend modes, no filter blur.
+- Only transform, opacity, stroke-dashoffset and stroke-dasharray animate (the dash array is the glyph draws' and the horizon front's). No width or height animation, no blend modes, no filter blur.
 
 ONE GATEWAY: src/lib/motion.ts
 - play(el, keyframes, opts):
@@ -360,11 +380,38 @@ WHAT MOVES, AND WHEN
   - at 1.0 s: flash 900 + one shockwave ring (a 320 px ring scaling .12 → 1.5) + ≤ 26 seeded motes; rays fade in and turn at 90 s per revolution;
   - text rises at an 80 ms stagger from 1.15 s; settled by 1.9 s.
 
+LICENCES (ui-motion.md §5.2): every motion names one in code; no licence, no motion.
+
+| Licence | Trigger | Full | Calm | Still |
+|---|---|---|---|---|
+| ACT | the user's own tap or key | as designed, at once | opacity ≤ 260 ms, no flourish | nothing |
+| SEEN | a measured or confirmed value differs from what this viewer last saw, under the same basis | once, only when ≥ 50% on screen; an element on screen at hydration gets its accent only, never a redraw from zero | opacity ≤ 260 ms | nothing |
+| CHANGED | an estimate (≈) or a stated figure differs from last seen | a crossfade of the marker or text, ≤ 320 ms; no draw, roll or direction | opacity ≤ 260 ms | nothing |
+| WAIT | a draft is running and nothing measured is in its card | a loop of ≤ 90 s per run, with a 40 px pause button in the card | one static frame | the SVG |
+| AMBIENT | none: a zero-mean texture carrying no data | ≤ 5 s of visible time per program per browser session, ramped in and out, then the SVG | the SVG | the SVG |
+| STATIC | none | one frame | one frame | the SVG |
+
+- Values move only from the last-seen measured value to the current one, in either direction, in ink, under the same basis; a rebase never animates. Estimates, Gemini-sourced, unverified, best-case and stated figures never animate as values. Proficiency is never celebrated; a pending reach never moves; the current stage never pulses.
+- The roadmap's loud events are the stage reached (segment, stamp, cairn) and the Aim rank reached (the only rise: a burst of 8 and one announce), each on a counted reach only. Safety surfaces (the Activities card, every health chip) and /today stay at rest.
+
 AMBIENT
-- Exactly two loops exist: the ready-emblem orbit (14 s) and the ceremony rays (90 s). Both run on animation-play-state: var(--ambient-play).
+- Exactly two infinite loops exist: the ready-emblem orbit (14 s) and the ceremony rays (90 s). Both run on animation-play-state: var(--ambient-play).
+- The WAIT / AMBIENT class (ui-motion.md D19) adds three finite loops, and nothing else:
+  - the drafting glyph's opacity breathe (CSS, 74 half-periods, about 89 s, on --ambient-play; still while the weave shader is live or the card is paused);
+  - the `weave` shader while a draft runs (≤ 90 s per run, an on-page pause, stopped at once when the run goes stale);
+  - the `horizon` air: ≤ 5 s of visible time per program per browser session, then the band is its SVG again (the lead's U1 = (a): the 5 s settle, so no pause button). Full only, prefers-reduced-motion: no-preference only, /you and /you/roadmap only.
+- One loop per page: while a WAIT loop runs, the horizon stays on its SVG, and no CSS loop runs inside a card with a live shader. None runs on /today or /review.
+- WCAG 2.2.2: moving content that starts by itself stops within 5 s or has an on-page pause.
 - Skies drift only on path headers and ceremony backdrops, under the same variable.
 - Removed: the btn-primary sheen, nav motes, the arcane conic, res-breathe/mote/sweep, aura-breathe, the field-tile sheen and crest, and rank-ascend and boss-rise replaying on every visit.
-- PowerSaver's hidden-tab and battery ≤ 20% pause maps onto html[data-power="save"] → --ambient-play: paused.
+- PowerSaver's hidden-tab and battery ≤ 20% pause maps onto html[data-power="save"] → --ambient-play: paused, and every shader loop returns to its SVG.
+
+SHADERS (ui-motion.md §6)
+- Tiny hand-written WebGL1, no three.js or any 3D library, loaded lazily with import() after the page is quiet (load, ≥ 50% in view, 400 ms with no input, then an idle slice). Never in a first-load chunk.
+- A context exists only while a slot loops: at most one per document, released when the loop ends, after 10 s offscreen, on unmount and when the route is hidden. Held while offscreen or the tab is hidden.
+- DPR capped (horizon 1, weave 1.5) with pixel caps; horizon ≤ 12 fps, weave ≤ 20 fps; one shared ticker.
+- SVG, never a context, under calm, still, prefers-contrast: more, forced-colors: active, no WebGL, mediump-only, save-data, ≤ 2 GB memory, a throttled device (a 2 s rAF median over 22 ms, twice), power-save, two counted context losses in 60 s, and data-fx="none" (the intake, the Start sheet, the Activities card). The measured marks stay visible under high contrast and forced colours, so a band is never empty.
+- The shader reads only ink and card tokens and draws no measured mark: every number is SVG or text beside the band.
 
 SETTINGS › FEEDBACK
 - Motion: Full / Calm / Still, written to html[data-motion] by an inline script in the root layout before paint.
@@ -827,7 +874,7 @@ GATES (all automated in CI unless marked manual)
 - In Still, every celebration's final DOM text equals the Full-motion settled text, and nothing has opacity 0.
 - Correct answers never auto-advance in Still.
 - On /today and the runner at rest, document.getAnimations() contains no infinite animation. The only infinite animations anywhere are the ready orbit and the ceremony rays, both paused under Calm, Still and power-save.
-- Only transform, opacity and stroke-dashoffset are animated (review checklist plus a stylelint rule on @keyframes).
+- Only transform, opacity, stroke-dashoffset and stroke-dasharray are animated (review checklist plus a stylelint rule on @keyframes).
 
 5. PERFORMANCE
 - `next build`: no framer-motion in the /today or /review route chunks; skies.css and cataclysm*.css are not in the global CSS chunk.
@@ -866,6 +913,15 @@ GATES (all automated in CI unless marked manual)
 10. URLS: /today, /today?capture=task, /review, /add and /workspace behave as before; the manifest changes only colours; the TWA opens Today.
 
 11. CHECK SUITES: life:check, board-check, streak-check, skills:stats and balance:horizon pass; next build and lint pass.
+
+12. UI MOTION (docs/life-plan/ui-motion.md §11, §12; added with "fewer words, more motion")
+- glyph-check (ui:glyph) and shader-check (ui:shader) pass inside ui:check: the glyph grammar and classes, chips, InfoTips and spoken twins; every motion through the gateway under full, calm and still; the shader params, gate, GLSL lint and engine.
+- shell-check holds glyph.css and fx.css (the one finite breathe, the backstops, ink only), the shader's token whitelist, AMBIENT_ROUTES (never /today or /review), the runtime reached only by import(), /today and /review never reaching a shader slot or the runtime, and no 3D library.
+- contrast-check holds glyph and chip ink on every card surface and the horizon's marks on the dawn, in Night and Vellum.
+- ui-audit's motion probes pass on /dev/style/fx and /dev/style/glyphs: still and calm (no canvas, no runtime chunk, nothing moving or looping), high contrast and forced colours (no canvas, the band keeps its hairline and path), the horizon air (≤ 5 s of visible time per session, offscreen, hidden and power-save stops, the quiet start, DPR caps), the weave (≤ 20 fps, 90 s, its pause), no WebGL, SwiftShader compiles, the walked path within 0.5%, the air-0 pixel match, context loss, 4× CPU (no long task over 50 ms at context start, INP ≤ 200 ms, text LCP, no slot shift), and the gateway's calm, still and in-view-at-hydration columns.
+- At 344: every roadmap surface meets its app-word budget (ui-motion.md §3.2; ui-audit --budgets hard in the final pass), no two targets intersect, and no text sits over a shader slot.
+- Every honesty element stays visible as a compact mark with its full text one tap away; screen readers hear each once and every compact figure in words.
+- WCAG 2.2.2: the horizon air stops within 5 s and does not restart on a /you ↔ /you/roadmap trip; the weave's pause button stops it. The manual device pass (ui-motion.md §11.8) is signed off.
 
 ## Visual reference
 

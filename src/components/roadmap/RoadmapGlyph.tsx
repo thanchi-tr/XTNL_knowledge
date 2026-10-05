@@ -1,12 +1,22 @@
 /**
- * The roadmap's own glyphs (lane R5), drawn inline: the kit's sprite
- * (ui/Icon.tsx, frozen) has no minus, calendar, step, target, edit or verdict
- * glyphs, and the mockups use them. Same grammar as the kit's icons: 24 px
- * box, 1.75 stroke, round caps, currentColor, decorative unless labelled.
- * A verdict glyph always sits beside its word (never colour or shape alone).
+ * The roadmap's own glyph names, now an alias of glyph/Glyph (ui-motion.md
+ * §4.3, R0). The 15 inline glyphs it drew became catalogue glyphs; this file
+ * keeps the old names working while the lanes move to <Glyph name="…">:
+ *
+ *   minus → m.minus   down → m.down     info → m.info     cal → t.cal
+ *   route → route     step → quest.step target → quest.checkpoint
+ *   edit → pv.you     tick → pv.checked v-* → v.*         GlyphButton → glyph/GlyphButton
+ *
+ * The alias draws the idle shape in the text's own colour (the old glyphs
+ * were static and took currentColor), keeps the kit's `.i` class (so its
+ * sizing contexts hold: 20 px by default, 12 px inside a chip) and an
+ * explicit `size` as an inline width and height, as before. A verdict glyph
+ * still always sits beside its word (never colour or shape alone; D27). No
+ * `title` anywhere (D13): a GlyphButton's name is its aria-label.
  */
 import type { CSSProperties } from "react";
 import { cx } from "@/components/ui/cx";
+import { Glyph, GlyphButton as CatalogGlyphButton, type GlyphName } from "@/components/glyph/Glyph";
 
 export type RoadmapGlyphName =
   | "minus"
@@ -25,103 +35,39 @@ export type RoadmapGlyphName =
   | "v-fitted"
   | "v-unv";
 
-function paths(name: RoadmapGlyphName) {
-  switch (name) {
-    case "minus":
-      return <path d="M5 12h14" />;
-    case "down":
-      return <path d="M6 9.5l6 6 6-6" />;
-    case "info":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M12 11v5.5M12 7.6v.01" />
-        </>
-      );
-    case "cal":
-      return (
-        <>
-          <rect x="4" y="5.5" width="16" height="14.5" rx="2" />
-          <path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" />
-        </>
-      );
-    case "route":
-      return (
-        <>
-          <circle cx="6" cy="18" r="2.2" />
-          <circle cx="18" cy="6" r="2.2" />
-          <path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8" />
-        </>
-      );
-    case "step":
-      return <path d="M4 19h5v-5h5V9h6" />;
-    case "target":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" />
-          <circle cx="12" cy="12" r="3.5" />
-        </>
-      );
-    case "edit":
-      return <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />;
-    case "tick":
-    case "v-fits":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M8 12.3l2.7 2.7L16 9.6" />
-        </>
-      );
-    case "v-tight":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M12 3.5v17" />
-          <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
-        </>
-      );
-    case "v-over":
-      return <path d="M12 3.8l9 15.7H3zM12 10v4.2M12 16.9v.01" />;
-    case "v-imp":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M6 6l12 12" />
-        </>
-      );
-    case "v-fitted":
-      return <path d="M4 8h16M4 16h16M8 5v6M16 13v6" />;
-    case "v-unv":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8.5" strokeDasharray="2.6 2.6" />
-          <path d="M8 12.3l2.7 2.7L16 9.6" />
-        </>
-      );
-  }
-}
+/** §4.3's table: each old name and the catalogue glyph it became. */
+export const ROADMAP_GLYPH_ALIAS: Readonly<Record<RoadmapGlyphName, GlyphName>> = {
+  minus: "m.minus",
+  down: "m.down",
+  info: "m.info",
+  cal: "t.cal",
+  route: "route",
+  step: "quest.step",
+  target: "quest.checkpoint",
+  edit: "pv.you",
+  tick: "pv.checked",
+  "v-fits": "v.fits",
+  "v-tight": "v.tight",
+  "v-over": "v.over",
+  "v-imp": "v.imp",
+  "v-fitted": "v.fitted",
+  "v-unv": "v.unv",
+};
 
 export function RoadmapGlyph({ name, size, className, style, label }: { name: RoadmapGlyphName; size?: number; className?: string; style?: CSSProperties; label?: string }) {
   return (
-    <svg
+    <Glyph
+      name={ROADMAP_GLYPH_ALIAS[name]}
+      size={size ?? 20}
+      label={label}
+      inherit
       className={cx("i", className)}
-      viewBox="0 0 24 24"
       style={size ? { width: size, height: size, ...style } : style}
-      aria-hidden={label ? undefined : true}
-      role={label ? "img" : undefined}
-      aria-label={label}
-      focusable="false"
-    >
-      {paths(name)}
-    </svg>
+    />
   );
 }
 
-/** A 44 px icon button with a roadmap glyph (the kit's IconButton takes only sprite icons). */
+/** A 44 px icon button with a roadmap glyph: glyph/GlyphButton under the old name (aria-label only, no `title`). */
 export function GlyphButton({ glyph, label, onClick, className }: { glyph: RoadmapGlyphName; label: string; onClick: () => void; className?: string }) {
-  return (
-    <button type="button" className={cx("icon-btn", className)} aria-label={label} title={label} onClick={onClick}>
-      <RoadmapGlyph name={glyph} />
-    </button>
-  );
+  return <CatalogGlyphButton glyph={ROADMAP_GLYPH_ALIAS[glyph]} label={label} onClick={onClick} className={className} />;
 }

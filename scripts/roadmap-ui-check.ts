@@ -100,7 +100,7 @@ import { goalPercent } from "../src/lib/goals";
 import * as copy from "../src/components/roadmap/roadmap-copy";
 import * as model from "../src/components/roadmap/roadmap-ui-model";
 import { addCardHref, addPreselectOf, todayTaskHref } from "../src/components/roadmap/roadmap-links";
-import { FIXTURE_STATES, REV4_STATES, fig, liveShaped, liveShapedAim, roadmapFixture, weekQuestsFixture, type FixtureState } from "../src/app/dev/style/roadmap/fixtures";
+import { FIXTURE_STATES, MOTION_NEW_STATES, MOTION_STATES, REV4_STATES, WORD_BUDGET_ROWS, fig, liveShaped, liveShapedAim, roadmapFixture, weekQuestsFixture, type FixtureState } from "../src/app/dev/style/roadmap/fixtures";
 
 // The brands hold at the props (Provenance): a plain number is no figure on any roadmap surface.
 // @ts-expect-error a plain number never type-checks as a measure row's figure
@@ -691,7 +691,7 @@ async function main() {
     check("title: a PROPER_NOUN title still offers its own Keep and I checked this", model.itemActionsOf(model.titleItemOf({ ...m1, titleFlags: ["PROPER_NOUN"] }), "draft").wide.join() === "KEEP,EDIT,CHECK");
     check("start: a NUMBER row going to Today offers only Edit", todayRowActionsOf("CHECK_OR_EDIT", ["NUMBER"], true).join() === "EDIT" && todayRowActionsOf("CHECK_OR_EDIT", [], true).join() === "CHECK,EDIT");
     const draftHtml2 = renders.get("draft-mixed")!.page;
-    check("title: an outline NUMBER title is struck, with its chip and flag", /id="rm-row-m3">Forward-testing on a demo account for <s>8<\/s> weeks<\/p><div class="rm-it-chips"[^>]*><span class="rm-pv rm-pv-draft">Gemini suggestion · not checked<\/span><span class="rm-fl">/.test(draftHtml2));
+    check("title: an outline NUMBER title is struck, with its chip and flag", /id="rm-row-m3" data-wc="name">Forward-testing on a demo account for <s>8<\/s> weeks<\/span><span class="rm-r4-nch"><span class="rm-pv rm-pv-draft">[\s\S]*?<span class="sr-only">Gemini suggestion · not checked<\/span><\/span><span class="rm-fl" data-wc="honest">/.test(draftHtml2));
     check("title: the next milestone's title row has one DOM id (the header carries none)", (draftHtml2.match(/id="rm-row-m1"/g) ?? []).length === 1);
 
     // NUMBER spans and reasons on a live-shaped row: the device's re-check is the fallback (Lens 2/3).
@@ -2018,6 +2018,8 @@ async function main() {
     const DAY = "2026-10-05";
     // The rendered buttons (a button's own text), so "Nothing to avoid" in the how-line never reads as the button.
     const buttonsOf = (h: string) => [...h.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map((m) => flat(m[1]));
+    // The answer's own acts (ui-motion.md R7): the buttons of the card's .rm-acts. The health chip and the (i)s are buttons too, never acts.
+    const answerActsOf = (h: string) => buttonsOf(sectionOf(h, /class="rm-acts"/));
     // The card's answer and the gate, as the server reads them (answerActivityCard → allowedKindsFor).
     const answerThrough = (state: ReturnType<typeof CAT.constraintsStateOf>, answer: ActivityCardAnswer | null, prev: ActivityConfirm | null = null): { ok: true; stored: ActivityConfirm; gate: ActivityGate } | { ok: false; error: string } | null => {
       if (!answer) return null;
@@ -2329,8 +2331,8 @@ async function main() {
     check("draft: one legend for the boxes (a fieldset): the question", /<fieldset class="rm-avd-set"><legend class="rm-avd-q">Your words mention/.test(dCard));
     check(
       "draft: with boxes ticked the button is Save, beside what it does (“The plan leaves out 3 and can include the other 2.”); the how-line names the other act",
-      JSON.stringify(buttonsOf(dCard)) === JSON.stringify(["Save my answers"]) && dText.includes("The plan leaves out 3 and can include the other 2.") && dText.includes(copy.ACTIVITY_HOW_LINE),
-      JSON.stringify(buttonsOf(dCard))
+      JSON.stringify(answerActsOf(dCard)) === JSON.stringify(["Save my answers"]) && dText.includes("The plan leaves out 3 and can include the other 2.") && dText.includes(copy.ACTIVITY_HOW_LINE),
+      JSON.stringify(answerActsOf(dCard))
     );
     check("draft: the plan's line and HEALTH_LINE on the card", dText.includes("Easy, mobility and technique practice only until you confirm.") && dCard.includes(copy.HEALTH_LINE));
     check("draft: the card sits above the milestones", dHtml.indexOf('aria-label="Activities to avoid"') > 0 && dHtml.indexOf('aria-label="Activities to avoid"') < dHtml.indexOf("Next · milestone 1"));
@@ -2360,8 +2362,8 @@ async function main() {
     check("care: an empty Constraints box asks anyway, and the lead claims nothing about the words", cText.startsWith("Before the plan adds more care sessions, it asks once. Which activities should the plan avoid?") && !cText.includes("Your words mention"), cText.slice(0, 140));
     check(
       "care: nothing ticked, so the one button is “Nothing to avoid” (never a Save that unlocks unticked rows), beside what it does",
-      countOf(cCard, /type="checkbox"/g) === 5 && countOf(cCard, /checked=""/g) === 0 && JSON.stringify(buttonsOf(cCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]) && cText.includes("The plan can then include all 5."),
-      JSON.stringify(buttonsOf(cCard))
+      countOf(cCard, /type="checkbox"/g) === 5 && countOf(cCard, /checked=""/g) === 0 && JSON.stringify(answerActsOf(cCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]) && cText.includes("The plan can then include all 5."),
+      JSON.stringify(answerActsOf(cCard))
     );
     check("care: the plan's line names planning the week and keeping a log (decision 2), with HEALTH_LINE", cText.includes("Planning the week and keeping a log only until you confirm.") && cCard.includes(copy.HEALTH_LINE));
     // ── The lead's ruling 1: the release is per card. A Save with a box ticked is the user's answer for every row the card
@@ -2369,9 +2371,9 @@ async function main() {
     {
       const oneTicked = { ...careAc, rows: careAc.rows.map((r, i) => (i === 0 ? { ...r, prefill: "AVOID" as const } : r)) };
       const actsOf = (v: typeof draftAc) => [
-        buttonsOf(cardOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "draft" })))),
-        buttonsOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "start" }))),
-        buttonsOf(R(createElement(ac.IntakeActivities, { view: v, keyNow: v.key, confirmed: null, onConfirm: () => {}, today: DAY }))),
+        answerActsOf(cardOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "draft" })))),
+        answerActsOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "start" }))),
+        answerActsOf(R(createElement(ac.IntakeActivities, { view: v, keyNow: v.key, confirmed: null, onConfirm: () => {}, today: DAY }))),
       ];
       const ticked = [actsOf(draftAc), actsOf(oneTicked)];
       const unticked = actsOf(careAc);
@@ -2417,7 +2419,7 @@ async function main() {
       wText.startsWith("Your words mention “No timed practice, it stresses me out”. Which activities should the plan avoid?") &&
         countOf(wCard, /type="checkbox"[^>]*checked=""/g) === 1 &&
         wText.includes("Ticked from your words, still in the plan until you answer: Timed practice.") &&
-        JSON.stringify(buttonsOf(wCard)) === JSON.stringify(["Save my answers"]),
+        JSON.stringify(answerActsOf(wCard)) === JSON.stringify(["Save my answers"]),
       wText.slice(0, 240)
     );
     check("field: no HEALTH_LINE, no plan line (nothing waits), no 'Left out' on a Field plan", !wCard.includes(copy.HEALTH_LINE) && !wText.includes("until you confirm") && !wText.includes("Left out"));
@@ -2441,7 +2443,7 @@ async function main() {
     const doneCard = cardOf(doneHtml);
     check(
       "plan: answered, the card shrinks to the user's answer and what the plan can include, with Change and HEALTH_LINE, before the footer (order 6); no box, no Save; never 'fine'",
-      flat(doneCard) === `You said to avoid: Longer session (2 Jan). The plan can include: Harder session, Strength session, Do a full attempt and Performance check. Change ${copy.HEALTH_LINE}` &&
+      flat(doneCard) === `You said to avoid: Longer session (2 Jan). The plan can include: Harder session, Strength session, Do a full attempt and Performance check. Change ${copy.SHORT_HEALTH} ${copy.HEALTH_LINE}` &&
         /<div class="rm-o6"><section class="card rm-avd"/.test(doneHtml) &&
         !/type="checkbox"|Save my answers/.test(doneCard) &&
         !/\bfine\b/i.test(flat(doneCard)),
@@ -2482,8 +2484,8 @@ async function main() {
     check("intake: a body track Area's words open the question under Constraints, quoting them", iText.startsWith("Your words mention “No running for now, my knee hurts”. Which activities should the plan avoid?") && iHtml.indexOf('id="rm-f-constraints"') < iHtml.indexOf('id="rm-f-activities"'), iText.slice(0, 120));
     check(
       "intake: a suggestion pre-ticks a box, quoted; 'Confirm these' with a box ticked (no save before the intake exists); the plan's line and HEALTH_LINE",
-      countOf(iCard, /checked=""/g) >= 2 && iText.includes("From your words: “No running for now, my knee hurts”") && JSON.stringify(buttonsOf(iCard)) === JSON.stringify(["Confirm these"]) && iText.includes("Easy, mobility and technique practice only until you confirm.") && iCard.includes(copy.HEALTH_LINE),
-      JSON.stringify(buttonsOf(iCard))
+      countOf(iCard, /checked=""/g) >= 2 && iText.includes("From your words: “No running for now, my knee hurts”") && JSON.stringify(answerActsOf(iCard)) === JSON.stringify(["Confirm these"]) && iText.includes("Easy, mobility and technique practice only until you confirm.") && iCard.includes(copy.HEALTH_LINE),
+      JSON.stringify(answerActsOf(iCard))
     );
     check("intake: the Constraints hint on a body or care Area says the app asks first", flat(iHtml).includes("On a body or care plan the app asks which activities to avoid before it places them."));
     const depthIntake = roadmapFixture("intake-depth").intake!;
@@ -2495,7 +2497,7 @@ async function main() {
     const careText = flat(careCard);
     check(
       "intake: a care Area asks too (no cue needed), with its own easy kinds' line and HEALTH_LINE, and “Nothing to avoid” while nothing is ticked",
-      careText.startsWith("Your words mention “Evenings only”. Which activities should the plan avoid?") && careText.includes("Planning the week and keeping a log only until you confirm.") && careText.includes(copy.HEALTH_LINE) && JSON.stringify(buttonsOf(careCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]),
+      careText.startsWith("Your words mention “Evenings only”. Which activities should the plan avoid?") && careText.includes("Planning the week and keeping a log only until you confirm.") && careText.includes(copy.HEALTH_LINE) && JSON.stringify(answerActsOf(careCard)) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID]),
       careText.slice(0, 200)
     );
     const careEmpty = flat(sectionOf(withIntake({ track: "CARE", aim: "Support Mum's care at home", constraints: null }), /id="rm-f-activities"/));
@@ -3451,7 +3453,7 @@ async function main() {
       const keptOrder = R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, milestones: keptMs.map((m) => ({ ...m, items: m.items.map((it) => (it.kind === "TOPIC" ? { ...it, decision: "EDITED" as const } : it)) })) } } }));
       check(
         "§20 ruling 7 render: a Gemini reorder is labelled as its suggestion with one tap back to your order (Keep my order); with your order standing, no button",
-        arrOf(v4Html) === `${copy.ARRANGEMENT_V4_LINE} ${copy.KEEP_MY_ORDER_WORD}` && !keptOrder.includes(`>${copy.KEEP_MY_ORDER_WORD}<`),
+        arrOf(v4Html) === `${copy.SHORT_GEMINI_ORDER} ${copy.ARRANGEMENT_V4_LINE} ${copy.KEEP_MY_ORDER_WORD}` && !keptOrder.includes(`>${copy.KEEP_MY_ORDER_WORD}<`),
         arrOf(v4Html)
       );
       const rtSrc2 = code(read("src/components/roadmap/roadmap-runtime.tsx"));
@@ -3658,6 +3660,2480 @@ async function main() {
   for (const f of roadmapSrc.filter((x) => x.endsWith(".tsx"))) for (const m of code(read(f)).matchAll(/className=(?:"([^"]+)"|\{`([^`]+)`\}|\{cx\(([^)]*)\)\})/g)) for (const c of (m[1] ?? m[2] ?? m[3] ?? "").match(/[A-Za-z][\w-]*/g) ?? []) usedClasses.add(c);
   const undefinedRm = [...usedClasses].filter((c) => c.startsWith("rm-") && !classes.has(c));
   check("css: every rm-* class a component uses is defined in roadmap.css", undefinedRm.length === 0, undefinedRm.join(", "));
+
+
+  // ── 11. UI motion: the roadmap contract (R0; ui-motion.md §9.3, §11.3; contracts §21) ──
+  // The short labels, the model's motion inputs, the fixtures' new states (hard checks: they pass now),
+  // and four harnesses that land reporting only: app words per §3.2 row, honesty in visible text, the
+  // tap reachability of sr-only honesty strings, and the full-text survival list. A lane turns its own
+  // rows into gates from its marked block below: r0Gate("words", ["s9-aim-card-active"], "R2").
+  // `--report` prints every harness row.
+  console.log("— ui motion: the roadmap contract (R0) —");
+  type Surface = "page" | "aim" | "today" | "intake";
+  type R0Row = { ok: boolean; detail: string };
+  const R0_RESULTS = { words: new Map<string, R0Row>(), honesty: new Map<string, R0Row>(), taps: new Map<string, R0Row>(), survival: new Map<string, R0Row>() };
+  {
+    const wc = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const glyphChip = await import("../src/components/glyph/HonestyChip");
+    const { LANE_WORDS } = await import("../src/components/glyph/GlyphLane");
+    const { railMetaOf } = await import("../src/components/glyph/RouteRail");
+    const seenLib = await import("../src/components/glyph/useSeen");
+    const gm = await import("../src/lib/glyph-motion");
+    const { GLYPH_INFO } = await import("../src/components/glyph/paths");
+    const alias = await import("../src/components/roadmap/RoadmapGlyph");
+    const prof = await import("../src/lib/roadmap-proficiency");
+    const aimFx = await import("../src/app/dev/style/art/you/aim-fixtures");
+    const todayFx = await import("../src/app/dev/style/today/fixtures");
+    const { hashSeed } = await import("../src/lib/motion");
+    const json = (x: unknown) => JSON.stringify(x);
+    const surfaceOf = (s: FixtureState, surface: Surface) => renders.get(s)?.[surface] ?? "";
+    const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+
+    // ── The short labels (§9.3): beside the full strings, never rewording one (D21) ──
+    const K = glyphChip.HONESTY_KINDS;
+    const drift = Object.entries(copy.SHORT_CHIP_LABEL).filter(([k, v]) => K[k as keyof typeof K].label !== v);
+    check("R0 short labels: every SHORT_CHIP_LABEL is glyph/HonestyChip's visible label for its kind", drift.length === 0, drift.map(([k, v]) => `${k}: ${v}`).join(" | "));
+    const geminiKinds = glyphChip.GEMINI_KINDS.filter((k) => k !== "integrity" && k !== "sized-by-gemini");
+    check(
+      "R0 short labels (D25): every Gemini label keeps the who-word 'Gemini'",
+      geminiKinds.every((k) => /Gemini/.test(copy.SHORT_CHIP_LABEL[k] ?? "")) && [copy.shortSizedByGemini(0.4), copy.shortGeminiChoice(false), copy.GEMINI_LANE_WORD].every((l) => /Gemini/.test(l)),
+      geminiKinds.filter((k) => !/Gemini/.test(copy.SHORT_CHIP_LABEL[k] ?? "")).join(", ")
+    );
+    check(
+      "R0 short labels: the figure kinds' builders ('38% sized by Gemini', 'pass rate calibrating 12/30', 'Target lowered 46 → 38', 'Behind on new cards · 4 of 9')",
+      copy.shortSizedByGemini(0.38) === "38% sized by Gemini" &&
+        copy.shortSizedByGemini(0.38).endsWith(K["sized-by-gemini"].label) &&
+        copy.shortCalibrating(12, 30) === "pass rate calibrating 12/30" &&
+        copy.shortCalibrating(12, 30).startsWith(K.calibrating.label) &&
+        copy.shortLowered(46, 38) === "Target lowered 46 → 38" &&
+        copy.shortLowered(46, 38).startsWith(K.lowered.label) &&
+        copy.shortBehindNewCards(4, 9) === "Behind on new cards · 4 of 9" &&
+        copy.shortBehindNewCards(4, 9).startsWith(K.behind.label)
+    );
+    check("R0 short labels: «Gemini's choice · not checked» on a DRAFT row, «Gemini's choice» once kept", copy.shortGeminiChoice(true) === K["gemini-pick"].label && copy.shortGeminiChoice(false) === "Gemini's choice");
+    check("R0 short labels (D12): the health chip keeps the instruction ('Not medical advice · ask a professional')", copy.SHORT_HEALTH === K.health.label && copy.SHORT_HEALTH === "Not medical advice · ask a professional");
+    check("R0 short labels: the lanes' who-words are GlyphLane's ('Gemini:', 'App:')", copy.GEMINI_LANE_WORD === LANE_WORDS.gemini && copy.APP_LANE_WORD === LANE_WORDS.app);
+    const sinceCases: string[][] = [["milestone 2 reached"], ["a", "b", "c"], ["a", "b", "c", "d", "e"]];
+    check(
+      "R0 short labels (H13): SINCE_LINE is glyph-motion's (its lead, ≤ 3 items, '+ n more')",
+      copy.SINCE_LEAD_WORDS === gm.SINCE_LEAD && sinceCases.every((c) => copy.sinceLine(c) === gm.sinceParts(c).text) && copy.sinceLine(["a", "b", "c", "d", "e"]).endsWith("+ 2 more")
+    );
+    check(
+      "R0 short labels: the since items are the composites' own labels (RouteRail's reach, RankSeal's rank)",
+      copy.sinceReachItem(2) === "milestone 2 reached" &&
+        copy.sinceRankItem("Aspirant") === "Aim rank Aspirant reached" &&
+        read("src/components/glyph/RouteRail.tsx").includes("`milestone ${nodes[last].n} reached`") &&
+        read("src/components/glyph/RankSeal.tsx").includes("`Aim rank ${name} reached`")
+    );
+    check(
+      "R0 short labels: the pay line's parts are statedLine's ('pays ⬡ 6 × progress from 70%')",
+      copy.shortFromFloor() === "from 70%" && copy.statedLine(6, null).startsWith(copy.SHORT_PAYS) && copy.statedLine(6, null).endsWith(`${copy.SHORT_X_PROGRESS} ${copy.shortFromFloor()}`)
+    );
+    check("R0 short labels: the pause label is WeavePause's default ('Pause animation')", copy.SHORT_PAUSE_LABEL === "Pause animation" && read("src/components/fx/WeavePause.tsx").includes(`label = "${copy.SHORT_PAUSE_LABEL}"`));
+    check(
+      "R0 short labels (C2-M2): the app's date ≈ at month precision, the user's exact with 'yours'",
+      copy.shortDateBy(12, "2027-12-05") === "L12 by ≈ Dec 2027" && copy.shortDateYours("2027-12-31") === "31 Dec 2027 · yours" && copy.shortDatePlain(null, "2027-12-31") === "by Dec 2027" && copy.shortProficiencyToward(12) === "Proficiency → L12" && copy.shortTooSoon(12) === "too soon for L12"
+    );
+    check("R0 short labels: the PipStrip's label in words ('Due: Tuesday 1, Wednesday 2, Saturday 1')", copy.dueDaysLabel([{ key: "Tue", n: 1 }, { key: "Wed", n: 2 }, { key: "Sat", n: 1 }, { key: "Sun", n: 0 }]) === "Due: Tuesday 1, Wednesday 2, Saturday 1");
+    // Today's aim line (§3.2 row 11): ≤ 8 app words in every fixture state; a rank not yet held keeps its verb (C2-B3).
+    const nameSpan = (t: string, name: string | null | undefined) => (name ? t.replace(name, `<span data-wc="name">${name}</span>`) : t);
+    const lineRows = todayFx.AIM_LINE_FIXTURES.map((f) => ({ key: f.key, v: todayFx.aimLineOfFixture(f) })).filter((x): x is { key: (typeof todayFx.AIM_LINE_FIXTURES)[number]["key"]; v: AimLineView } => x.v != null);
+    const overLine = lineRows
+      .map(({ key, v }) => {
+        const s = copy.aimLineShort(v);
+        const stage = v.kind === "START" ? v.stageName : null;
+        const rankName = v.kind === "START" ? v.givesRank : null;
+        return { key, n: wc.countAppWords(`<p><b>${nameSpan(s.lead, stage)}</b> ${nameSpan(s.rest, rankName)}</p>`, { width: 344 }).count, s, v };
+      })
+      .filter((x) => x.n > 8 || (x.v.kind === "START" && x.v.givesRank != null && !(x.s.rest.startsWith("Gives ") && x.s.rest.includes(`Aim rank ${x.v.givesRank}`) && x.s.glyph?.rank === AIM_RANKS.indexOf(x.v.givesRank))));
+    check("R0 short labels (§3.2 row 11): aimLineShort is ≤ 8 app words for every aim line fixture, and START keeps 'Gives … Aim rank X'", lineRows.length > 5 && overLine.length === 0, overLine.map((x) => `${x.key}: ${x.n}`).join(", "));
+
+    // ── Seen keys (D8, §5.6): two basis families, no surface in `what` ──
+    const act = roadmapFixture("active");
+    const bases = model.seenBasesOfRoadmap(act.view!);
+    const aimBases = model.seenBasesOfAimCard(act.aim!);
+    check("R0 seen keys: the plan basis is glyph/useSeen's planBasis(acceptedDay, version)", bases?.plan === seenLib.planBasis(act.view!.header!.acceptedDay!, act.view!.header!.version), String(bases?.plan));
+    check(
+      "R0 seen keys (D8): the Proficiency basis is useSeen's proficiencyBasis(basisVersion, hashSeed(basisSignature))",
+      bases?.prof === seenLib.proficiencyBasis(1, hashSeed("fixture:basis:v1")) && model.proficiencyBasisKeyOf(3, "sig") === `3:${hashSeed("sig")}`,
+      String(bases?.prof)
+    );
+    const rankKey = model.seenKeyOf(bases, model.SEEN_WHAT.rank);
+    check("R0 seen keys: the Aim card's rank key equals the page's (the rank rise plays once per viewer)", rankKey != null && json(rankKey) === json(model.seenKeyOf(aimBases, model.SEEN_WHAT.rank)) && rankKey.what === "rank", json([rankKey, model.seenKeyOf(aimBases, "rank")]));
+    const fam = (w: Parameters<typeof model.seenKeyOf>[1], o?: { proficiency?: boolean }) => model.seenKeyOf(bases, w, o)?.basis.split("/")[0];
+    check(
+      "R0 seen keys: the headline meter, the horizon (and a measure whose target changed) on Proficiency's family; rank, reach, seal, date and week quests on the plan's",
+      fam("meter:proficiency") === "prof" && fam("horizon") === "prof" && fam(model.seenMeasureWhat("m"), { proficiency: true }) === "prof" && (["rank", "reach", "seal", "date"] as const).every((w) => fam(w) === "plan") && fam(model.seenMeasureWhat("m")) === "plan" && fam(model.seenQuestWhat("2027-01-25", 1)) === "plan"
+    );
+    check(
+      "R0 seen keys: a view without its basis key or version gives no key, so nothing animates",
+      model.seenKeyOf(model.seenBasesOfRoadmap(liveShaped(act.view!)), "meter:proficiency") === null && model.seenBasesOfAimCard(liveShapedAim(act.aim!))?.plan === null && model.seenBasesOfRoadmap(roadmapFixture("empty").view!) === null
+    );
+    const b1 = { basisVersion: 1, cards: [{ measureKey: "CARDS_AT_LEVEL|d:a|L6", domainIds: ["a"], level: 6, target: 40 }], practice: [{ itemLineageId: "lp-a", planned: 24 }, { itemLineageId: "lp-b", planned: 12 }], scheduled: 6 };
+    const b2 = { ...b1, practice: b1.practice.slice(0, 1) };
+    check(
+      "R0 seen keys (D8): a practice switched off at Start (same version) gives a new Proficiency key with the real basisSignature",
+      prof.rebaseCauseOf(b1, b2) === "SWITCHED_OFF" && model.proficiencyBasisKeyOf(1, prof.basisSignature(b1)) !== model.proficiencyBasisKeyOf(1, prof.basisSignature(b2))
+    );
+    const storeSeeds = [...(roadmapFixture("since-line").seen ?? []), { key: { roadmapId: "rm1", basis: "plan/2026-10-04:1", what: "x" }, value: "a string" }];
+    const store = model.seenStorageOf(storeSeeds);
+    check(
+      "R0 seen keys: seenStorageOf writes glyph/useSeen's entries (its entryKeyOf and seenToken)",
+      storeSeeds.every((s) => store[seenLib.entryKeyOf(s.key)]?.e[s.key.what] === seenLib.seenToken(s.value)) && Object.keys(store).length === new Set(storeSeeds.map((s) => seenLib.entryKeyOf(s.key))).size
+    );
+    check("R0 seen keys: the realistic date reads back from its seen value ('moved from …')", model.dayOfSeenValue(model.daySeenValue("2028-03-05")) === "2028-03-05" && model.dayOfSeenValue(null) === null && model.dayOfSeenValue(12) === null);
+    check("R0 seen keys: a week quest row's key is per week and row, no surface, no bare name", model.seenQuestWhat("2027-01-25", 1) === "wq:2027-01-25:1");
+
+    // ── The Aim rank (D5, D18) ──
+    const r1 = model.rankSealOf(act.view!.rank);
+    check("R0 rank: held Aspirant, next Journeyman at milestone 2 (drawn active beside its verb)", r1?.index === 1 && r1.next?.index === 2 && r1.next.milestoneOrd === 2 && r1.top === 6 && !r1.keeps, json(r1));
+    const rp = model.rankSealOf(roadmapFixture("reach-pending").view!.rank);
+    check("R0 rank (D18): a pending reach moves no rank and names its day", rp?.index === 1 && rp.pending?.milestoneOrd === 2 && rp.pending.countsFrom === "2027-01-30", json(rp));
+    const rc = model.rankSealOf(roadmapFixture("closed-unreached").view!.rank);
+    check("R0 rank: a milestone closed unreached gave no rank; the next gives its own", rc?.index === 0 && rc.next?.index === 2 && rc.next.milestoneOrd === 2, json(rc));
+    check("R0 rank: no view, no seal", model.rankSealOf(null) === null);
+
+    // ── The rail (§4.5): one state per MilestoneRowState, honest words, counted reaches only ──
+    const T0 = "2027-01-28";
+    const synth = (state: MilestoneRowView["state"], p: Partial<MilestoneRowView> = {}): MilestoneRowView => ({ id: `x-${state}`, lineageId: `lx-${state}`, ord: 2, title: "T", state, windowStart: "2026-12-21", dueDay: "2027-03-07", percent: 23, rankIndex: 2, gaveRank: null, reachedDay: null, countsFrom: null, closedPercent: null, ...p });
+    const allStates: MilestoneRowView["state"][] = ["REACHED", "PENDING_REACH", "CURRENT", "PLANNED", "OUTLINE", "DROPPED", "SLIPPED", "PAST_DUE", "CLOSED_UNREACHED"];
+    const nodes = allStates.map((st) => model.railNodesOf([synth(st, st === "PENDING_REACH" ? { countsFrom: "2027-01-30" } : st === "CLOSED_UNREACHED" ? { closedPercent: 82 } : {})], { today: T0 })[0]);
+    check("R0 rail: every MilestoneRowState but LATER is its own node (LATER has none)", nodes.every((n, i) => n.state === allStates[i]) && model.railNodesOf([synth("LATER")]).length === 0);
+    const metaOf = (st: string) => nodes.find((n) => n.state === st)?.meta;
+    check(
+      "R0 rail (§8): the visible words — 'Reached · counts from Sat', 'Closed at 82% · not reached', 'Past due', 'Slipped'; none on the others",
+      metaOf("PENDING_REACH") === "Reached · counts from Sat" && metaOf("CLOSED_UNREACHED") === "Closed at 82% · not reached" && metaOf("PAST_DUE") === "Past due" && metaOf("SLIPPED") === "Slipped" && ["REACHED", "CURRENT", "PLANNED", "OUTLINE", "DROPPED"].every((s) => metaOf(s) == null)
+    );
+    check(
+      "R0 rail: the model's words are RouteRail's own defaults (railMetaOf)",
+      nodes.every((n) => (n.meta ?? null) === railMetaOf({ n: n.n, state: n.state, label: n.label, countsFrom: n.countsFrom ?? undefined, closedPct: n.closedPct })),
+      nodes.map((n) => `${n.state}: ${n.meta} | ${railMetaOf({ n: n.n, state: n.state, label: n.label, countsFrom: n.countsFrom ?? undefined, closedPct: n.closedPct })}`).filter((x) => !x.endsWith(`| ${x.split(": ")[1].split(" |")[0]}`)).join("; ")
+    );
+    check("R0 rail (D18): only a REACHED node counts; a pending reach never does", nodes.filter((n) => n.counted).map((n) => n.state).join() === "REACHED" && model.countedReachOf(model.railNodesOf(roadmapFixture("reach-pending").view!.milestones, { today: T0 })) === 1);
+    check("R0 rail: CURRENT carries its measured % for the arc; CLOSED_UNREACHED its closing %", nodes.find((n) => n.state === "CURRENT")?.pct === 23 && nodes.find((n) => n.state === "CLOSED_UNREACHED")?.closedPct === 82);
+    const held = model.railNodesOf(roadmapFixture("held-stages").view!.milestones, { today: "2026-10-05" });
+    check(
+      "R0 rail: a stage held when the plan began draws reached, 'Held when you began', no rank (never a held day's HeldGlyph)",
+      held.filter((n) => n.heldAtStart).length === 3 && held.filter((n) => n.heldAtStart).every((n) => n.state === "REACHED" && n.meta === "Held when you began" && n.rankIndex == null),
+      json(held.map((n) => [n.n, n.state, n.meta, n.rankIndex]))
+    );
+    const actNodes = model.railNodesOf(act.view!.milestones, { today: T0, plan: { m3: { rankIndex: 3, gives: true, paragonAfter: false } } });
+    check(
+      "R0 rail (D25): a Gemini title (DRAFT / KEPT) is flagged for its who-word chip; an app title never is",
+      actNodes.filter((n) => n.state === "OUTLINE").every((n) => n.gemini) && model.railNodesOf(roadmapFixture("depth-realistic").view!.milestones).every((n) => !n.gemini)
+    );
+    check("R0 rail: ▸ holds the date span and the rank a milestone gives ('Reaching it gives the Aim rank Specialist')", actNodes.find((n) => n.n === 3)!.more.includes(copy.givesRankLine(3, true)) && actNodes[0].more[0].includes("–"));
+    check("R0 rail: a reached node shows the rank it gave (gaveRank or the plan); the pack's milestone 1 cuts out Journeyman", model.railNodesOf(roadmapFixture("depth-realistic").view!.milestones)[0].rankIndex === 2);
+    check("R0 rail: the Aim card's strip reads the rows the card carries, never invented places", (model.aimRailOf(act.aim!)?.length ?? 0) === 6 && model.aimRailOf(liveShapedAim(act.aim!)) === null);
+
+    // ── PipStrip, horizon, whose date, honest flags, lanes, health ──
+    const pips = model.pipDaysOf(["2027-01-26", "2027-01-27", "2027-01-27", "2027-01-30"], "2027-01-28", "2027-01-28");
+    check(
+      "R0 pips: the life week's seven days with due counts, today outlined, past days marked, the label in words",
+      pips.days.map((d) => `${d.key}${d.n}`).join() === "Mon0,Tue1,Wed2,Thu0,Fri0,Sat1,Sun0" && pips.days[3].today === true && pips.days.slice(0, 3).every((d) => d.past) && !pips.days[4].past && pips.label === "Due: Tuesday 1, Wednesday 2, Saturday 1",
+      json(pips)
+    );
+    const raiseRow = act.view!.weekQuests!.rows[0];
+    check("R0 pips: a RAISE row draws pips only when it carries its due days (else the due sentence stays)", model.rowPipsOf(raiseRow, T0) === null && model.rowPipsOf({ ...raiseRow, dueDays: ["2027-01-29"] }, T0)?.days[4].n === 1 && model.rowPipsOf({ ...act.view!.weekQuests!.rows[2], dueDays: ["2027-01-29"] }, T0) === null);
+    const hz = (s: FixtureState) => model.horizonOfAimCard(roadmapFixture(s).aim!);
+    check("R0 horizon: the Aim card has no band on EMPTY, DRAFT or RUNNING (RUNNING has the weave)", hz("empty") === null && hz("draft-mixed") === null && hz("running") === null);
+    const hzA = hz("active");
+    check("R0 horizon: ACTIVE draws the band with its Proficiency basis (prof/…), from your ticks when self-reported", hzA?.variant === "card" && hzA.status === "ACTIVE" && hzA.basisKey === bases?.prof && hzA.fromYourTicks === true && hzA.proficiency?.percent === 41, json(hzA && { ...hzA, proficiency: hzA.proficiency?.percent }));
+    check("R0 horizon: DONE is static (status DONE); unmeasured gives the unlit marks (no invented 0%)", hz("done")?.status === "DONE" && hz("horizon-unmeasured")?.proficiency === null && hz("closed-unreached-aim")?.status === "DONE");
+    const hzR = (s: FixtureState) => model.horizonOfRoadmap(roadmapFixture(s).view!);
+    check(
+      "R0 horizon: the page's band — none while drafting runs; unlit on the empty roadmap and the draft (contours = its depth); ARCHIVED static and dimmed",
+      hzR("running") === null && hzR("empty")?.proficiency === null && hzR("draft-v4")?.proficiency === null && hzR("draft-v4")?.depth === 12 && hzR("draft-v4")?.basisKey === null && hzR("archived")?.status === "ARCHIVED" && hzR("active")?.variant === "page"
+    );
+    const dR = model.aimDateOfHeader(roadmapFixture("depth-realistic").view!.header!);
+    const dO = model.aimDateOfHeader(roadmapFixture("depth-over").view!.header!);
+    const dA = model.aimDateOfHeader(act.view!.header!);
+    check(
+      "R0 whose date (C2-M2): the app's date '[t.cal] L12 by ≈ Mar 2028'; the user's '[t.pin] 3 Oct 2027 · yours'; a plan that doesn't say whose claims neither",
+      dR.whose === "app" && dR.glyph === "t.cal" && dR.text === "L12 by ≈ Mar 2028" && dO.whose === "yours" && dO.glyph === "t.pin" && dO.text === "3 Oct 2027 · yours" && dA.whose === null && dA.text === "by Dec 2027",
+      json([dR.text, dO.text, dA.text])
+    );
+    check("R0 whose date: the Aim card reads whose from its dateOrigin, and a calibrating estimate is the app's", model.aimDateOfCard(roadmapFixture("depth-over").aim!)?.whose === "yours" && model.aimDateOfCard(roadmapFixture("depth-calibrating").aim!)?.whose === "app");
+    const fCap = model.realismFlagsOf(roadmapFixture("capacity-calibrating").view!.draft!);
+    const fCapView = model.realismFlagsOf({ throughput: roadmapFixture("capacity-calibrating").view!.throughput, feasibility: roadmapFixture("capacity-calibrating").view!.draft!.feasibility });
+    const fAct = model.realismFlagsOf(act.view!);
+    check(
+      "R0 flags (D28): unverified while capacity calibrates; 'pass rate calibrating 12/30' and «best case» while the pass rate does; «reads high» once measured; «38% sized by Gemini»",
+      fCap.unverified && fCapView.unverified && fCapView.calibrating?.n === 12 && fCapView.calibrating.need === 30 && fCapView.bestCase && !fAct.unverified && fAct.readsHigh && fAct.calibrating === null && fAct.sizedByGemini === 0.38,
+      json([fCapView, fAct])
+    );
+    check("R0 flags: the CapacityGauge and the pace phrase", model.capacityFlagsOf({ unverified: true }).unverified && !model.capacityFlagsOf(null).unverified && model.paceFlagsOf({ kind: "on-pace", day: T0, pipeline: 0, bestCase: true }).bestCase && !model.paceFlagsOf({ kind: "on-pace" }).bestCase);
+    check(
+      "R0 lanes (D25): Gemini's lane lists only what geminiV4PartsOf says it did",
+      json(model.geminiLaneItemsOf({ needs: true, order: "KEPT", picks: 0 })) === json(["Domains", "order"]) && json(model.geminiLaneItemsOf({ needs: false, order: null, picks: 2 })) === json(["picks"]) && model.geminiLaneItemsOf({ needs: false, order: null, picks: 0 }).length === 0
+    );
+    check("R0 health (D12): one chip on a body or care card or a card with a health row; never a Field card; none where a HEALTH flag shows the line", model.healthChipShown({ track: "BODY" }) && model.healthChipShown({ track: "CARE" }) && model.healthChipShown({ track: "CRAFT", healthRows: true }) && !model.healthChipShown({ track: "CRAFT" }) && !model.healthChipShown({ track: "BODY", healthFlagShown: true }));
+
+    // ── RoadmapGlyph is an alias of glyph/Glyph (§4.3) ──
+    check("R0 alias: every RoadmapGlyph name maps to a catalogue glyph (§4.3's table)", Object.values(alias.ROADMAP_GLYPH_ALIAS).every((g) => g in GLYPH_INFO) && alias.ROADMAP_GLYPH_ALIAS.target === "quest.checkpoint" && alias.ROADMAP_GLYPH_ALIAS.tick === "pv.checked" && alias.ROADMAP_GLYPH_ALIAS.edit === "pv.you");
+    const gHtml = renderToStaticMarkup(createElement(alias.RoadmapGlyph, { name: "info" }));
+    const bHtml = renderToStaticMarkup(createElement(alias.GlyphButton, { glyph: "minus", label: "One hour less", onClick: () => undefined }));
+    check("R0 alias: RoadmapGlyph draws the catalogue glyph (class mg … i, data-g) with no title; GlyphButton is named by aria-label only", /<svg class="mg [^"]*\bi\b/.test(gHtml) && gHtml.includes('data-g="m.info"') && !/ title="/.test(gHtml + bHtml) && bHtml.includes('aria-label="One hour less"') && bHtml.includes('data-g="m.minus"'), gHtml.slice(0, 160));
+
+    // ── The new fixture states (§9.3) ──
+    check("R0 fixtures: every UI motion state is a /dev/style/roadmap state (ui-audit reads the list)", MOTION_STATES.every((s) => (FIXTURE_STATES as readonly string[]).includes(s)) && MOTION_NEW_STATES.every((s) => renders.get(s)!.page.length > 0));
+    const fx = (s: FixtureState) => roadmapFixture(s);
+    const seen = (s: FixtureState, what: string) => fx(s).seen?.find((x) => x.key.what === what)?.value;
+    const view = (s: FixtureState) => fx(s).view!;
+    check("R0 fixtures: rank-new — the viewer last saw Initiate and no reach (both play, once)", seen("rank-new", "rank") === 0 && seen("rank-new", "reach") === 0 && view("rank-new").rank!.index === 1);
+    check("R0 fixtures: reach-new — the reach is new, the rank was seen (reach plays, rank-rise doesn't)", seen("reach-new", "reach") === 0 && seen("reach-new", "rank") === 1);
+    const pend = view("reach-pending");
+    check(
+      "R0 fixtures: reach-pending — a PENDING_REACH row and rank.pending; what was seen equals what counts (nothing plays)",
+      pend.milestones.some((r) => r.state === "PENDING_REACH" && r.countsFrom === "2027-01-30") && pend.rank!.pending?.countsFrom === "2027-01-30" && seen("reach-pending", "reach") === model.countedReachOf(model.railNodesOf(pend.milestones)) && fx("reach-pending").aim!.milestone!.status === "PENDING_REACH"
+    );
+    check("R0 fixtures: closed-unreached — a struck milestone at 82%, no rank from it", view("closed-unreached").milestones.some((r) => r.state === "CLOSED_UNREACHED" && r.closedPercent === 82) && view("closed-unreached").rank!.index === 0);
+    const cua = view("closed-unreached-aim");
+    check("R0 fixtures: closed-unreached-aim — DONE, never reached, the rank actually held, a milestone closed short", cua.state === "DONE" && cua.header!.reachedDay === null && cua.header!.doneDay != null && cua.milestones.some((r) => r.state === "CLOSED_UNREACHED") && fx("closed-unreached-aim").aim!.state === "DONE" && fx("closed-unreached-aim").aim!.reachedDay === null && seen("closed-unreached-aim", "seal") === 0);
+    const qd = fx("quest-done-new");
+    check(
+      "R0 fixtures: quest-done-new — a row reached its count since the viewer saw 1; Today's card and Now share the key",
+      qd.today!.rows[0].done && Number(qd.today!.rows[0].figure.value) === qd.today!.rows[0].count && seen("quest-done-new", model.seenQuestWhat(qd.today!.weekStart, 1)) === 1 && json(model.seenBasesOfWeekQuests(qd.today!)) === json({ ...model.seenBasesOfRoadmap(qd.view!), prof: null })
+    );
+    check("R0 fixtures: date-moved — the seen date differs from the app's estimated date now", seen("date-moved", "date") === model.daySeenValue("2028-03-05") && view("date-moved").header!.targetDay !== "2028-03-05" && view("date-moved").header!.dateOrigin?.origin === "REALISTIC");
+    check("R0 fixtures: horizon-unmeasured — no reading on the page or the card", view("horizon-unmeasured").proficiency === null && fx("horizon-unmeasured").aim!.proficiency === null);
+    check("R0 fixtures: horizon-self-reported — SELF_REPORTED, with a lower last-seen % on its own basis", view("horizon-self-reported").proficiency!.class === "SELF_REPORTED" && Number(seen("horizon-self-reported", "horizon")) < view("horizon-self-reported").proficiency!.percent);
+    const rb = fx("rebase-switched-off-seen-before");
+    const rbBases = model.seenBasesOfRoadmap(rb.view!);
+    const rbProfSeeds = (rb.seen ?? []).filter((x) => x.key.what === "meter:proficiency" || x.key.what === "horizon");
+    check(
+      "R0 fixtures (D8): rebase-switched-off-seen-before — SWITCHED_OFF within version 1 and the same acceptance day; the seen Proficiency sits under the old basis, so nothing animates",
+      rb.view!.proficiency!.change?.kind === "rebased" &&
+        rb.view!.proficiency!.change.rebase.cause === "SWITCHED_OFF" &&
+        rbBases?.plan === bases?.plan &&
+        rbBases?.prof != null &&
+        rbBases.prof !== bases?.prof &&
+        rbProfSeeds.length === 2 &&
+        rbProfSeeds.every((x) => x.key.basis === bases?.prof && x.key.basis !== rbBases.prof)
+    );
+    const capMs = view("capacity-calibrating").draft!.feasibility.milestones;
+    check("R0 fixtures: capacity-calibrating — every time check unverified, the throughput calibrating", capMs.length > 0 && capMs.every((m) => m.time.unverified) && view("capacity-calibrating").throughput?.passShare.kind === "calibrating");
+    check(`R0 fixtures (H13): since-line — more than ${gm.SINCE_MAX} SEEN events pending, on the page's own keys`, (fx("since-line").seen?.length ?? 0) > gm.SINCE_MAX && fx("since-line").seen!.every((x) => x.key.roadmapId === view("since-line").header!.id));
+    check("R0 fixtures: run-stale — the run timed out, on the page and the Aim card", view("run-stale").run!.stale && (fx("run-stale").aim as { run?: { stale: boolean } }).run?.stale === true && view("running").run!.stale === false);
+    check("R0 fixtures: writes-off — a server that records nothing, the Aim card's figure live", view("writes-off").writesOff && fx("writes-off").aim!.writesOff && fx("writes-off").aim!.proficiency!.live === true);
+    const seedsOk = FIXTURE_STATES.flatMap((s) => (fx(s).seen ?? []).map((x) => ({ s, x }))).filter(({ s, x }) => x.key.roadmapId !== view(s).header?.id || !/^(plan|prof)\//.test(x.key.basis));
+    check("R0 fixtures: every seed is keyed on its own roadmap, in one of the two basis families", seedsOk.length === 0, seedsOk.map(({ s }) => s).join(", "));
+    const aims = aimFx.aimCardFixtures("2026-12-22");
+    const aimKeys = new Set(aims.map((f) => f.key));
+    check("R0 fixtures (/dev/style/art/you): every AIM_MOTION_KEYS state is an Aim card fixture", Object.values(aimFx.AIM_MOTION_KEYS).every((k) => k != null && aimKeys.has(k)));
+    const so = aims.find((f) => f.key === "switched-off")!;
+    const soView = aimFx.buildAimFixture(so).view as (AimCardView & { proficiency: { basisKey?: string } | null }) | null;
+    const soBases = soView ? model.seenBasesOfAimCard(soView) : null;
+    check(
+      "R0 fixtures (/dev/style/art/you): switched-off — rebased within version 1; the seen Proficiency sits under the old basis (nothing animates)",
+      soView?.proficiency != null && soBases?.prof != null && (so.seen ?? []).filter((x) => x.key.what === "meter:proficiency").every((x) => x.key.basis !== soBases.prof && x.key.basis.startsWith("prof/")) && (so.seen ?? []).some((x) => x.key.what === "rank" && x.key.basis === soBases.plan)
+    );
+    check("R0 fixtures (/dev/style/art/you): new-rank seeds Initiate; pending-reach seeds what counts", aims.find((f) => f.key === "new-rank")?.seen?.find((x) => x.key.what === "rank")?.value === 0 && aims.find((f) => f.key === "pending-reach")?.seen?.find((x) => x.key.what === "reach")?.value === 1);
+    const tq = todayFx.MOTION_QUEST_FIXTURES.find((f) => f.key === "quest-done-new");
+    check("R0 fixtures (/dev/style/today): quest-done-new — the RAISE row at its count, last seen at 1 (QUEST_FIXTURES untouched)", tq != null && tq.input.progress[0] != null && tq.seen.length === 1 && tq.seen[0].value === 1 && tq.seen[0].key.what === model.seenQuestWhat(tq.input.set.weekStart, 1));
+    check("R0 fixtures: the §3.2 word budget rows name fixture states and cover rows 1–10 and 12 (row 11 is the aim line's, checked above)", WORD_BUDGET_ROWS.every((r) => (FIXTURE_STATES as readonly string[]).includes(r.fixture)) && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12].every((n) => WORD_BUDGET_ROWS.some((r) => r.row === n)) && new Set(WORD_BUDGET_ROWS.map((r) => r.id)).size === WORD_BUDGET_ROWS.length);
+    const cssR0 = read("src/components/roadmap/roadmap.css");
+    const markers = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"].map((l) => [cssR0.indexOf(`/* ===== ${l} `), cssR0.indexOf(`/* ===== /${l} ===== */`)]);
+    check("R0 roadmap.css: one marked section per lane (R0 … R7), in order, inside @layer components", markers.every(([a, b], i) => a > 0 && b > a && (i === 0 || a > markers[i - 1][1])));
+
+    // ── The harnesses (reporting only; each lane gates its rows) ──
+    /** The outer markup of each element whose opening tag matches `attr` (a regex source), balanced by tag name. */
+    const blocksOf = (html: string, attr: string): string[] => {
+      const out: string[] = [];
+      const open = new RegExp(`<([a-zA-Z][\\w-]*)\\b[^>]*\\s${attr}[\\s/>]`, "g");
+      let m: RegExpExecArray | null;
+      while ((m = open.exec(html))) {
+        const tag = m[1];
+        const start = m.index;
+        const tagRe = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+        tagRe.lastIndex = start;
+        let depth = 0;
+        let end = html.length;
+        let t: RegExpExecArray | null;
+        while ((t = tagRe.exec(html))) {
+          if (t[1]) depth--;
+          else if (!t[2]) depth++;
+          if (depth === 0) {
+            end = tagRe.lastIndex;
+            break;
+          }
+        }
+        out.push(html.slice(start, end));
+      }
+      return out;
+    };
+    // 1. App words per §3.2 row (D2): the blocks a lane marks data-wc-block, the fold data-wc-fold.
+    for (const row of WORD_BUDGET_ROWS) {
+      const html = surfaceOf(row.fixture, row.surface);
+      if (!html) {
+        R0_RESULTS.words.set(row.id, { ok: false, detail: `${row.fixture}/${row.surface} not rendered statically` });
+        continue;
+      }
+      const blocks = row.blocks.flatMap((b) => blocksOf(html, `data-wc-block="${b}"`));
+      if (blocks.length === 0) {
+        R0_RESULTS.words.set(row.id, { ok: false, detail: `no [data-wc-block] ${row.blocks.join(" + ")} yet` });
+        continue;
+      }
+      const counts = blocks.map((b) => wc.countAppWords(b, { width: 344 }).count);
+      const n = row.each ? Math.max(...counts) : counts.reduce((a, b) => a + b, 0);
+      let ok = n <= row.budget;
+      let detail = `${n} / ${row.budget}${row.each ? " (each)" : ""}`;
+      if (row.fold != null) {
+        const fold = blocksOf(html, `data-wc-fold(?:="[^"]*")?`).reduce((a, b) => a + wc.countAppWords(b, { width: 344 }).count, 0);
+        ok = ok && fold <= row.fold;
+        detail += ` · fold ${fold} / ${row.fold}`;
+      }
+      R0_RESULTS.words.set(row.id, { ok, detail });
+    }
+    // 2. Honesty survives in VISIBLE text (§11.3; §3.1's visibility, no exemptions).
+    const rankVerbOk = (text: string, heldIndex: number): string[] =>
+      text
+        .split("\n")
+        .filter((l) => AIM_RANKS.some((r, i) => i > heldIndex && new RegExp(`\\b${r}\\b`).test(l)))
+        .filter((l) => !/\b(gives|Gives|Next|Reaching|next rank|Top rank|Aim ranks on this plan|when the aim is reached|milestone \d)/.test(l));
+    const HONESTY: { id: string; fixture: FixtureState; surface: Surface; need?: (string | RegExp)[]; test?: (visible: string) => string | null }[] = [
+      { id: "gemini-chip", fixture: "draft-mixed", surface: "page", need: [copy.SHORT_GEMINI] },
+      { id: "gemini-kept-chip", fixture: "draft-mixed", surface: "page", need: [copy.SHORT_GEMINI_KEPT] },
+      { id: "gemini-choice-chip", fixture: "draft-v4", surface: "page", need: [copy.shortGeminiChoice(true)] },
+      { id: "gemini-lanes", fixture: "draft-v4", surface: "page", need: [copy.GEMINI_LANE_WORD, copy.APP_LANE_WORD] },
+      { id: "constraints-chip", fixture: "draft-mixed", surface: "page", need: [copy.SHORT_SHOWN_TO_GEMINI] },
+      { id: "draft-eyebrow", fixture: "draft-v4", surface: "page", need: ["Draft · not accepted yet"] },
+      { id: "unverified-verdict", fixture: "capacity-calibrating", surface: "page", need: ["Unverified ·"] },
+      { id: "best-case", fixture: "depth-calibrating", surface: "page", need: [copy.SHORT_BEST_CASE] },
+      { id: "pass-calibrating", fixture: "depth-calibrating", surface: "page", need: ["pass rate calibrating"] },
+      { id: "sized-by-gemini", fixture: "draft-v4", surface: "page", need: ["sized by Gemini"] },
+      { id: "health-chip-body", fixture: "body-practice", surface: "page", need: [copy.SHORT_HEALTH] },
+      { id: "health-chip-draft-body", fixture: "draft-body", surface: "page", need: [copy.SHORT_HEALTH] },
+      { id: "health-chip-activities", fixture: "draft-confirm", surface: "page", need: [copy.SHORT_HEALTH] },
+      { id: "health-chip-today", fixture: "body-practice", surface: "today", need: [copy.SHORT_HEALTH] },
+      { id: "estimate-date-page", fixture: "depth-realistic", surface: "page", need: [/L12 by ≈ [A-Z][a-z]{2} \d{4}/] },
+      { id: "estimate-date-aim", fixture: "depth-realistic", surface: "aim", need: [/L12 by ≈ [A-Z][a-z]{2} \d{4}/] },
+      { id: "yours-date", fixture: "depth-over", surface: "page", need: [/· yours\b/] },
+      { id: "review-gap-draft", fixture: "draft-v4", surface: "page", need: [copy.SHORT_REVIEW_GAP] },
+      { id: "review-gap-intake", fixture: "intake-depth", surface: "intake", need: [copy.SHORT_REVIEW_GAP] },
+      { id: "not-timed", fixture: "intake", surface: "intake", need: [copy.SHORT_NOT_TIMED] },
+      { id: "reads-high", fixture: "draft-v4", surface: "page", need: [copy.SHORT_READS_HIGH] },
+      { id: "data-intake", fixture: "intake-gemini", surface: "intake", need: [copy.SHORT_DATA] },
+      { id: "data-draft", fixture: "draft-v4", surface: "page", need: [copy.SHORT_DATA] },
+      { id: "policy-judge", fixture: "draft-v4", surface: "page", need: [copy.SHORT_POLICY, copy.SHORT_JUDGE] },
+      { id: "pays-nothing-today", fixture: "active", surface: "today", need: [copy.SHORT_PAYS_NOTHING] },
+      { id: "context-only", fixture: "active", surface: "page", need: [copy.SHORT_CONTEXT_ONLY] },
+      { id: "aim-unchecked", fixture: "active", surface: "page", need: [copy.SHORT_AIM_UNCHECKED] },
+      { id: "pay-line", fixture: "active", surface: "page", need: [copy.SHORT_PAYS, copy.SHORT_X_PROGRESS, copy.shortFromFloor()] },
+      { id: "at-acceptance", fixture: "accepted", surface: "aim", need: [copy.SHORT_AT_ACCEPTANCE] },
+      { id: "proficiency-toward-aim", fixture: "depth-realistic", surface: "aim", need: [/Proficiency → L12/] },
+      { id: "proficiency-toward-page", fixture: "depth-realistic", surface: "page", need: [/Proficiency → L12/] },
+      { id: "from-your-ticks", fixture: "horizon-self-reported", surface: "aim", need: ["from your ticks"] },
+      { id: "counts-from", fixture: "reach-pending", surface: "page", need: ["counts from"] },
+      { id: "not-reached", fixture: "closed-unreached", surface: "page", need: ["not reached"] },
+      { id: "aim-not-reached", fixture: "closed-unreached-aim", surface: "aim", need: ["the aim wasn't reached"] },
+      { id: "past-due", fixture: "past-due", surface: "page", need: ["Past due"] },
+      { id: "practice-only", fixture: "draft-confirm", surface: "page", need: [/only until you confirm\./] },
+      { id: "plan-can-include", fixture: "active-answered", surface: "page", need: ["The plan can include:"] },
+      { id: "over", fixture: "depth-over", surface: "page", need: [/\bOver\b/] },
+      { id: "target-lowered", fixture: "behind", surface: "page", need: ["Target lowered"] },
+      { id: "legacy-hidden", fixture: "legacy", surface: "page", need: [copy.LEGACY_GEMINI_HIDDEN] },
+      { id: "not-recorded", fixture: "writes-off", surface: "aim", need: [copy.SHORT_NOT_RECORDED] },
+      { id: "writes-off", fixture: "writes-off", surface: "page", need: [copy.SHORT_WRITES_OFF] },
+      { id: "rank-verb-page", fixture: "active", surface: "page", test: (t) => rankVerbOk(t, 1).join(" | ") || null },
+      { id: "rank-verb-aim", fixture: "active", surface: "aim", test: (t) => rankVerbOk(t, 1).join(" | ") || null },
+      { id: "running-static", fixture: "running", surface: "page", test: (t) => (/Drafting/.test(t) && !/\d+\s?%/.test(t) && !/spin/i.test(surfaceOf("running", "page")) ? null : "no static 'Drafting' line, or a %") },
+    ];
+    for (const h of HONESTY) {
+      const html = surfaceOf(h.fixture, h.surface);
+      if (!html) {
+        R0_RESULTS.honesty.set(h.id, { ok: false, detail: `${h.fixture}/${h.surface} not rendered` });
+        continue;
+      }
+      const t = wc.visibleText(html, { width: 344 });
+      const missing = (h.need ?? []).filter((n) => (typeof n === "string" ? !t.includes(n) : !n.test(t))).map(String);
+      const bad = h.test ? h.test(t) : null;
+      R0_RESULTS.honesty.set(h.id, { ok: missing.length === 0 && bad == null, detail: [missing.length ? `not visible: ${missing.join(" · ")}` : "", bad ?? ""].filter(Boolean).join("; ") || "visible" });
+    }
+    // 4 (first: the list 3 reads). Every currently pinned full string stays in the static markup (sr, a panel or visible).
+    const SURVIVAL: [FixtureState, Surface, string][] = [
+      ["intake", "intake", copy.NO_KEY_LINE],
+      ["intake", "intake", copy.AIM_LONG_HINT],
+      ["intake-gemini", "intake", copy.FREE_TIER_LINE],
+      ["intake-confirm", "intake", copy.ACTIVITY_QUESTION],
+      ["intake-confirm", "intake", copy.ACTIVITY_INTAKE_HOW_LINE],
+      ["draft-mixed", "page", copy.PROVENANCE_WORDS.DRAFT],
+      ["draft-mixed", "page", copy.CONSTRAINTS_LINE],
+      ["draft-mixed", "page", copy.HEALTH_LINE],
+      ["draft-mixed", "page", copy.AIM_UNCHECKED_LINE],
+      ["draft-mixed", "page", copy.TIME_FIXED_LINE],
+      ["draft-credential", "page", copy.CREDENTIAL_LINE],
+      ["draft-v4", "page", copy.GEMINI_CHOICE_WORDS],
+      ["draft-v4", "page", copy.ARRANGEMENT_V4_LINE],
+      ["draft-v4", "page", copy.NEVER_LOWERED_LINE],
+      ["draft-v3", "page", copy.GEMINI_V3_LEAD_LINE],
+      ["draft-v3", "page", copy.ARRANGEMENT_LINE],
+      ["draft-rejected", "page", copy.RUN_REJECTED_LINE],
+      ["draft-body", "page", copy.HEALTH_LINE],
+      ["draft-confirm", "page", copy.ACTIVITY_QUESTION],
+      ["draft-confirm", "page", copy.ACTIVITY_HOW_LINE],
+      ["draft-confirm", "page", copy.HEALTH_LINE],
+      ["active", "page", copy.AIM_UNCHECKED_LINE],
+      ["active", "page", copy.PRACTICE_KEEP_SHARE_LINE],
+      ["active", "page", copy.TIME_FIXED_LINE],
+      ["body-practice", "page", copy.HEALTH_LINE],
+      ["done", "page", copy.AIM_HISTORY_LINE],
+      ["depth-realistic", "page", copy.NEVER_LOWERED_LINE],
+      ["depth-calibrating", "page", copy.REDATE_NOTE],
+      ["legacy", "page", copy.LEGACY_ACTIVE_BANNER],
+      ["legacy", "page", copy.LEGACY_GEMINI_HIDDEN],
+      ["legacy-draft", "page", copy.LEGACY_DRAFT_BANNER],
+      ["writes-off", "page", copy.WRITES_OFF_BANNER],
+      ["empty", "aim", copy.AIM_CALL_BODY],
+      ["empty", "aim", copy.AIM_CALL_RANK_LINE],
+      ["active-answered", "page", "The plan can include:"],
+    ];
+    for (const [s, surface, str] of SURVIVAL) {
+      const all = norm(textOf(surfaceOf(s, surface)));
+      R0_RESULTS.survival.set(`${s}/${surface}: ${str.slice(0, 48)}`, { ok: all.includes(norm(str)), detail: all.includes(norm(str)) ? "in the markup" : "gone from the markup" });
+    }
+    // 3. Tap reachability (D13): an sr-only honesty string is also in a panel a touch user opens on the same card
+    //    (a chip's or an InfoTip's aria-controls panel, the Key, a row's ▸, the TimeBar's list behind Dates).
+    const survivalStrings = [...new Set([...SURVIVAL.map(([, , x]) => norm(x)), ...Object.values(copy.PROVENANCE_WORDS).map(norm), norm(copy.GEMINI_CHOICE_WORDS)])].filter((x) => x.length >= 12);
+    type PNode = { tag?: string; attrs: Record<string, string>; children: PNode[]; parent: PNode | null; text?: string };
+    const parse = (h: string) => wc.parseMarkup(h) as unknown as PNode;
+    const elems = (n: PNode) => wc.elementsOf(n as never) as unknown as PNode[];
+    const cls = (e: PNode) => wc.classesOf(e as never) as string[];
+    const txt = (e: PNode) => wc.textOfNode(e as never) as string;
+    const cardOf = (el: PNode): PNode => {
+      let p = el.parent;
+      while (p && p.tag !== "#root" && !(cls(p).includes("card") || p.tag === "section" || p.tag === "dialog")) p = p.parent;
+      return p ?? el;
+    };
+    /** The sr-only honesty strings in a surface, whether each is one tap away on its card, and cards over the InfoTip cap. */
+    const tapsOf = (html: string, strings: readonly string[]) => {
+      const els = elems(parse(html));
+      let sr = 0;
+      const unreached: string[] = [];
+      for (const el of els) {
+        if (!cls(el).includes("sr-only")) continue;
+        const t = norm(txt(el));
+        const str = strings.find((x) => t.includes(x));
+        if (!str) continue;
+        sr++;
+        const inCard = elems(cardOf(el));
+        const controlled = new Set(inCard.filter((e) => e.tag === "button" && e.attrs["aria-controls"]).map((e) => e.attrs["aria-controls"]));
+        const inPanel = inCard.some((e) => e.attrs.id && controlled.has(e.attrs.id) && norm(txt(e)).includes(str));
+        const inDetails = inCard.some((e) => e.tag === "details" && e.children.filter((c) => c.tag !== "summary").some((c) => norm(txt(c)).includes(str)));
+        if (!inPanel && !inDetails) unreached.push(str.slice(0, 40));
+      }
+      const tips = new Map<PNode, number>();
+      for (const el of els) if (el.tag === "button" && cls(el).includes("mg-tip")) tips.set(cardOf(el), (tips.get(cardOf(el)) ?? 0) + 1);
+      return { sr, unreached, tips: tips.size, overTips: [...tips.values()].filter((n) => n > model.INFO_TIPS_PER_CARD).length };
+    };
+    for (const s of FIXTURE_STATES) {
+      for (const surface of ["page", "aim", "today", "intake"] as const) {
+        const html = surfaceOf(s, surface);
+        if (!html) continue;
+        const r = tapsOf(html, survivalStrings);
+        if (r.sr === 0 && r.tips === 0) continue;
+        R0_RESULTS.taps.set(`${s}/${surface}`, {
+          ok: r.unreached.length === 0 && r.overTips === 0,
+          detail: `${r.sr - r.unreached.length}/${r.sr} sr-only honesty strings one tap away${r.unreached.length ? ` (not: ${r.unreached.slice(0, 2).join(" | ")})` : ""}${r.overTips ? ` · ${r.overTips} card(s) over ${model.INFO_TIPS_PER_CARD} InfoTips` : ""}`,
+        });
+      }
+    }
+    // The harnesses' own mechanics, on made-up markup (the fixtures carry no marked block or sr-only chip yet).
+    const S = copy.HEALTH_LINE;
+    const reach = tapsOf(`<section class="card"><span class="sr-only">${S}</span><button aria-controls="p1">i</button><span id="p1" hidden="">${S}</span></section>`, [S]);
+    const row = tapsOf(`<section class="card"><span class="sr-only">${S}</span><details><summary>x</summary><p>${S}</p></details></section>`, [S]);
+    const lost = tapsOf(`<section class="card"><span class="sr-only">${S}</span></section><section class="card"><button aria-controls="p2">i</button><span id="p2" hidden="">${S}</span></section>`, [S]);
+    const capped = tapsOf(`<section class="card">${'<button class="mg-tip" aria-controls="q">i</button>'.repeat(4)}</section>`, [S]);
+    check("R0 taps harness: a panel the card's button controls, or a row's ▸, is one tap away; another card's panel is not; 4 InfoTips on a card are over the cap", reach.unreached.length === 0 && reach.sr === 1 && row.unreached.length === 0 && lost.unreached.length === 1 && capped.overTips === 1);
+    const nested = `<div data-wc-block="aim-card"><p>Set an aim</p><div><div>Two more words</div></div></div><p>outside the block</p>`;
+    check("R0 words harness: a marked block is cut by its own tag, nested blocks included", json(blocksOf(nested, 'data-wc-block="aim-card"').map((b) => wc.countAppWords(b, { width: 344 }).count)) === json([6]) && blocksOf(`<p data-wc-fold="">a b</p><p>c</p>`, 'data-wc-fold(?:="[^"]*")?').length === 1);
+    // The report: one line per harness (every row with --report), then the gates the lanes have turned on.
+    const showAll = process.argv.includes("--report");
+    for (const [kind, rows] of Object.entries(R0_RESULTS)) {
+      const ok = [...rows.values()].filter((r) => r.ok).length;
+      console.log(`  · R0 ${kind} (reporting only): ${ok}/${rows.size} rows hold`);
+      if (showAll) for (const [id, r] of rows) console.log(`      ${r.ok ? "ok  " : "··  "}${id}: ${r.detail}`);
+    }
+    check("R0 harnesses: the four reports ran (words per §3.2 row, visible honesty, tap reachability where a surface has sr-only honesty strings or InfoTips, full-text survival)", R0_RESULTS.words.size === WORD_BUDGET_ROWS.length && R0_RESULTS.honesty.size === HONESTY.length && R0_RESULTS.survival.size === SURVIVAL.length);
+  }
+  /** A lane turns its rows into hard gates, from its own block below: r0Gate("words", ["s9-aim-card-active"], "R2"). */
+  const r0Gate = (kind: keyof typeof R0_RESULTS, ids: readonly string[], lane: string) => {
+    for (const id of ids) {
+      const r = R0_RESULTS[kind].get(id);
+      check(`${lane} gate (${kind}): ${id}`, r?.ok === true, r ? r.detail : "no such row");
+    }
+  };
+
+  // ===== R1 Today (AimLine, WeekQuests): its checks and r0Gate calls, between these markers only =====
+  // ui-motion.md §3.3 screens 10 and 11 (and the Now section's week quests), §7.10, §7.11, §11.3, §11.4.
+  // Rows 10 and 11 are hard gates from here on; the Now section's budget is R3's (row 5), so R1 caps its own part.
+  console.log("— ui motion R1: Today's aim line and week quests —");
+  {
+    type R1El = { tag?: string; attrs: Record<string, string>; children: R1El[]; parent: R1El | null; text?: string };
+    type R1Run = { text: string; kind: string; block?: boolean; edge?: boolean };
+    const wc1 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const { AimLine } = await import("../src/components/roadmap/AimLine");
+    const wqm = await import("../src/components/roadmap/WeekQuests");
+    const todayFx1 = await import("../src/app/dev/style/today/fixtures");
+    const norm1 = (t: string) => t.replace(/\s+/g, " ").trim();
+    const els1 = (h: string) => wc1.elementsOf(wc1.parseMarkup(h) as never) as unknown as R1El[];
+    const text1 = (e: R1El) => norm1(wc1.textOfNode(e as never) as string);
+    const cls1 = (e: R1El) => (e.attrs.class ?? "").split(/\s+/);
+    const visible1 = (h: string) => norm1(wc1.visibleText(h, { width: 344 }).replace(/\n/g, " "));
+    const words1 = (h: string) => wc1.countAppWords(h, { width: 344 }).count;
+    /** The outer markup of each element whose opening tag carries `attr`, balanced by its tag name. */
+    const cut1 = (html: string, attr: string): string[] => {
+      const out: string[] = [];
+      const open = new RegExp(`<([a-zA-Z][\\w-]*)\\b[^>]*\\s${attr}[\\s/>]`, "g");
+      for (let m = open.exec(html); m; m = open.exec(html)) {
+        const tagRe = new RegExp(`<(/?)${m[1]}\\b[^>]*?(/?)>`, "g");
+        tagRe.lastIndex = m.index;
+        let depth = 0;
+        let end = html.length;
+        for (let t = tagRe.exec(html); t; t = tagRe.exec(html)) {
+          if (t[1]) depth--;
+          else if (!t[2]) depth++;
+          if (depth === 0) {
+            end = tagRe.lastIndex;
+            break;
+          }
+        }
+        out.push(html.slice(m.index, end));
+      }
+      return out;
+    };
+    /** App words on each visible line (row 10's ≤ 8 a line): the runs cut at block edges, each line classified alone. */
+    const perLine1 = (html: string): { n: number; line: string }[] => {
+      const runs = wc1.runsOf(wc1.parseMarkup(html) as never, { width: 344 }) as unknown as R1Run[];
+      const rules = wc1.wordRules();
+      const out: { n: number; line: string }[] = [];
+      let cur: R1Run[] = [];
+      const flush = () => {
+        const toks = wc1.classifyRuns(cur as never, rules) as unknown as { text: string; kind: string }[];
+        if (toks.length) out.push({ n: toks.filter((t) => t.kind === "app").length, line: toks.map((t) => t.text).join(" ") });
+        cur = [];
+      };
+      for (const r of runs) {
+        if (r.block) flush();
+        else cur.push(r);
+      }
+      flush();
+      return out;
+    };
+    const redOf = (h: string) => /owed|danger|gold|--mp\b/.test(h);
+
+    // ── The R0 harness rows R1 owns, now hard gates ──
+    r0Gate("words", ["s10-week-quests-active", "s10-week-quests-behind", "s10-week-quests-body"], "R1");
+    for (const row of WORD_BUDGET_ROWS.filter((r) => r.row === 10)) {
+      const block = cut1(renders.get(row.fixture)?.today ?? "", `data-wc-block="${row.blocks[0]}"`)[0] ?? "";
+      const worst = perLine1(block).sort((a, b) => b.n - a.n)[0];
+      check(`R1 gate (words a line): ${row.id} — no line over ${row.perLine ?? 8} app words`, block.length > 0 && worst != null && worst.n <= (row.perLine ?? 8), worst ? `${worst.n}: ${worst.line}` : "no marked block");
+    }
+    r0Gate("honesty", ["pays-nothing-today"], "R1");
+    const todayTaps = [...R0_RESULTS.taps.keys()].filter((k) => k.endsWith("/today"));
+    check("R1 gate (taps): every fixture's Today card is in the tap harness (its Key is an InfoTip)", todayTaps.length >= 10, String(todayTaps.length));
+    r0Gate("taps", todayTaps, "R1");
+    r0Gate("survival", [...R0_RESULTS.survival.keys()].filter((k) => k.startsWith(`active/page: ${copy.PRACTICE_KEEP_SHARE_LINE.slice(0, 20)}`)), "R1");
+    const bodyTodayRow = R0_RESULTS.honesty.get("health-chip-today");
+    console.log(`  · R1 note: R0's honesty row health-chip-today ${bodyTodayRow?.ok ? "holds" : "is open"} (${bodyTodayRow?.detail ?? "no row"}): the body-practice fixture's rows carry no health flag, so no card chip is due (handoff); the chip itself is checked below on a body set`);
+
+    // ── Row 11: Today's aim line, every state (AimLine over AIM_LINE_FIXTURES), ≤ 8 app words, static ──
+    const lineViews = todayFx1.AIM_LINE_FIXTURES.map((f) => ({ key: f.key, v: todayFx1.aimLineOfFixture(f) })).filter((x): x is { key: (typeof todayFx1.AIM_LINE_FIXTURES)[number]["key"]; v: AimLineView } => x.v != null);
+    const lineHtml = lineViews.map(({ key, v }) => ({ key, v, h: R(createElement(AimLine, { view: v })) }));
+    const overLine = lineHtml.map(({ key, h }) => ({ key, n: (() => { const b = cut1(h, 'data-wc-block="aim-line"')[0]; return b ? words1(b) : Infinity; })() })).filter((x) => x.n > 8);
+    check("R1 gate (words): §3.2 row 11 — every aim line fixture is ≤ 8 app words in its marked block (data-wc-block=\"aim-line\")", lineHtml.length > 5 && overLine.length === 0, overLine.map((x) => `${x.key}: ${x.n}`).join(", "));
+    check(
+      "R1 aim line: the words are aimLineShort's (the bold lead, then the rest); the year-or-three question is gone from Today",
+      lineHtml.every(({ v, h }) => {
+        const s = copy.aimLineShort(v);
+        return visible1(h) === norm1(`${s.lead} ${s.rest}`) && !/year or three/.test(h);
+      }),
+      lineHtml.filter(({ v, h }) => visible1(h) !== norm1(`${copy.aimLineShort(v).lead} ${copy.aimLineShort(v).rest}`)).map(({ key, h }) => `${key}: ${visible1(h)}`).join(" | ")
+    );
+    const startView: AimLineView = { kind: "START", milestoneId: "m5", ord: 5, stageName: "Mastered, part 1", givesRank: "Expert", href: "/you/roadmap#now" };
+    const startHtml = R(createElement(AimLine, { view: startView }));
+    check(
+      "R1 aim line (C2-B3): START keeps its verb, 'Gives [rank.4 active] Aim rank Expert.', the medallion in the next-rank shape between the verb and the name, never the held one",
+      visible1(startHtml).endsWith("is ready. Gives Aim rank Expert.") &&
+        /<svg[^>]*data-g="rank\.4" data-s="active"/.test(startHtml) &&
+        !/data-s="done"/.test(startHtml) &&
+        startHtml.indexOf("Gives") < startHtml.indexOf('data-g="rank.4"') &&
+        startHtml.indexOf('data-g="rank.4"') < startHtml.indexOf("Aim rank"),
+      visible1(startHtml)
+    );
+    check("R1 aim line (§3.1): the stage and rank names are marked as names, the verb and 'Aim rank' are not", startHtml.includes('<span data-wc="name">Mastered, part 1</span>') && startHtml.includes('<span data-wc="name">Expert</span>') && !/data-wc="name">[^<]*(Gives|Aim rank)/.test(startHtml));
+    const keepHtml = R(createElement(AimLine, { view: { ...startView, givesRank: null } }));
+    check("R1 aim line: a START that keeps the rank reads 'Keeps your rank.' and draws no rank medallion (the view carries no held index; handoff)", visible1(keepHtml).endsWith("Keeps your rank.") && !/data-g="rank\./.test(keepHtml));
+    const lineSrc1 = code(read("src/components/roadmap/AimLine.tsx"));
+    check(
+      "R1 aim line (D10, §11.4): static — no seen hook, glyph motion, shader or data-play; the route glyph and the medallion are aria-hidden; no title",
+      !/useSeen|usePlayOnSeen|playGlyph|glyph-motion|@\/components\/fx|data-play/.test(lineSrc1) && lineHtml.every(({ h }) => !/data-play|data-mg-armed|class="shd|\stitle="/.test(h)) && /<svg[^>]*data-g="route"[^>]*aria-hidden="true"/.test(startHtml) && /<svg[^>]*data-g="rank\.4"[^>]*aria-hidden="true"/.test(startHtml)
+    );
+    check("R1 aim line: the × still reads 'Not now…' and is a 40 px button; never red", lineHtml.every(({ h }) => /<button[^>]*aria-label="Not now[^"]*"/.test(h) && !redOf(h)));
+
+    // ── Row 10: Today's week quests card ──
+    const act1 = roadmapFixture("active");
+    const tHtml = renders.get("active")!.today;
+    const tBlock = cut1(tHtml, 'data-wc-block="week-quests"')[0] ?? "";
+    const tEls = els1(tBlock);
+    const keyPanel = tEls.find((e) => e.attrs["data-tip-panel"] === "key");
+    const keyText = keyPanel ? text1(keyPanel) : "";
+    const kinds1 = model.weekQuestKindsOf(act1.today!);
+    check(
+      "R1 week quests (§3.3 s10): the legend, the footer and every row's place, due days and quota sit in the card Key (a hidden panel), not on the card",
+      keyPanel != null &&
+        "hidden" in keyPanel.attrs &&
+        keyText.includes(copy.weekQuestsLegend(kinds1)) &&
+        keyText.includes(copy.weekQuestsFooter(kinds1, 2, 6)) &&
+        wqm.weekQuestKeyRowsOf(act1.today!).every((l) => keyText.includes(norm1(l))) &&
+        keyText.includes("1 comes due Tue, 2 Wed, 1 Sat") &&
+        keyText.includes("· in Anytime") &&
+        !visible1(tBlock).includes("comes due") &&
+        !visible1(tBlock).includes(copy.weekQuestsLegend(kinds1)),
+      keyText.slice(0, 200)
+    );
+    check("R1 week quests: one InfoTip (the Key) on the card, inside the card (D13: ≤ 3)", tEls.filter((e) => e.tag === "button" && cls1(e).includes("mg-tip")).length === 1 && /class="card rm-quest"[\s\S]*class="mg-tip"/.test(tBlock));
+    check(
+      "R1 week quests (§11.4): ≤ 3 rows, then '2 more'; every row a KindGlyph with its evidence badge",
+      tEls.filter((e) => /^rm-quest-(row|line)$/.test(cls1(e)[0] ?? "")).length === 3 && /class="rm-quest-more"[^>]*>[\s\S]*?2 more<\/button>/.test(tBlock) && tEls.filter((e) => cls1(e).includes("mg-kg")).length === 3 && tEls.filter((e) => cls1(e).includes("mg-kg-ev")).length === 3
+    );
+    check(
+      "R1 week quests (§4.4): the glyph says how far a row is — idle at 0, active (the started pip) at 1+, done with the check badge",
+      /data-kg="raise" data-s="active"/.test(tBlock) &&
+        /data-kg="add" data-s="active"/.test(tBlock) &&
+        /data-kg="step" data-s="idle"/.test(tBlock) &&
+        /data-kg="practice" data-s="done"[\s\S]*?mg-kg-ok/.test(R(createElement(WeekQuests, { variant: "today", view: { ...act1.today!, rows: act1.today!.rows.filter((r) => r.done) } })))
+    );
+    check("R1 week quests (§3.1): a label's Domain names are names; its verbs and counts stay app words", tBlock.includes('in <span data-wc="name">Risk Management</span> or <span data-wc="name">Position Sizing</span> to level 6+'));
+    const paysChip = tEls.find((e) => e.attrs["data-hc"] === "pays-nothing");
+    check(
+      "R1 week quests (§4.6): «pays nothing» visible as a static chip (read once: its sr text is the footer; the Key holds it too)",
+      visible1(tBlock).includes(copy.SHORT_PAYS_NOTHING) && paysChip != null && paysChip.tag === "span" && text1(paysChip).includes(copy.weekQuestsFooter(kinds1, 2, 6))
+    );
+    check("R1 week quests: no health chip on a Field plan's card", !visible1(tBlock).includes(copy.SHORT_HEALTH) && !tBlock.includes(copy.HEALTH_LINE));
+    const healthRows = (["Easy session · 3 sessions × 30 min", "Mobility session · 2 sessions × 20 min"] as const).map((label, i) =>
+      Object.assign({ ord: i + 1, kind: "PRACTICE" as const, label, count: 3, unit: "session" as const, evidence: "SELF_REPORTED" as const, figure: fig(i, "from your ticks", "SELF"), done: false, dueLine: null, quotaLine: null, slipLine: null, seekTemplateId: `t-${i}`, place: "in Habits", href: null }, { health: true })
+    );
+    const bodySet = weekQuestsFixture({ level: null }, healthRows);
+    const bodyCard = R(createElement(WeekQuests, { variant: "today", view: bodySet }));
+    const bodyEls = els1(bodyCard);
+    const healthBtn = bodyEls.find((e) => e.tag === "button" && e.attrs["data-hc"] === "health");
+    const healthPanel = bodyEls.find((e) => e.attrs["data-hc-panel"] === "health");
+    check(
+      "R1 week quests (D12, §11.4): a body set's card shows one «Not medical advice · ask a professional», a button opening HEALTH_LINE (once in the markup), never a line per row",
+      (visible1(bodyCard).match(/Not medical advice · ask a professional/g) ?? []).length === 1 &&
+        bodyCard.split(copy.HEALTH_LINE).length === 2 &&
+        healthBtn != null &&
+        healthPanel != null &&
+        healthBtn.attrs["aria-controls"] === healthPanel.attrs.id &&
+        "hidden" in healthPanel.attrs &&
+        !bodyCard.includes("rm-q-health")
+    );
+    check("R1 week quests (§4.4): a Practice row draws the plan's own track sigil (body on a body plan; craft otherwise, or the track passed)", /data-g="quest\.practice"[^>]*data-track="body"/.test(bodyCard) && /data-track="craft"/.test(renders.get("behind")!.today) && /data-track="know"/.test(R(createElement(WeekQuests, { variant: "today", view: roadmapFixture("behind").today!, track: "know" }))));
+    const allToday = [...renders.values()].map((r) => r.today).filter(Boolean);
+    check("R1 week quests (D10, §11.4): no Today card renders a shader slot, a WAIT card, data-play or a burst hook; never red", allToday.length > 10 && allToday.every((h) => !/class="[^"]*\bshd\b|data-wait|data-play|data-burst/.test(h) && !redOf(h)));
+    const wqSrc = code(read("src/components/roadmap/WeekQuests.tsx"));
+    check(
+      "R1 week quests (H9, H10): Today's only motion is SEEN — the done check (quest-done with today, a check draw only) and meters from the last-seen count; no burst, no rank or reach motion, no shader import",
+      /usePlayOnSeen\(kgRef, key, progress, "quest-done", \{\s*today: onToday,/.test(wqSrc) &&
+        /function TodayRow[\s\S]*?useRowSeen\(row, weekStart, bases, true\)/.test(wqSrc) &&
+        /function NowRow[\s\S]*?useRowSeen\(row, view\.weekStart, bases, false\)/.test(wqSrc) &&
+        /useSeenValue\(meterKey, progress\)/.test(wqSrc) &&
+        !/burst|rank-rise|"reach"|"build"|@\/components\/fx|playGlyph\(/.test(wqSrc)
+    );
+    const qd1 = roadmapFixture("quest-done-new");
+    const todayKey = model.seenKeyOf(model.seenBasesOfWeekQuests(qd1.today!), model.seenQuestWhat(qd1.today!.weekStart, 1));
+    const pageKey = model.seenKeyOf(model.seenBasesOfRoadmap(qd1.view!), model.seenQuestWhat(qd1.view!.weekQuests!.weekStart, 1));
+    check(
+      "R1 week quests (D8): a row's done check keys on the plan basis and its week and row — Today's card and the Now section share it (it plays once); a view without its roadmap gives no key",
+      todayKey != null && JSON.stringify(todayKey) === JSON.stringify(pageKey) && todayKey.basis.startsWith("plan/") && model.seenKeyOf(model.seenBasesOfWeekQuests(act1.today!), model.seenQuestWhat(act1.today!.weekStart, 1)) === null,
+      JSON.stringify([todayKey, pageKey])
+    );
+
+    // ── The Aim card's line: PromiseRing "2/5 Week quests →" ──
+    const aimLineHtml = R(createElement(wqm.WeekQuestsLine, { done: 1, total: 5 }));
+    check(
+      "R1 week quests (§3.3 s9): the Aim card's line is a PromiseRing, '1/5' and 'Week quests' (2 app words), read as '1 of 5 done · Today', to /today",
+      /^<a class="rm-quest-one rm-wq-line" href="\/today">/.test(aimLineHtml) &&
+        /<span class="rm-wq-ring" aria-hidden="true"><div class="pring/.test(aimLineHtml) &&
+        JSON.stringify(wc1.countAppWords(aimLineHtml, { width: 344 }).tokens.map((t: { text: string }) => t.text)) === JSON.stringify(["1/5", "Week", "quests"]) &&
+        words1(aimLineHtml) === 2 &&
+        aimLineHtml.includes('<span class="sr-only">1 of 5 done · Today</span>') &&
+        R(createElement(wqm.WeekQuestsLine, { done: 5, total: 5 })).includes("all 5 done · Today"),
+      visible1(aimLineHtml)
+    );
+
+    // ── The Now section's week quests (row 5 is R3's: R1 caps its own part) ──
+    const nowOf = (s: FixtureState, extra: Partial<Parameters<typeof WeekQuests>[0]> = {}) => {
+      const v = roadmapFixture(s).view!;
+      return R(createElement(WeekQuests, { variant: "roadmap", view: v.weekQuests!, today: v.today, onShowBasis: () => undefined, onLogCheckpoint: () => undefined, shownElsewhere: v.triggers.map((t) => t.line), ...extra }));
+    };
+    const nowCaps: [FixtureState, number][] = [["active", 30], ["behind", 30], ["depth-realistic", 30], ["body-practice", 12]];
+    const nowWords = nowCaps.map(([s, cap]) => ({ s, cap, n: words1(nowOf(s)) }));
+    check("R1 Now (row 5's part): the week quests are ≤ 30 app words on the active, behind and depth plans (124 / 155 / 93 before) and ≤ 12 on the body plan", nowWords.every((x) => x.n <= x.cap), nowWords.map((x) => `${x.s} ${x.n}/${x.cap}`).join(" · "));
+    const nowAct = nowOf("active");
+    const nowEls = els1(nowAct);
+    const rowBtns = nowEls.filter((e) => e.tag === "button" && cls1(e).includes("rm-wq-x"));
+    check(
+      "R1 Now (D13): every row has its ▸ — a 40 px button, aria-expanded, controlling the hidden panel right after it — and the section adds no InfoTip to the Now card",
+      rowBtns.length === act1.view!.weekQuests!.rows.length &&
+        rowBtns.every((b) => {
+          const sib = b.parent!.children.filter((c) => c.tag);
+          const next = sib[sib.indexOf(b) + 1];
+          return b.attrs["aria-expanded"] === "false" && next != null && next.attrs.id === b.attrs["aria-controls"] && "hidden" in next.attrs;
+        }) &&
+        !nowAct.includes("mg-tip")
+    );
+    const panelText = (kind: string) =>
+      nowEls
+        .filter((e) => e.attrs["data-kind"] === kind)
+        .map((r) => r.children.find((c) => c.tag && cls1(c).includes("rm-wq-p")))
+        .map((p) => (p ? text1(p) : ""))
+        .join(" | ");
+    check(
+      "R1 Now: each row's ▸ holds its evidence and the page's own lines (due days, quota and the add-count line, 'the milestone counts 80% of these', On Today)",
+      panelText("RAISE").includes("1 comes due Tue, 2 Wed, 1 Sat") &&
+        panelText("ADD").includes("counts toward Trading's weekly quota too") &&
+        panelText("ADD").includes(copy.addCountsLine(2, 6)) &&
+        panelText("PRACTICE").includes(copy.PRACTICE_KEEP_SHARE_LINE) &&
+        panelText("STEP").includes("On Today") &&
+        nowAct.includes('aria-label="Add a card here"'),
+      panelText("ADD").slice(0, 160)
+    );
+    const nowPays = nowEls.find((e) => e.tag === "button" && e.attrs["data-hc"] === "pays-nothing");
+    const nowPaysPanel = nowEls.find((e) => e.attrs["data-hc-panel"] === "pays-nothing");
+    check(
+      "R1 Now: «pays nothing» is visible and opens the set's footer, legend and window (the Now card's Key is the page's)",
+      visible1(nowAct).includes(copy.SHORT_PAYS_NOTHING) && nowPays != null && nowPaysPanel != null && text1(nowPaysPanel).includes(copy.weekQuestsFooter(model.weekQuestKindsOf(act1.view!.weekQuests!), 2, 6)) && text1(nowPaysPanel).includes("fixed for the week")
+    );
+    check(
+      "R1 Now: 'Week quests · until Sun' on the sub-head (the window and 'fixed for the week' in the chip's panel); the basis sheet behind a 40 px button named 'How these were set'",
+      /<span class="t-eyebrow">Week quests<\/span><span class="rm-cap">until Sun<\/span>/.test(nowAct) && !visible1(nowAct).includes("fixed for the week") && /<button[^>]*class="icon-btn mg-gb mg-gb-40 rm-wq-basis"[^>]*aria-label="How these were set"/.test(nowAct)
+    );
+    const liveNow = R(createElement(WeekQuests, { variant: "roadmap", view: { ...act1.view!.weekQuests!, writesOff: true, frozen: false } }));
+    check("R1 Now (§4.6): a set computed here and recorded nowhere shows «not recorded here», opening 'not recorded on this server'", visible1(liveNow).includes(copy.SHORT_NOT_RECORDED) && /data-hc-panel="not-recorded"[^>]*>[\s\S]*?not recorded on this server/.test(liveNow) && !visible1(nowAct).includes(copy.SHORT_NOT_RECORDED));
+    const bodyNow = R(createElement(WeekQuests, { variant: "roadmap", view: bodySet }));
+    check(
+      "R1 Now (D12): a body set shows one health chip, none when the Now card already shows its own (health={false}); practice names are names",
+      (visible1(bodyNow).match(/Not medical advice · ask a professional/g) ?? []).length === 1 &&
+        !visible1(R(createElement(WeekQuests, { variant: "roadmap", view: bodySet, health: false }))).includes(copy.SHORT_HEALTH) &&
+        bodyNow.includes('<span data-wc="name">Easy session</span> · 3 sessions × 30 min')
+    );
+    check("R1 Now: never red; no shader, WAIT card or data-play", [nowAct, nowOf("behind"), liveNow, bodyNow].every((h) => !redOf(h) && !/class="[^"]*\bshd\b|data-wait|data-play/.test(h)));
+  }
+  // ===== /R1 =====
+  // ===== R2 Rank & Aim card (ProficiencyBlock, PlanRanks, AimCard, AimFigure) =====
+  // ui-motion.md §3.3 screen 9 and the rank parts of screen 4, §4.4 Rank, §4.5 RankSeal / RouteRail strip, §6.1–§6.2 (the
+  // card's horizon band, the RUNNING weave), §7.9, §8, §11.3 (budgets, honesty, taps, shader slots), §11.4 (/you). Row 9 and
+  // the Aim card's honesty, tap and survival rows are hard gates from here on.
+  console.log("— ui motion R2: the Aim card and the rank —");
+  {
+    const wc2 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const pb2 = await import("../src/components/roadmap/ProficiencyBlock");
+    const ac2 = await import("../src/components/roadmap/AimCard");
+    const flat2 = (h: string) => textOf(h).replace(/\s+/g, " ");
+    const aim2 = (s: FixtureState) => renders.get(s)!.aim;
+    const page2 = (s: FixtureState) => renders.get(s)!.page;
+    /** The outer markup of the first element whose opening tag matches `open` (a regex source), balanced by its tag name. */
+    const cut2 = (html: string, open: string): string => {
+      const m = new RegExp(`<([a-zA-Z][\\w-]*)\\b[^>]*${open}`).exec(html);
+      if (!m) return "";
+      const tagRe = new RegExp(`<(/?)${m[1]}\\b[^>]*?(/?)>`, "g");
+      tagRe.lastIndex = m.index;
+      let depth = 0;
+      for (let t = tagRe.exec(html); t; t = tagRe.exec(html)) {
+        if (t[1]) depth--;
+        else if (!t[2]) depth++;
+        if (depth === 0) return html.slice(m.index, tagRe.lastIndex);
+      }
+      return html.slice(m.index);
+    };
+    /** The Aim card itself (its data-wc-block section; the SectionHeader above it is the page's). */
+    const card2 = (h: string) => cut2(h, 'data-wc-block="aim-card"');
+    const words2 = (h: string) => wc2.countAppWords(h, { width: 344 }).count;
+    const visible2 = (h: string) => wc2.visibleText(h, { width: 344 }).replace(/\s+/g, " ");
+    const count2 = (h: string, re: RegExp) => (h.match(re) ?? []).length;
+    const actFx = roadmapFixture("active");
+    const actAim2 = actFx.aim!;
+    const act2 = aim2("active");
+    const T2 = actFx.view!.today;
+    const asView = (v: AimCardView & model.AimCardMotionFields) => v;
+
+    // 1. R0's rows for this screen: hard gates.
+    r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.row === 9).map((r) => r.id), "R2");
+    r0Gate("honesty", ["estimate-date-aim", "at-acceptance", "proficiency-toward-aim", "from-your-ticks", "aim-not-reached", "not-recorded", "rank-verb-aim"], "R2");
+    r0Gate("taps", [...R0_RESULTS.taps.keys()].filter((k) => k.endsWith("/aim")), "R2");
+    r0Gate("survival", [...R0_RESULTS.survival.keys()].filter((k) => /^[\w-]+\/aim: /.test(k)), "R2");
+
+    // 2. Every Aim card state on /dev/style/roadmap: its card is the marked block, ≤ 14 app words (§3.2 row 9, "every state").
+    const aimStates = FIXTURE_STATES.filter((s) => /<section/.test(aim2(s)));
+    const unmarked = aimStates.filter((s) => !card2(aim2(s)).startsWith("<section"));
+    check('R2 words: every Aim card state marks its own card data-wc-block="aim-card" (the SectionHeader stays outside)', aimStates.length > 30 && unmarked.length === 0, unmarked.join(", "));
+    // The ASK card with a last aim or a seed keeps both lines (§3.3) and the pinned last-aim markup (fix round), so it is reported, not gated.
+    const askLong = (h: string) => /class="card rm-ac-call/.test(h) && /rm-ac-last|rm-ac-seed/.test(h);
+    const over = aimStates.filter((s) => !askLong(card2(aim2(s)))).map((s) => ({ s, n: words2(card2(aim2(s))) })).filter((x) => x.n > 14);
+    check("R2 words (§3.2 row 9): every /dev/style/roadmap Aim card state holds ≤ 14 app words (the ASK card with a last aim or a seed reported below)", over.length === 0, over.map((x) => `${x.s}: ${x.n}`).join(", "));
+    for (const s of aimStates.filter((x) => askLong(card2(aim2(x))))) console.log(`  · R2 note: ${s}: the ASK card with its last aim reads ${words2(card2(aim2(s)))} app words (handoff)`);
+
+    // 3. The rank (D5, D18; §4.4, §4.5): the held rank's medallion, aria-hidden beside its label; "kept for good" in words.
+    check(
+      "R2 rank: the card's RankSeal is 40 px, the held rank in its done state, aria-hidden beside its label (no padlock part, no title)",
+      /<span class="mg-rs mg-rs-40" data-rank="1" data-s="done" style="--rs:40px" aria-hidden="true">/.test(act2) && !/m\.lock|i-lock|data-part="lock"/.test(card2(act2)) && !/ title="/.test(card2(act2))
+    );
+    check(
+      "R2 rank: the label reads 'Aim rank' then the name (a name, not app words), with ', 2 of 7, kept for good' sr-only once",
+      card2(act2).includes('<span class="rm-rs-k">Aim rank</span><span class="rm-rs-nw"><b class="rm-rs-n" data-wc="name">Aspirant</b></span><span class="sr-only">, 2 of 7, kept for good</span>') &&
+        count2(flat2(card2(act2)), /kept for good/g) === 2
+    );
+    const pageRp = cut2(page2("active"), 'data-rp="page"');
+    check(
+      "R2 rank (page): the header's seal is 48 px with its 7-pip ladder (held pips solid, the next one a ring), the same label",
+      /<span class="mg-rs mg-rs-48" data-rank="1" data-s="done"/.test(pageRp) && count2(pageRp, /class="mg-rs-pip"/g) === 7 && count2(pageRp, /class="mg-rs-pip" data-on=""/g) === 2 && /data-next=""/.test(pageRp) && pageRp.includes('<b class="rm-rs-n" data-wc="name">Aspirant</b>')
+    );
+    const nextLine = cut2(pageRp, 'class="rm-rp-next"');
+    check(
+      "R2 rank (page, C2-B3): 'Next · [rank.2 active] Journeyman · milestone 2', a rank not yet held never in its done state; the full line sr-only",
+      visible2(nextLine).includes("Next · Journeyman · milestone 2") && /data-g="rank\.2" data-s="active"/.test(nextLine) && !/data-g="rank\.2" data-s="done"/.test(card2(act2) + pageRp) && nextLine.includes(`<span class="sr-only">${copy.nextRankLine(actFx.view!.rank!.next)}</span>`),
+      visible2(nextLine)
+    );
+    const ladder2 = cut2(pageRp, 'class="rm-ladder rm-ladder-g"');
+    const rungs = [...ladder2.matchAll(/data-rung="(\w+)"><svg[^>]*data-g="rank\.(\d)" data-s="(\w+)"/g)].map((m) => `${m[2]}:${m[1]}:${m[3]}`);
+    check("R2 ladder (page): each rung leads with its medallion — given done, the next active, later idle — in the closed disclosure", rungs.join() === "0:done:done,1:done:done,2:active:active,3:idle:idle,4:idle:idle,5:idle:idle,6:idle:idle" && /<details class="rm-parts">/.test(pageRp), rungs.join());
+    const partsG = cut2(pageRp, 'class="rm-rp-parts"');
+    check("R2 parts (page): three static mini-meters (cards, practice, milestones), aria-hidden, with the parts line as their one sr twin", count2(partsG, /class="rm-rp-part" data-part-k=/g) === 3 && partsG.includes(`<span class="sr-only">${copy.proficiencyPartsLine(actFx.view!.proficiency!)}</span>`) && /class="rm-rp-parts-g" aria-hidden="true"/.test(partsG));
+
+    // 4. Proficiency (D8, D26, D27; §3.3 screens 4 and 9).
+    const pf2 = cut2(card2(act2), 'class="rm-rp-pf"');
+    check(
+      "R2 Proficiency: '41% [ev.tested][ev.tick]' over '[ev.measured] 09:12 · from your ticks' over 'Proficiency' (compact text aria-hidden, one sr sentence with the caption and the time)",
+      /<b class="rm-pf-n num" aria-hidden="true">41%<\/b>/.test(pf2) &&
+        /data-g="ev\.tested"[\s\S]*data-g="ev\.tick"/.test(pf2) &&
+        /data-g="ev\.measured"[\s\S]*09:12/.test(pf2) &&
+        visible2(pf2).includes("from your ticks") &&
+        pf2.includes("<span>Proficiency</span>") &&
+        pf2.includes('<span class="sr-only">Proficiency 41%, tested by your reviews and your ticks, measured 09:12</span>')
+    );
+    const measuredAim = asView({ ...actAim2, proficiency: { ...actAim2.proficiency!, class: "MEASURED", figure: fig(0.4189, "tested by your reviews") } });
+    const measuredHtml = R(createElement(AimCard, { view: measuredAim, today: T2 }));
+    check(
+      "R2 Proficiency: a MEASURED reading drops 'from your ticks' and ev.tick; its band's walked path is solid at the printed % (41 100), a SELF_REPORTED one dotted",
+      !visible2(card2(measuredHtml)).includes("from your ticks") && !/data-g="ev\.tick"/.test(cut2(card2(measuredHtml), 'class="rm-rp-pf"')) && /class="shd-walk" d="[^"]*" pathLength="100" stroke-dasharray="41 100"/.test(measuredHtml) && /class="shd-walk shd-dots"/.test(act2)
+    );
+    const liveAim = asView({ ...actAim2, writesOff: true, proficiency: { ...actAim2.proficiency!, live: true } });
+    const liveHtml = card2(R(createElement(AimCard, { view: liveAim, today: T2 })));
+    check("R2 Proficiency (D27): a live (writes-off) figure has no clock (it was measured nowhere) and the card's «not recorded here» chip opens NOT_RECORDED_HERE and the banner", !/data-g="ev\.measured"/.test(cut2(liveHtml, 'class="rm-rp-pf"')) && /data-hc="not-recorded"/.test(liveHtml) && liveHtml.includes(copy.WRITES_OFF_BANNER.replace(/'/g, "&#x27;")));
+    const pbSrc2 = code(read("src/components/roadmap/ProficiencyBlock.tsx"));
+    const acSrc2 = code(read("src/components/roadmap/AimCard.tsx"));
+    check(
+      "R2 seen keys (D8, §11.4): the card hands ProficiencyBlock its seenBasesOfAimCard bases; the seal keys on the plan basis ('rank', no surface), the meter on the Proficiency basis, never for a live figure; no LastSeenMeter (it has no basis)",
+      /const bases = seenBasesOfAimCard\(view\)/.test(acSrc2) &&
+        /seen=\{bases\}/.test(acSrc2) &&
+        /seenKey=\{sealKey\}/.test(pbSrc2) &&
+        /const sealKey = seenBaseOf\(bases, "plan"\)/.test(pbSrc2) &&
+        /const meterKey = p && !p\.live \? seenKeyOf\(bases, SEEN_WHAT\.proficiency\) : null/.test(pbSrc2) &&
+        /useSeenValue\(meterKey,/.test(pbSrc2) &&
+        !/LastSeenMeter|useLastSeen/.test(pbSrc2 + acSrc2)
+    );
+    const pairs = FIXTURE_STATES.map((s) => roadmapFixture(s)).filter((f) => f.aim?.roadmapId && !f.aim.legacy && ["ACTIVE", "ACCEPTED", "PAST_DUE", "DONE"].includes(f.aim.state) && f.view?.header && f.aim.roadmapId === f.view.header.id);
+    const keyDrift = pairs.filter((f) => {
+      const a = model.seenKeyOf(model.seenBasesOfAimCard(f.aim!), model.SEEN_WHAT.rank);
+      return a != null && JSON.stringify(a) !== JSON.stringify(model.seenKeyOf(model.seenBasesOfRoadmap(f.view!), model.SEEN_WHAT.rank));
+    });
+    check("R2 seen keys (§11.4): on every fixture the Aim card's rank key equals the living header's (a rise plays once per viewer)", pairs.length > 10 && keyDrift.length === 0, keyDrift.map((f) => f.view!.header!.id).join(", "));
+    check(
+      "R2 seen keys: without the surface's bases the block keeps only the Proficiency family (no plan basis, so no rank-rise), and a key-like id never passes",
+      JSON.stringify(pb2.proficiencyBasesOf(undefined, "rm1", actAim2.proficiency)) === JSON.stringify({ roadmapId: "rm1", prof: `prof/${(actAim2.proficiency as { basisKey?: string }).basisKey}`, plan: null }) && pb2.proficiencyBasesOf(undefined, "aim:rm1", actAim2.proficiency) === null && pb2.proficiencyBasesOf(null, "rm1", actAim2.proficiency) === null
+    );
+
+    // 5. The card's one (i) (D13): the next rank and "kept for good", the caption, "What it's made of" and the parts.
+    const tip2 = cut2(card2(act2), 'data-tip-panel="info"');
+    check(
+      "R2 (i) (D13): one InfoTip on the ACTIVE card, after 'Proficiency' (its panel hidden: the next rank, the caption with its time, 'What it's made of' and the parts)",
+      count2(card2(act2), /class="mg-tip/g) === 1 &&
+        /hidden=""/.test(tip2) &&
+        tip2.includes(copy.nextRankLine(actAim2.rank!.next)) &&
+        tip2.includes("Proficiency 41% · tested by your reviews and your ticks · measured 09:12") &&
+        tip2.includes(`What it&#x27;s made of</b> · ${copy.proficiencyPartsLine(actAim2.proficiency!)}`) &&
+        card2(act2).indexOf("<span>Proficiency</span>") < card2(act2).indexOf("What it&#x27;s made of")
+    );
+    const maxTips = Math.max(...aimStates.map((s) => count2(card2(aim2(s)), /class="mg-tip/g)));
+    check("R2 (i) (D13): no Aim card state renders more than one InfoTip (the chips' panels are their own)", maxTips <= 1, String(maxTips));
+
+    // 6. The chips and the date (C2-M2, D25, D28).
+    const over2 = aim2("depth-over");
+    check("R2 date (C2-M2): the user's own date is '[t.pin] 3 Oct 2027 · yours', spoken as their own; the app's estimate '[t.cal] L12 by ≈ …'", /data-g="t\.pin"/.test(over2) && visible2(card2(over2)).includes("3 Oct 2027 · yours") && /your own date/.test(over2) && /data-g="t\.cal"/.test(aim2("depth-realistic")) && /L12 by ≈ [A-Z][a-z]{2} \d{4}/.test(visible2(aim2("depth-realistic"))));
+    check("R2 chips: «Aim not checked» is a chip button whose panel holds AIM_UNCHECKED_LINE; «Target lowered 46 → 38» stays visible with the Changed line in the (i)", /data-hc="aim-unchecked"/.test(act2) && act2.includes(copy.AIM_UNCHECKED_LINE.replace(/'/g, "&#x27;")) && visible2(aim2("behind")).includes("Target lowered 46 → 38") && cut2(aim2("behind"), 'data-tip-panel="info"').includes("Target lowered 46 → 38 on 26 Jan (re-plan)"));
+    const acc2 = aim2("accepted");
+    check(
+      "R2 accepted: «at acceptance» is a chip button beside the % whose panel holds acceptanceCaption; a later reading shows its measured time instead",
+      /data-hc="at-acceptance"/.test(cut2(acc2, 'class="rm-rp-pf"')) && cut2(acc2, 'data-hc-panel="at-acceptance"').includes("as measured at acceptance on 4 Oct") && !/data-hc="at-acceptance"/.test(R(createElement(AimCard, { view: { ...roadmapFixture("accepted").aim!, acceptedDay: "2026-10-03" }, today: "2026-10-04" })))
+    );
+
+    // 7. The milestone (§4.5 strip; D18 pending; C2-M3).
+    const strip2 = (h: string) => cut2(h, 'class="mg-rr mg-rr-strip rm-ac-strip"');
+    const s2 = strip2(act2);
+    check(
+      "R2 strip: the ACTIVE card draws its six places on a 16 px strip, the current node its measured arc (23 100), one label per node with no title (no Gemini words without their chip)",
+      count2(s2, /class="mg-rr-row"/g) === 6 && /data-state="CURRENT"[\s\S]*?class="mg-rr-arc"[^>]*stroke-dasharray="23 100"/.test(s2) && s2.includes('<span class="sr-only">Milestone 2 · Current · 23%</span>') && !/Execution rules|Gemini/.test(s2)
+    );
+    const pend2 = aim2("reach-pending");
+    check(
+      "R2 pending (D18): the pending node is a dashed ring, labelled not counted yet; the line says 'counts from Sat' once in all the card's text; the seal stays the held rank",
+      /data-state="PENDING_REACH"[\s\S]*?stroke-dasharray="4 4"/.test(strip2(pend2)) && strip2(pend2).includes("Milestone 2 · Reached · not counted yet") && count2(flat2(card2(pend2)), /counts from/g) === 1 && /data-rank="1" data-s="done"/.test(pend2)
+    );
+    check("R2 strip: a card that doesn't carry the plan's rows draws no strip (never invented places)", !strip2(R(createElement(AimCard, { view: liveShapedAim(actAim2), today: T2 }))));
+    check(
+      "R2 progress: '23% [ev] · [pace.on] On pace · 7 Mar' (its pace words honest-marked, in ink), the pinned full line sr-only",
+      /<span class="sr-only">23% · tested by your reviews · on pace for 7 Mar<\/span>/.test(act2) && /data-g="pace\.on"/.test(act2) && /23%s*·s*On pace · 7 Mar/.test(visible2(card2(act2))) && /data-g="pace\.behind"/.test(aim2("behind"))
+    );
+
+    // 8. DONE (§3.3 screen 9; §11.4): the rank actually held; the seal only on a reached aim.
+    const doneC = card2(aim2("done"));
+    const closedC = card2(aim2("closed-unreached-aim"));
+    check("R2 done (§11.4): a reached aim shows [m.seal]; one closed unreached shows none, and 'the aim wasn't reached' is visible (an honesty mark)", /data-g="m\.seal"/.test(doneC) && !/data-g="m\.seal"/.test(closedC) && /<span data-wc="honest">the aim wasn&#x27;t reached<\/span>/.test(closedC));
+    check("R2 done (D17): history doesn't breathe — a DONE card's band is static SVG", /data-shd-kind="static"/.test(doneC) && /data-shd-kind="static"/.test(closedC) && !/data-shd-kind="ambient"/.test(doneC + closedC));
+
+    // 9. Shader slots (§11.3): the band on a measured open plan, unlit when unmeasured, none on ASK / LATER / HIDDEN / DRAFT; RUNNING's weave.
+    const bandKind = (h: string) => /<div class="rm-band"><div class="shd shd-horizon shd-band-card" aria-hidden="true" data-shd="horizon" data-shd-kind="(\w+)"/.exec(card2(h))?.[1] ?? null;
+    check(
+      "R2 band: ACTIVE, ACCEPTED, the re-plan and a rebase open with the horizon band (aria-hidden, AMBIENT, SVG marks, no canvas), before the aim, edge to edge (.rm-band)",
+      (["active", "accepted", "behind", "rebase-switched-off-seen-before"] as const).every((s) => bandKind(aim2(s)) === "ambient" && /class="shd-marks"/.test(aim2(s)) && !/<canvas/.test(aim2(s)) && card2(aim2(s)).indexOf('class="rm-band"') < card2(aim2(s)).indexOf('class="rm-ac-t"'))
+    );
+    const unm = card2(aim2("horizon-unmeasured"));
+    check("R2 band: an unmeasured plan draws the unlit marks (no walked path, no dot, no dawn) and never loops", /data-shd="horizon"/.test(unm) && !/shd-walk|shd-front|shd-fb/.test(unm) && /data-shd-kind="static"/.test(unm));
+    const noBasis = asView({ ...liveShapedAim(actAim2), proficiency: { ...actAim2.proficiency! } });
+    delete (noBasis.proficiency as { basisKey?: string }).basisKey;
+    const noBasisC = card2(R(createElement(AimCard, { view: noBasis, today: T2 })));
+    check("R2 band: a view without its Proficiency basis key keeps its band (marks and air, which carry no number) but HorizonField's seen key needs one", bandKind(noBasisC) === "ambient" && /class="shd-marks"/.test(noBasisC) && /h\.basisKey \? \(\s*<HorizonField/.test(acSrc2));
+    const emptyAim2 = roadmapFixture("empty").aim!;
+    const quiet2 = [R(createElement(AimCard, { view: emptyAim2, prompt: "ASK", autosaveAim: null })), R(createElement(AimCard, { view: emptyAim2, prompt: "LATER" })), R(createElement(AimCard, { view: emptyAim2, prompt: "HIDDEN", lastAim: { roadmapId: "rm0", aim: "Run a sub-50 10K", rankIndex: 6, rankName: AIM_RANKS[6], reached: true, day: "2027-03-03" } })), aim2("draft-mixed")];
+    check("R2 band (§11.3): ASK, LATER, HIDDEN and DRAFT render no shader slot", quiet2.every((h) => h.length > 0 && !/class="shd\b/.test(h)));
+    const run2 = card2(aim2("running"));
+    const stale2 = card2(aim2("run-stale"));
+    check(
+      "R2 RUNNING (WAIT): a [data-wait] card with the weave band (aria-hidden, no canvas), [route.weave], 'Drafting · started …' and the 40 px 'Pause animation' (aria-pressed) in its row — never a %",
+      /data-wait=""/.test(run2) && /data-shd="weave" data-shd-kind="wait"/.test(run2) && /data-g="route\.weave"/.test(run2) && /aria-label="Pause animation" aria-pressed="false"/.test(run2) && /Drafting · started \d\d:\d\d/.test(visible2(run2)) && !/\d+\s?%/.test(visible2(run2)) && !/spin/i.test(run2)
+    );
+    check("R2 RUNNING: a stale run's weave is static, the card drops data-wait (the glyph's breathe stops) and its pause button", /data-shd-kind="static"/.test(stale2) && !/data-wait/.test(stale2) && !/Pause animation/.test(stale2));
+
+    // 10. ASK (§3.3 screen 9; §11.4): no band, an unlit seal and the static route, the why one tap away.
+    const ask2 = card2(quiet2[0]);
+    check(
+      "R2 ASK (§11.4): the unlit RankSeal 34 and the static [route] beside the box; the (i) panel holds AIM_CALL_BODY and AIM_CALL_RANK_LINE; no route-invite motion",
+      /<span class="mg-rs mg-rs-34" data-rank="0" data-s="idle"/.test(ask2) &&
+        /data-g="route"/.test(ask2) &&
+        cut2(ask2, 'data-tip-panel="info"').includes(copy.AIM_CALL_BODY) &&
+        cut2(ask2, 'data-tip-panel="info"').includes(copy.AIM_CALL_RANK_LINE.replace(/'/g, "&#x27;")) &&
+        /describes=\{ids\.box\}/.test(acSrc2) &&
+        !/usePlayOnSeen|playGlyph|useSeenEvent/.test(/function AskCard[\s\S]*?\n\}\n/.exec(acSrc2)?.[0] ?? "x usePlayOnSeen")
+    );
+    const askLast = card2(R(createElement(AimCard, { view: emptyAim2, prompt: "ASK", lastAim: { roadmapId: "rm0", aim: "Run a sub-50 10K", rankIndex: 6, rankName: AIM_RANKS[6], reached: true, day: "2027-03-03" }, seed: { goalId: "g1", title: "Speak Japanese at work" }, autosaveAim: null })));
+    console.log(`  · R2 note: the ASK card with a last aim and a seed reads ${words2(askLast)} app words (plain ASK ${words2(ask2)}); §3.3 keeps both lines and the pinned last-aim markup can't mark the quoted aim as own (handoff)`);
+    check("R2 last aim: '[rank.6 done] Aim rank Paragon · reached …', the medallion beside the pinned two lines", /data-g="rank\.6" data-s="done"/.test(askLast) && /<p class="rm-ac-last-rank">Aim rank <b>Paragon<\/b> · reached 3 Mar 2027<\/p>/.test(askLast));
+
+    // 11. Names, ink and the CSS section.
+    const allAim2 = aimStates.map((s) => card2(aim2(s))).join("\n") + pageRp;
+    check("R2 markup: no title attribute, no 'spin' or 'shimmer', never red (no owed / danger), no gold on any Aim card or the page's rank block", !/ title="|spin|shimmer|owed|danger|gold/i.test(allAim2.replace(/data-g="[^"]*"/g, "")));
+    check("R2 helpers: the strip's labels, the compact pace and the acceptance mode", ac2.stripLabelOf({ n: 3, state: "OUTLINE", pct: null, meta: null, heldAtStart: false }) === "Milestone 3 · Outline" && ac2.paceShortOf({ kind: "on-pace", day: "2027-03-07", pipeline: 0, bestCase: false }, "2027-01-28")?.text === "On pace · 7 Mar" && ac2.acceptanceModeOf(roadmapFixture("accepted").aim!) && !ac2.acceptanceModeOf(actAim2));
+    const css2 = read("src/components/roadmap/roadmap.css");
+    const sec2 = css2.slice(css2.indexOf("/* ===== R2 "), css2.indexOf("/* ===== /R2 ===== */")).replace(/\/\*[\s\S]*?\*\//g, "");
+    const foreign2 = [...sec2.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].map((m) => m[1]).filter((c) => !c.startsWith("rm-") && c !== "meter");
+    check("R2 css: its section is layout hooks only — rm-* classes, no animation, keyframes or transition, ink only, no text under 12 px", sec2.length > 200 && foreign2.length === 0 && !/animation|@keyframes|transition|gold|--owed|--mp\b|--xp\b|--light/.test(sec2) && [...sec2.matchAll(/font(?:-size)?:\s*(?:\d+\s+)?([\d.]+)px/g)].every((m) => Number(m[1]) >= 12), foreign2.join(", "));
+  }
+  // ===== /R2 =====
+  // ===== R3 Living page (AimHeader, MeasureRow, PastWeekQuests, PaysLine, TowardAim, RoadmapView) =====
+  // ui-motion.md §3.3 screens 4, 5, 6 and 12 (empty, done, legacy), §7.4–§7.6, §7.12, §11.3. The gates first (R0's harness
+  // rows for these screens), then the living page's own checks: the horizon slot, the rail, the seen keys, the moved text.
+  {
+    console.log("— ui motion: the living page (R3) —");
+    const wc3 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const mr3 = await import("../src/components/roadmap/MeasureRow");
+    const ah3 = await import("../src/components/roadmap/AimHeader");
+    const rv3 = await import("../src/components/roadmap/RoadmapView");
+    const page = (s: FixtureState) => renders.get(s)?.page ?? "";
+    const vis = (s: FixtureState) => wc3.visibleText(page(s), { width: 344 });
+    const n3 = (t: string) => t.replace(/\s+/g, " ").trim();
+    /** The outer markup of the first element whose opening tag carries `attr` (balanced by its tag name). */
+    const elOf = (html: string, attr: string): string => {
+      const at = html.indexOf(attr);
+      if (at < 0) return "";
+      const start = html.lastIndexOf("<", at);
+      const tag = /^<([a-zA-Z][\w-]*)/.exec(html.slice(start))?.[1] ?? "div";
+      const re = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+      re.lastIndex = start;
+      let depth = 0;
+      for (let t = re.exec(html); t; t = re.exec(html)) {
+        if (t[1]) depth--;
+        else if (!t[2]) depth++;
+        if (depth === 0) return html.slice(start, re.lastIndex);
+      }
+      return html.slice(start);
+    };
+    const blockOf = (s: FixtureState, name: string) => elOf(page(s), `data-wc-block="${name}"`);
+
+    // 1. The gates: the word budgets of rows 4, 5, 6 and 12 (empty, done, legacy), the honesty these screens carry, and
+    //    the full strings they moved into a panel (still in the markup).
+    r0Gate(
+      "words",
+      ["s4-aim-header-active", "s4-aim-header-behind", "s4-aim-header-depth", "s5-now-active", "s5-now-behind", "s5-now-depth", "s6-milestones-active", "s6-milestones-depth", "s12-tab-empty", "s12-tab-done-header", "s12-tab-done-page", "s12-tab-legacy"],
+      "R3"
+    );
+    r0Gate("honesty", ["estimate-date-page", "yours-date", "aim-unchecked", "pay-line", "context-only", "counts-from", "not-reached", "past-due", "over", "target-lowered", "legacy-hidden", "writes-off", "rank-verb-page"], "R3");
+    const surv = (s: FixtureState, str: string) => `${s}/page: ${str.slice(0, 48)}`;
+    r0Gate(
+      "survival",
+      [surv("active", copy.AIM_UNCHECKED_LINE), surv("done", copy.AIM_HISTORY_LINE), surv("depth-calibrating", copy.REDATE_NOTE), surv("legacy", copy.LEGACY_ACTIVE_BANNER), surv("legacy", copy.LEGACY_GEMINI_HIDDEN), surv("legacy-draft", copy.LEGACY_DRAFT_BANNER), surv("writes-off", copy.WRITES_OFF_BANNER)],
+      "R3"
+    );
+
+    // 2. Tap reachability (D13) on the cards only this lane draws (Milestones, Toward the aim, the empty roadmap, QUESTS_BEHIND):
+    //    every sr-only honesty string is also in a panel a button of the same card controls, or in a row's ▸; ≤ 3 InfoTips a card.
+    type P3 = { tag?: string; attrs: Record<string, string>; children: P3[]; parent: P3 | null };
+    const tapStrings = [...new Set([...Object.values(copy.PROVENANCE_WORDS), copy.GEMINI_CHOICE_WORDS, copy.AIM_HISTORY_LINE, copy.AIM_CALL_BODY, copy.AIM_CALL_RANK_LINE].map(n3))].filter((x) => x.length >= 12);
+    const tapsOfCard = (card: string) => {
+      const root = wc3.parseMarkup(card) as unknown as P3;
+      const els = wc3.elementsOf(root as never) as unknown as P3[];
+      const cls = (e: P3) => wc3.classesOf(e as never) as string[];
+      const txt = (e: P3) => n3(wc3.textOfNode(e as never) as string);
+      const controlled = new Set(els.filter((e) => e.tag === "button" && e.attrs["aria-controls"]).map((e) => e.attrs["aria-controls"]));
+      const lost: string[] = [];
+      for (const el of els) {
+        if (!cls(el).includes("sr-only")) continue;
+        const str = tapStrings.find((x) => txt(el).includes(x));
+        if (!str) continue;
+        const inPanel = els.some((e) => e.attrs.id && controlled.has(e.attrs.id) && txt(e).includes(str));
+        const inDetails = els.some((e) => e.tag === "details" && e.children.filter((c) => c.tag !== "summary").some((c) => txt(c).includes(str)));
+        if (!inPanel && !inDetails) lost.push(str.slice(0, 40));
+      }
+      return { lost, tips: els.filter((e) => e.tag === "button" && cls(e).includes("mg-tip")).length };
+    };
+    const myCards = FIXTURE_STATES.flatMap((s) =>
+      [elOf(page(s), 'aria-label="Milestones"'), elOf(page(s), 'aria-label="Toward the aim"'), elOf(page(s), 'aria-label="No roadmap yet"'), elOf(page(s), 'class="card pad rm-behind"')].filter(Boolean).map((card) => ({ s, ...tapsOfCard(card) }))
+    );
+    const lostTaps = myCards.filter((c) => c.lost.length > 0);
+    check("R3 taps (D13): every sr-only honesty string on the rail, Toward the aim, the empty roadmap and the behind card is one tap away on its card", myCards.length > 20 && lostTaps.length === 0, lostTaps.slice(0, 3).map((c) => `${c.s}: ${c.lost.join(" | ")}`).join("; "));
+    check("R3 taps (D13): ≤ 3 InfoTips on each of those cards, and on the Aim header's own rows", myCards.every((c) => c.tips <= model.INFO_TIPS_PER_CARD), myCards.filter((c) => c.tips > model.INFO_TIPS_PER_CARD).map((c) => c.s).join(", "));
+    const noTitle = FIXTURE_STATES.filter((s) => ["milestones", "toward", "roadmap-footer", "roadmap-empty", "roadmap-legacy", "aim-notes"].some((b) => / title="/.test(blockOf(s, b))));
+    check("R3 (D13): no `title` attribute in the blocks this lane draws", noTitle.length === 0, noTitle.join(", "));
+
+    // 3. The horizon slot (§6.1, §11.3 shader slots, D15, D16, D17): the living header's band, server-rendered, no canvas.
+    const band = (s: FixtureState) => elOf(page(s), 'class="rm-band"');
+    const act = roadmapFixture("active").view!;
+    const actBand = band("active");
+    check(
+      "R3 horizon: the ACTIVE header opens with the band — .shd.shd-horizon aria-hidden, AMBIENT, the SVG marks on top, no <canvas>, the walked path at the measured %",
+      actBand.length > 0 &&
+        page("active").indexOf('class="rm-band"') < page("active").indexOf("rm-aim-t") &&
+        /<div class="shd shd-horizon shd-band-page" aria-hidden="true" data-shd="horizon" data-shd-kind="ambient" data-shd-state="fallback">/.test(actBand) &&
+        actBand.includes('class="shd-marks"') &&
+        !actBand.includes("<canvas") &&
+        (["active", "depth-realistic", "behind", "writes-off"] as const).every((s) => {
+          const p = roadmapFixture(s).view!.proficiency!;
+          // SELF_REPORTED: the walked path dotted (D29); measured: pathLength 100 dashed to the stored %.
+          return p.class === "SELF_REPORTED" ? band(s).includes("shd-walk shd-dots") : band(s).includes(`stroke-dasharray="${p.percent} 100"`);
+        }),
+      actBand.slice(0, 200)
+    );
+    check("R3 horizon (D15): no text on a band (the % and its words sit beside it)", FIXTURE_STATES.every((s) => n3(textOf(band(s))) === ""));
+    check("R3 horizon: DONE and ARCHIVED are static (no context), ARCHIVED dimmed; the walked path keeps the last %", /data-shd-kind="static"/.test(band("done")) && /shd-dim[^"]*" aria-hidden/.test(band("archived")) && /data-shd-kind="static"/.test(band("archived")) && !/shd-dim/.test(band("done")));
+    check("R3 horizon: unmeasured gives the unlit marks (no walked path, no front dot), never an invented 0%", band("horizon-unmeasured").includes("shd-marks") && !band("horizon-unmeasured").includes("shd-walk") && !band("horizon-unmeasured").includes("shd-fg"));
+    check("R3 horizon: SELF_REPORTED draws the walked path dotted", band("horizon-self-reported").includes("shd-walk shd-dots"));
+    check("R3 horizon: the empty roadmap has the unlit marks only (no dawn, no seen key); a legacy plan and drafting have no page band", band("empty").includes("shd-marks") && !band("empty").includes("shd-fb") && !band("empty").includes("shd-walk") && band("legacy") === "" && !page("running").includes("shd-horizon"));
+    check(
+      "R3 horizon: a view without its Proficiency basis key mounts the band with a rebase (no horizon-front can play); the model gives its basis otherwise",
+      model.horizonOfRoadmap(liveShaped(act))?.basisKey === null && model.horizonOfRoadmap(act)?.basisKey === model.seenBasesOfRoadmap(act)?.prof && /basisKey \? horizon\.proficiency : horizon\.proficiency \? \{ \.\.\.horizon\.proficiency, change: \{ kind: "rebased" \} \}/.test(read("src/components/roadmap/AimHeader.tsx"))
+    );
+
+    // 4. The rail (§4.5, D18, D25, D29): one node per row, counted reaches only, honest words, ranks with their verb.
+    const railOf = (s: FixtureState) => elOf(page(s), 'class="mg-rr rm-rail"');
+    const rows = (s: FixtureState) => roadmapFixture(s).view!.milestones;
+    const railRows = (s: FixtureState) => [...railOf(s).matchAll(/<li class="mg-rr-row" data-state="([A-Z_]+)" data-n="(\d+)"/g)].map((m) => `${m[2]}:${m[1]}`);
+    check(
+      "R3 rail: the Milestones list is a RouteRail with one node per row, in place order (LATER after the places), each row's state",
+      (["active", "behind", "depth-realistic", "reach-pending", "closed-unreached", "past-due", "done", "held-stages"] as const).every((s) => railRows(s).length === rows(s).length),
+      `${railRows("active").join(",")} | ${rows("active").map((r) => `${r.ord}:${r.state}`).join(",")}`
+    );
+    check("R3 rail (D18, D29): a pending reach is a dashed ring with 'Reached · counts from Sat' (not yet counted), never drawn reached", /data-state="PENDING_REACH"[\s\S]*?stroke-dasharray="4 4"/.test(railOf("reach-pending")) && vis("reach-pending").includes("Reached · counts from Sat"));
+    check("R3 rail: a milestone closed unreached is struck with 'Closed at 82% · not reached'; a held stage reads 'Held when you began'", vis("closed-unreached").includes("Closed at 82% · not reached") && railRows("held-stages").filter((x) => x.endsWith(":REACHED")).length >= 3 && (n3(textOf(railOf("held-stages"))).match(/Held when you began/g) ?? []).length >= 3);
+    const actVis = vis("active");
+    check(
+      "R3 rail (C2-B3): no rank name not yet held is visible without its verb; the ▸ keeps 'gives Aim rank → Journeyman' with the full sentence sr-only",
+      !/→ (Journeyman|Specialist|Expert|Virtuoso)/.test(actVis) && page("active").includes("gives Aim rank → Journeyman") && railOf("active").includes(copy.givesRankLine(2, true)) && railOf("active").includes("keeps your rank")
+    );
+    check(
+      "R3 rail (D25): every Gemini title keeps its words chip on the row and its full words in the node's label and its ▸",
+      rows("active")
+        .filter((r) => r.titleClass === "DRAFT")
+        .every((r) => {
+          const li = elOf(railOf("active"), `data-n="${r.ord}"`);
+          return (li.match(new RegExp(copy.PROVENANCE_WORDS.DRAFT, "g")) ?? []).length >= 3;
+        })
+    );
+    check("R3 rail: `reach` keys on the plan's basis (no surface), and a user's own Start (goal id null → set) bumps the rail's start tick", /<RouteRail nodes=\{nodes\} seenKey=\{seenBaseOf\(seen \?\? null, "plan"\)\} startTick=\{startTick\}/.test(read("src/components/roadmap/RoadmapView.tsx")) && /tick: !startSeen\.goalId && goalId \? startSeen\.tick \+ 1 : startSeen\.tick/.test(read("src/components/roadmap/RoadmapView.tsx")));
+    check("R3 rail: the top rank's line (Paragon, or what keeps it closed) sits in the card's (i), in the markup", page("active").includes("Reaching the aim gives the Aim rank Paragon.") && !actVis.includes("Reaching the aim gives") && page("depth-lowered").includes("Top rank on this plan: Expert"));
+
+    // 5. The closed and empty screens (D18: no seal on an aim closed unreached; §3.3 screen 12).
+    check("R3 done: reached — the rank held, its seal and 'Reached 18 Apr 2027 · Aim rank Specialist · 90%', eyebrow 'History'", vis("done").includes("Reached 18 Apr 2027 · Aim rank Specialist · 90%") && blockOf("done", "roadmap-done-header").includes('data-g="m.seal"') && /class="mg-rs mg-rs-72"/.test(blockOf("done", "roadmap-done-header")) && vis("done").startsWith(copy.SHORT_HISTORY));
+    check("R3 done (D18): closed unreached — the rank actually held, no seal, 'Closed 19 Apr 2027 · the aim wasn't reached'", vis("closed-unreached-aim").includes("Closed 19 Apr 2027 · the aim wasn't reached") && !blockOf("closed-unreached-aim", "roadmap-done-header").includes('data-g="m.seal"') && /data-rank="\d" data-s="done"/.test(blockOf("closed-unreached-aim", "roadmap-done-header")));
+    check("R3 done: 'Set a new aim' with the history line one tap away (not visible), no Re-plan or Archive", !vis("done").includes(copy.AIM_HISTORY_LINE) && page("done").includes(copy.AIM_HISTORY_LINE) && vis("done").includes(copy.AIM_NEW_AIM));
+    check(
+      "R3 empty: an unlit RankSeal and [route] over the unlit marks; 'Set an aim' and its button; the body and the rank line one tap away",
+      /data-rank="0" data-s="idle"/.test(blockOf("empty", "roadmap-empty")) && blockOf("empty", "roadmap-empty").includes('data-g="route"') && !vis("empty").includes(copy.AIM_CALL_BODY) && page("empty").includes(copy.AIM_CALL_RANK_LINE)
+    );
+    check("R3 legacy: «older plan» opens the banner; the hidden-wording line verbatim and visible", vis("legacy").includes(copy.SHORT_LEGACY) && !vis("legacy").includes(copy.LEGACY_ACTIVE_BANNER) && vis("legacy").includes(copy.LEGACY_GEMINI_HIDDEN));
+
+    // 6. Now, the header and Toward the aim: the moved words, the seen keys, the pay line in ink, the static elapsed bar.
+    check("R3 header: the app's date '[t.cal] L12 by ≈ Mar 2028' (an estimate) and the user's '[t.pin] 3 Oct 2027 · yours'; 'Plan v… · the date the app set' in the (i)", vis("depth-realistic").includes("L12 by ≈ Mar 2028") && /data-g="t\.cal"/.test(elOf(page("depth-realistic"), 'class="chip rm-date"')) && /data-g="t\.pin"/.test(elOf(page("depth-over"), 'class="chip rm-date"')) && !vis("depth-realistic").includes("the date the app set"));
+    check("R3 header (date-moved, CHANGED): the estimate crossfades only when its shown month changes, through playGlyph with its licence", ah3.monthSeenValue("2028-03-05") === ah3.monthSeenValue("2028-03-30") && ah3.monthSeenValue("2028-03-05") !== ah3.monthSeenValue("2028-04-01") && /playGlyph\(ref\.current, "date-moved", \{ licence: "CHANGED" \}\)/.test(read("src/components/roadmap/AimHeader.tsx")));
+    check("R3 header (H13): SINCE_LINE renders from glyph/useSeen's useSinceLine (client-only), the rest in the (i)", /const since = useSinceLine\(\);/.test(read("src/components/roadmap/AimHeader.tsx")) && /since\.text/.test(read("src/components/roadmap/AimHeader.tsx")));
+    check("R3 header: the living page's writes-off banner is the «writes off» chip (the banner one tap away); a draft keeps its banner", !vis("writes-off").includes(copy.WRITES_OFF_BANNER) && vis("writes-off").includes(copy.SHORT_WRITES_OFF) && R(createElement(RoadmapScreen, { view: { ...roadmapFixture("draft-v4").view!, writesOff: true } })).includes(copy.WRITES_OFF_BANNER.replace(/'/g, "&#x27;")));
+    check("R3 behind: «Behind on new cards · 5 of 7» opens the banner's sentence (said once); the levers stay buttons", vis("behind").includes("Behind on new cards · 5 of 7") && !vis("behind").includes("asks 5 of the 7 needed") && rv3.behindChipLabelOf("x", "Behind on new cards for Milestone 2") === "Behind on new cards for Milestone 2");
+    const nowAct = blockOf("active", "now");
+    check("R3 Now (H6): 'Now · milestone 2 of 6' over a static elapsed bar 'day 39/77' (sr 'day 39 of 77'); no transition or animation on the bar", nowAct.includes('class="rm-el-bar"') && vis("active").includes("day 39/77") && n3(textOf(nowAct)).includes("day 39 of 77") && !/\.rm-el[\w-]* \{[^}]*(transition|animation)/.test(read("src/components/roadmap/roadmap.css")));
+    check("R3 Now: the headline '23% · 09:12' with its evidence glyph; the pay line 'pays ⬡ 6 × progress from 70%' with its floor tick at the pay bar; the pace in ink", vis("active").includes("23% · 09:12") && /data-g="ev\.tested"/.test(elOf(nowAct, 'class="rm-head-ev"')) && /class="rm-floor-t" aria-hidden="true" style="left:70%"/.test(nowAct) && vis("active").includes("pays 6 × progress from 70%") && vis("active").includes("On pace for 7 Mar"));
+    check("R3 pay line (D22): the ⬡ is the kit c-mp symbol in ink (never the gold currency glyph); the line is an honesty mark", /data-g="c-mp"/.test(nowAct) && !/class="g c-mp/.test(page("active") + page("start-refit")) && /<span class="rm-pays" data-wc="honest">/.test(nowAct));
+    check(
+      "R3 meter-fill (SEEN, D8, D9): the headline and every measure fill from the value this viewer last saw, keyed on the plan basis and the target (a changed target is a new key)",
+      /<Meter className="rm-head-m" value=\{Number\(current\.headline\.value\)\} from=\{headFrom\}/.test(read("src/components/roadmap/RoadmapView.tsx")) &&
+        /useSeenValue\(g != null \? key : null, g \?\? 0\)/.test(read("src/components/roadmap/MeasureRow.tsx")) &&
+        mr3.measureSeenKeyOf({ roadmapId: "rm1", basis: "plan/2026-10-04:1" }, { measureKey: "M", target: 42 })?.what === "measure:M@42" &&
+        mr3.measureSeenKeyOf({ roadmapId: "rm1", basis: "plan/2026-10-04:1" }, { measureKey: "M", target: 38 })?.what !== "measure:M@42" &&
+        mr3.measureSeenKeyOf(null, { measureKey: "M", target: 42 }) === null
+    );
+    check("R3 measures: the compact row ('Position Sizing, Risk Management · L6+', '+5/21 since start') opens its full lines in the ▸", vis("active").includes("Position Sizing, Risk Management · L6+") && vis("active").includes("+5/21 since start") && !vis("active").includes("holding 26 of 42") && page("active").includes("holding"));
+    check("R3 past weeks: one ▸ over a static five-week strip (aria-hidden), every week's line inside", /<details class="rm-past-d"><summary class="rm-past-s"><span class="t-eyebrow">Past week quests<\/span><span class="rm-pw" aria-hidden="true">/.test(page("active")) && !vis("active").includes("Week of 18 Jan"));
+    check("R3 Toward (C2-m5): '39 sessions «context only»' with no ≈ on the tick count; the judge chip opens the full line", /39 sessions/.test(n3(vis("active"))) && !wc3.visibleText(blockOf("active", "toward"), { width: 344 }).includes("≈") && vis("active").includes(copy.SHORT_JUDGE) && !vis("active").includes("is yours to judge."));
+  }
+  // ===== /R3 =====
+  // ===== R4 Rows (MilestoneCard, ItemRow, PracticeRow, TopicRow, DomainRow, ProvenanceChip, FlagChips, AddItemSheet) =====
+  // ui-motion.md §3.3 screen 3 (the Next card, the outline nodes) and the row parts of screen 5, §4.4–§4.6, §7.3, §11.3.
+  // The gates first (R0's harness rows for screen 3 and the Gemini and health chips it carries), then the rows' own checks.
+  {
+    console.log("— ui motion: the rows (R4) —");
+    type R4El = { tag?: string; attrs: Record<string, string>; children: R4El[]; parent: R4El | null; text?: string };
+    const wc4 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const pr4 = await import("../src/components/roadmap/PracticeRow");
+    const dr4 = await import("../src/components/roadmap/DraftReview");
+    const n4 = (t: string) => t.replace(/\s+/g, " ").trim();
+    const page4 = (s: FixtureState) => renders.get(s)?.page ?? "";
+    const vis4 = (h: string) => n4(wc4.visibleText(h, { width: 344 }).replace(/\n/g, " "));
+    const words4 = (h: string) => wc4.countAppWords(h, { width: 344 }).count;
+    /** The outer markup of each element whose opening tag carries `attr`, balanced by its tag name. */
+    const cut4 = (html: string, attr: string): string[] => {
+      const out: string[] = [];
+      const open = new RegExp(`<([a-zA-Z][\\w-]*)\\b[^>]*\\s${attr}[\\s/>]`, "g");
+      for (let m = open.exec(html); m; m = open.exec(html)) {
+        const tagRe = new RegExp(`<(/?)${m[1]}\\b[^>]*?(/?)>`, "g");
+        tagRe.lastIndex = m.index;
+        let depth = 0;
+        let end = html.length;
+        for (let t = tagRe.exec(html); t; t = tagRe.exec(html)) {
+          if (t[1]) depth--;
+          else if (!t[2]) depth++;
+          if (depth === 0) {
+            end = tagRe.lastIndex;
+            break;
+          }
+        }
+        out.push(html.slice(m.index, end));
+      }
+      return out;
+    };
+    const nextOf = (h: string) => cut4(h, 'data-wc-block="next-card"')[0] ?? "";
+    const nodesOf = (h: string) => cut4(h, 'data-wc-block="outline-node"');
+    const DRAFTS = FIXTURE_STATES.filter((s) => roadmapFixture(s).view?.state === "DRAFT" && roadmapFixture(s).view?.draft);
+    const els4 = (h: string) => wc4.elementsOf(wc4.parseMarkup(h) as never) as unknown as R4El[];
+    const cls4 = (e: R4El) => (e.attrs.class ?? "").split(/\s+/).filter(Boolean);
+    const txt4 = (e: R4El) => n4(wc4.textOfNode(e as never) as string);
+
+    // 1. The gates: screen 3's budgets (≤ 120 / ≤ 160 app words; ≤ 12 per collapsed node) and the honesty its rows carry.
+    r0Gate("words", ["s3-next-card-v4", "s3-next-card-mixed", "s3-outline-node-v4"], "R4");
+    r0Gate("honesty", ["gemini-chip", "gemini-choice-chip", "health-chip-draft-body"], "R4");
+    // (gemini-kept-chip names draft-mixed, which holds no kept row: R4 holds the kept chip on a draft that has one, in 3.)
+
+    // 2. Every draft fixture: the Next card is one marked block, its outline milestones collapsed nodes ≤ 12 app words each.
+    const overNext = DRAFTS.filter((s) => nextOf(page4(s)) && words4(nextOf(page4(s))) > 160).map((s) => `${s}: ${words4(nextOf(page4(s)))}`);
+    check("R4 words: every draft fixture's Next card is one data-wc-block and stays ≤ 160 app words (draft-mixed's budget)", DRAFTS.length > 8 && DRAFTS.every((s) => cut4(page4(s), 'data-wc-block="next-card"').length <= 1) && overNext.length === 0, overNext.join(", "));
+    const overNode: string[] = [];
+    for (const s of DRAFTS) for (const nd of nodesOf(page4(s))) if (words4(nd) > 12) overNode.push(`${s}: ${words4(nd)} (${vis4(nd).slice(0, 60)})`);
+    check("R4 words: every collapsed outline node on every draft is ≤ 12 app words (§3.2 row 3)", overNode.length === 0, overNode.slice(0, 3).join(" | "));
+    const v4 = roadmapFixture("draft-v4").view!;
+    const v4Nodes = nodesOf(page4("draft-v4"));
+    check(
+      "R4 outline: each outline milestone is a node closed by default (its rows behind ▸), titled, its glyph counts spoken in words",
+      v4Nodes.length === v4.draft!.milestones.length - 1 && v4Nodes.every((nd) => /<details class="rm-r4-nd">/.test(nd) && /<summary class="rm-r4-ns">/.test(nd) && /<span class="sr-only">[^<]*\b(practices?|steps?|checkpoints?|topics?)\b/.test(nd)),
+      String(v4Nodes.length)
+    );
+    const mixedNodes = nodesOf(page4("draft-mixed"));
+    const numNode = mixedNodes.find((nd) => nd.includes("Forward-testing on a demo account for <s>8</s> weeks")) ?? "";
+    const numSummary = cut4(numNode, 'class="rm-r4-ns"')[0] ?? "";
+    check(
+      "R4 outline: a folded node whose title carries a blocking flag shows the flag and its reason in its summary, beside it (FlagChips' contract)",
+      vis4(numSummary).includes("Number") && vis4(numSummary).includes(copy.flagReason("NUMBER")) && /id="rm-row-m3"/.test(numSummary) && /<details class="rm-r4-nd">/.test(numNode)
+    );
+    check("R4 outline: a folded node counts the rows a flag holds back ('[i-flag] 2', spoken '2 flagged')", mixedNodes.some((nd) => /<span class="sr-only">[^<]*\b\d+ flagged<\/span>/.test(nd)));
+
+    // 3. D25: Gemini keeps its who-word on every row, pick and folded node; the full words are sr-only, read once.
+    const mixedNext = nextOf(page4("draft-mixed"));
+    const geminiRows = cut4(mixedNext, 'class="rm-it rm-it-draft"');
+    check(
+      "R4 D25: every Gemini row on the Next card shows «Gemini · not checked» (the balloon chip), its full words sr-only once",
+      geminiRows.length > 5 && geminiRows.every((r) => vis4(r).includes(copy.SHORT_GEMINI) && (r.match(new RegExp(`<span class="sr-only">${copy.PROVENANCE_WORDS.DRAFT}</span>`, "g")) ?? []).length === 1 && r.includes('data-g="pv.suggest"')),
+      String(geminiRows.length)
+    );
+    const chipLabels = els4(page4("draft-mixed") + page4("draft-v4")).filter((e) => cls4(e).includes("rm-pv") && e.children.some((c) => c.attrs?.["data-wc"] === "honest"));
+    check("R4 D25: no Gemini chip is a bare 'not checked' — every visible label carries 'Gemini'", chipLabels.length > 10 && chipLabels.every((e) => /Gemini/.test(txt4(e))));
+    const dm = roadmapFixture("draft-mixed").view!;
+    const keptView: RoadmapView = {
+      ...dm,
+      draft: { ...dm.draft!, milestones: dm.draft!.milestones.map((m) => (m.lineageId !== dm.draft!.nextLineageId ? m : { ...m, items: m.items.map((it, i) => (it.kind === "TOPIC" && i === m.items.findIndex((x) => x.kind === "TOPIC") ? { ...it, decision: "KEPT" as const } : it)) })) },
+    };
+    const keptNext = nextOf(R(createElement(RoadmapScreen, { view: keptView })));
+    check("R4 D25: a kept Gemini row reads «Gemini · kept · not checked» (sr: Gemini's words · kept by you · not checked)", vis4(keptNext).includes(copy.SHORT_GEMINI_KEPT) && keptNext.includes("Gemini&#x27;s words · kept by you · not checked") && keptNext.includes('class="rm-it rm-it-kept"'));
+    const ret = v4.draft!.milestones.find((m) => m.stage === "RETAINED")!;
+    const retNext = nextOf(R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: ret.lineageId } } })));
+    /** A rendered row, from its own id to the next row's (rows sit one after another inside their section). */
+    const rowsOf4 = (h: string) => h.split('<div id="rm-row-').slice(1);
+    const pickRow = rowsOf4(retNext).find((r) => r.includes("Explain it in your own words")) ?? "";
+    check(
+      "R4 D25: Gemini's waiting pick reads «Gemini's choice · not checked» (sr GEMINI_CHOICE_WORDS once); its ▸ holds the choice line; the app's default sits beside it as the app's mark",
+      vis4(pickRow).includes(copy.shortGeminiChoice(true)) &&
+        (pickRow.match(/>Gemini&#x27;s choice among the app&#x27;s options</g) ?? []).length === 1 &&
+        /<details class="rm-r4-more">[\s\S]*?options for this stage; the app&#x27;s default is Problem sets\./.test(pickRow) &&
+        retNext.includes('data-pm="app-added"'),
+      vis4(pickRow).slice(0, 160)
+    );
+    check(
+      "R4 D25: a folded node holding a waiting pick shows «Gemini's choice · not checked» in its summary (draft-v4: Retained's)",
+      v4Nodes.some((nd) => {
+        const sum = cut4(nd, 'class="rm-r4-ns"')[0] ?? "";
+        return vis4(sum).includes(copy.shortGeminiChoice(true));
+      })
+    );
+
+    // 4. The other marks are glyph only (D13, §4.4): their words sr-only, never visible text; the card Key lists each.
+    const v4Next = nextOf(page4("draft-v4"));
+    const marks = ["Written by the app", "added by the app", "You wrote this", "Your syllabus line", "You checked this"];
+    const shownMark = (h: string) => marks.filter((w) => vis4(h).includes(w));
+    check("R4 marks: provenance other than Gemini's is a glyph-only mark on the Next card (no visible 'added by the app', 'You wrote this' …)", shownMark(v4Next).length === 0 && shownMark(mixedNext).length === 0 && v4Next.includes('data-pm="app-added"') && v4Next.includes('data-pm="syllabus"'), shownMark(v4Next).join(", "));
+    const keyPanelOf = (h: string) => cut4(h, 'data-tip-panel="key"')[0] ?? "";
+    check(
+      "R4 Key (D13): the Next card's Key lists every mark it shows (the app's, the syllabus line, Gemini's words), the dates' setter and the rank line in full",
+      ["added by the app", "Your syllabus line", "dates set by the app"].every((w) => keyPanelOf(v4Next).includes(w)) &&
+        keyPanelOf(mixedNext).includes(copy.PROVENANCE_WORDS.DRAFT) &&
+        /Reaching it gives the Aim rank\s*<b>Journeyman<\/b>/.test(keyPanelOf(v4Next)) &&
+        /Reaching it gives the Aim rank\s*<b>Aspirant<\/b>/.test(keyPanelOf(mixedNext))
+    );
+
+    // 5. Taps (D13): every sr-only honesty string on a card of R4's is also in a panel a touch user opens on that card.
+    const SURV4 = [...new Set([...Object.values(copy.PROVENANCE_WORDS), copy.GEMINI_CHOICE_WORDS, copy.HEALTH_LINE, copy.AIM_UNCHECKED_LINE, copy.CREDENTIAL_LINE, copy.TIME_FIXED_LINE, copy.CONSTRAINTS_LINE].map(n4))].filter((x) => x.length >= 12);
+    const unreached4: string[] = [];
+    let srSeen4 = 0;
+    let tipsOver4 = 0;
+    for (const s of DRAFTS) {
+      for (const card of [nextOf(page4(s)), ...nodesOf(page4(s))].filter(Boolean)) {
+        const all = els4(card);
+        const panels = new Set(all.filter((e) => e.tag === "button" && e.attrs["aria-controls"]).map((e) => e.attrs["aria-controls"]));
+        const panelText = all.filter((e) => (e.attrs.id && panels.has(e.attrs.id)) || e.tag === "details").map((e) => (e.tag === "details" ? e.children.filter((c) => c.tag !== "summary").map(txt4).join(" ") : txt4(e))).join(" ");
+        for (const e of all.filter((x) => cls4(x).includes("sr-only"))) {
+          const str = SURV4.find((x) => txt4(e).includes(x));
+          if (!str) continue;
+          srSeen4++;
+          if (!panelText.includes(str)) unreached4.push(`${s}: ${str.slice(0, 40)}`);
+        }
+        if (all.filter((e) => e.tag === "button" && cls4(e).includes("mg-tip")).length > model.INFO_TIPS_PER_CARD) tipsOver4++;
+      }
+    }
+    check("R4 taps (D13): every sr-only honesty string on a Next card or an outline node is in a panel on the same card (its chip's, the Key, a row's ▸ or the node's)", srSeen4 > 20 && unreached4.length === 0, `${unreached4.length}/${srSeen4}: ${unreached4.slice(0, 3).join(" | ")}`);
+    check(`R4 taps: no card of R4's carries more than ${model.INFO_TIPS_PER_CARD} InfoTips (the Key included)`, tipsOver4 === 0, String(tipsOver4));
+    check("R4 a11y: no `title` attribute on any R4 card (it does nothing on touch, D13)", DRAFTS.every((s) => [nextOf(page4(s)), ...nodesOf(page4(s))].every((h) => !/\stitle="/.test(h))));
+
+    // 6. D12, health: one chip per body card, a button whose panel is HEALTH_LINE; the rows drop their own line; never on a Field card.
+    const bodyNext = nextOf(page4("draft-body"));
+    const healthBtns = cut4(bodyNext, 'data-hc="health"').filter((h) => h.startsWith("<button"));
+    check(
+      "R4 D12: the body draft's Next card has exactly one «Not medical advice · ask a professional», a 40 px chip button whose panel holds HEALTH_LINE, and no HEALTH_LINE line on a row",
+      (vis4(bodyNext).match(/Not medical advice · ask a professional/g) ?? []).length === 1 && healthBtns.length === 1 && /aria-controls="[^"]+"/.test(healthBtns[0]) && bodyNext.includes(copy.HEALTH_LINE.replace(/'/g, "&#x27;")) && !vis4(bodyNext).includes(copy.HEALTH_LINE),
+      String(healthBtns.length)
+    );
+    check("R4 D12: a Field draft's cards carry no health chip", !page4("draft-v4").includes('data-hc="health"') && !page4("draft-v3").includes('data-hc="health"'));
+    const wk = roadmapFixture("draft-mixed").view!.draft!.milestones.flatMap((m) => m.items.map((it) => ({ it: { ...it, flags: [] as ItemDraft["flags"] }, m }))).find((x) => x.it.method === "WORKOUT")!;
+    const tgt = { row: model.editorRowOf(wk.it), item: wk.it, milestone: wk.m };
+    const rowCard = R(createElement(pr4.PracticeRow, { target: tgt, stage: "draft", health: "card" }));
+    const rowOwn = R(createElement(pr4.PracticeRow, { target: tgt, stage: "draft" }));
+    check("R4 D12: PracticeRow's health='card' drops the body session's own HEALTH_LINE (the card shows the chip); any other caller keeps it", !rowCard.includes(copy.HEALTH_LINE.replace(/'/g, "&#x27;")) && rowOwn.includes(copy.HEALTH_LINE.replace(/'/g, "&#x27;")));
+    const yoursIt = { ...wk.it, planSource: "YOURS" as const, origin: "GEMINI" as const, decision: "PENDING" as const };
+    const editedRow = R(createElement(pr4.PracticeRow, { target: { row: model.editorRowOf(yoursIt), item: yoursIt, milestone: wk.m }, stage: "draft", health: "card" }));
+    check(
+      "R4 §8: a Gemini practice whose numbers you edited reads «your numbers · Gemini's words» (a chip button, EDIT_NUMBERS_NOTE in its panel) beside «Gemini · not checked»",
+      vis4(editedRow).includes(copy.SHORT_EDIT_NUMBERS) && /<button[^>]*data-hc="edit-numbers"[^>]*aria-controls="[^"]+"/.test(editedRow) && editedRow.includes(copy.EDIT_NUMBERS_NOTE.replace(/'/g, "&#x27;")) && vis4(editedRow).includes(copy.SHORT_GEMINI)
+    );
+
+    // 7. A rank not yet held keeps its verb (C2-B3); the next rank is drawn active, a kept one done.
+    const rankLines4 = DRAFTS.flatMap((s) => cut4(page4(s), 'class="rm-rk rm-r4-rk"'));
+    const badRank = rankLines4.filter((l) => {
+      const v = vis4(l);
+      if (v.startsWith(copy.SHORT_GIVES_RANK)) return !/data-g="rank\.\d" data-s="active"/.test(l);
+      if (v.includes(copy.SHORT_KEEPS_RANK)) return /data-s="active"/.test(l.split(copy.PARAGON_PARTS.lead)[0]);
+      return true;
+    });
+    check("R4 ranks (C2-B3): every draft card's rank line is 'gives Aim rank [rank.N active] X' or '[rank.N done] keeps your rank'", rankLines4.length > 20 && badRank.length === 0, badRank.slice(0, 2).map(vis4).join(" | "));
+
+    // 8. Glyph use (§11.3): practice rows show the plan's own track sigil; every KindGlyph carries its evidence badge.
+    const trackOf = (h: string) => [...h.matchAll(/data-g="quest\.practice"[^>]*data-track="(\w+)"/g)].map((m) => m[1]);
+    check("R4 glyphs: a Field plan's practice rows show knowledge's sigil, a body plan's the body's (never craft by default)", trackOf(v4Next).length > 0 && trackOf(v4Next).every((t) => t === "know") && trackOf(bodyNext).length > 0 && trackOf(bodyNext).every((t) => t === "body"), `${trackOf(v4Next).join()} / ${trackOf(bodyNext).join()}`);
+    const kgs = els4(v4Next + mixedNext).filter((e) => cls4(e).includes("mg-kg"));
+    check("R4 glyphs: every KindGlyph on the Next cards has its evidence badge", kgs.length > 5 && kgs.every((e) => e.children.some((c) => cls4(c).includes("mg-kg-ev"))), String(kgs.length));
+    check("R4 glyphs (D27): no clock (ev.measured) on a draft card, and no verdict glyph outside a verdict chip", DRAFTS.every((s) => !nextOf(page4(s)).includes('data-g="ev.measured"')) && els4(v4Next + mixedNext).filter((e) => /^v\./.test(e.attrs["data-g"] ?? "")).every((e) => { let p = e.parent; while (p && !cls4(p).includes("mg-vc") && !cls4(p).includes("rm-vd") && !cls4(p).includes("mg-hc")) p = p.parent; return Boolean(p); }));
+
+    const measureMore = cut4(mixedNext, 'class="rm-mr rm-r4-mr"')[0] ?? "";
+    check("R4 measures: a target meter's sentence ('Hold 43 cards at level 6+ in … (now 28)') is spoken and opens in its ▸ with the gap and basis caption", /<span class="sr-only"><b>Hold \d+ cards at level \d+\+ in [^<]+<\/b>/.test(measureMore) && /<details class="rm-r4-more">[\s\S]*Hold \d+ cards at level \d+\+ in [^<]+: each recalled after a gap of about/.test(measureMore));
+
+    // 9. The full strings stay in the DOM (D1): who set the dates; the checks' sentences in their (i) (R5's ChecksPanel); the aim check's line.
+    check(
+      "R4 survival: the Next card keeps 'dates set by the app' (sr), the checks' sentences in ChecksPanel's (i) (TIME_FIXED_LINE, Fitted's sum), AIM_UNCHECKED_LINE in its chip's panel",
+      v4Next.includes("dates set by the app") &&
+        mixedNext.includes(copy.TIME_FIXED_LINE.replace(/'/g, "&#x27;")) &&
+        mixedNext.includes("Fitted at Steady:") &&
+        /data-hc="aim-unchecked"[^>]*aria-controls="[^"]+"/.test(mixedNext) &&
+        mixedNext.includes(copy.AIM_UNCHECKED_LINE.replace(/'/g, "&#x27;"))
+    );
+    check(
+      "R4 checks: the Next card draws the checks once — R5's ChecksPanel (its CapacityGauge, 'Unverified ·' while capacity calibrates) — and its measures add no second verdict chip",
+      (v4Next.match(/class="mg-cg[ "]/g) ?? []).length === 1 &&
+        vis4(nextOf(page4("capacity-calibrating"))).includes("Unverified ·") &&
+        cut4(mixedNext, 'class="rm-mr rm-r4-mr"').every((h) => !h.includes('class="chip mg-vc"'))
+    );
+    const blockingNext = DRAFTS.filter((s) => {
+      const d = roadmapFixture(s).view!.draft!;
+      const w = d.feasibility.milestones.find((x) => x.lineageId === d.nextLineageId)?.worst;
+      return w === "IMPOSSIBLE" || w === "OVER";
+    });
+    check("R4 checks: when the Next card's verdict blocks (Over, Impossible), its remedies are on the card, not behind a tap", blockingNext.every((s) => /<div class="rm-acts">[\s\S]*?(Move the date|Re-fit at Light|Use the realistic date|Move the last milestones)/.test(nextOf(page4(s)))), blockingNext.join(", "));
+
+    // 10. "+ Add" (44 px) and the kinds behind it; the section heads short, their names spoken.
+    const adds = cut4(mixedNext, 'class="rm-ms-sec rm-r4-add"');
+    check(
+      "R4 add: one '+ Add' per decidable milestone, a 44 px summary; the kinds stay in the markup behind it ('it reads “You wrote this”' inside)",
+      adds.length === 1 && /<summary class="rm-r4-adds" aria-label="Add your own to milestone 1"/.test(adds[0]) && adds[0].includes("Add a topic") && adds[0].includes("it reads “You wrote this”") && /\.rm-r4-adds \{[^}]*min-height: 44px; min-width: 44px;/.test(read("src/components/roadmap/roadmap.css"))
+    );
+    check(
+      "R4 heads: Learn · Practise · Steps · Checkpoint are short visible heads (with their glyphs); their full names and captions are spoken",
+      ["Learn", "Practise", "Steps"].every((w) => vis4(v4Next).includes(w)) && v4Next.includes('<span class="sr-only">What to practise</span><span class="sr-only">sessions and minutes set by the app</span>') && !vis4(v4Next).includes("sessions and minutes set by the app")
+    );
+
+    // 11. data-wc marks only what is exempt (§11.3): no app-word label sits inside a data-wc element of R4's.
+    const appLabels = [copy.SHORT_GIVES_RANK, copy.SHORT_KEEPS_RANK, copy.SHORT_ADD, copy.SHORT_NEED, copy.SHORT_HAVE, ...Object.values(copy.SHORT_SECTION)];
+    const misMarked = DRAFTS.flatMap((s) => els4(nextOf(page4(s)) + nodesOf(page4(s)).join("")).filter((e) => e.attrs["data-wc"] && appLabels.includes(txt4(e)))).map(txt4);
+    check("R4 words (§11.3): no data-wc exemption holds an app-word label (gives Aim rank, Learn, Add …)", misMarked.length === 0, misMarked.join(", "));
+
+    // 12. Motion: the rows' one motion is pv-confirm, on the user's own "I checked this" (ACT); nothing loops, no shader on a draft card.
+    const itemSrc = code(read("src/components/roadmap/ItemRow.tsx"));
+    check(
+      "R4 motion: pv-confirm plays only after the user's own 'I checked this' on the row (ACT, through glyph-motion), never on arrival",
+      /if \(a === "CHECK"\) checkedByMe\.current = true;/.test(itemSrc) && /playGlyph\([\s\S]*?"pv-confirm", \{ licence: "ACT" \}\)/.test(itemSrc) && (itemSrc.match(/playGlyph\(/g) ?? []).length === 1
+    );
+    check("R4 motion: no R4 card carries a shader slot, a wait loop or a play hook", DRAFTS.every((s) => [nextOf(page4(s)), ...nodesOf(page4(s))].every((h) => !/class="shd|data-wait|data-play/.test(h))));
+    check("R4 motion: the R4 files call no element.animate and import no shader runtime", ["MilestoneCard", "ItemRow", "PracticeRow", "TopicRow", "DomainRow", "ProvenanceChip", "FlagChips", "AddItemSheet"].every((f) => !/\.animate\(|lib\/shader\/runtime/.test(code(read(`src/components/roadmap/${f}.tsx`)))));
+
+    // 13. roadmap.css's R4 section: layout hooks only (rm-* classes, element and attribute selectors), no animation, ink only.
+    const css4 = read("src/components/roadmap/roadmap.css");
+    const sec4 = css4.slice(css4.indexOf("/* ===== R4 "), css4.indexOf("/* ===== /R4 ===== */")).replace(/\/\*[\s\S]*?\*\//g, "");
+    const foreign4 = [...sec4.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].map((m) => m[1]).filter((c) => !c.startsWith("rm-") && c !== "btn");
+    const trans4 = [...sec4.matchAll(/transition\s*:\s*([^;}]+)/g)].map((m) => m[1].trim().split(/\s+/)[0]);
+    check(
+      "R4 css: its section styles rm-* classes only (and the kit .btn as context), no keyframes or animation, transitions on transform only, ink only, no dashed rim",
+      sec4.length > 500 && foreign4.length === 0 && !/@keyframes|animation|gold|--owed|--mp\b|--xp\b|--light|dashed/.test(sec4) && trans4.every((t) => t === "transform"),
+      `${foreign4.join(", ")} ${trans4.join(", ")}`
+    );
+
+    // 14. The editor still renders every decidable row with its id, and the next item to decide still finds it.
+    const sc = dr4.editorScopeOf(dm, dm.draft!.milestones)!;
+    const ids = dm.draft!.milestones.find((m) => m.lineageId === dm.draft!.nextLineageId)!.items.filter((it) => it.decision !== "REMOVED").map((it) => model.rowDomId(it.id ?? it.lineageId));
+    check("R4 editor: every row of the Next card keeps its DOM id (the footer's next item to decide scrolls to it) under the editor", Boolean(sc) && ids.every((id) => (mixedNext.match(new RegExp(`id="${id}"`, "g")) ?? []).length === 1), ids.filter((id) => !mixedNext.includes(`id="${id}"`)).join(", "));
+  }
+  // ===== /R4 =====
+  // ===== R5 Draft review (DraftReview, RunFacts, DateBlock, ChecksPanel, ThroughputPanel) =====
+  // ui-motion.md screens 2 and 12 (drafting), §6.1 (the unlit horizon, the weave), §7.2, §7.12, §8; D12, D13, D25,
+  // D26, D28. R5 gates its R0 rows (the header + Depth and date budgets, the drafting budget, the honesty its blocks
+  // carry), then checks its own blocks directly: taps inside them, the lanes and their who-words, the integrity and
+  // data chips, the TimeBar and the realism figures (read from R2's own words), the Paragon conditions, the checks
+  // panel's gauge and chips, the capacity panel, and the WAIT card (the weave, its pause, the aria-live line) on the
+  // drafting page and on a re-plan card whose run is RUNNING.
+  console.log("— R5 Draft review (ui-motion.md screens 2 and 12) —");
+  {
+    const wc5 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const DR5 = await import("../src/components/roadmap/DraftReview");
+    const DB5 = await import("../src/components/roadmap/DateBlock");
+    const RF5 = await import("../src/components/roadmap/RunFacts");
+    const CK5 = await import("../src/components/roadmap/ChecksPanel");
+    const TP5 = await import("../src/components/roadmap/ThroughputPanel");
+    const n5 = (t: string) => t.replace(/\s+/g, " ").trim();
+    const page5 = (s: FixtureState) => renders.get(s)!.page;
+    const vis5 = (h: string) => n5(wc5.visibleText(h, { width: 344 }).replace(/\n/g, " "));
+    const all5 = (h: string) => n5(textOf(h));
+    /** The outer markup of each element whose opening tag carries `attr` (balanced by tag name). */
+    const block5 = (html: string, attr: string): string[] => {
+      const out: string[] = [];
+      const open = new RegExp(`<([a-zA-Z][\\w-]*)\\b[^>]*\\s${attr}[\\s/>]`, "g");
+      let m: RegExpExecArray | null;
+      while ((m = open.exec(html))) {
+        const tag = m[1];
+        const tagRe = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+        tagRe.lastIndex = m.index;
+        let depth = 0;
+        let end = html.length;
+        let t: RegExpExecArray | null;
+        while ((t = tagRe.exec(html))) {
+          if (t[1]) depth--;
+          else if (!t[2]) depth++;
+          if (depth === 0) {
+            end = tagRe.lastIndex;
+            break;
+          }
+        }
+        out.push(html.slice(m.index, end));
+      }
+      return out;
+    };
+    const mine5 = (s: FixtureState, b: "draft-header" | "draft-date" | "roadmap-drafting") => block5(page5(s), `data-wc-block="${b}"`)[0] ?? "";
+    type PN5 = { tag?: string; attrs: Record<string, string>; children: PN5[]; parent: PN5 | null };
+    const tree5 = (h: string) => wc5.parseMarkup(h) as unknown as PN5;
+    const els5 = (n: PN5) => wc5.elementsOf(n as never) as unknown as PN5[];
+    const cls5 = (e: PN5) => wc5.classesOf(e as never) as string[];
+    const txt5 = (e: PN5) => n5(wc5.textOfNode(e as never) as string);
+    /** The text of the panel a matching button controls (a chip or an InfoTip), and whether it is closed (hidden). */
+    const panel5 = (h: string, match: (b: PN5) => boolean): { text: string; hidden: boolean } | null => {
+      const els = els5(tree5(h));
+      const b = els.find((e) => e.tag === "button" && match(e));
+      const id = b?.attrs["aria-controls"];
+      const p = id ? els.find((e) => e.attrs.id === id) : undefined;
+      return p ? { text: txt5(p), hidden: "hidden" in p.attrs } : null;
+    };
+    const chip5 = (kind: string) => (b: PN5) => b.attrs["data-hc"] === kind;
+    const tip5 = (topic: string) => (b: PN5) => b.attrs["aria-label"] === `About ${topic}`;
+
+    // 1. R0's rows for R5's surfaces, as hard gates: the budgets (§3.2 rows 2 and 12-drafting) and the honesty they carry.
+    r0Gate("words", ["s2-draft-header-v4", "s2-draft-header-count-gate", "s2-draft-header-mixed", "s12-tab-drafting"], "R5");
+    r0Gate("honesty", ["gemini-lanes", "constraints-chip", "draft-eyebrow", "review-gap-draft", "reads-high", "data-draft", "policy-judge", "running-static"], "R5");
+
+    // 2. Taps (D13) inside R5's blocks: a static chip's or mark's sr-only words, and the run line, sit in a panel a button
+    //    of the same card controls; at most 3 InfoTips a card (the Key included).
+    const taps5 = (html: string) => {
+      const root = tree5(html);
+      const els = els5(root);
+      const cardOf = (el: PN5): PN5 => {
+        let p = el.parent;
+        while (p && p.tag !== "#root" && !(cls5(p).includes("card") || p.tag === "section")) p = p.parent;
+        return p ?? root;
+      };
+      let sr = 0;
+      const lost: string[] = [];
+      for (const el of els) {
+        if (!cls5(el).includes("sr-only") || !el.parent || !["mg-hc", "mg-pm", "rm-rf"].some((c) => cls5(el.parent!).includes(c))) continue;
+        sr++;
+        const t = txt5(el);
+        const card = els5(cardOf(el));
+        const controlled = new Set(card.filter((e) => e.tag === "button" && e.attrs["aria-controls"]).map((e) => e.attrs["aria-controls"]));
+        if (!card.some((e) => e.attrs.id && controlled.has(e.attrs.id) && txt5(e).includes(t))) lost.push(t.slice(0, 48));
+      }
+      const tips = new Map<PN5, number>();
+      for (const el of els) if (el.tag === "button" && cls5(el).includes("mg-tip")) tips.set(cardOf(el), (tips.get(cardOf(el)) ?? 0) + 1);
+      return { sr, lost, over: [...tips.values()].filter((n) => n > model.INFO_TIPS_PER_CARD).length };
+    };
+    const TAP_STATES: FixtureState[] = ["draft-v4", "draft-v3", "draft-mixed", "count-gate", "capacity-calibrating", "draft-impossible", "draft-body", "draft-exam", "draft-rejected", "running", "run-stale"];
+    for (const s of TAP_STATES) {
+      const html = (["draft-header", "draft-date", "roadmap-drafting"] as const).map((b) => mine5(s, b)).join("");
+      const r = taps5(html);
+      check(`R5 taps (${s}): every sr-only chip, mark and run word in R5's blocks is one tap away on its card; ≤ 3 InfoTips a card`, html.length > 0 && r.lost.length === 0 && r.over === 0, `${r.sr} sr strings · lost: ${r.lost.join(" | ")} · over: ${r.over}`);
+    }
+
+    // 3. The header (§3.3 screen 2): the unlit horizon, the settings chips, who did what, the run.
+    const v4 = roadmapFixture("draft-v4").view!;
+    const head4 = mine5("draft-v4", "draft-header");
+    const parts4 = model.geminiV4PartsOf(v4.draft!.milestones, { field: true });
+    const lane5 = (h: string, who: "gemini" | "app") => {
+      const m = new RegExp(`<div class="mg-lane" data-who="${who}">[\\s\\S]*?<span class="mg-lane-w" data-wc="honest">([^<]*)</span><span class="mg-lane-i">([^<]*)</span>`).exec(h);
+      return m ? `${m[1]} ${m[2]}` : null;
+    };
+    check(
+      "R5 header (D25): draft-v4's lanes keep their who-words and list only what this reply did ('Gemini: order · picks', geminiLaneItemsOf), the app's 'App: practices · words · numbers'",
+      lane5(head4, "gemini") === `${copy.GEMINI_LANE_WORD} ${model.geminiLaneItemsOf(parts4).join(" · ")}` && model.geminiLaneItemsOf(parts4).join() === "order,picks" && lane5(head4, "app") === `${copy.APP_LANE_WORD} ${copy.APP_LANE_ITEMS.join(" · ")}`,
+      `${lane5(head4, "gemini")} | ${lane5(head4, "app")}`
+    );
+    const lanesPanel4 = panel5(head4, tip5("who did what on this draft"));
+    check(
+      "R5 header: the lead line moves into the lanes' (i) verbatim (closed, in the DOM) and leaves the screen",
+      lanesPanel4?.hidden === true && lanesPanel4.text === copy.geminiV4LeadLine(parts4) && !vis5(head4).includes("Gemini put your outline"),
+      lanesPanel4?.text.slice(0, 80)
+    );
+    const head3 = mine5("draft-v3", "draft-header");
+    check(
+      "R5 header: a v3 reply's lanes ('Gemini: Domains · order · picks', 'App: words · numbers'), its lead in the (i); a rev-3 draft's ('Gemini: words', 'App: numbers')",
+      lane5(head3, "gemini") === "Gemini: Domains · order · picks" &&
+        lane5(head3, "app") === "App: words · numbers" &&
+        panel5(head3, tip5("who did what on this draft"))?.text === copy.GEMINI_V3_LEAD_LINE &&
+        lane5(mine5("draft-mixed", "draft-header"), "gemini") === "Gemini: words" &&
+        panel5(mine5("draft-mixed", "draft-header"), tip5("who did what on this draft"))?.text === copy.GEMINI_LEAD_LINE
+    );
+    const headCg = mine5("count-gate", "draft-header");
+    const headRej = mine5("draft-rejected", "draft-header");
+    check(
+      "R5 header: the app's own draft keeps 'Built from your numbers.' on screen with no lanes; a rejected reply keeps its banner line, no lanes, no 'Gemini:' lane",
+      vis5(headCg).includes(copy.BUILT_LEAD_LINE) && !headCg.includes('class="mg-lane"') && vis5(headRej).includes(copy.RUN_REJECTED_LINE) && !headRej.includes('class="mg-lane"')
+    );
+    check(
+      "R5 header (§8): the eyebrow 'Draft · not accepted yet' and the aim verbatim (marked honest and own); the settings as chips ('Statistics · L9', 'Mastered (level 12)', 'Exam P', '6 h/wk yours · Steady')",
+      head4.includes('<div class="t-eyebrow" data-wc="honest">Draft · not accepted yet</div>') &&
+        head4.includes(`<p class="rm-aim-t" data-wc="own">${v4.header!.aim}</p>`) &&
+        ["Statistics · L9", "Mastered (level 12)", "Exam P", "6 h/wk yours · Steady"].every((t) => vis5(head4).includes(t)) &&
+        head4.includes('<span class="sr-only">6 hours a week</span>'),
+      vis5(head4).slice(0, 220)
+    );
+    const run4 = v4.run!;
+    const integ4 = panel5(head4, chip5("integrity"));
+    check(
+      "R5 header (§3.3, §8): the run is the integrity chip — integrityLine verbatim on screen, its panel the run line (closed); no other run words",
+      vis5(head4).includes(copy.integrityLine(run4.report!.integrity!)) && integ4?.hidden === true && integ4.text === RF5.integrityPanelLine(run4) && integ4.text.startsWith(RF5.runFactsLine(run4)),
+      integ4?.text
+    );
+    const data4 = panel5(head4, chip5("data"));
+    check(
+      "R5 header (§8): «Google may use this» on the Gemini path, its panel FREE_TIER_LINE + the privacy line; none on the app's own draft",
+      vis5(head4).includes(copy.SHORT_DATA) && data4?.text === `${copy.FREE_TIER_LINE} ${copy.privacyLine(PACK_SECTIONS)}` && !headCg.includes('data-hc="data"'),
+      data4?.text.slice(0, 80)
+    );
+    const headMx = mine5("draft-mixed", "draft-header");
+    const runMx = roadmapFixture("draft-mixed").view!.run!;
+    check(
+      "R5 header (v3 / mixed): the run's counts '1 draft · 2 dropped · 1 matched' with the run line sr-only and in its (i), 'What was dropped' kept; «Shown to Gemini · not checked» opens CONSTRAINTS_LINE",
+      vis5(headMx).includes(`${RF5.runFactsCompact(runMx)} · What was dropped`) &&
+        RF5.runFactsCompact(runMx) === "1 draft · 2 dropped · 1 matched" &&
+        headMx.includes(`<span class="sr-only">${RF5.runFactsLine(runMx)}</span>`) &&
+        panel5(headMx, tip5("this run"))?.text === RF5.runFactsLine(runMx) &&
+        vis5(headMx).includes(copy.SHORT_SHOWN_TO_GEMINI) &&
+        panel5(headMx, chip5("constraints"))?.text === copy.CONSTRAINTS_LINE,
+      vis5(headMx)
+    );
+    const hz4 = block5(head4, 'data-shd="horizon"')[0] ?? "";
+    check(
+      "R5 header (§6.1): the unlit horizon at the card's top — static (no context), aria-hidden, one contour a level of the depth, no walked path and no front dot, no canvas, no text",
+      head4.indexOf('<div class="rm-band">') === head4.indexOf(">") + 1 &&
+        /class="shd shd-horizon shd-band-page" aria-hidden="true" data-shd="horizon" data-shd-kind="static" data-shd-state="fallback"/.test(hz4) &&
+        (hz4.match(/class="shd-contour"/g) ?? []).length === 12 &&
+        !/shd-walk|shd-front|<canvas|<text/.test(hz4) &&
+        textOf(hz4).trim() === "",
+      hz4.slice(0, 160)
+    );
+    const headBody = mine5("draft-body", "draft-header");
+    check(
+      "R5 header (D12): a body draft's header carries one «Not medical advice · ask a professional» that opens HEALTH_LINE (no HEALTH_LINE line on screen)",
+      (vis5(headBody).match(new RegExp(copy.SHORT_HEALTH, "g")) ?? []).length === 1 && panel5(headBody, chip5("health"))?.text === copy.HEALTH_LINE && !vis5(headBody).includes(copy.HEALTH_LINE)
+    );
+
+    // 4. The Depth and date card (§3.3 screen 2, §7.2): ladder, Domain chips, the policy and judge lines, the TimeBar, the
+    //    realism figures, the verdict, the schedule chip, the never-lowered (i), Paragon's four conditions and the Key.
+    const date4 = mine5("draft-v4", "draft-date");
+    const dc4 = v4.draft!.dateCheck!;
+    const dp4 = v4.draft!.depth!;
+    const m4 = v4.draft!.feasibility.m;
+    const gap4 = copy.depthGapDays(dp4.depth, m4);
+    check(
+      "R5 depth: the StageLadder to the chosen depth (aria-hidden), each Domain with its count, «review gap ≈ 110 d»; «App policy» opens depthLine, «yours to judge» coverageJudgeLine (each verbatim, closed)",
+      /class="mg-sl rm-dd-sl" aria-hidden="true" data-chosen="12"/.test(date4) &&
+        dp4.coverage.every((c) => vis5(date4).includes(`${c.name} ${c.n}`)) &&
+        vis5(date4).includes(`${copy.SHORT_REVIEW_GAP} ≈ ${gap4} d`) &&
+        panel5(date4, chip5("policy"))?.text === copy.depthLine(dp4.depth, dp4.coverage, m4) &&
+        panel5(date4, chip5("judge"))?.text === copy.coverageJudgeLine(v4.header!.aim) &&
+        !vis5(date4).includes("Multiple-choice cards don't count") &&
+        !vis5(date4).includes("is yours to judge:"),
+      vis5(date4).slice(0, 200)
+    );
+    const lines4 = DB5.dateBasisOf(dc4);
+    const tb4 = /<div class="mg-tb rm-dd-tb" role="group" aria-labelledby="([^"]+)"/.exec(date4);
+    const lbl4 = tb4 ? els5(tree5(date4)).find((e) => e.attrs.id === tb4[1]) : undefined;
+    const list4 = [...date4.matchAll(/<li data-k="(\w+)">([^<]*)<\/li>/g)].map((x) => [x[1], x[2].replace(/&#x27;/g, "'")]);
+    check(
+      "R5 TimeBar (§4.5, D13): role=group labelled by the realism sentence (in its closed (i)); its list holds the realistic date (≈, month), the exam line (R2's words, said once) and the earliest; no line draw, no %",
+      lbl4 != null &&
+        txt5(lbl4) === lines4.realism &&
+        JSON.stringify(list4.map((x) => x[0])) === JSON.stringify(["realistic", "exam", "earliest"]) &&
+        list4[0][1] === DB5.realisticMarkSentence(dc4.D_real!, false) &&
+        list4[1][1] === lines4.exam &&
+        (all5(date4).match(/By your exam \(/g) ?? []).length === 1 &&
+        vis5(date4).includes("≈ Mar 2028") &&
+        !/%/.test(vis5(block5(date4, 'role="group"')[0] ?? "")),
+      `${tb4?.[1]} · ${JSON.stringify(list4.map((x) => x[0]))}`
+    );
+    const fig4 = DB5.realismFiguresOf(lines4.realism);
+    check(
+      "R5 realism figures: the StatRow says the realism sentence's own figures ('3 new/wk · 80% pass «reads high» · 92% cleared'), read from R2's words",
+      JSON.stringify(fig4) === JSON.stringify({ rate: 3, share: 0.7, pass: { value: 80, assumed: false }, clear: { value: 92, assumed: false } }) &&
+        /3\s?new\/wk/.test(vis5(date4)) &&
+        /80%\s?pass\s?reads high/.test(vis5(date4)) &&
+        /92%\s?cleared/.test(vis5(date4)),
+      vis5(date4)
+    );
+    const realismSrc = read("src/lib/roadmap-realism.ts");
+    const assumedFig = DB5.realismFiguresOf(roadmapFixture("depth-calibrating").view!.dateCheck!.basis[0]);
+    check(
+      "R5 realism figures: the parser reads R2's template (each fragment it matches is still in roadmap-realism.ts); an assumed pass rate and clearance read as assumed; a sentence it can't read gives no figure",
+      ["of your usual ${fmtRate(rSrc as number)} new cards a week", "`your ${pct(model.params.p)} pass rate (reads high)`", "`an assumed ${pct(model.params.p)} pass rate`", "`the ${pct(model.params.c)} of your due queue you clear`", "`an assumed ${pct(model.params.c)} of your due queue cleared`", "this depth is realistic by", "By your exam (", "This date is set by the review schedule"].every((f) => realismSrc.includes(f)) &&
+        assumedFig.pass?.assumed === true &&
+        assumedFig.clear?.assumed === true &&
+        JSON.stringify(DB5.realismFiguresOf("Not dated: no writing pace yet.")) === JSON.stringify({ rate: null, share: null, pass: null, clear: null }),
+      JSON.stringify(assumedFig)
+    );
+    check(
+      "R5 date: «set by reviews» opens the schedule-bound line; the never-lowered line sits in an (i) beside the choices (closed); every other line R2 wrote is in the realism (i)",
+      panel5(date4, chip5("schedule"))?.text === lines4.schedule &&
+        lines4.schedule === dc4.basis.find((b) => b.startsWith("This date is set by the review schedule")) &&
+        panel5(date4, tip5("lowering the depth"))?.text === copy.NEVER_LOWERED_LINE &&
+        panel5(date4, tip5("lowering the depth"))?.hidden === true &&
+        lines4.rest.every((b) => panel5(date4, tip5("how this date is worked out"))?.text.includes(b)) &&
+        !vis5(date4).includes(copy.NEVER_LOWERED_LINE)
+    );
+    const cal5 = mine5("capacity-calibrating", "draft-date");
+    check(
+      "R5 date (D28): while the pass rate calibrates, 'pass rate calibrating 12/30' replaces the % and the realistic marker carries «best case»",
+      vis5(cal5).includes(copy.shortCalibrating(12, 30)) && vis5(cal5).includes(`≈ Mar 2028 · ${copy.SHORT_BEST_CASE}`) && !/80%\s?pass/.test(vis5(cal5)),
+      vis5(cal5)
+    );
+    const imp5 = mine5("draft-impossible", "draft-date");
+    check(
+      "R5 date: on your own date the verdict chip ('Impossible'), the realistic date offer and the lower depth stay one tap each; a 'yours' marker only for a date that can be yours",
+      /data-verdict="IMPOSSIBLE"/.test(imp5) && imp5.includes(">Use Sun 12 Mar 2028<") && imp5.includes(copy.LOWER_DEPTH_WORD) && !/· yours/.test(vis5(imp5))
+    );
+    const wip = { ...dc4, verdict: "TIGHT" as const, dateOrigin: { origin: "USER" as const, calibrating: [] } };
+    const tight5 = R(createElement(DB5.DateBlock, { roadmapId: "rm1", check: wip, depth: 12, rows: [], mode: "draft", userDay: "2027-12-31", today: v4.today, throughput: { ...v4.throughput!, adherence: { kind: "calibrating", have: 3, need: 8 } }, feasibility: null }));
+    check(
+      "R5 date (D28): your own date reads 'Unverified · Tight' while capacity calibrates, with a t.pin marker '31 Dec 2027 · yours' and 'Keep my date — Tight'; the (i) says why it's unverified",
+      vis5(tight5).includes("Unverified · Tight") && vis5(tight5).includes(`31 Dec 2027 · ${copy.SHORT_YOURS}`) && tight5.includes(`${copy.KEEP_MY_DATE} — Tight`) && all5(tight5).includes(DB5.UNVERIFIED_REALISM_LINE),
+      vis5(tight5)
+    );
+    const para4 = vis5(date4);
+    const key4 = panel5(date4, tip5("the marks on the depth and date"));
+    check(
+      "R5 Paragon (§3.3 screen 2, D5): an idle seal (rank 6, no padlock) and 'Paragon needs L12 · final stage · practice kept · standard logged', no pip lit on a draft; paragonDepthLine in the card Key (closed)",
+      /<span class="mg-rs mg-rs-34"[^>]*data-rank="6" data-s="idle"[^>]*aria-hidden="true"/.test(date4) &&
+        para4.includes(`${AIM_RANKS[6]} needs`) &&
+        ["L12", "final stage", "practice kept", "standard logged"].every((c) => para4.includes(c)) &&
+        !/rm-dd-pip"[^>]*data-on/.test(date4) &&
+        !/data-g="m\.lock"/.test(date4) &&
+        key4?.hidden === true &&
+        key4.text.includes(copy.paragonDepthLine(dp4.coverage.length)),
+      key4?.text.slice(0, 120)
+    );
+    check(
+      "R5 depth and date: three InfoTips on the card (the realism (i), the never-lowered (i), the Key) and no text inside a band",
+      (block5(date4, 'class="card rm-date-card"')[0]?.match(/class="mg-tip"/g) ?? []).length === 3 && !/class="shd/.test(date4)
+    );
+
+    // 5. The checks panel (§3.3 screen 3's "Is this realistic?", R5's file): the gauge, the chips, the capacity (i).
+    const mf5 = v4.draft!.feasibility.milestones[0];
+    const ck5 = R(createElement(CK5.ChecksPanel, { roadmapId: "rm1", mf: mf5, aimCheck: { kind: "unchecked" }, intensity: "STEADY", dueDay: "2026-11-22", m: 1, today: v4.today, title: "Milestone 1", throughput: v4.throughput, hoursPerWeek: 6 }));
+    const g5 = CK5.gaugeOf(mf5.time)!;
+    const cap5 = panel5(ck5, tip5("whether this is realistic"));
+    check(
+      "R5 checks: the worst week as a CapacityGauge ('need ≈ 3 h 20 · have ≈ 4 h 30 /wk') with its verdict chip; «38% sized by Gemini» opens the throughput sentence; every sentence and TIME_FIXED_LINE in the capacity (i)",
+      ck5.includes('class="mg-cg rm-ck2-g"') &&
+        vis5(ck5).includes(`≈ ${g5.need.text}`) &&
+        vis5(ck5).includes(`≈ ${g5.have.text} /wk`) &&
+        vis5(ck5).includes(copy.shortSizedByGemini(0.38)) &&
+        panel5(ck5, chip5("sized-by-gemini"))?.text === TP5.sizedSentence(v4.throughput!, 0.38) &&
+        cap5?.hidden === true &&
+        cap5.text.includes(CK5.timeSentence(mf5.time)) &&
+        cap5.text.includes(copy.TIME_FIXED_LINE) &&
+        !vis5(ck5).includes(copy.TIME_FIXED_LINE) &&
+        panel5(ck5, chip5("aim-unchecked"))?.text === copy.AIM_UNCHECKED_LINE &&
+        ck5.includes('href="/you/roadmap/new#reality"'),
+      vis5(ck5)
+    );
+    const ckU = R(createElement(CK5.ChecksPanel, { roadmapId: "rm1", mf: { ...mf5, time: { ...mf5.time, unverified: true } }, aimCheck: { kind: "unchecked" }, intensity: "STEADY", dueDay: "2026-11-22", m: 1, today: v4.today, title: "Milestone 1", throughput: null, hoursPerWeek: 6, intakeEditable: false }));
+    const ckN = R(createElement(CK5.ChecksPanel, { roadmapId: "rm1", mf: { ...mf5, time: { ...mf5.time, worstWeek: null } }, aimCheck: null, intensity: "STEADY", dueDay: "2026-11-22", m: 1, today: v4.today, title: "Milestone 1", throughput: null, hoursPerWeek: 6 }));
+    check(
+      "R5 checks (D28): 'Unverified · Fits' while capacity calibrates (v.unv before the verdict glyph), no sized chip without Gemini's share; with no worst week the verdict stands alone; ≤ 1 InfoTip",
+      vis5(ckU).includes("Unverified · Fits") && /data-g="v\.unv"[\s\S]*data-g="v\.fits"/.test(ckU) && !ckU.includes('data-hc="sized-by-gemini"') && ckU.includes('<button type="button" class="rm-ilink">Add a figure</button>') && !ckN.includes("mg-cg") && vis5(ckN).includes("App-tracked time") && (ck5.match(/class="mg-tip"/g) ?? []).length === 1
+    );
+    const tpHtml = R(createElement(TP5.ThroughputPanel, { throughput: v4.throughput, hoursPerWeek: 6 }));
+    const tpCal = R(createElement(TP5.ThroughputPanel, { throughput: roadmapFixture("capacity-calibrating").view!.throughput, hoursPerWeek: 6 }));
+    check(
+      "R5 capacity (§8): «not timed» and «38% sized by Gemini» (its panel the throughput sentence) on tracked time, «reads high» on the pass share, 'yours' on your hours; calibrating figures say so, with no Gemini share",
+      ["not timed", copy.shortSizedByGemini(0.38), "reads high", copy.SHORT_YOURS].every((t) => vis5(tpHtml).includes(t)) &&
+        panel5(tpHtml, chip5("sized-by-gemini"))?.text === TP5.sizedSentence(v4.throughput!, 0.38) &&
+        vis5(tpCal).includes("Calibrating") &&
+        !tpCal.includes('data-hc="sized-by-gemini"'),
+      vis5(tpHtml)
+    );
+    const dvMx = roadmapFixture("draft-mixed").view!;
+    const inh = { ...dvMx.run!, kind: "INHOUSE" as const, wrote: "INHOUSE" as const };
+    const rfChip = R(createElement(RF5.RunFacts, { run: inh, today: dvMx.today, variant: "chip" }));
+    const rfLine = R(createElement(RF5.RunFacts, { run: inh, today: dvMx.today }));
+    check(
+      "R5 run facts: the chip variant shows the counts ('2 dropped · 1 matched'), the line sr-only and in its (i); the default variant (the living page's reference column) keeps the full line",
+      vis5(rfChip) === "2 dropped · 1 matched · What was dropped" && rfChip.includes(`<span class="sr-only">${RF5.runFactsLine(inh)}</span>`) && vis5(rfLine) === `${RF5.runFactsLine(inh)} · What was dropped`,
+      `${vis5(rfChip)} | ${vis5(rfLine)}`
+    );
+
+    // 6. Drafting (§3.3 screen 12, §6.1, §7.12; WAIT, D19): one card with the weave band, the pause in its heading row,
+    //    the route.weave glyph and the aria-live line verbatim; stale stops it.
+    const drf = mine5("running", "roadmap-drafting");
+    const runR = roadmapFixture("running").view!.run!;
+    const live5 = els5(tree5(drf)).find((e) => e.attrs["aria-live"] === "polite");
+    const waitCard = block5(drf, "data-wait(?:=\"\")?")[0] ?? "";
+    check(
+      "R5 drafting (WAIT): a [data-wait] card with the weave band at its top (wait kind, aria-hidden, no canvas), the 40 px 'Pause animation' (aria-pressed) in the heading row, the route.weave glyph, and 'Drafting · 1 draft · started … · usually about 18 s' verbatim in aria-live",
+      waitCard.length > 0 &&
+        /<div class="rm-band"><div class="shd shd-weave" aria-hidden="true" data-shd="weave" data-shd-kind="wait"/.test(waitCard) &&
+        /<div class="rm-drf-h"><div class="t-eyebrow">Draft<\/div><button type="button" class="icon-btn mg-gb mg-gb-40 shd-pause" aria-label="Pause animation" aria-pressed="false">/.test(waitCard) &&
+        /<svg class="[^"]*mg-weave[^"]*"[^>]*data-g="route\.weave"/.test(waitCard) &&
+        live5 != null &&
+        txt5(live5) === `Drafting · 1 draft · started ${copy.timeSecondsLabel(runR.startedAt)} · usually about 18 s` &&
+        !/<canvas|%|spin|shimmer|rm-sk|role="progressbar"|<progress/.test(drf),
+      drf.slice(0, 200)
+    );
+    const stale5 = mine5("run-stale", "roadmap-drafting");
+    check(
+      "R5 drafting: a stale run stops the weave at once (static strands, no [data-wait], no pause) and says so, with its two answers",
+      /data-shd="weave" data-shd-kind="static"/.test(stale5) && !/data-wait/.test(stale5) && !/aria-pressed/.test(stale5) && vis5(stale5).includes("Drafting stopped (timed out)") && stale5.includes(">Build from my numbers<") && stale5.includes(">Try again<")
+    );
+    const rp5 = roadmapFixture("active-replan").view!;
+    const rpRun = (stale: boolean) => R(createElement(RoadmapScreen, { view: { ...rp5, run: { ...rp5.run!, status: "RUNNING" as const, finishedAt: null, usualSeconds: 18, stale } } }));
+    const rpCard = (h: string) => block5(h, 'aria-label="The re-plan draft"')[0] ?? "";
+    const rpLive = rpCard(rpRun(false));
+    const rpStale = rpCard(rpRun(true));
+    const rpIdle = rpCard(page5("active-replan"));
+    check(
+      "R5 re-plan (§6.1): while its run is RUNNING the re-plan card is the page's WAIT card (the weave, the pause, the aria-live line); stale, it stops; idle, no band and no pause",
+      /data-wait=""/.test(rpLive.slice(0, rpLive.indexOf(">"))) &&
+        /data-shd="weave" data-shd-kind="wait"/.test(rpLive) &&
+        /aria-label="Pause animation" aria-pressed="false"/.test(rpLive) &&
+        /aria-live="polite"/.test(rpLive) &&
+        !/data-wait/.test(rpStale.slice(0, rpStale.indexOf(">"))) &&
+        /data-shd-kind="static"/.test(rpStale) &&
+        !/aria-pressed/.test(rpStale) &&
+        rpIdle.length > 0 &&
+        !/data-shd|aria-pressed|data-wait/.test(rpIdle),
+      rpLive.slice(0, 160)
+    );
+
+    // 7. Motion honesty in R5's files (H1, H3, H7): no WAAPI call and no loop of their own; a draft passes no seen key to
+    //    its TimeBar (no plan basis yet), so its estimate never moves; the CSS section is layout only.
+    const r5Files = ["DraftReview.tsx", "RunFacts.tsx", "DateBlock.tsx", "ChecksPanel.tsx", "ThroughputPanel.tsx"].map((f) => code(read(`src/components/roadmap/${f}`)));
+    const drSrc5 = r5Files[0];
+    check(
+      "R5 motion: no .animate(, no 'spin' or 'shimmer', no data-play in R5's files; DraftReview gives its DateBlock no seenKey; DateBlock hands it only to the TimeBar",
+      r5Files.every((s) => !/\.animate\(|spin|shimmer|data-play/i.test(s)) && !/<DateBlock[\s\S]*?seenKey=/.test(drSrc5.slice(drSrc5.indexOf("<DateBlock"), drSrc5.indexOf("/>", drSrc5.indexOf("<DateBlock")))) && (r5Files[2].match(/seenKey/g) ?? []).length >= 2
+    );
+    const css5 = read("src/components/roadmap/roadmap.css");
+    const sec5 = css5.slice(css5.indexOf("/* ===== R5 "), css5.indexOf("/* ===== /R5 ===== */")).replace(/\/\*[\s\S]*?\*\//g, "");
+    check(
+      "R5 css: its section is layout hooks only — rm-* classes (kit classes only as context), no animation, transition or keyframes, ink only",
+      sec5.length > 0 && !/animation|transition|@keyframes|gold|--owed|--mp\b|--light/.test(sec5) && [...sec5.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].every((m) => m[1].startsWith("rm-") || m[1] === "t-eyebrow" || m[1] === "chip")
+    );
+    void DR5;
+  }
+  // ===== /R5 =====
+  // ===== R6 Start sheet (StartSheet) =====
+  // ui-motion.md screen 7 (§3.3, §7.7, §8; D12, D13, D25, D26, D28). The kit Sheet portals and renders nothing
+  // on the server, so the page's static render has no Start sheet: R6 renders StartSheetBody itself (with the
+  // Sheet's title and its dates, which count too), fills R0's row-7 word rows from it, adds its own honesty,
+  // tap and survival rows (ids "r6…"), and gates every one of them with r0Gate at the end of this block.
+  console.log("— R6 Start sheet (ui-motion.md screen 7) —");
+  {
+    const wc6 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const ss = await import("../src/components/roadmap/StartSheet");
+    const { ItemEditor } = await import("../src/components/roadmap/ItemEditor");
+    const { editorScopeOf } = await import("../src/components/roadmap/DraftReview");
+    const { ACTIVITY_DOM_ID } = await import("../src/components/roadmap/ActivityConfirm");
+    const { timeSentence } = await import("../src/components/roadmap/ChecksPanel");
+    const n6 = (t: string) => t.replace(/\s+/g, " ").trim();
+    type Sheet6 = { body: string; head: string; sp: StartPreview; today: string; items: MilestoneDraft["items"]; text: string; all: string };
+    const sheet6 = (s: FixtureState, o: { patch?: (p: StartPreview) => StartPreview; heldRank?: number | null } = {}): Sheet6 => {
+      const fx = roadmapFixture(s);
+      const v = fx.view!;
+      const ms = v.current!.milestone;
+      const sp = o.patch ? o.patch(fx.startPreview!) : fx.startPreview!;
+      const scope = editorScopeOf(v, [ms]);
+      const el = createElement(ss.StartSheetBody, { preview: sp, milestone: ms, today: v.today, activityConfirm: v.activityConfirm, roadmapId: v.header!.id, heldRank: o.heldRank, onClose: () => undefined });
+      // ItemEditor's props type requires `children`, so createElement needs it in the props object here.
+      // eslint-disable-next-line react/no-children-prop
+      const body = R(scope ? createElement(ItemEditor, { scope, children: el }) : el);
+      const head = `<h2>Start milestone ${ms.ord}</h2><p>${renderToStaticMarkup(createElement(ss.StartSheetDates, { milestone: ms, today: v.today }))}</p>`;
+      return { body, head, sp, today: v.today, items: ms.items, text: wc6.visibleText(head + body, { width: 344 }), all: n6(textOf(head + body)) };
+    };
+    const S7: Record<"start-refit" | "exam-waypoint" | "active-confirm", Sheet6> = { "start-refit": sheet6("start-refit"), "exam-waypoint": sheet6("exam-waypoint"), "active-confirm": sheet6("active-confirm") };
+    const refit = S7["start-refit"];
+    const exam = S7["exam-waypoint"];
+    const bodyS = S7["active-confirm"];
+    const count6 = (h: string, re: RegExp) => (h.match(re) ?? []).length;
+
+    // 1. App words per §3.2 row 7 (the sheet's title, its dates and the marked body): R0's rows, now rendered.
+    const rows7 = WORD_BUDGET_ROWS.filter((r) => r.row === 7);
+    for (const row of rows7) {
+      const sh = (S7 as Record<string, Sheet6 | undefined>)[row.fixture];
+      if (!sh) {
+        R0_RESULTS.words.set(row.id, { ok: false, detail: `R6 renders no Start sheet for ${row.fixture}` });
+        continue;
+      }
+      const marked = sh.body.startsWith('<div class="rm-ss" data-wc-block="start-sheet"');
+      const c = wc6.countAppWords(sh.head + sh.body, { width: 344 });
+      R0_RESULTS.words.set(row.id, { ok: marked && c.count <= row.budget, detail: `${c.count} / ${row.budget}: title, dates and [data-wc-block="start-sheet"] (rendered by R6)${marked ? "" : " · the body is not the marked block"}` });
+    }
+
+    // 2. Honesty survives in VISIBLE text (§8, §11.3), on the sheet and on variants of it.
+    const need6 = (sh: Sheet6, words: (string | RegExp)[]): string | null => {
+      const miss = words.filter((w) => (typeof w === "string" ? !sh.text.includes(w) : !w.test(sh.text))).map(String);
+      return miss.length ? `not visible: ${miss.join(" · ")}` : null;
+    };
+    const unverified = sheet6("start-refit", { patch: (p) => ({ ...p, feasibility: { ...p.feasibility, time: { ...p.feasibility.time, unverified: true } } }) });
+    const yoursHours = sheet6("start-refit", { patch: (p) => ({ ...p, feasibility: { ...p.feasibility, time: { ...p.feasibility.time, worstWeek: { ...p.feasibility.time.worstWeek!, availableClass: "YOURS" } } } }) });
+    const paidPatch = (p: StartPreview): StartPreview => ({ ...p, payBasis: { ...p.payBasis!, lineagePaidOn: "2027-03-03" } });
+    const paid = sheet6("start-refit", { patch: paidPatch });
+    const paidPay = model.startPayOf(paidPatch(refit.sp), [], refit.items);
+    const keeps = sheet6("start-refit", { patch: (p) => ({ ...p, givesRank: null }), heldRank: 1 });
+    const keepsBare = sheet6("start-refit", { patch: (p) => ({ ...p, givesRank: null }) });
+    const restsName = ss.restsOnAddedOf(exam.sp)!;
+    const H6: [string, () => string | null][] = [
+      ["r6-pay-line", () => need6(refit, [copy.SHORT_PAYS, copy.SHORT_X_PROGRESS, copy.shortFromFloor()])],
+      ["r6-pay-line-exam", () => need6(exam, [copy.SHORT_PAYS, copy.SHORT_X_PROGRESS, copy.shortFromFloor()])],
+      ["r6-rests-on-added", () => need6(exam, [copy.SHORT_RESTS_ON_ADDED]) ?? (/<button[^>]*data-hc="rests-on-added"[^>]*aria-controls="/.test(exam.body) && exam.all.includes(n6(copy.restsOnAddedLine(6, restsName))) ? null : "not a button opening restsOnAddedLine")],
+      ["r6-pays-nothing-ms", () => need6(paid, [copy.SHORT_PAYS_NOTHING]) ?? (paidPay.stated === 0 && /<button[^>]*data-hc="pays-nothing-ms"[^>]*aria-controls="/.test(paid.body) && paid.all.includes(n6(copy.statedLine(0, paidPay.zeroReason, paidPay.paidOn, paid.today))) ? null : "a milestone that pays nothing doesn't open its reason")],
+      ["r6-health-body", () => (count6(bodyS.text, /Not medical advice · ask a professional/g) === 1 && count6(bodyS.all, new RegExp(copy.HEALTH_LINE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) === 1 ? null : "not exactly one health chip carrying HEALTH_LINE")],
+      ["r6-health-not-field", () => (!refit.text.includes(copy.SHORT_HEALTH) && !exam.text.includes(copy.SHORT_HEALTH) ? null : "a Field plan's sheet shows the health chip")],
+      ["r6-gemini-who", () => (count6(refit.text, /Gemini · kept · not checked/g) >= refit.sp.todayRows.filter((r) => r.class === "KEPT_SUGGESTION").length ? null : "a kept Today row lost its who-word")],
+      ["r6-rank-verb", () => need6(refit, [/gives Aim rank\nJourneyman|gives Aim rank Journeyman/]) ?? (/data-g="rank\.2" data-s="active"/.test(refit.body) && !/data-g="rank\.\d" data-s="done"/.test(refit.body) ? null : "the rank not yet held isn't the active (open) shape")],
+      ["r6-keeps-rank", () => need6(keeps, [copy.SHORT_KEEPS_RANK]) ?? (/data-g="rank\.1" data-s="done"/.test(keeps.body) && !/data-g="rank\./.test(keepsBare.body.replace(/<span class="mg-tp"[\s\S]*?<\/span><\/span>/g, "")) && keepsBare.text.includes(copy.SHORT_KEEPS_RANK) ? null : "keeps: the held rank's done shape, or no glyph without it")],
+      ["r6-over", () => need6(refit, [/\bOver\b/])],
+      ["r6-unverified", () => need6(unverified, ["Unverified · Fits"])],
+      ["r6-yours-hours", () => need6(yoursHours, [copy.SHORT_YOURS])],
+      ["r6-rows-left", () => need6(refit, [copy.shortRowsLeft(2)])],
+      ["r6-week-quests-pay-nothing", () => need6(refit, [copy.SHORT_WEEK_QUESTS, copy.SHORT_PAYS_NOTHING])],
+      ["r6-held", () => need6(bodyS, [ss.START_NOT_ADDED, copy.ACTIVITY_HELD_LEFT_OUT]) ?? (bodyS.all.includes(copy.ACTIVITY_HELD_WAITING) ? null : "the waiting line left the markup")],
+      ["r6-jump", () => need6(bodyS, [copy.SHORT_WAITING_ACTIVITIES])],
+      ["r6-target-fits", () => need6(exam, [ss.START_TARGET_WORD, ss.START_TARGET_FITS])],
+    ];
+    for (const [id, f] of H6) {
+      const bad = f();
+      R0_RESULTS.honesty.set(id, { ok: bad == null, detail: bad ?? "visible" });
+    }
+
+    // 3. Tap reachability (D13): every sr-only honesty or row string is also in a panel a button on the sheet opens; ≤ 3 InfoTips.
+    type P6 = { tag?: string; attrs: Record<string, string>; children: P6[]; parent: P6 | null; text?: string };
+    const taps6 = (sh: Sheet6) => {
+      const strings = [...new Set([...Object.values(copy.PROVENANCE_WORDS), copy.ACTIVITY_HELD_WAITING, timeSentence(sh.sp.feasibility.time)].map(n6))].filter((x) => x.length >= 12);
+      const els = wc6.elementsOf(wc6.parseMarkup(sh.body) as never) as unknown as P6[];
+      const cls = (e: P6) => wc6.classesOf(e as never) as string[];
+      const txt = (e: P6) => n6(wc6.textOfNode(e as never) as string);
+      const controlled = new Set(els.filter((e) => e.tag === "button" && e.attrs["aria-controls"]).map((e) => e.attrs["aria-controls"]));
+      const panels = els.filter((e) => e.attrs.id && controlled.has(e.attrs.id)).map(txt);
+      let sr = 0;
+      const lost: string[] = [];
+      for (const el of els) {
+        if (!cls(el).includes("sr-only")) continue;
+        for (const str of strings.filter((x) => txt(el).includes(x))) {
+          sr++;
+          if (!panels.some((p) => p.includes(str))) lost.push(str.slice(0, 40));
+        }
+      }
+      return { sr, lost, tips: els.filter((e) => e.tag === "button" && cls(e).includes("mg-tip")).length };
+    };
+    const TAP6 = Object.entries(S7).map(([s, sh]) => {
+      const r = taps6(sh);
+      const id = `r6-${s}`;
+      R0_RESULTS.taps.set(id, { ok: r.sr > 0 && r.lost.length === 0 && r.tips <= model.INFO_TIPS_PER_CARD, detail: `${r.sr - r.lost.length}/${r.sr} sr-only strings one tap away · ${r.tips} InfoTips${r.lost.length ? ` (not: ${r.lost.join(" | ")})` : ""}` });
+      return id;
+    });
+
+    // 4. Full-text survival: every sentence the sheet used to print is still in its markup (a panel, the Key, sr).
+    const due6 = copy.dayWithWeekday(refit.sp.dueDay, refit.today);
+    const SURV6: [Sheet6, string, string][] = [
+      [refit, "today's check reason", refit.sp.todayCheck!.reason],
+      [refit, "TIME_FIXED_LINE", copy.TIME_FIXED_LINE],
+      [refit, "the time sentence", timeSentence(refit.sp.feasibility.time)],
+      [refit, "the Mid-goal limit line", refit.sp.pay.limitLine!],
+      [refit, "the pay paragraph's due day", `Becomes a Mid goal on Today, due ${due6}`],
+      [refit, "the pay paragraph's tail", ", once 21 days old · progress from your records, no +1"],
+      [refit, "the gate sentence", ss.startGateLine(2)],
+      [refit, "the title row's why", "Gemini's words — goes to Today as written."],
+      [refit, "the Domain row's why", "Gemini picked this Domain — it sets what counts."],
+      [refit, "the week quests' footer", ss.weekQuestFooter(refit.sp.weekQuests!, refit.today)],
+      [refit, "a kept row's words", copy.PROVENANCE_WORDS.KEPT_SUGGESTION],
+      [exam, "restsOnAddedLine", copy.restsOnAddedLine(6, restsName)],
+      [exam, "the target-still-fits sentence", ss.START_TARGET_FITS_LINE],
+      [bodyS, "HEALTH_LINE", copy.HEALTH_LINE],
+      [bodyS, "ACTIVITY_HELD_WAITING", copy.ACTIVITY_HELD_WAITING],
+      [bodyS, "ACTIVITY_HELD_LEFT_OUT", copy.ACTIVITY_HELD_LEFT_OUT],
+    ];
+    for (const [sh, id, str] of SURV6) R0_RESULTS.survival.set(`r6: ${id}`, { ok: sh.all.includes(n6(str)), detail: sh.all.includes(n6(str)) ? "in the markup" : "gone from the markup" });
+
+    // 5. Hard checks: the slot rules, the glyph rules, motion and the code.
+    const sheets6 = Object.values(S7);
+    check("R6: each sheet's body is one [data-wc-block=start-sheet] with data-fx=none (no shader on the Start sheet; §6.1)", sheets6.every((sh) => sh.body.startsWith('<div class="rm-ss" data-wc-block="start-sheet" data-fx="none">') && count6(sh.body, /data-wc-block=/g) === 1));
+    check("R6: no shader slot, canvas, WAIT card, data-play, title tooltip, spin or shimmer on the sheet", sheets6.every((sh) => !/class="[^"]*\bshd\b|<canvas|data-wait|data-play| title="|spin|shimmer/i.test(sh.body + sh.head)));
+    check(
+      "R6 (D5): [m.lock] sits only on the rows that still need the user, closed at rest (start-refit 2, exam-waypoint 0, active-confirm 0)",
+      sheets6.every((sh) => count6(sh.body, /\brm-ss-lock\b/g) === ss.rowsToCheck(sh.sp).length) && count6(refit.body, /\brm-ss-lock\b/g) === 2 && !/\bmg-open\b/.test(refit.body),
+      sheets6.map((sh) => count6(sh.body, /\brm-ss-lock\b/g)).join(",")
+    );
+    const src6 = code(read("src/components/roadmap/StartSheet.tsx"));
+    const plays6 = [...src6.matchAll(/playGlyph\(([^,]+),\s*"([^"]+)",\s*\{([^}]*)\}\)/g)];
+    check(
+      "R6 (§5.2, H1, H3): only ACT motions through playGlyph — unlock and pay-swap — and pay-swap never writes the figure's text (React owns it; a stated rate never rolls)",
+      plays6.length === 2 && plays6.map((m) => m[2]).sort().join() === "pay-swap,unlock" && plays6.every((m) => /licence: "ACT"/.test(m[3]) && !/\btext\s*:/.test(m[3])) && !/\.animate\(|countTo\(|roll\(/.test(src6),
+      plays6.map((m) => `${m[2]} {${m[3]}}`).join(" | ")
+    );
+    check("R6 (ACT): the pay figure crossfades only when the user's own switch just changed it, never on a reload", /actedAt\.current = Date\.now\(\);/.test(src6) && /before !== payKey && Date\.now\(\) - actedAt\.current < 1000/.test(src6) && /ref=\{payRef\}/.test(src6));
+    check(
+      "R6 (screen 7): the sheet jumps to the page's own activity card (href #rm-activities) instead of duplicating it; nothing to ask, no jump",
+      bodyS.body.includes(`href="#${ACTIVITY_DOM_ID}"`) && !/\brm-avd\b/.test(bodyS.body) && ![refit, exam].some((sh) => sh.body.includes(`href="#${ACTIVITY_DOM_ID}"`)) && /\.rm-ss-jump \{[^}]*min-height: 44px;/.test(read("src/components/roadmap/roadmap.css"))
+    );
+    check("R6 (D12, D11): the health chip is a button opening HEALTH_LINE, inside [data-safety] (its panel opens instantly)", /<span data-safety="">\s*<button[^>]*data-hc="health"[^>]*aria-controls="[^"]+"/.test(bodyS.body) && /data-hc-panel="health"[^>]*>\s*<p class="rm-it-why">Not medical advice/.test(bodyS.body));
+    check(
+      "R6 (D26): compact figures carry spoken twins — '3/wk · 45 min · ≈ ⬡ 14.0 a session' is read '3× a week, 45 minutes, about 14.0 XP a session'; the dates are read as words",
+      refit.body.includes('<span class="sr-only">3× a week, 45 minutes, about 14.0 XP a session</span>') &&
+        ss.ruleShort("TARGET:3/W") === "3/wk" &&
+        ss.ruleShort("TARGET:2/M") === "2/mo" &&
+        ss.ruleShort("DAILY") === copy.ruleWords("DAILY") &&
+        wc6.countAppWords("<p>3/wk · 45 min</p>", { width: 344 }).count === 0 &&
+        /<span class="sr-only">Mon 21 Dec to Sun 7 Mar 2027<\/span>/.test(refit.head)
+    );
+    const provCases: [ItemDraft["origin"], ItemDraft["decision"], string][] = [
+      ["GEMINI", "PENDING", copy.provenanceChipWords("DRAFT", false)],
+      ["GEMINI", "KEPT", copy.provenanceChipWords("KEPT_SUGGESTION", false)],
+      ["CODE", "PENDING", copy.provenanceChipWords("WORKED_OUT", false)],
+      ["USER", "EDITED", copy.provenanceChipWords("YOURS", false)],
+      ["GEMINI", "CHECKED", copy.provenanceChipWords("YOURS", true)],
+      ["SYLLABUS", "KEPT", "Your syllabus line"],
+    ];
+    const provBad = provCases.filter(([o, d, w]) => ss.startProvOf(o, d).words !== w);
+    check("R6 (D25, D13): a Today row's mark says the words ProvenanceChip says (Gemini's keep their chip and who-word; the rest are glyph-only, words sr-only)", provBad.length === 0 && "chip" in ss.startProvOf("GEMINI", "PENDING") && "mark" in ss.startProvOf("CODE", "PENDING"), provBad.map(([o, d]) => `${o}/${d}: ${ss.startProvOf(o, d).words}`).join(" | "));
+    check(
+      "R6 (glyph use): Practice rows use the plan's own track sigil (craft on a Trading plan, body on a body plan); every KindGlyph has its evidence badge",
+      /data-kg="practice"[\s\S]{0,400}data-track="craft"/.test(refit.body) && /data-kg="practice"[\s\S]{0,400}data-track="body"/.test(bodyS.body) && sheets6.every((sh) => count6(sh.body, /data-kg="/g) === count6(sh.body, /\bmg-kg-ev\b/g) && count6(sh.body, /data-kg="/g) > 0)
+    );
+    const appWords6 = [ss.START_TARGET_WORD, ss.START_TARGET_FITS, ss.START_TODAY_HEAD, ss.START_PRACTICES_HEAD, ss.START_NOT_ADDED, copy.SHORT_GIVES_RANK, copy.SHORT_KEEPS_RANK, copy.SHORT_WEEK_QUESTS, copy.SHORT_WAITING_ACTIVITIES, copy.SHORT_NEED, copy.SHORT_HAVE, "Add to Today", "I checked this", "Next row to check", "rows left"];
+    const exemptBad = sheets6.flatMap((sh) =>
+      (wc6.elementsOf(wc6.parseMarkup(sh.body) as never) as unknown as P6[])
+        .filter((e) => e.attrs["data-wc"])
+        .map((e) => n6(wc6.textOfNode(e as never) as string))
+        .filter((t) => appWords6.some((w) => t.includes(w)))
+    );
+    check("R6 (§3.1, D2): no data-wc exemption holds the sheet's own app words", exemptBad.length === 0, exemptBad.slice(0, 3).join(" | "));
+    const css6 = read("src/components/roadmap/roadmap.css");
+    const rawSec6 = css6.slice(css6.indexOf("/* ===== R6 "), css6.indexOf("/* ===== /R6 ===== */"));
+    const sec6 = rawSec6.replace(/\/\*[\s\S]*?\*\//g, "");
+    const outside6 = css6.replace(rawSec6, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const wide6 = [...sec6.matchAll(/(?:^|[\s;{])(?:min-|max-)?width:\s*(\d+)px/g)].map((m) => Number(m[1])).filter((w) => w > 278);
+    // a class R6 introduces is rm-ss-*; another lane's or the shared rm-* classes appear only as context
+    const foreign6 = [...new Set([...sec6.matchAll(/\.(rm-[\w-]+)/g)].map((m) => m[1]))].filter((c) => !c.startsWith("rm-ss") && !new RegExp(`\\.${c}(?![\\w-])`).test(outside6));
+    check("R6 roadmap.css (344 first): R6's section sets no width over the 278 px content box, no transition and no animation, and every class it introduces is rm-ss-*", sec6.length > 0 && wide6.length === 0 && !/transition|animation|@keyframes/.test(sec6) && foreign6.length === 0, [...wide6, ...foreign6].join(","));
+
+    // The gates: R0's row-7 word rows and every R6 row above.
+    r0Gate("words", rows7.map((r) => r.id), "R6");
+    r0Gate("honesty", H6.map(([id]) => id), "R6");
+    r0Gate("taps", TAP6, "R6");
+    r0Gate("survival", SURV6.map(([, id]) => `r6: ${id}`), "R6");
+  }
+  // ===== /R6 =====
+  // ===== R7 Intake & safety (RoadmapForm, ActivityConfirm) =====
+  // ui-motion.md screens 1 and 8 (§3.3, §7.1, §7.8, §8; D11, D12, D13, D25, D26, D27, D31). The intake and the
+  // Activities card (a safety surface: static at every level, data-safety, no shader) keep every consent and honesty
+  // word on screen and fold the rest into a card Key or an (i). Here: R7's own checks; the replacements for the activity
+  // pins that read every <button> of a card as an act (the health chip and the (i)s are buttons now; the acts are the
+  // card's .rm-acts) and for the answered card's exact text (now with its health chip: §11.3's named re-pin); then the
+  // gates on R0's rows for screens 1 and 8.
+  console.log("— R7 Intake & safety (ui-motion.md screens 1 and 8) —");
+  {
+    const wc7 = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const ac7 = await import("../src/components/roadmap/ActivityConfirm");
+    const form7 = await import("../src/components/roadmap/RoadmapForm");
+    const CAT7 = await import("../src/lib/roadmap-catalog");
+    const RT7 = await import("../src/lib/roadmap-types");
+    const { CONFIRM_STATES: CS7 } = await import("../src/app/dev/style/roadmap/fixtures");
+    type ACV7 = import("../src/lib/roadmap-types").ActivityConfirmView;
+    const j7 = (x: unknown) => JSON.stringify(x);
+    const n7 = (t: string) => t.replace(/\s+/g, " ").trim();
+    const flat7 = (h: string) => n7(textOf(h));
+    const vis7 = (h: string) => n7(wc7.visibleText(h, { width: 344 }).replace(/\n/g, " "));
+    const VOID7 = new Set(["input", "img", "br", "hr", "meta", "link", "source", "track", "wbr", "area", "base", "col", "embed"]);
+    /** Every element whose opening tag matches `re` (no g flag), as its balanced outer markup. */
+    const outer7 = (html: string, re: RegExp): string[] => {
+      const out: string[] = [];
+      const open = /<([a-zA-Z][\w-]*)\b[^>]*>/g;
+      for (let m = open.exec(html); m; m = open.exec(html)) {
+        if (!re.test(m[0])) continue;
+        const tag = m[1];
+        if (m[0].endsWith("/>") || VOID7.has(tag)) {
+          out.push(m[0]);
+          continue;
+        }
+        const tagRe = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+        tagRe.lastIndex = m.index;
+        let depth = 0;
+        let end = html.length;
+        for (let t = tagRe.exec(html); t; t = tagRe.exec(html)) {
+          if (t[1]) depth--;
+          else if (!t[2]) depth++;
+          if (depth === 0) {
+            end = tagRe.lastIndex;
+            break;
+          }
+        }
+        out.push(html.slice(m.index, end));
+      }
+      return out;
+    };
+    const openTag7 = (el: string) => el.slice(0, el.indexOf(">") + 1);
+    const attr7 = (el: string, name: string) => new RegExp(`\\s${name}="([^"]*)"`).exec(openTag7(el))?.[1] ?? null;
+    const count7 = (h: string, s: string) => h.split(s).length - 1;
+    /** The answer's own acts: the buttons of the card's .rm-acts (the health chip and an (i) are buttons too, never acts). */
+    const acts7 = (card: string) => outer7(card, /class="rm-acts"/).flatMap((a) => [...a.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map((m) => flat7(m[1])));
+    /** The panels a button of this markup opens (aria-controls → the hidden element with that id). */
+    const panels7 = (h: string) => {
+      const ids = new Set([...h.matchAll(/<button\b[^>]*\saria-controls="([^"]+)"/g)].map((m) => m[1]));
+      return outer7(h, /\shidden=""/).filter((p) => ids.has(attr7(p, "id") ?? ""));
+    };
+    const box7 = (h: string) => outer7(h, /data-wc-block="activities"/)[0] ?? "";
+    const card7 = (h: string) => outer7(h, /aria-label="Activities to avoid"/)[0] ?? "";
+    const intakeCard7 = (h: string) => outer7(h, /id="rm-f-activities"/)[0] ?? "";
+    const DAY7 = "2026-10-05";
+    const acOf7 = (s: FixtureState): ACV7 | null => {
+      const f = roadmapFixture(s);
+      return f.view?.draft?.activityConfirm ?? f.view?.activityConfirm ?? null;
+    };
+    const draftAc7 = acOf7("draft-confirm")!;
+    const careAc7 = acOf7("draft-care")!;
+    const startOf7 = (v: ACV7) => R(createElement(ac7.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY7, place: "start" }));
+
+    // ── The Activities card: a static safety surface (D11) ──
+    const placed7 = CS7.map((s) => ({ s, box: box7(renders.get(s)!.page + renders.get(s)!.intake) }));
+    const startBoxes7 = [box7(startOf7(draftAc7)), box7(startOf7(careAc7))];
+    const boxes7 = [...placed7.map((p) => p.box), ...startBoxes7];
+    check(
+      "R7 safety (D11): every Activities card — draft, plan, Start sheet and intake, each confirm state — is one static box: data-safety, data-fx=\"none\", data-wc-block=\"activities\"; no data-play, weave, shader slot, canvas, animation or title",
+      boxes7.length === CS7.length + 2 &&
+        boxes7.every((b) => b.length > 0 && /\sdata-safety=""/.test(openTag7(b)) && /\sdata-fx="none"/.test(openTag7(b)) && !/data-play|mg-weave|class="shd|<canvas|animation|transition| title="/.test(b)),
+      placed7.filter((p) => !p.box).map((p) => p.s).join(", ")
+    );
+    check(
+      "R7 safety (D11): the card's code plays no motion — ActivityConfirm imports no glyph-motion and no seen hook; only the kit checkbox changes state",
+      !/lib\/glyph-motion"|glyph\/useSeen"|\b(playGlyph|usePlayOnSeen|useSeenEvent|useSeenValue|sequence)\(/.test(code(read("src/components/roadmap/ActivityConfirm.tsx")))
+    );
+    check(
+      "R7 safety (D11): on the card a chip's press scale stays still (its .chip has no transition, no :active transform)",
+      /\.rm-avd-c \.chip \{ transition: none; \}/.test(read("src/components/roadmap/roadmap.css")) && /\.rm-avd-c button:active > \.chip \{ transform: none; \}/.test(read("src/components/roadmap/roadmap.css"))
+    );
+
+    // ── One health chip per card (D12), its label keeping the instruction, HEALTH_LINE one tap away ──
+    const healthOk7 = (b: string, want: number) =>
+      count7(b, 'data-hc="health"') === want &&
+      (want === 0 || panels7(b).some((p) => attr7(p, "data-hc-panel") === "health" && flat7(p) === copy.HEALTH_LINE)) &&
+      (want === 0 || vis7(b).includes(copy.SHORT_HEALTH)) &&
+      !/class="rm-it-why"/.test(b);
+    const healthWant7 = (s: FixtureState) => (s === "intake-confirm" ? 1 : ac7.activityHealthOf(acOf7(s) ?? { track: "FIELD" }) ? 1 : 0);
+    const healthBad7 = placed7.filter((p) => !healthOk7(p.box, healthWant7(p.s))).map((p) => p.s);
+    check(
+      "R7 health (D12): one «Not medical advice · ask a professional» chip per body, care or asking craft card, a button opening HEALTH_LINE; none on a Field card; none on a body plan's Start sheet card (the sheet's own), one on a care plan's",
+      healthBad7.length === 0 && healthWant7("draft-words") === 0 && healthOk7(startBoxes7[0], 0) && healthOk7(startBoxes7[1], 1),
+      healthBad7.join(", ")
+    );
+
+    // ── The consent text stays visible word for word (C2-B4); repetition and the how-to move ──
+    const dBox7 = box7(card7(renders.get("draft-confirm")!.page));
+    const dVis7 = vis7(dBox7);
+    check(
+      "R7 consent (C2-B4): the draft card shows its lead (the user's words once), the question, the plan's line, the save line beside Save and the health chip; the how-to and the rows' quotes are folded (an (i), the card Key)",
+      dVis7.startsWith("Your words mention “Running causes me knee pain” and “Bad knees, so no jumping”. Which activities should the plan avoid?") &&
+        ["Easy, mobility and technique practice only until you confirm.", "The plan leaves out 3 and can include the other 2.", "Save my answers", copy.SHORT_HEALTH].every((t) => dVis7.includes(t)) &&
+        !dVis7.includes(copy.ACTIVITY_HOW_LINE) &&
+        !dVis7.includes("From your words:"),
+      dVis7.slice(0, 400)
+    );
+    const aBox7 = box7(card7(renders.get("active-confirm")!.page));
+    check(
+      "R7 consent: asking again, the stale line stays visible verbatim ('You answered on 2 Jan, before your words changed.'), with the save line",
+      vis7(aBox7).includes("You answered on 2 Jan, before your words changed.") && vis7(aBox7).includes(copy.activitySaveLine(2, 5))
+    );
+    check(
+      "R7 consent: the pending line is led by the track's sigil ([s-body] on a body plan, [s-care] on a care plan)",
+      /<p class="rm-avd-p rm-avd-pl"><svg[^>]*data-g="s-body"/.test(dBox7) && /<p class="rm-avd-p rm-avd-pl"><svg[^>]*data-g="s-care"/.test(box7(card7(renders.get("draft-care")!.page)))
+    );
+
+    // ── The rows: [checkbox] [sess.*] name; ticked: struck glyph + "avoid"; pre-ticked from words: [m.quote] ──
+    const dRows7 = outer7(dBox7, /<li class="rm-avd-row/);
+    const rowBad7 = dRows7.filter((r) => {
+      const on = /checked=""/.test(r);
+      return !(/data-g="sess\./.test(r) && on === /mg-strike/.test(r) && on === /class="rm-avd-av" aria-hidden="true">avoid</.test(r) && /<div class="rm-avd-lb" data-wc="name"><label class="rm-avd-hit"><input /.test(r));
+    });
+    check(
+      "R7 rows (§3.3 s8): each row is its checkbox, its session glyph and its name (a name, data-wc); a ticked row strikes its glyph and adds the word 'avoid', an unticked one neither",
+      dRows7.length === 5 && rowBad7.length === 0,
+      rowBad7.map((r) => flat7(r)).join(" | ")
+    );
+    check(
+      "R7 rows: [m.quote] marks exactly the rows the user's words pre-ticked (3 on the draft), and no session glyph is ever played (no ref, no motion)",
+      dRows7.filter((r) => r.includes('data-g="m.quote"')).length === 3 && dRows7.filter((r) => r.includes('data-g="m.quote"')).every((r) => /checked=""/.test(r))
+    );
+    const wordsOf7 = wc7.countAppWords(dBox7, { width: 344 }).words;
+    check(
+      "R7 rows (§3.1): the kinds' names are exempt (names) and 'avoid' counts as the app's word, once per ticked row",
+      wordsOf7.filter((w) => w === "avoid").length === 3 && !wordsOf7.some((w) => ["Harder", "Longer", "Strength", "Performance", "attempt"].includes(w)),
+      wordsOf7.join(" ")
+    );
+    /** D13: each row's line is its checkbox's description, the one element in the card Key that holds it (a panel a button opens), never an sr-only copy. */
+    const rowLinesOk7 = (b: string, v: ACV7) => {
+      const descs = [...b.matchAll(/<input\b[^>]*\saria-describedby="([^"]+)"/g)].map((m) => m[1]);
+      const ps = panels7(b);
+      const want = v.rows.map((r) => copy.activityRowLine(r)).filter((l): l is string => l != null);
+      return (
+        descs.length === want.length &&
+        descs.every((id) => count7(b, `id="${id}"`) === 1 && ps.some((p) => attr7(p, "data-tip-panel") === "key" && p.includes(`id="${id}"`))) &&
+        !b.includes('class="sr-only"')
+      );
+    };
+    check(
+      "R7 rows (D13): a row's line ('From your words: “…”', 'Not ticked on 2 Jan …', 'You said to avoid it on 2 Jan') is its checkbox's description, held once in the card Key a touch user opens — no sr-only copy, no title (draft, asking again, intake)",
+      rowLinesOk7(dBox7, draftAc7) && rowLinesOk7(aBox7, acOf7("active-confirm")!) && rowLinesOk7(box7(renders.get("intake-confirm")!.intake), intakeActivityOf7())
+    );
+    /** The intake's card view, as the form builds it from the words on the form (RoadmapForm's intakeActivityOf call). */
+    function intakeActivityOf7(): ACV7 {
+      const i = roadmapFixture("intake-confirm").intake!.draft!.intake;
+      return model.intakeActivityOf({ track: "BODY", texts: RT7.cueTextsOf(i), exam: false, practicesAllowed: true, examLabel: null, stored: null }).view;
+    }
+    const tipsOk7 = (b: string, how: string) => {
+      const ps = panels7(b);
+      return count7(b, 'class="mg-tip"') === 2 && count7(b, 'class="mg-tip"') <= model.INFO_TIPS_PER_CARD && ps.some((p) => attr7(p, "data-tip-panel") === "info" && flat7(p) === how) && ps.some((p) => attr7(p, "data-tip-panel") === "key");
+    };
+    check(
+      "R7 (i) and Key (D13): an asking card has two InfoTips (≤ 3): the how-to (ACTIVITY_HOW_LINE, the intake's ACTIVITY_INTAKE_HOW_LINE) and the card Key; on the safety surface both open at once (data-safety)",
+      tipsOk7(dBox7, copy.ACTIVITY_HOW_LINE) && tipsOk7(aBox7, copy.ACTIVITY_HOW_LINE) && tipsOk7(box7(renders.get("intake-confirm")!.intake), copy.ACTIVITY_INTAKE_HOW_LINE) && tipsOk7(startBoxes7[0], copy.ACTIVITY_HOW_LINE)
+    );
+    const ownBad7 = outer7(dBox7, /data-wc="own"/).filter((o) => !/^“[^”]*”[.,;:]?$/.test(flat7(o)));
+    check("R7 words: the lead's quotes are the user's own (data-wc=\"own\": “…” and its stop), and nothing else on the card is marked own", ownBad7.length === 0 && outer7(dBox7, /data-wc="own"/).length === 2, ownBad7.join(" | "));
+
+    // ── The answered card: the summary lines verbatim, each name beside its glyph ──
+    const ansCard7 = card7(renders.get("active-answered")!.page);
+    const gl7 = outer7(ansCard7, /class="rm-avd-gl"/);
+    check(
+      "R7 answered (§3.3 s8): the summary keeps its two lines verbatim, each name beside its session glyph — struck on 'You said to avoid:', with a check on 'The plan can include:' — then Change and the health chip",
+      gl7.length === 5 &&
+        gl7.filter((g) => /mg-strike/.test(g)).length === 1 &&
+        gl7.filter((g) => g.includes('data-g="safe.in"')).length === 4 &&
+        vis7(ansCard7).startsWith("You said to avoid: Longer session (2 Jan). The plan can include: Harder session, Strength session, Do a full attempt and Performance check. Change"),
+      vis7(ansCard7)
+    );
+    // The re-pin (§11.3, named): the answered card's flat text now ends with its health chip, label then line.
+    check(
+      "R7 re-pin (replaces 'plan: answered, the card shrinks …'): the answered card is the user's answer, what the plan can include, Change, then the health chip («Not medical advice · ask a professional», HEALTH_LINE behind it); no box, no Save, never 'fine'",
+      flat7(ansCard7) === `You said to avoid: Longer session (2 Jan). The plan can include: Harder session, Strength session, Do a full attempt and Performance check. Change ${copy.SHORT_HEALTH} ${copy.HEALTH_LINE}` &&
+        /<div class="rm-o6"><section class="card rm-avd"/.test(renders.get("active-answered")!.page) &&
+        !/type="checkbox"|Save my answers/.test(ansCard7) &&
+        !/\bfine\b/i.test(flat7(ansCard7)),
+      flat7(ansCard7)
+    );
+
+    // ── The re-pins of the acts (they read every button of a card; the acts are the card's .rm-acts) ──
+    const dCard7 = card7(renders.get("draft-confirm")!.page);
+    check(
+      "R7 re-pin (replaces 'draft: with boxes ticked the button is Save …'): with boxes ticked the one act is Save, beside what it does; the how-line names the other act",
+      j7(acts7(dCard7)) === j7([copy.ACTIVITY_SAVE_WORD]) && flat7(dCard7).includes("The plan leaves out 3 and can include the other 2.") && flat7(dCard7).includes(copy.ACTIVITY_HOW_LINE),
+      j7(acts7(dCard7))
+    );
+    const cCard7 = card7(renders.get("draft-care")!.page);
+    check(
+      "R7 re-pin (replaces 'care: nothing ticked …'): nothing ticked, the one act is “Nothing to avoid”, beside what it does",
+      j7(acts7(cCard7)) === j7([CAT7.ACTIVITY_NOTHING_TO_AVOID]) && flat7(cCard7).includes("The plan can then include all 5.") && (cCard7.match(/type="checkbox"/g) ?? []).length === 5,
+      j7(acts7(cCard7))
+    );
+    const oneTicked7 = { ...careAc7, rows: careAc7.rows.map((r, i) => (i === 0 ? { ...r, prefill: "AVOID" as const } : r)) };
+    const actsAt7 = (v: ACV7) => [
+      acts7(card7(R(createElement(ac7.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY7, place: "draft" })))),
+      acts7(startOf7(v)),
+      acts7(R(createElement(ac7.IntakeActivities, { view: v, keyNow: v.key, confirmed: null, onConfirm: () => {}, today: DAY7 }))),
+    ];
+    const ticked7 = [actsAt7(draftAc7), actsAt7(oneTicked7)];
+    const unticked7 = actsAt7(careAc7);
+    check(
+      "R7 re-pin (replaces 'ruling 1: with any box ticked …'): with any box ticked “Nothing to avoid” is hidden — the one act is Save (the intake's Confirm these) on the plan card, the Start sheet and the intake; with none ticked it is the only act",
+      ticked7.every(([p, s, i]) => j7(p) === j7([copy.ACTIVITY_SAVE_WORD]) && j7(s) === j7([copy.ACTIVITY_SAVE_WORD]) && j7(i) === j7([copy.ACTIVITY_CONFIRM_WORD])) &&
+        unticked7.every((a) => j7(a) === j7([CAT7.ACTIVITY_NOTHING_TO_AVOID])),
+      j7({ ticked7, unticked7 })
+    );
+    const wCard7 = card7(renders.get("draft-words")!.page);
+    check(
+      "R7 re-pin (replaces 'field: the card offers the suggestion …'): quoted, pre-ticked, still in the plan until the user saves; the one act is Save",
+      flat7(wCard7).startsWith("Your words mention “No timed practice, it stresses me out”. Which activities should the plan avoid?") &&
+        (wCard7.match(/type="checkbox"[^>]*checked=""/g) ?? []).length === 1 &&
+        vis7(wCard7).includes("Ticked from your words, still in the plan until you answer: Timed practice.") &&
+        j7(acts7(wCard7)) === j7([copy.ACTIVITY_SAVE_WORD]),
+      flat7(wCard7).slice(0, 240)
+    );
+    const iCard7 = intakeCard7(renders.get("intake-confirm")!.intake);
+    check(
+      "R7 re-pin (replaces 'intake: a suggestion pre-ticks a box …'): the intake's one act with boxes ticked is 'Confirm these', with the plan's line and the health chip",
+      j7(acts7(iCard7)) === j7([copy.ACTIVITY_CONFIRM_WORD]) && vis7(iCard7).includes("Easy, mobility and technique practice only until you confirm.") && iCard7.includes(copy.HEALTH_LINE) && (iCard7.match(/checked=""/g) ?? []).length >= 2,
+      j7(acts7(iCard7))
+    );
+    const careIntake7 = roadmapFixture("intake-confirm").intake!;
+    const careHtml7 = R(createElement(RoadmapForm, { view: { ...careIntake7, draft: { ...careIntake7.draft!, intake: { ...careIntake7.draft!.intake, track: "CARE", aim: "Support Mum's care at home", constraints: "Evenings only." } } } }));
+    const careCard7 = intakeCard7(careHtml7);
+    check(
+      "R7 re-pin (replaces 'intake: a care Area asks too …'): a care Area asks with its own easy kinds' line and the health chip, and its one act is “Nothing to avoid” while nothing is ticked",
+      flat7(careCard7).startsWith("Your words mention “Evenings only”. Which activities should the plan avoid?") &&
+        vis7(careCard7).includes("Planning the week and keeping a log only until you confirm.") &&
+        careCard7.includes(copy.HEALTH_LINE) &&
+        j7(acts7(careCard7)) === j7([CAT7.ACTIVITY_NOTHING_TO_AVOID]),
+      j7(acts7(careCard7))
+    );
+
+    // ── The intake (screen 1) ──
+    const intakeOf7 = (s: FixtureState) => renders.get(s)!.intake;
+    const INTAKE7: FixtureState[] = ["intake", "intake-gemini", "intake-empty-library", "intake-confirm", "intake-depth", "no-key"];
+    const rootBad7 = INTAKE7.filter((s) => {
+      const root = outer7(intakeOf7(s), /data-wc-block="intake"/)[0] ?? "";
+      return !(root.length > 0 && /\sdata-fx="none"/.test(openTag7(root)) && !/class="shd|<canvas| title="|data-play/.test(root));
+    });
+    check("R7 intake (§11.3): the form carries data-fx=\"none\" and data-wc-block=\"intake\"; no shader slot, canvas, data-play or title", rootBad7.length === 0, rootBad7.join(", "));
+    const tipCap7 = INTAKE7.flatMap((s) => {
+      const h = intakeOf7(s);
+      const secs = outer7(h, /<section class="card rm-fs"/);
+      const inSecs = secs.map((x) => count7(x, 'class="mg-tip"'));
+      const outside = count7(h, 'class="mg-tip"') - inSecs.reduce((a, b) => a + b, 0);
+      return [...inSecs, outside].filter((n) => n > model.INFO_TIPS_PER_CARD).map((n) => `${s}: ${n}`);
+    });
+    check("R7 intake (D13): at most 3 InfoTips per card (the form lead, the Depth (i), the card Key; the activity card's two inside its card), and at most 3 outside the cards", tipCap7.length === 0, tipCap7.join(", "));
+    const blank7 = intakeOf7("intake");
+    const aimTa7 = /<textarea\b[^>]*\sid="([^"]+)"[^>]*\splaceholder="([^"]*)"[^>]*\saria-describedby="([^"]+)"/.exec(blank7);
+    const aimDesc7 = aimTa7 ? panels7(blank7).flatMap((p) => outer7(p, new RegExp(`id="${aimTa7[3]}"`))) : [];
+    check(
+      "R7 intake (C1-m2): the aim is labelled 'Your aim'; its placeholder is AIM_CALL_PLACEHOLDER; it is described by the Key's line holding the question, AIM_LONG_HINT and 'Shown exactly as you wrote it' (a panel one tap away)",
+      aimTa7 != null &&
+        new RegExp(`<label class="st-label" for="${aimTa7[1]}">${copy.SHORT_AIM_LABEL}</label>`).test(blank7) &&
+        aimTa7[2] === copy.AIM_CALL_PLACEHOLDER &&
+        aimDesc7.length === 1 &&
+        flat7(aimDesc7[0]) === `What do you want to be able to do? ${copy.AIM_LONG_HINT} Shown exactly as you wrote it, everywhere. Never rewritten.`,
+      aimTa7 ? flat7(aimDesc7[0] ?? "") : "no aim textarea"
+    );
+    check(
+      "R7 intake: the form lead sits behind the (i) beside 'Your aim' (no lead paragraph on screen); a Gemini clause only on the Gemini path",
+      !vis7(blank7).includes("Say what you want to be able to do.") &&
+        panels7(blank7).some((p) => flat7(p) === "Say what you want to be able to do. The app sets every date, level and target from your records, and measures progress from them.") &&
+        panels7(intakeOf7("intake-gemini")).some((p) => flat7(p).startsWith("Say what you want to be able to do. Gemini can arrange the milestones; the app sets every date"))
+    );
+    const depth7 = intakeOf7("intake-depth");
+    const gap7 = copy.depthGapDays(12, 1);
+    check(
+      "R7 intake (D6): a Field Area's Depth is the StageLadder (aria-hidden) over the stage buttons ('Mastered' a name, 'L12' spoken 'level 12'), with «review gap ≈ 110 d» visible; a track Area has no ladder",
+      /<div class="mg-sl"[^>]*aria-hidden="true"/.test(depth7) &&
+        /<b data-wc="name">Mastered<\/b><small aria-hidden="true">L(?:<!-- -->)?12<\/small><span class="sr-only">level (?:<!-- -->)?12<\/span>/.test(depth7) &&
+        vis7(depth7).includes(`${copy.SHORT_REVIEW_GAP} ≈ ${gap7} d`) &&
+        !intakeOf7("intake-confirm").includes('class="mg-sl"'),
+      String(gap7)
+    );
+    check(
+      "R7 intake: the Depth (i) holds depthHint, realisticHint and the exam waypoint, the waypoint said once on the whole form",
+      panels7(depth7).some((p) => flat7(p) === `${copy.depthHint(12, 1)} ${copy.realisticHint(1)} ${copy.EXAM_WAYPOINT_HINT}`) && count7(flat7(depth7), copy.EXAM_WAYPOINT_HINT) === 1
+    );
+    const chips7 = outer7(depth7, /class="chip btn-chip rm-chip-two rm-in-when"/);
+    const chipWant7 = (["6", "12", "24", "36"] as const).map((mo, i) => {
+      const possible = roadmapFixture("intake-depth").intake!.dateChips![i].possible.MASTERED;
+      const w = form7.whenChipLabel(Number(mo));
+      return { name: `${w.spoken} ${copy.chipVerdict(possible, 12)}`, vis: `${w.label} ${possible ? copy.chipVerdict(true, 12) : copy.shortTooSoon(12)}`, glyph: possible ? "v.fits" : "v.imp" };
+    });
+    check(
+      "R7 intake (§3.3 s1): By-when chips are verdict chips — '[t.cal] 12 mo' over '[v.fits] possible' or '[v.imp] too soon for L12' — named by the full verdict (chipVerdict verbatim)",
+      chips7.length === 4 &&
+        chips7.every((c, i) => `${flat7(outer7(c, /class="rm-in-when-l"/)[0] ?? "")} ${flat7(outer7(c, /class="rm-in-when-v"/)[0] ?? "")}` === chipWant7[i].vis && flat7(outer7(c, /class="sr-only"/)[0] ?? "") === chipWant7[i].name && c.includes(`data-g="${chipWant7[i].glyph}"`) && c.includes('data-g="t.cal"')),
+      chips7.map((c) => `${flat7(c)} | ${flat7(outer7(c, /class="sr-only"/)[0] ?? "")}`).join(" ; ")
+    );
+    check(
+      "R7 intake: a track Area's chips read '3 mo' … '3 years' (the longest stays '>3 years<'), each spoken in full",
+      ["3 mo", "6 mo", "12 mo", "24 mo", "3 years"].every((t) => vis7(intakeOf7("intake-confirm")).includes(t)) && blank7.includes(">3 years<") && blank7.includes(">3 months</span>")
+    );
+    const hours7 = outer7(blank7, /id="rm-f-hours"/)[0] ?? "";
+    check(
+      "R7 intake (D26, D27): Hours is the stepper and a StatRow '[ev.estimate] ≈ 9 h 10 seen · [pv.you] 5 h/wk yours' with «not timed», each figure with its spoken twin",
+      ["≈ 9 h 10", "seen", "5 h/wk", "yours", copy.SHORT_NOT_TIMED].every((t) => vis7(hours7).includes(t)) &&
+        hours7.includes("about 9 hours 10 minutes seen") &&
+        /5 hours a week yours/.test(flat7(hours7)) &&
+        hours7.includes('data-g="ev.estimate"') &&
+        hours7.includes('data-g="pv.you"') &&
+        !hours7.includes('data-g="ev.measured"'),
+      vis7(hours7)
+    );
+    const gem7 = intakeOf7("intake-gemini");
+    const lanes7 = outer7(gem7, /class="rm-in-lanes"/)[0] ?? "";
+    const asks7 = model.geminiAsksOf({ fieldArea: false, lines: 0, otherDomains: 0, chosenDomains: 0, practicesAllowed: true });
+    check(
+      "R7 intake (D25): the Gemini path shows its lanes with the who-words — 'Gemini: picks' and 'App: practices · words · numbers' — with what Gemini will do one tap away (geminiArrangesLine)",
+      j7(outer7(lanes7, /class="mg-lane"/).map(flat7)) === j7([`${copy.GEMINI_LANE_WORD} ${copy.GEMINI_LANE_ITEM.picks}`, `${copy.APP_LANE_WORD} ${copy.APP_LANE_ITEMS.join(" · ")}`]) && panels7(lanes7).some((p) => flat7(p) === copy.geminiArrangesLine(asks7)),
+      j7(outer7(lanes7, /class="mg-lane"/).map(flat7))
+    );
+    const dataChip7 = panels7(gem7).find((p) => attr7(p, "data-hc-panel") === "data");
+    check(
+      "R7 intake (§8): on a free-tier key the Gemini path shows «Google may use this» beside the buttons, a chip opening the privacy line and FREE_TIER_LINE; a paid key shows no chip",
+      count7(gem7, 'data-hc="data"') === 1 &&
+        dataChip7 != null &&
+        flat7(dataChip7) === `${copy.privacyLine(PACK_SECTIONS)} ${copy.FREE_TIER_LINE}` &&
+        vis7(outer7(gem7, /class="rm-sticky"/)[0] ?? "").includes(copy.SHORT_DATA) &&
+        !R(createElement(RoadmapForm, { view: { ...roadmapFixture("intake-gemini").intake!, keyTier: "PAID" }, gates: { gemini: true } })).includes('data-hc="data"')
+    );
+    const noKeyPanel7 = (h: string) => panels7(h).find((p) => attr7(p, "data-hc-panel") === "no-key");
+    check(
+      "R7 intake (§8): with no key (and with the Gemini switch off) the path shows «from your numbers», a chip opening NO_KEY_LINE",
+      [intakeOf7("no-key"), blank7].every((h) => count7(h, 'data-hc="no-key"') === 1 && flat7(noKeyPanel7(h) ?? "") === copy.NO_KEY_LINE && vis7(h).includes(copy.SHORT_NO_KEY))
+    );
+    check(
+      "R7 intake (§3.3 s1): 'Your aim', 'Pick an Area', 'Exam · optional', 'Syllabus · optional', 'Anything to avoid?' are the visible labels; the constraints hint is the textarea's description, in the card Key",
+      [copy.SHORT_AIM_LABEL, copy.SHORT_PICK_AREA, copy.SHORT_EXAM_OPTIONAL, copy.SHORT_SYLLABUS_OPTIONAL, copy.SHORT_ANYTHING_TO_AVOID].every((t) => vis7(blank7).includes(t)) &&
+        /<textarea\b[^>]*\saria-describedby="([^"]+)"[^>]*>[^<]*<\/textarea>/.test(outer7(blank7, /id="rm-f-constraints"/)[0] ?? "") &&
+        panels7(blank7).some((p) => flat7(p).includes("The app ticks the practice types your constraints seem to rule out, quoting your words; nothing is left out until you say so.")) &&
+        !vis7(blank7).includes("The app ticks the practice types")
+    );
+    const names7 = new Set<string>([
+      ...INTAKE7.flatMap((s) => roadmapFixture(s).intake!.fields.flatMap((f) => [f.name, ...f.domains.map((x) => x.name)])),
+      ...Object.values(copy.TRACK_WORD),
+      ...["Mastered", "Fluent", "Retained"],
+      ...Object.values(copy.KIND_NAME),
+    ]);
+    const nameBad7 = INTAKE7.flatMap((s) =>
+      outer7(intakeOf7(s), /data-wc="name"/)
+        .filter((e) => !e.startsWith("<select"))
+        .map((e) => flat7(e).replace(/[.,;:]+$/, ""))
+        .filter((t) => !names7.has(t))
+        .map((t) => `${s}: ${t}`)
+    );
+    check("R7 words (§3.1): every data-wc=\"name\" on the intake and its activity card holds a name (an Area, a Field, a Domain, a track, a stage, a kind), never the app's words", nameBad7.length === 0, nameBad7.slice(0, 6).join(" | "));
+    const foldBad7 = INTAKE7.filter((s) => {
+      const h = intakeOf7(s);
+      const folds = outer7(h, /\sdata-wc-fold=/);
+      return !(folds.some((f) => /id="rm-f-aim"/.test(openTag7(f))) && folds.some((f) => /id="rm-f-area"/.test(openTag7(f))) && folds.every((f) => !/\sdata-wc-fold=/.test(f.slice(openTag7(f).length))));
+    });
+    check("R7 intake (§3.1 step 5): the fold is marked (the notes, the aim, the Area, and Depth or By when), never one fold inside another", foldBad7.length === 0, foldBad7.join(", "));
+    const fmCode7 = code(read("src/components/roadmap/RoadmapForm.tsx"));
+    const plays7 = [...fmCode7.matchAll(/playGlyph\(/g)].length;
+    const licensed7 = [...fmCode7.matchAll(/playGlyph\([^,]+,\s*"([\w-]+)",\s*\{\s*licence:\s*"(\w+)"\s*\}\)/g)].map((m) => [m[1], m[2]]);
+    check(
+      "R7 intake motion (§4.7, H1): the form's own motions are the user's picks — verdict-change and bars, each licensed ACT (the ladder is StageLadder's own ACT); nothing plays on arrival",
+      plays7 === 2 && licensed7.length === 2 && licensed7.every(([mo, li]) => (mo === "verdict-change" || mo === "bars") && li === "ACT"),
+      j7(licensed7)
+    );
+    const css7 = read("src/components/roadmap/roadmap.css");
+    const sec7 = css7.slice(css7.indexOf("/* ===== R7 "), css7.indexOf("/* ===== /R7 ===== */")).replace(/\/\*[\s\S]*?\*\//g, "");
+    check(
+      "R7 css: its section is layout hooks only — rm-* classes (kit .chip and .st-label as context), no @keyframes, no transition but none, ink only",
+      sec7.length > 0 && !/@keyframes|animation|--owed|gold|--mp\b|--xp\b/.test(sec7) && [...sec7.matchAll(/transition:\s*([^;]+);/g)].every((m) => m[1].trim() === "none") && [...sec7.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].every((m) => m[1].startsWith("rm-") || ["chip", "st-label"].includes(m[1]))
+    );
+
+    // ── The gates on R0's rows (screens 1 and 8) ──
+    r0Gate("words", WORD_BUDGET_ROWS.filter((r) => r.row === 1 || r.row === 8).map((r) => r.id), "R7");
+    r0Gate("honesty", ["health-chip-activities", "review-gap-intake", "not-timed", "data-intake", "practice-only", "plan-can-include"], "R7");
+    r0Gate("survival", [...R0_RESULTS.survival.keys()].filter((k) => /^(intake|intake-gemini|intake-confirm|draft-confirm|active-answered)\//.test(k)), "R7");
+    r0Gate("taps", ["intake/intake", "intake-gemini/intake", "intake-empty-library/intake", "intake-confirm/intake", "intake-depth/intake", "no-key/intake"], "R7");
+  }
+  // ===== /R7 =====
+
+  // ===== RZ final pass (ui-motion.md §10 RZ, §11.3, §12): every screen on its hard budget, the rows no lane gated, the seams between lanes =====
+  console.log("— ui motion RZ: the final pass —");
+  {
+    const wcZ = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const pageZ = (s: FixtureState) => renders.get(s)?.page ?? "";
+    const visZ = (h: string, width = 344) => wcZ.visibleText(h, { width });
+    const failingZ = (m: Map<string, { ok: boolean; detail: string }>, skip: readonly string[] = []) =>
+      [...m.entries()].filter(([id, r]) => !r.ok && !skip.includes(id)).map(([id, r]) => `${id}: ${r.detail}`);
+
+    // ── 1. Every screen on its hard budget (§3.2, §12.1): each lane gated its rows; RZ holds every row at once (R6's s7 rows as its block filled them). ──
+    check(
+      "RZ words (§3.2): every row of every screen holds its budget and its fold — rows 1–10 and 12 (row 11 is R0's own check above)",
+      R0_RESULTS.words.size === WORD_BUDGET_ROWS.length && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12].every((n) => WORD_BUDGET_ROWS.some((r) => r.row === n)) && failingZ(R0_RESULTS.words).length === 0,
+      failingZ(R0_RESULTS.words).join(" | ")
+    );
+
+    // ── 2. Honesty in visible text (§8 ✓ rows), taps (D13) and full-text survival: every row, the ones no lane gated included ──
+    r0Gate("honesty", ["proficiency-toward-page", "sized-by-gemini", "unverified-verdict", "health-chip-body", "health-chip-today"], "RZ");
+    // R0's three rows that point at a fixture where the element can't be on screen at 344, held where it is (handoffs to the lead):
+    //   gemini-kept-chip names draft-mixed, which has no kept Gemini row; best-case and pass-calibrating name depth-calibrating, a
+    //   living plan whose realism figures sit in the reference column (collapsed under 760 px of main, open from 932).
+    const MISDIRECTED = ["gemini-kept-chip", "best-case", "pass-calibrating"];
+    check("RZ honesty (§8, §11.3): every visible-honesty row holds, but R0's three misdirected rows (held below where they apply)", failingZ(R0_RESULTS.honesty, MISDIRECTED).length === 0, failingZ(R0_RESULTS.honesty, MISDIRECTED).join(" | "));
+    const mixed = roadmapFixture("draft-mixed").view!.draft!;
+    const keptGemini = mixed.milestones.some((m) => provenanceOf(m.titleOrigin, m.titleDecision) === "KEPT_SUGGESTION" || m.items.some((it) => provenanceOf(it.origin, it.decision) === "KEPT_SUGGESTION"));
+    check("RZ honesty: R0's gemini-kept-chip row can't hold where it points — draft-mixed carries no kept Gemini title or row", !keptGemini);
+    for (const s of ["active-replan", "accepted"] as const)
+      check(`RZ honesty (D25): «Gemini · kept · not checked» is visible at 344 where a kept Gemini row is (${s}/page)`, visZ(pageZ(s)).includes(copy.SHORT_GEMINI_KEPT));
+    check(
+      "RZ honesty (D28): «best case» and 'pass rate calibrating' are visible on depth-calibrating's page once its reference column is open (932), and on capacity-calibrating's draft at 344",
+      [copy.SHORT_BEST_CASE, "pass rate calibrating"].every((t) => visZ(pageZ("depth-calibrating"), 932).includes(t) && visZ(pageZ("capacity-calibrating")).includes(t))
+    );
+    check("RZ taps (D13): every surface's sr-only honesty strings are one tap away on their card, ≤ 3 InfoTips a card", R0_RESULTS.taps.size > 0 && failingZ(R0_RESULTS.taps).length === 0, failingZ(R0_RESULTS.taps).join(" | "));
+    check("RZ survival (§11.3): every pinned full string is still in the static markup", R0_RESULTS.survival.size >= 35 && failingZ(R0_RESULTS.survival).length === 0, `${R0_RESULTS.survival.size} rows · ${failingZ(R0_RESULTS.survival).join(" | ")}`);
+
+    // ── 3. The seams: what one lane's component takes and the page that renders it passes ──
+    const rvSrc = code(read("src/components/roadmap/RoadmapView.tsx"));
+    const wqCall = /<WeekQuests\s+variant="roadmap"[\s\S]*?\/>/.exec(rvSrc)?.[0] ?? "";
+    check(
+      "RZ seam R3 → R1: the Now section's week quests key on the page's seen bases, draw the plan's own track sigil, and leave the health chip to the Now card",
+      /bases=\{seen\}/.test(wqCall) && /track=\{nowTrack\}/.test(wqCall) && /health=\{healthSaid \? false : undefined\}/.test(wqCall) && /const healthSaid = healthChip \|\| healthFlag;/.test(rvSrc) && /const nowTrack = trackSigilOf\(nowScope\)/.test(rvSrc)
+    );
+    check("RZ seam R3 → R6: the Start sheet gets the rank held (its \"keeps your rank\" glyph), on the line the pin reads", /<StartSheet [^\n]*roadmapId=\{header\.id\} heldRank=\{view\.rank\?\.index \?\? null\}/.test(rvSrc));
+    const dbCall = /<DateBlock[\s\S]*?\/>/.exec(rvSrc)?.[0] ?? "";
+    check(
+      "RZ seam R3 → R5: the plan's DateBlock gets today, the throughput, the feasibility, the exam and the plan's seen key (its TimeBar, the D28 marks, the date-moved crossfade)",
+      ["today={view.today}", "throughput={view.throughput}", "feasibility={view.feasibility}", "exam={view.depth?.exam ?? null}", 'seenKey={seenBaseOf(seenBasesOfRoadmap(view), "plan")}'].every((p) => dbCall.includes(p))
+    );
+    check("RZ seam R3 → R2: the header's ProficiencyBlock gets the page's seen bases (the rank rise keys on the plan)", /<ProficiencyBlock[\s\S]*?seen=\{roadmapSeen\}[\s\S]*?\/>/.test(code(read("src/components/roadmap/AimHeader.tsx"))));
+    const bodyNow = (/<div class="rm-o2" id="now" data-wc-block="now">[\s\S]*?<\/section>/.exec(pageZ("body-practice")) ?? [""])[0];
+    const nowHealthBtns = [...bodyNow.matchAll(/<button[^>]*data-hc="health"[^>]*>/g)];
+    check(
+      "RZ seam R3 + R4 + R1 (D12): the body plan's Now card shows one «Not medical advice · ask a professional», a chip opening HEALTH_LINE, and no HEALTH_LINE line on its rows or week quests",
+      (visZ(bodyNow).match(/Not medical advice · ask a professional/g) ?? []).length === 1 && nowHealthBtns.length === 1 && bodyNow.includes(copy.HEALTH_LINE) && !visZ(bodyNow).includes(copy.HEALTH_LINE),
+      `${(visZ(bodyNow).match(/Not medical advice · ask a professional/g) ?? []).length} chips, ${nowHealthBtns.length} buttons`
+    );
+    check("RZ seam (D12): a Field plan's Now card shows no health chip", !visZ(pageZ("active")).includes(copy.SHORT_HEALTH));
+    // D11: every «Not medical advice» chip on every surface sits inside [data-safety] (static at every level; its panel opens instantly).
+    type ZNode = { tag?: string; attrs: Record<string, string>; parent: ZNode | null };
+    const unsafe: string[] = [];
+    for (const s of FIXTURE_STATES)
+      for (const surface of ["page", "aim", "today", "intake"] as const) {
+        const h = renders.get(s)?.[surface] ?? "";
+        if (!h.includes('data-hc="health"')) continue;
+        for (const el of wcZ.elementsOf(wcZ.parseMarkup(h)) as unknown as ZNode[]) {
+          if (el.attrs["data-hc"] !== "health") continue;
+          let p: ZNode | null = el;
+          while (p && !("data-safety" in p.attrs)) p = p.parent;
+          if (!p) unsafe.push(`${s}/${surface}`);
+        }
+      }
+    check("RZ seam (D11): every health chip on every fixture surface sits inside [data-safety]", unsafe.length === 0, [...new Set(unsafe)].join(", "));
+    const tpCard = (/<section class="card rm-tp rm-tp2">[\s\S]*?<\/section>/.exec(pageZ("active")) ?? [""])[0];
+    check("RZ seam (D13): Your capacity's static chips («not timed», «reads high») are in its card Key too (one tap on a phone)", /data-tip="key"/.test(tpCard) && tpCard.includes("task estimates, not timed") && tpCard.includes("reads high: lapses by neglect"));
+
+    // ── 4. The dev pages (§11.7–§11.8): a SEEN fixture seeds what the viewer last saw, once per session, before its hooks read ──
+    const fxSrc = code(read("src/app/dev/style/roadmap/RoadmapFixtures.tsx"));
+    check(
+      "RZ dev page: /dev/style/roadmap seeds the state's fx.seen (writeSeen, then flushSeen) in a layout effect rendered before the fixture, once per session",
+      /useLayoutEffect\(/.test(fxSrc) && /for \(const s of seeds\) writeSeen\(s\.key, s\.value\);\s*flushSeen\(\);/.test(fxSrc) && /sessionStorage\.getItem\(mark\)/.test(fxSrc) && /<FixtureRoadmapProvider>\s*<SeenSeeds state=\{state\} seeds=\{fx\.seen\} \/>/.test(fxSrc)
+    );
+
+    // ── 5. ui-audit (§11.7): its live-DOM word budgets are these rows, every one, on its own fixture state ──
+    let plan: { wordBudgets?: { id: string; state?: string; blocks?: string[]; max: number; fold?: number | null; eachBlock?: boolean; required?: boolean }[] } = {};
+    try {
+      const { execFileSync } = await import("node:child_process");
+      plan = JSON.parse(execFileSync(process.execPath, [join(ROOT, "scripts/ui-audit.mjs"), "--plan", "--routes", "fixtures"], { cwd: ROOT, encoding: "utf8", timeout: 60000 }));
+    } catch (err) {
+      plan = {};
+      check("RZ ui-audit: --plan runs", false, String(err).slice(0, 200));
+    }
+    const auditRows = new Map((plan.wordBudgets ?? []).filter((b) => b.state).map((b) => [b.id, b] as const));
+    const auditDrift = WORD_BUDGET_ROWS.filter((r) => {
+      const a = auditRows.get(r.id);
+      return !a || a.state !== r.fixture || a.max !== r.budget || (a.fold ?? null) !== (r.fold ?? null) || a.eachBlock !== Boolean(r.each) || a.required !== true || JSON.stringify(a.blocks) !== JSON.stringify(r.blocks);
+    });
+    check("RZ ui-audit: --budgets hard gates every §3.2 row on its own /dev/style/roadmap?state= by the same blocks, budget and fold", auditRows.size === WORD_BUDGET_ROWS.length && auditDrift.length === 0, auditDrift.map((r) => r.id).join(", "));
+  }
+  // ===== /RZ =====
+  void r0Gate;
 
   console.log(`\nroadmap-ui-check: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;

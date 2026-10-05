@@ -21,9 +21,42 @@
  * agrees with the Aim card, Today and Toward the aim; the Paragon line keys on
  * rank.top.withAim. "How this was drafted" describes RoadmapView.acceptedRun,
  * the run behind the accepted plan ("Latest run" while a view lacks it).
+ *
+ * UI motion (ui-motion.md §3.3 screens 5, 6 and 12, §7.5–§7.6, §7.12; lane
+ * R3). Fewer words, the full text one tap away (D1, D13):
+ *   - Now: "Now · milestone 2 of 6" over a static elapsed bar "day 39/77"
+ *     (H6); the headline "23% [ev] · [ev.measured] 09:12" with its meter (it
+ *     fills from the value this viewer last saw, SEEN, either direction), a
+ *     floor tick at the pay bar, "pays [c-mp] 6 × progress from 70%" (or
+ *     «pays nothing» with its reason one tap away) and the pace in ink
+ *     («best case» when it rests on a calibrating pass rate); the card Key
+ *     holds every caption and explanation the sections dropped; steps carry
+ *     their KindGlyph; the checkpoint «context only».
+ *   - QUESTS_BEHIND: «Behind on new cards · 5 of 7» opens the banner; the
+ *     levers stay buttons, their explanations in the (i).
+ *   - Milestones: a RouteRail, one node per MilestoneRowState (pending
+ *     dashed, closed struck, past due flagged; a held stage reached with
+ *     "Held when you began"); ▸ on each node holds its dates, the rank it
+ *     gives and its line. `reach` plays on a counted reach only (SEEN); a
+ *     user's own Start pings the current node once (`start`, ACT). The
+ *     current node never pulses.
+ *   - Empty: an unlit RankSeal, [route], "Set an aim" with its (i), over the
+ *     unlit horizon marks. Done: the rank held, "Reached … · Aim rank … ·
+ *     96%" (seal) or "Closed … · the aim wasn't reached" (no seal), the
+ *     read-only rail, "Set a new aim" with the history line in its (i).
+ *     Legacy: «older plan» opens its banner; LEGACY_GEMINI_HIDDEN verbatim.
+ *   - Blocks are marked data-wc-block (WORD_BLOCK) for the word budgets.
  */
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Glyph, KindGlyph } from "@/components/glyph/Glyph";
+import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
+import { CardKey, InfoTip } from "@/components/glyph/InfoTip";
+import { RankSeal } from "@/components/glyph/RankSeal";
+import { RouteRail, type RailNode } from "@/components/glyph/RouteRail";
+import { useSeenValue, type SeenKey } from "@/components/glyph/useSeen";
+import { HorizonMarks } from "@/components/fx/fallbacks";
+import { BAND } from "@/lib/shader/params";
 import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
@@ -33,13 +66,13 @@ import { SectionHeader, Switch } from "@/components/ui/Tabs";
 import { TypedConfirm } from "@/components/ui/TypedConfirm";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
-import { cx } from "@/components/ui/cx";
 import { goalPercent } from "@/lib/goals";
+import { payBar } from "@/lib/life-economy";
 import { addDays, daysBetween } from "@/lib/life-day";
 import {
+  AIM_RANKS,
   NOT_RECORDED_HERE,
   ROADMAP_GEMINI_LIVE,
-  aimRankName,
   parseMeasureKey,
   provenanceOf,
   type CurrentMilestoneView,
@@ -59,6 +92,7 @@ import {
   CHECKPOINT_KIND_WORD,
   CLOSE_SHORT_PARAGON_LINE,
   DRAFT_IT_AGAIN_WORD,
+  HEALTH_LINE,
   KEEP_DATES_WORD,
   LEGACY_ACTIVE_BANNER,
   LEGACY_DRAFT_BANNER,
@@ -67,21 +101,34 @@ import {
   MILESTONE_NOTE_LINE,
   NONE_GEMINI_LINE,
   PARAGON_PARTS,
+  PROVENANCE_WORDS,
   REDATE_NOTE,
   REDATE_WORD,
+  SHORT_CONTEXT_ONLY,
+  SHORT_GIVES_RANK,
+  SHORT_HEALTH,
+  SHORT_KEEPS_RANK,
+  SHORT_LEGACY,
+  SHORT_PAYS_NOTHING,
+  SHORT_SECTION,
   START_AGAIN_AT_DEPTH_WORD,
   START_AGAIN_LINE,
   TIME_FIXED_LINE,
   WRITES_OFF_BANNER,
   dayLabel,
   dayWithWeekday,
-  heldRowLine,
+  givesRankLine,
   measuredLabel,
+  pacePhrase,
   paragonDepthLine,
   pastDueLine,
   paceLine,
   pauseRowLine,
   practiceKeptPausedLine,
+  shortBar,
+  shortBehindNewCards,
+  shortDayOf,
+  shortNowOf,
   spanLabel,
   statedLine,
   topRankDepthLine,
@@ -94,29 +141,39 @@ import {
   domainIndexOf,
   editorRowOf,
   geminiNamedOf,
-  milestoneRowLine,
+  healthChipShown,
+  horizonOfRoadmap,
+  paceFlagsOf,
   paragonLineShown,
   pausedItemsOf,
   pausedOfMeasure,
   positionsOf,
   practiceOnlyLineOf,
+  railNodesOf,
   referenceRunOf,
+  rowHealthOf,
   rowsAreProgressionOf,
   scopeNamesOf,
+  seenBaseOf,
+  seenBasesOfRoadmap,
+  seenMeasureWhat,
   stageRunOf,
   stageWhysOf,
   startAgainOffered,
+  titleItemOf,
   type LibraryDomain,
+  type RankPlanEntry,
+  type SeenBases,
 } from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { usePauseSeen } from "./roadmap-pauses";
 import { ItemEditor } from "./ItemEditor";
 import { editorScopeOf, DraftReview, DraftRunning } from "./DraftReview";
-import { AimHeader } from "./AimHeader";
+import { AimHeader, AreaChipShort, spaced } from "./AimHeader";
 import { TowardAim } from "./TowardAim";
-import { MeasureRow, measureFractionOf } from "./MeasureRow";
+import { MeasureRow, evidenceOfCaption, measureFractionOf } from "./MeasureRow";
 import { DomainItemRow, DomainRow } from "./DomainRow";
-import { ItemRow, MilestoneTitleText } from "./ItemRow";
+import { ItemRow, MilestoneTitleText, trackSigilOf } from "./ItemRow";
 import { StruckLabel } from "./StruckLabel";
 import { TopicRow } from "./TopicRow";
 import { PracticeRow } from "./PracticeRow";
@@ -129,10 +186,10 @@ import { ReplanSheet } from "./ReplanSheet";
 import { ThroughputPanel } from "./ThroughputPanel";
 import { ChecksPanel, VerdictChip } from "./ChecksPanel";
 import { RunFacts, RunTable } from "./RunFacts";
-import { AreaChipView, restartHandoffOf } from "./AimCard";
+import { restartHandoffOf } from "./AimCard";
 import { PlanHistory } from "./PlanHistory";
 import { HowMeasuredSheet, WorkedOutSheet } from "./HowMeasuredSheet";
-import { RankLines, StageWhyLine } from "./MilestoneCard";
+import { StageWhyLine } from "./MilestoneCard";
 import { PaysLine } from "./PaysLine";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 import { TitleClassChip } from "./ProvenanceChip";
@@ -147,19 +204,42 @@ function isLibrary(d: LibraryDomain | { id: string; name: string } | undefined):
 
 // ── NONE ────────────────────────────────────────────────────────────────────
 
+/** The unlit horizon marks (no reading: hairline, path and contours only; no dawn, no canvas, no seen key). Static SVG. */
+export function UnlitHorizon({ depth = null }: { depth?: number | null }) {
+  const [w, h] = BAND.page;
+  return (
+    <div className="rm-band">
+      <div className="shd shd-horizon shd-band-page" aria-hidden="true" data-shd="horizon" data-shd-state="fallback">
+        <HorizonMarks w={w} h={h} front={-1} contours={typeof depth === "number" ? Math.max(0, Math.min(12, Math.round(depth))) : 0} />
+      </div>
+    </div>
+  );
+}
+
 /**
  * NONE (F-R4-1): the ASK card's heading, body and true rank line, and "Set an
  * aim". Gemini is named only while ROADMAP_GEMINI_LIVE and a key both hold.
+ * UI motion (§3.3 screen 12): an unlit RankSeal and [route] over the unlit
+ * horizon; the body, the rank line and the Gemini line live in the (i).
+ * Static: nothing here moves.
  */
 export function EmptyRoadmap({ hasKey, gates }: { hasKey: boolean; gates?: LiveGates }) {
   const gemini = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && hasKey;
   return (
-    <section className="card rm-none" aria-label="No roadmap yet">
-      <RoadmapGlyph name="route" size={28} style={{ margin: "0 auto" }} />
-      <b className="rm-none-h">{AIM_CALL_HEADING}</b>
-      <p className="rm-none-p">{AIM_CALL_BODY}</p>
-      <p className="t-meta rm-none-p">{AIM_CALL_RANK_LINE}</p>
-      {gemini && <p className="t-meta rm-none-p">{NONE_GEMINI_LINE}</p>}
+    <section className="card rm-none" aria-label="No roadmap yet" data-wc-block="roadmap-empty">
+      <UnlitHorizon />
+      <span className="rm-none-g" aria-hidden="true">
+        <RankSeal index={0} size={72} state="idle" />
+        <RoadmapGlyph name="route" size={28} />
+      </span>
+      <div className="rm-none-hr">
+        <b className="rm-none-h">{AIM_CALL_HEADING}</b>
+        <InfoTip topic="setting an aim">
+          <span className="rm-tip-l">{AIM_CALL_BODY}</span>
+          <span className="rm-tip-l">{AIM_CALL_RANK_LINE}</span>
+          {gemini && <span className="rm-tip-l">{NONE_GEMINI_LINE}</span>}
+        </InfoTip>
+      </div>
       <Button variant="primary" href={ROADMAP_NEW_HREF}>
         {AIM_CALL_HEADING}
       </Button>
@@ -245,7 +325,62 @@ function MarkDoneSheet({ open, onClose, roadmapId, reached }: { open: boolean; o
 
 // ── Now ─────────────────────────────────────────────────────────────────────
 
-function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current: CurrentMilestoneView; onStartOpen: () => void }) {
+/** "measured 09:12" → "09:12" (the clock glyph says measured; the sr line keeps the words). */
+function measuredAtShort(label: string): string {
+  return label.replace(/^measured /, "");
+}
+
+/** The pace in ink, in the Aim card's words ("On pace for 7 Mar", "About 3 weeks behind"): pacePhrase, sentence case. */
+export function pacePhraseShort(pace: Parameters<typeof pacePhrase>[0], today?: string): string | null {
+  const p = pacePhrase(pace, today);
+  return p ? p.charAt(0).toUpperCase() + p.slice(1) : null;
+}
+
+/** "gives Aim rank [rank.2 active] Journeyman" (a rank not yet held keeps its verb, drawn active) or "[rank.N done] keeps your rank". */
+function RankGivesLine({ rankIndex, gives, held }: { rankIndex: number | null; gives: boolean; held: number }) {
+  if (rankIndex == null) return null;
+  const idx = Math.max(0, Math.min(6, rankIndex));
+  if (!gives)
+    return (
+      <p className="rm-rkg">
+        <Glyph name={`rank.${Math.max(0, Math.min(6, held))}` as `rank.${0 | 1 | 2 | 3 | 4 | 5 | 6}`} state="done" size={16} inherit />
+        {" "}
+        <span>{SHORT_KEEPS_RANK}</span>
+      </p>
+    );
+  return (
+    <p className="rm-rkg">
+      <span>{SHORT_GIVES_RANK}</span>{" "}
+      <Glyph name={`rank.${idx}` as `rank.${0 | 1 | 2 | 3 | 4 | 5 | 6}`} state="active" size={16} inherit />{" "}
+      <b data-wc="name">{AIM_RANKS[idx]}</b>
+    </p>
+  );
+}
+
+/** The static elapsed bar (H6: elapsed time is a fact, but motion on it would read as progress): "day 39/77". */
+function ElapsedBar({ day, of }: { day: number; of: number }) {
+  return (
+    <span className="rm-el">
+      <span className="rm-el-bar" aria-hidden="true">
+        <i style={{ "--rm-el": Math.max(0, Math.min(1, day / of)).toFixed(3) } as CSSProperties} />
+      </span>
+      <span className="num" aria-hidden="true">
+        {shortDayOf(day, of)}
+      </span>
+      <span className="sr-only">
+        day {day} of {of}
+      </span>
+    </span>
+  );
+}
+
+/** A BODY track plan (DraftReview's MilestoneCard context `body`): its cards carry the one health chip (D12). */
+function bodyPlanOf(view: RoadmapView): boolean {
+  const a = view.header?.area;
+  return a?.kind === "TRACK" && a.track === "BODY";
+}
+
+function NowSection({ view, current, onStartOpen, seen }:{ view: RoadmapView; current: CurrentMilestoneView; onStartOpen: () => void; seen?: SeenBases | null }) {
   const m = current.milestone;
   const today = view.today;
   const index = useMemo(() => domainIndexOf(view), [view]);
@@ -258,64 +393,125 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
   const of = positionsOf(view);
   const started = Boolean(current.goalId);
   const checkpoint = m.items.find((it) => it.kind === "CHECKPOINT" && it.decision !== "REMOVED") ?? null;
-  const dayOf = m.windowStart && m.dueDay ? `day ${Math.max(1, Math.min(daysBetween(m.windowStart, m.dueDay) + 1, daysBetween(m.windowStart, today) + 1))} of ${daysBetween(m.windowStart, m.dueDay) + 1}` : null;
+  const windowDays = m.windowStart && m.dueDay ? daysBetween(m.windowStart, m.dueDay) + 1 : null;
+  const dayN = m.windowStart && windowDays ? Math.max(1, Math.min(windowDays, daysBetween(m.windowStart, today) + 1)) : null;
   const fractions = current.measures.filter((x) => x.role === "PAYS").map((x) => ({ key: x.measureKey, g: measureFractionOf(x) }));
   const slowest = fractions.length > 1 ? fractions.reduce((a, b) => ((b.g ?? 1) < (a.g ?? 1) ? b : a)).key : null;
   const headPct = current.headline ? goalPercent(Number(current.headline.value)) : null;
   // A stored reading keeps its real "measured" time even with writes off; only a value computed here reads NOT_RECORDED_HERE.
   const headMeasuredAt = current.measures.find((x) => x.measuredAt)?.measuredAt ?? null;
+  const headMeasured = headMeasuredAt ? measuredLabel(headMeasuredAt, today) : view.writesOff ? NOT_RECORDED_HERE : "not measured yet";
   const prevBest = Math.max(0, ...rows.filter((r) => r.ord < m.ord && r.rankIndex != null).map((r) => r.rankIndex!));
+  const heldRank = view.rank?.index ?? prevBest;
   // Constraint safety (contracts §19): while the plan waits on the user's answer about activities.
   const practiceOnly = practiceOnlyLineOf(view.activityConfirm);
   // Started practices and steps an answer touched (decision 4): how each stands — off Today, still there (its pause refused), back by
   // Undo, or no longer avoided — said on its row, and under a Practice kept that no longer pays (the lead's ruling 3). What this tab
   // saw happen to each task (the save's reply, the notice's Undo) is roadmap-pauses'.
-  const seen = usePauseSeen(view.header?.id);
-  const paused = started ? pausedItemsOf(current, view.activityConfirm, seen) : [];
+  const pausedSeen = usePauseSeen(view.header?.id);
+  const paused = started ? pausedItemsOf(current, view.activityConfirm, pausedSeen) : [];
   const pausedOf = new Map(paused.map((p) => [p.lineageId, p] as const));
-  const rank = { rankIndex: m.rankIndex, gives: m.rankIndex != null && m.rankIndex > prevBest, paragonAfter: false };
+  const rankGives = m.rankIndex != null && m.rankIndex > prevBest;
   // The practice progression (contracts §20): why this stage holds what it practises, from what it holds (a revision-4 stage of a plan
   // whose rows are code's progression: any writer but a v3 reply; the stage before's rows aren't in the view, so no "builds on" here).
   // The plan's track, exam and gate (the editor scope's: what the type picker leaves out), so a stage's options are the ones Gemini was offered.
   const nowScope = editorScopeOf(view, [m]);
   const stageRun = nowScope ? stageRunOf(nowScope) : null;
   const why = stageRun && m.stage && rowsAreProgressionOf(referenceRunOf(view).run) ? (stageWhysOf([m], stageRun).get(m.lineageId) ?? null) : null;
+  // The pace of the slowest part, in ink (never red); «best case» when it rests on a calibrating pass rate (D28).
+  const headPace = current.measures.find((x) => x.measureKey === slowest)?.pace ?? current.measures[0]?.pace ?? null;
+  const paceFull = paceLine(headPace, { today });
+  const paceShort = pacePhraseShort(headPace, today);
+  const paceBest = paceFlagsOf(headPace).bestCase;
+  // meter-fill (SEEN): the headline fills from the value this viewer last saw, under the plan's basis and the same targets (D8).
+  const plan = seenBaseOf(seen ?? null, "plan");
+  const headKey: SeenKey | null =
+    plan && current.headline ? { ...plan, what: seenMeasureWhat(`headline:${m.lineageId}@${current.measures.map((x) => `${x.measureKey}=${x.target}`).join(",")}`) } : null;
+  const headFrom = useSeenValue(headKey, current.headline ? Number(current.headline.value) : 0);
+  const pays = current.stated != null && current.stated > 0;
+  const statedFull = statedLine(current.stated, current.zeroReason, current.paidOn, today);
 
   const items = (kind: ItemDraft["kind"]) => m.items.filter((it) => it.kind === kind && it.decision !== "REMOVED").sort((a, b) => a.ord - b.ord);
-  const sec = (title: string, cap: string | null, body: ReactNode) => (
+  // The plan's own track sigil (a Practice row's quest glyph, as the card's PracticeRows draw it; §4.4).
+  const nowTrack = trackSigilOf(nowScope);
+  // D12: one «Not medical advice · ask a professional» on the Now card of a body plan (or one with health rows), unless a HEALTH flag
+  // already shows the line; its rows and its week quests then drop their own (MilestoneCard's rule, so the two cards agree).
+  const liveItems = m.items.filter((it) => it.decision !== "REMOVED");
+  const healthFlag = titleItemOf(m).flags.includes("HEALTH") || liveItems.some((it) => it.flags.includes("HEALTH"));
+  const healthChip = healthChipShown({
+    track: bodyPlanOf(view) ? "BODY" : null,
+    healthRows: m.notes.includes("HEALTH_LINE") || liveItems.some((it) => it.kind === "PRACTICE" && it.method === "WORKOUT") || Boolean(started && view.weekQuests?.rows.some(rowHealthOf)),
+    healthFlagShown: healthFlag,
+  });
+  // The card says HEALTH_LINE once (its chip, or a HEALTH flag's reason): the rows and the week quests never add their own.
+  const healthSaid = healthChip || healthFlag;
+  const sec = (title: string, body: ReactNode) => (
     <div className="rm-ms-sec">
       <div className="rm-ms-sh">
         <span className="t-eyebrow">{title}</span>
-        {cap && <span className="rm-cap">{cap}</span>}
       </div>
       {body}
     </div>
   );
+  // The card Key (D13): each glyph the card draws with its words, and the captions the sections dropped.
+  const keyRows: ReactNode[] = [
+    started ? (
+      <>
+        Mid goal on Today · <PaysLine text={statedFull} />
+      </>
+    ) : current.stated != null ? (
+      <>
+        Becomes a Mid goal on Today · <PaysLine text={statedFull} />
+      </>
+    ) : null,
+    current.headline ? `${current.headline.caption} · ${headMeasured}` : null,
+    current.headline ? `The slowest part sets the milestone${paceFull ? ` · ${paceFull}` : "."}` : null,
+    current.measures.length > 0 ? "Measures: the same numbers as Today's goal card" : null,
+    items("DOMAIN").length > 0 ? "Domains: from your library" : null,
+    items("TOPIC").length > 0 ? `${SHORT_SECTION.learn}: write cards on it in its Domain; review them when due` : null,
+    items("PRACTICE").length > 0 || practiceOnly ? `What to practise: ${started ? "on Today under this goal" : "goes to Today when you start it"}` : null,
+    items("STEP").length > 0 ? "Steps: you tick these" : null,
+    checkpoint ? "Checkpoint: you log it · doesn't move your progress" : null,
+  ].filter((r): r is NonNullable<typeof r> => r != null);
 
   return (
-    <div className="rm-o2" id="now">
-      <SectionHeader title={`Now · milestone ${m.ord} of ${of || m.ord}`} aside={dayOf ?? undefined} />
+    <div className="rm-o2" id="now" data-wc-block="now">
+      <SectionHeader title={shortNowOf(m.ord, of || m.ord)} aside={dayN && windowDays ? <ElapsedBar day={dayN} of={windowDays} /> : undefined} />
       <section className="card" aria-label="Current milestone">
         <div className="rm-ms-h">
           <span className="rm-ms-n rm-ms-n-cur">{m.ord}</span>
           <div>
-            <p className="rm-ms-t">
+            <p data-wc="name" className="rm-ms-t">
               <MilestoneTitleText milestone={m} />
             </p>
             <StageWhyLine why={why} track={stageRun?.track} />
             <div className="rm-ms-w">{spanLabel(m.windowStart, m.dueDay, today)}</div>
-            <div className="rm-chips" style={{ marginTop: 8 }}>
+            <div className="rm-chips rm-now-chips">
               <Chip>{current.pastDue ? "Past due" : current.starting ? "Starting" : started ? "Current" : "Planned"}</Chip>
               <TitleClassChip cls={provenanceOf(m.titleOrigin, m.titleDecision)} />
-              {started && (
-                <span className="rm-pv">
-                  Mid goal on Today · <PaysLine text={statedLine(current.stated, current.zeroReason, current.paidOn, today)} />
-                </span>
-              )}
+              <CardKey
+                topic={`milestone ${m.ord}`}
+                entries={[
+                  { glyph: "ev.tested", words: "tested by your reviews" },
+                  { glyph: "ev.tick", words: "from your ticks" },
+                  { glyph: "ev.measured", words: "measured at (time)" },
+                  { glyph: "c-mp", words: "the stated pay, from the pay bar (the tick on the meter)" },
+                  { glyph: "pace.on", words: "the pace of the slowest part" },
+                  { glyph: "quest.step", words: "a step: you tick it" },
+                ]}
+                rows={keyRows}
+              />
             </div>
-            <RankLines rank={rank} />
+            <RankGivesLine rankIndex={m.rankIndex} gives={rankGives} held={heldRank} />
           </div>
         </div>
+
+        {healthChip && (
+          // A safety surface (D11): static at every level, its panel opens instantly.
+          <div className="rm-ms-sec" data-safety="">
+            <HonestyChip kind="health" label={SHORT_HEALTH} full={HEALTH_LINE} wrap />
+          </div>
+        )}
 
         {current.pastDue && (
           <div className="rm-ms-sec">
@@ -336,6 +532,53 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
           </div>
         )}
 
+        {started && (
+          <div className="rm-ms-sec">
+            {current.headline ? (
+              <>
+                <div className="rm-head">
+                  <span className="rm-big" aria-hidden="true">
+                    {headPct}%
+                  </span>
+                  <span className="sr-only">{`Milestone ${m.ord}: ${headPct}%, ${current.headline.caption}, ${headMeasured}`}</span>
+                  <span className="rm-head-ev" aria-hidden="true">
+                    {evidenceOfCaption(current.headline.caption).map((e) => (
+                      <Glyph key={e} name={e} size={14} inherit />
+                    ))}
+                    {headMeasuredAt ? (
+                      <>
+                        {" "}
+                        <span className="rm-sep">·</span>{" "}
+                        <Glyph name="ev.measured" size={14} inherit />
+                        <span className="num">{measuredAtShort(headMeasured)}</span>
+                      </>
+                    ) : (
+                      <span>{headMeasured}</span>
+                    )}
+                  </span>
+                </div>
+                <span className="rm-floor">
+                  <Meter className="rm-head-m" value={Number(current.headline.value)} from={headFrom} label={`Milestone ${m.ord}, ${headPct}%, ${current.headline.caption}`} />
+                  {pays && <i className="rm-floor-t" aria-hidden="true" style={{ left: `${Math.round(payBar("MID") * 100)}%` }} />}
+                </span>
+                <p className="rm-head-pay">
+                  {pays ? <PaysLine text={statedFull} /> : <HonestyChip kind="pays-nothing-ms" label={SHORT_PAYS_NOTHING} full={statedFull} />}
+                </p>
+                {paceShort && (
+                  <p className="rm-pace">
+                    <Glyph name={headPace?.kind === "behind" || headPace?.kind === "short" || headPace?.kind === "far" ? "pace.behind" : "pace.on"} size={16} inherit />
+                    <span>{paceShort}</span>
+                    {paceBest && " "}
+                    {paceBest && <HonestyChip kind="best-case" />}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="t-meta">{view.writesOff ? "Not recorded on this server." : "Not measured yet — the first reading is recorded when you next open Today or You in the app."}</p>
+            )}
+          </div>
+        )}
+
         {!current.pastDue && view.weekQuests && started && (
           <>
             <WeekQuests
@@ -345,6 +588,9 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
               onShowBasis={() => setBasis(true)}
               onLogCheckpoint={checkpoint ? () => setLogOpen(true) : undefined}
               shownElsewhere={view.triggers.map((t) => t.line)}
+              bases={seen}
+              track={nowTrack}
+              health={healthSaid ? false : undefined}
             />
             <div className="rm-ms-sec" style={{ borderTop: 0, paddingTop: 0 }}>
               <PastWeekQuests weeks={view.pastWeeks} today={today} />
@@ -353,44 +599,15 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
           </>
         )}
 
-        {started && (
-          <div className="rm-ms-sec">
-            {current.headline ? (
-              <>
-                <div className="rm-head">
-                  <span className="rm-big">{headPct}%</span>
-                  <span className="rm-cap" style={{ textAlign: "right" }}>
-                    {current.headline.caption}
-                    <br />
-                    {headMeasuredAt ? measuredLabel(headMeasuredAt, today) : view.writesOff ? NOT_RECORDED_HERE : "not measured yet"}
-                  </span>
-                </div>
-                <Meter className="rm-head-m" value={Number(current.headline.value)} label={`Milestone ${m.ord}, ${headPct}%, ${current.headline.caption}`} />
-                <p className="t-meta">
-                  The slowest part sets the milestone
-                  {(() => {
-                    const p = current.measures.find((x) => x.measureKey === slowest)?.pace ?? current.measures[0]?.pace ?? null;
-                    const line = paceLine(p, { today });
-                    return line ? ` · ${line}` : ".";
-                  })()}
-                </p>
-              </>
-            ) : (
-              <p className="t-meta">{view.writesOff ? "Not recorded on this server." : "Not measured yet — the first reading is recorded when you next open Today or You in the app."}</p>
-            )}
-          </div>
-        )}
-
         {current.measures.length > 0 &&
           sec(
             "Measures",
-            "the same numbers as Today's goal card",
             current.measures
               .filter((x) => x.kind !== "CHECKPOINT")
               .map((x) => {
                 const parsed = parseMeasureKey(x.measureKey);
-                const label =
-                  x.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `Cards at level ${parsed.level}+ in ${scopeNamesOf(parsed.domainIds, index) ?? "this milestone's Domains"}` : "Practice kept");
+                const names = parsed?.kind === "CARDS_AT_LEVEL" ? scopeNamesOf(parsed.domainIds, index) : null;
+                const label = x.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `Cards at level ${parsed.level}+ in ${names ?? "this milestone's Domains"}` : "Practice kept");
                 return (
                   <MeasureRow
                     key={x.measureKey}
@@ -402,6 +619,8 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
                     since="since start"
                     writesOff={view.writesOff}
                     note={practiceKeptPausedLine(pausedOfMeasure(x, paused), today)}
+                    scope={names}
+                    seen={plan}
                   />
                 );
               })
@@ -409,8 +628,7 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
 
         {items("DOMAIN").length > 0 &&
           sec(
-            "Domains needed",
-            "from your library",
+            "Domains",
             items("DOMAIN").map((it) => {
               const f = it.domainId ? index.get(it.domainId) : undefined;
               const cls = provenanceOf(it.origin, it.decision);
@@ -422,8 +640,7 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
 
         {items("TOPIC").length > 0 &&
           sec(
-            "What to learn",
-            "write cards on it in its Domain; review them when due",
+            SHORT_SECTION.learn,
             items("TOPIC").map((it) => {
               const f = it.domainId ? index.get(it.domainId) : undefined;
               return <TopicRow key={it.id ?? it.lineageId} target={{ row: editorRowOf(it), item: it, milestone: m }} stage="active" domainName={f?.name ?? it.proposedName} facts={isLibrary(f) ? f : null} />;
@@ -433,7 +650,6 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
         {(items("PRACTICE").length > 0 || practiceOnly) &&
           sec(
             "What to practise",
-            started ? "on Today under this goal" : "goes to Today when you start it",
             <>
               {practiceOnly && <p className="rm-avd-p rm-avd-ms">{practiceOnly}</p>}
               {items("PRACTICE").map((it) => (
@@ -444,14 +660,15 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
                   kept={current.practiceKept?.[it.lineageId] ?? null}
                   paused={pausedOf.get(it.lineageId) ?? null}
                   today={today}
+                  health={healthSaid ? "card" : "row"}
                 />
               ))}
             </>
           )}
 
-        {m.notes.length > 0 && (
+        {m.notes.some((n) => !(n === "HEALTH_LINE" && healthSaid)) && (
           <div className="rm-ms-sec">
-            {m.notes.map((n) => (
+            {m.notes.filter((n) => !(n === "HEALTH_LINE" && healthSaid)).map((n) => (
               <p key={n} className="t-meta" style={{ margin: 0 }}>
                 {MILESTONE_NOTE_LINE[n]}
               </p>
@@ -462,24 +679,27 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
         {items("STEP").length > 0 &&
           sec(
             "Steps",
-            "you tick these",
             items("STEP").map((it) => {
               const done = current.stepDone?.[it.lineageId] ?? null;
               const cls = provenanceOf(it.origin, it.decision);
               if (cls === "DRAFT" || cls === "KEPT_SUGGESTION") return <ItemRow key={it.id ?? it.lineageId} target={{ row: editorRowOf(it), item: it, milestone: m }} stage="active" kindLabel="Step" />;
               return done ? (
-                <div key={it.id ?? it.lineageId} className="rm-done-l">
-                  <RoadmapGlyph name="tick" />
+                <div key={it.id ?? it.lineageId} className="rm-dr rm-step">
+                  <KindGlyph kind="step" state="done" size={20} />
                   <div>
-                    <p className="rm-it-l">{it.label}</p>
+                    <p className="rm-it-l" data-wc={cls === "YOURS" ? "own" : undefined}>
+                      {it.label}
+                    </p>
                     <div className="rm-it-m">done {dayWithWeekday(done, today)}</div>
                   </div>
                 </div>
               ) : (
-                <div key={it.id ?? it.lineageId} className="rm-dr" style={{ paddingBottom: 0 }}>
-                  <RoadmapGlyph name="step" />
+                <div key={it.id ?? it.lineageId} className="rm-dr rm-step" style={{ paddingBottom: 0 }}>
+                  <KindGlyph kind="step" state="idle" size={20} />
                   <div>
-                    <p className="rm-it-l">{it.label}</p>
+                    <p className="rm-it-l" data-wc={cls === "YOURS" ? "own" : undefined}>
+                      {it.label}
+                    </p>
                     {started && it.templateId && (
                       <div className="rm-it-m">
                         {pausedOf.has(it.lineageId) && `${pauseRowLine(pausedOf.get(it.lineageId)!, today)}${pausedOf.get(it.lineageId)!.offToday ? "" : " "}`}
@@ -500,7 +720,7 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
           <div className="rm-ms-sec" id="checkpoint">
             <div className="rm-ms-sh">
               <span className="t-eyebrow">Checkpoint</span>
-              <span className="rm-cap">context only</span>
+              <span className="rm-cap" data-wc="honest">{SHORT_CONTEXT_ONLY}</span>
             </div>
             {/* Through ItemRow, so its words keep their chip (a kept checkpoint still reads "Gemini's words …") and its ⋯. */}
             <ItemRow
@@ -509,10 +729,10 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
               kindLabel={checkpoint.checkpointKind ? CHECKPOINT_KIND_WORD[checkpoint.checkpointKind] : "a test of your own"}
               meta={
                 <>
-                  {current.checkpointLog
-                    ? `you logged ${current.checkpointLog.score}/${current.checkpointLog.outOf} on ${dayLabel(current.checkpointLog.day, today)}`
-                    : "no score logged yet"}
-                  {checkpoint.bar != null && checkpoint.outOf != null ? ` · your bar ${checkpoint.bar} of ${checkpoint.outOf}` : ""} · doesn&apos;t move your progress
+                  {current.checkpointLog ? `you logged ${current.checkpointLog.score}/${current.checkpointLog.outOf} on ${dayLabel(current.checkpointLog.day, today)}` : null}
+                  {current.checkpointLog && checkpoint.bar != null && checkpoint.outOf != null ? " · " : null}
+                  {checkpoint.bar != null && checkpoint.outOf != null ? shortBar(checkpoint.bar, checkpoint.outOf) : current.checkpointLog ? null : "no score logged yet"}
+                  <span className="sr-only"> · doesn&apos;t move your progress</span>
                 </>
               }
             >
@@ -528,12 +748,9 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
 
         {!started && !current.starting && !current.pastDue && (
           <div className="rm-ms-sec">
-            <p className="t-body" style={{ margin: 0 }}>
-              Start milestone {m.ord} when you&apos;re ready.
-            </p>
             {current.stated != null && (
-              <p className="t-meta" style={{ marginTop: 4 }}>
-                Becomes a Mid goal on Today · <PaysLine text={statedLine(current.stated, current.zeroReason, current.paidOn, today)} />.
+              <p className="rm-head-pay" style={{ marginTop: 0 }}>
+                {pays ? <PaysLine text={statedFull} /> : <HonestyChip kind="pays-nothing-ms" label={SHORT_PAYS_NOTHING} full={statedFull} />}
               </p>
             )}
             {view.goalsLive ? (
@@ -578,7 +795,8 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
  * fall); [Keep the dates] leaves the dates as they are and records that on
  * the plan (R4's keepCalibratedDates: the measured inputs leave
  * dateOrigin.calibrating, so the offer is answered on every device and the
- * chip stops saying "estimate" for them; the contract §15.10).
+ * chip stops saying "estimate" for them; the contract §15.10). The re-date
+ * note sits in the (i) (D1).
  */
 function CalibratedOffer({ view, line }: { view: RoadmapView; line: string }) {
   const header = view.header!;
@@ -588,9 +806,9 @@ function CalibratedOffer({ view, line }: { view: RoadmapView; line: string }) {
   return (
     <section className="card rm-banner" aria-label="Your inputs are measured">
       <div className="rm-banner-t">
-        <p style={{ margin: 0 }}>{line}</p>
-        <p className="t-meta" style={{ margin: "4px 0 0" }}>
-          {REDATE_NOTE}
+        <p style={{ margin: 0 }}>
+          {line}{" "}
+          <InfoTip topic="re-dating">{REDATE_NOTE}</InfoTip>
         </p>
       </div>
       <div className="rm-acts" style={{ marginTop: 0 }}>
@@ -606,6 +824,19 @@ function CalibratedOffer({ view, line }: { view: RoadmapView; line: string }) {
   );
 }
 
+/** "Behind on new cards · 5 of 7" from the QUESTS_BEHIND sentence ("… asks 5 of the 7 needed …"); its own head when the counts aren't in it. */
+export function behindChipLabelOf(line: string, head: string): string {
+  const m = /asks (\d+) of the (\d+) needed/.exec(line);
+  return m ? shortBehindNewCards(Number(m[1]), Number(m[2])) : head;
+}
+
+/**
+ * The triggers above Now. QUESTS_BEHIND (ui-motion.md §3.3 screen 5): one card
+ * with «[pace.behind] Behind on new cards · 5 of 7» (it opens the banner's
+ * sentence, said once) and the levers as buttons; what each lever does is in
+ * the (i). CALIBRATED offers Re-date and Keep the dates. The rest keep their
+ * lines and Re-plan.
+ */
 function Triggers({ view, current, onReplan }: { view: RoadmapView; current: CurrentMilestoneView | null; onReplan: () => void }) {
   const [resched, setResched] = useState(false);
   const { run, pending, error } = useRoadmapAction();
@@ -619,41 +850,46 @@ function Triggers({ view, current, onReplan }: { view: RoadmapView; current: Cur
   const later = view.milestones.filter((r) => r.ord > ord && r.state !== "LATER").map((r) => r.ord);
   const laterLine = later.length > 1 ? `Milestones ${later[0]} to ${later[later.length - 1]}` : later.length === 1 ? `Milestone ${later[0]}` : "later milestones";
   return (
-    <div className="rm-o2 rm-stack">
+    <div className="rm-o2 rm-stack" data-wc-block="aim-notes">
       {behind && (
         <>
-          <section className="card rm-banner">
-            <p className="rm-banner-t">
-              <b>{banner!.head}</b>
-              {banner!.body}
-            </p>
-          </section>
-          <section className="card pad">
-            <div className="t-eyebrow">What acts on Milestone {ord}</div>
+          <section className="card pad rm-behind" aria-label={`What acts on Milestone ${ord}`}>
+            <Chips>
+              <HonestyChip
+                kind="behind"
+                label={behindChipLabelOf(behind.line, banner!.head)}
+                wrap
+                full={
+                  <>
+                    <b>{banner!.head}</b> {banner!.body}
+                  </>
+                }
+              />
+              <InfoTip topic={`what acts on Milestone ${ord}`}>
+                {current?.goalId && <span className="rm-tip-l">Reschedule: a later due day counts as Carried when you close it.</span>}
+                {current?.stated != null && current.stated > 0 && (
+                  <span className="rm-tip-l">
+                    Or let it close short: it <PaysLine text={statedLine(current.stated, null)} />.
+                  </span>
+                )}
+                {depthPlan && <span className="rm-tip-l">{CLOSE_SHORT_PARAGON_LINE}</span>}
+                {later.length > 0 && (
+                  <span className="rm-tip-l">
+                    {depthPlan ? `This re-dates ${laterLine}; it never lowers a count or a level, and it doesn't change Milestone ${ord}.` : `This re-fits ${laterLine}; it doesn't change Milestone ${ord}.`}
+                  </span>
+                )}
+              </InfoTip>
+            </Chips>
             <div className="rm-lever">
               {current?.goalId && (
-                <>
-                  <Button variant="primary" className="rm-btn-wrap" onClick={() => setResched(true)}>
-                    Reschedule Milestone {ord}
-                  </Button>
-                  <p className="t-meta">A later due day counts as Carried when you close it.</p>
-                </>
+                <Button variant="primary" className="rm-btn-wrap" onClick={() => setResched(true)}>
+                  Reschedule Milestone {ord}
+                </Button>
               )}
-              {current?.stated != null && current.stated > 0 && (
-                <p className="t-meta rm-ink1">
-                  Or let it close short: it <PaysLine text={statedLine(current.stated, null)} />.
-                </p>
-              )}
-              {depthPlan && <p className="t-meta">{CLOSE_SHORT_PARAGON_LINE}</p>}
               {later.length > 0 && (
-                <>
-                  <Button className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.replan(view.header!.id, "REFIT"))}>
-                    {depthPlan ? "Re-date later milestones" : "Re-fit later milestones"}
-                  </Button>
-                  <p className="t-meta">
-                    {depthPlan ? `This re-dates ${laterLine}; it never lowers a count or a level, and it doesn't change Milestone ${ord}.` : `This re-fits ${laterLine}; it doesn't change Milestone ${ord}.`}
-                  </p>
-                </>
+                <Button className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.replan(view.header!.id, "REFIT"))}>
+                  {depthPlan ? "Re-date later milestones" : "Re-fit later milestones"}
+                </Button>
               )}
               {error && <ActionError>{error}</ActionError>}
             </div>
@@ -700,6 +936,27 @@ function StartAgain({ row }: { row: MilestoneRowView }) {
   );
 }
 
+/** Which rows give a rank (F-R4-12): a stage held when you began gives none and doesn't raise the bar; the rest give one above the best before them. */
+export function rankPlanOfRows(rows: readonly MilestoneRowView[]): Record<string, RankPlanEntry> {
+  let best = 0;
+  const out: Record<string, RankPlanEntry> = {};
+  for (const r of [...rows].sort((a, b) => a.ord - b.ord)) {
+    if (r.held || r.rankIndex == null) continue;
+    out[r.id] = { rankIndex: r.rankIndex, gives: r.rankIndex > best, paragonAfter: false };
+    best = Math.max(best, r.rankIndex);
+  }
+  return out;
+}
+
+/**
+ * The milestones as a RouteRail (ui-motion.md §3.3 screen 6, §4.5): one node
+ * per MilestoneRowState (railNodesOf), LATER rows after them as thin rings;
+ * a node's title keeps its Gemini chip with the who-word (D25); its ▸ holds
+ * the dates, the rank it gives ("gives Aim rank → X", never the name alone),
+ * its full line, the link to Now and Start again. `reach` (SEEN) plays on a
+ * counted reach only; `start` (ACT) pings the current node once after the
+ * user's own Start. The Paragon or depth line sits in the card's (i).
+ */
 function MilestonesList({
   rows,
   today,
@@ -708,6 +965,8 @@ function MilestonesList({
   positions,
   paragon,
   depthLine,
+  seen,
+  startTick,
 }: {
   rows: readonly MilestoneRowView[];
   today: string;
@@ -719,66 +978,97 @@ function MilestonesList({
   paragon: boolean;
   /** Revision 4: a depth plan's own line under the list (the Paragon conditions, or what keeps Paragon closed); replaces rev 3's. */
   depthLine?: string | null;
+  /** The plan's seen basis (reach); none: nothing animates. */
+  seen?: SeenBases | null;
+  /** Bumped after the user's own Start (ACT). */
+  startTick?: number;
 }) {
-  let best = 0;
-  const gives = new Map<string, boolean>();
-  for (const r of [...rows].sort((a, b) => a.ord - b.ord)) {
-    // A stage held when you began gives no rank (F-R4-12): it neither gives one nor raises the bar for the next.
-    if (r.held) {
-      gives.set(r.id, false);
-      continue;
-    }
-    const g = r.rankIndex != null && r.rankIndex > best;
-    gives.set(r.id, g);
-    if (r.rankIndex != null) best = Math.max(best, r.rankIndex);
+  const plan = rankPlanOfRows(rows);
+  const model = railNodesOf(rows, { today, plan });
+  // railNodesOf keeps the rows in place order with LATER left out, one node per row.
+  const placed = rows.filter((x) => x.state !== "LATER").sort((a, b) => a.ord - b.ord);
+  const later = rows.filter((r) => r.state === "LATER").sort((a, b) => a.ord - b.ord);
+  const title = (r: MilestoneRowView) => (
+    <span data-wc="name">
+      <b>
+        <StruckLabel label={r.title} struck={r.titleStruck} />
+      </b>
+      <TitleClassChip cls={r.titleClass} />
+    </span>
+  );
+  const nodes: RailNode[] = model.map((n, i) => {
+    const r: MilestoneRowView | undefined = placed[i];
+    const entry = r ? plan[r.id] : undefined;
+    const giving = entry && entry.gives && entry.rankIndex != null && n.state !== "REACHED" && n.state !== "PENDING_REACH" && n.state !== "DROPPED" && n.state !== "CLOSED_UNREACHED" && !n.heldAtStart;
+    const givesFull = giving ? givesRankLine(entry.rankIndex, true) : null;
+    const idx = entry?.rankIndex ?? 0;
+    const pct = r && !n.heldAtStart && r.percent != null && n.state !== "CLOSED_UNREACHED" ? `${r.percent}%` : null;
+    return {
+      n: n.n,
+      // RouteRail badges every OUTLINE node with Gemini's balloon; an outline row in the app's words is drawn as the same
+      // thin ring without it (its words still say "Outline"), so the badge never claims Gemini wrote it (D25, D27).
+      state: n.state === "OUTLINE" && !n.gemini ? "PLANNED" : n.state,
+      label: `${n.label}${n.gemini && n.titleClass ? ` · ${PROVENANCE_WORDS[n.titleClass === "KEPT_SUGGESTION" ? "KEPT_SUGGESTION" : "DRAFT"]}` : ""}${pct ? ` · ${pct}` : ""}`,
+      title: r ? title(r) : n.title,
+      meta: n.meta ?? undefined,
+      aside: pct ?? undefined,
+      pct: n.pct,
+      gate: n.gate ?? undefined,
+      rankIndex: n.rankIndex,
+      countsFrom: n.countsFrom ?? undefined,
+      closedPct: n.closedPct,
+      more: (
+        <>
+          {/* The title's words class, in full (D13: the sr label's provenance is one tap away). */}
+          {n.gemini && n.titleClass && <p className="t-meta">{PROVENANCE_WORDS[n.titleClass === "KEPT_SUGGESTION" ? "KEPT_SUGGESTION" : "DRAFT"]}</p>}
+          {n.more
+            .filter((l) => l !== givesFull)
+            .map((l) => (
+              <p key={l} className="t-meta">
+                {l}
+              </p>
+            ))}
+          {givesFull && (
+            <p className="t-meta rm-rr-gives">
+              <Glyph name={`rank.${Math.max(0, Math.min(6, idx))}` as `rank.${0 | 1 | 2 | 3 | 4 | 5 | 6}`} state="active" size={16} inherit />
+              <span aria-hidden="true">
+                {SHORT_GIVES_RANK} → {AIM_RANKS[Math.max(0, Math.min(6, idx))]}
+              </span>
+              <span className="sr-only">{givesFull}</span>
+            </p>
+          )}
+          {n.state === "CURRENT" && (
+            <p className="t-meta">
+              <a className="rm-ilink" href="#now">
+                Its week quests and measures are in Now
+              </a>
+            </p>
+          )}
+          {r && startAgainOffered(r, rows, open) && <StartAgain row={r} />}
+        </>
+      ),
+    };
+  });
+  for (const r of later) {
+    nodes.push({
+      n: r.ord,
+      state: "LATER",
+      label: `Milestone ${r.ord} · ${r.title} · Later · no dates`,
+      title: title(r),
+      meta: "Later",
+      more: <p className="t-meta">No dates: a Later milestone gets its dates when a re-plan brings it back.</p>,
+    });
   }
   return (
-    <div className="rm-o4">
+    <div className="rm-o4" data-wc-block="milestones">
       <SectionHeader title="Milestones" aside={`${positions} · to ${dayLabel(targetDay, today)}`} />
-      <section className="card">
-        {rows.map((r) => {
-          const parts = r.rankIndex != null && gives.get(r.id);
-          return (
-            <details key={r.id} className="rm-ml">
-              <summary className={cx("rm-ml-row", r.state === "LATER" && "rm-ml-later")}>
-                <span className={cx("rm-ms-n", r.state === "CURRENT" && "rm-ms-n-cur", r.state === "REACHED" && "rm-ms-n-done")}>{r.ord}</span>
-                <div>
-                  <b>
-                    <StruckLabel label={r.title} struck={r.titleStruck} />
-                  </b>
-                  <TitleClassChip cls={r.titleClass} />
-                  <span className="t-meta">{r.held ? heldRowLine(r.rankIndex) : milestoneRowLine(r, today)}</span>
-                </div>
-                <span className="rm-ml-r">
-                  {r.percent != null && !r.held ? `${r.percent}%` : r.closedPercent != null ? `${r.closedPercent}%` : ""}
-                  {r.state !== "CLOSED_UNREACHED" && !r.held && <small>{parts ? `→ ${aimRankName(r.rankIndex!)}` : r.rankIndex != null ? "keeps your rank" : ""}</small>}
-                </span>
-              </summary>
-              <div className="rm-ml-more">
-                <p className="t-meta">{r.held ? MILESTONE_NOTE_LINE.HELD_AT_START : r.windowStart && r.dueDay ? spanLabel(r.windowStart, r.dueDay, today) : "No dates: a Later milestone gets its dates when a re-plan brings it back."}</p>
-                {r.rankIndex != null && r.state !== "CLOSED_UNREACHED" && !r.held && (
-                  <p className="t-meta">{parts ? `Reaching it gives the Aim rank ${aimRankName(r.rankIndex)}.` : "Reaching it keeps your rank."}</p>
-                )}
-                {r.state === "CURRENT" && (
-                  <p className="t-meta">
-                    <a className="rm-ilink" href="#now">
-                      Its week quests and measures are in Now
-                    </a>
-                  </p>
-                )}
-                {startAgainOffered(r, rows, open) && <StartAgain row={r} />}
-              </div>
-            </details>
-          );
-        })}
-        {depthLine ? (
-          <p className="rm-note rm-note-top">{depthLine}</p>
-        ) : (
-          paragon && (
-            <p className="rm-note rm-note-top">
-              {PARAGON_PARTS.lead} {PARAGON_PARTS.name}.
-            </p>
-          )
+      <section className="card rm-ml-card" aria-label="Milestones">
+        <RouteRail nodes={nodes} seenKey={seenBaseOf(seen ?? null, "plan")} startTick={startTick} label="Milestones" className="rm-rail" />
+        {(depthLine || paragon) && (
+          <div className="rm-ml-foot">
+            <Glyph name="rank.6" state="idle" size={20} />
+            <InfoTip topic="the top rank">{depthLine ?? `${PARAGON_PARTS.lead} ${PARAGON_PARTS.name}.`}</InfoTip>
+          </div>
         )}
       </section>
     </div>
@@ -862,6 +1152,11 @@ function Reference({ view, current, gates }: { view: RoadmapView; current: Curre
                 rows={view.milestones.filter((r) => !r.held && r.state !== "LATER" && r.state !== "DROPPED")}
                 mode="plan"
                 userDay={header.targetDay}
+                today={view.today}
+                throughput={view.throughput}
+                feasibility={view.feasibility}
+                exam={view.depth?.exam ?? null}
+                seenKey={seenBaseOf(seenBasesOfRoadmap(view), "plan")}
               />
             )}
             {others.length > 0 && (
@@ -987,17 +1282,19 @@ function Footer({ view, current, onReplan }: { view: RoadmapView; current: Curre
   // DONE or ARCHIVED (a reset's archive included): no dead end — the next aim, and the history kept.
   if (header.status === "DONE" || header.status === "ARCHIVED")
     return (
-      <div className="rm-o7 rm-closed" id="archive">
-        <Button variant="primary" href={ROADMAP_NEW_HREF}>
-          {AIM_NEW_AIM}
-        </Button>
-        <p className="t-meta">{AIM_HISTORY_LINE}</p>
+      <div className="rm-o7 rm-closed" id="archive" data-wc-block="roadmap-footer">
+        <span className="rm-closed-r">
+          <Button variant="primary" href={ROADMAP_NEW_HREF}>
+            {AIM_NEW_AIM}
+          </Button>
+          <InfoTip topic="this roadmap's history">{AIM_HISTORY_LINE}</InfoTip>
+        </span>
       </div>
     );
   if (header.status !== "ACTIVE") return null;
   const reached = Boolean(header.reachedDay);
   return (
-    <div className="rm-o7 rm-acts" id="archive" style={{ marginTop: 0 }}>
+    <div className="rm-o7 rm-acts" id="archive" style={{ marginTop: 0 }} data-wc-block="roadmap-footer">
       {reached && (
         <Button variant="primary" onClick={() => setDone(true)}>
           Mark the aim done
@@ -1040,8 +1337,14 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
   const closed = header.status !== "ACTIVE";
   // Constraint safety (contracts §19): the activity card asks above Now; once answered it sits before the footer, editable.
   const asks = activityAsksOf(view.activityConfirm);
+  // UI motion: the seen bases (D8), the horizon band, and the user's own Start (it pings the current node once: `start`, ACT).
+  const seen = useMemo(() => seenBasesOfRoadmap(view), [view]);
+  const horizon = useMemo(() => horizonOfRoadmap(view), [view]);
+  const goalId = current?.goalId ?? null;
+  const [startSeen, setStartSeen] = useState<{ goalId: string | null; tick: number }>({ goalId, tick: 0 });
+  if (startSeen.goalId !== goalId) setStartSeen({ goalId, tick: !startSeen.goalId && goalId ? startSeen.tick + 1 : startSeen.tick });
   const body = (
-    <div className="rm-cols">
+    <div className="rm-cols" data-wc-block={closed ? "roadmap-done" : undefined}>
       <div className="rm-col">
         <AimHeader
           className="rm-o1"
@@ -1057,6 +1360,8 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
           paragonMissing={view.paragonMissing ?? []}
           m={view.feasibility?.m ?? 1}
           names={names}
+          horizon={horizon}
+          writesOffChip
         />
         {!closed && <Triggers view={view} current={current} onReplan={() => setReplan(true)} />}
         {!closed && asks && (
@@ -1069,7 +1374,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             <DraftReview view={view} mode="replan" gates={gates} />
           </div>
         )}
-        {!closed && current && <NowSection view={view} current={current} onStartOpen={() => setStart(true)} />}
+        {!closed && current && <NowSection view={view} current={current} onStartOpen={() => setStart(true)} seen={seen} />}
         {view.milestones.length > 0 && (
           <MilestonesList
             rows={view.milestones}
@@ -1079,6 +1384,8 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
             positions={scheduled}
             paragon={paragonLineShown(view.rank)}
             depthLine={depthListLine(view)}
+            seen={seen}
+            startTick={startSeen.tick}
           />
         )}
         {!closed && <GapPanel gaps={view.gaps} hidden={view.gapsHidden} scope={scope} gates={gates} />}
@@ -1091,7 +1398,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
       </div>
       <div className="rm-col">
         {view.toward && (
-          <div className="rm-o3">
+          <div className="rm-o3" data-wc-block="toward">
             <SectionHeader title="Toward the aim" aside={header.firstAcceptedDay ? `since you began · ${dayLabel(header.firstAcceptedDay, view.today)}` : undefined} />
             <TowardAim
               toward={view.toward}
@@ -1103,6 +1410,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
               firstAcceptedDay={header.firstAcceptedDay}
               domainIndex={index}
               writesOff={view.writesOff}
+              seen={seenBaseOf(seen, "plan")}
             />
           </div>
         )}
@@ -1117,7 +1425,7 @@ function LivingRoadmap({ view, startPreview, gates }: { view: RoadmapView; start
       {!closed && <ReplanSheet open={replan} onClose={() => setReplan(false)} roadmapId={header.id} startedOrd={current?.goalId ? current.milestone.ord : null} />}
       {!closed && current && scope && (
         <ItemEditor scope={scope}>
-          <StartSheet open={start} onClose={() => setStart(false)} milestone={current.milestone} today={view.today} initial={startPreview ?? null} activityConfirm={view.activityConfirm} roadmapId={header.id} />
+          <StartSheet open={start} onClose={() => setStart(false)} milestone={current.milestone} today={view.today} initial={startPreview ?? null} activityConfirm={view.activityConfirm} roadmapId={header.id} heldRank={view.rank?.index ?? null} />
         </ItemEditor>
       )}
     </>
@@ -1149,21 +1457,36 @@ function LegacyRoadmap({ view }: { view: RoadmapView }) {
     writeAimHandoff(handoff);
   };
   return (
-    <div className="rm-stack">
+    <div className="rm-stack" data-wc-block="roadmap-legacy">
       <section className="card rm-aim" aria-label="Aim">
         <div className="t-eyebrow">{header.status === "ARCHIVED" ? "Aim · archived" : header.status === "DONE" ? "Aim · done" : "Aim"}</div>
-        <p className="rm-aim-t">{header.aim}</p>
-        <div className="rm-chips">
-          <AreaChipView area={header.area} />
-          <Chip>{dayLabel(header.targetDay, view.today)}</Chip>
-        </div>
+        <p className="rm-aim-t" data-wc="own">
+          {header.aim}
+        </p>
+        <Chips className="rm-aim-chips">
+          {spaced([
+            <AreaChipShort key="area" header={header} />,
+            <Chip key="day">{dayLabel(header.targetDay, view.today)}</Chip>,
+            <HonestyChip
+              key="legacy"
+              kind="legacy"
+              label={SHORT_LEGACY}
+              full={
+                <>
+                  <b>{draft ? LEGACY_DRAFT_BANNER : LEGACY_ACTIVE_BANNER}</b>
+                  {!draft && !closed && <> {LEGACY_MEASURE_LINE}</>}
+                </>
+              }
+            />,
+          ])}
+        </Chips>
       </section>
       <section className="card rm-banner" aria-label="Planned before plans aimed at a depth">
-        <div className="rm-banner-t">
-          <b>{draft ? LEGACY_DRAFT_BANNER : LEGACY_ACTIVE_BANNER}</b>
-          {legacy?.geminiHidden && <span className="rm-banner-s">{LEGACY_GEMINI_HIDDEN}</span>}
-          {!draft && !closed && <span className="rm-banner-s">{LEGACY_MEASURE_LINE}</span>}
-        </div>
+        {legacy?.geminiHidden && (
+          <p className="rm-banner-t" data-wc="honest">
+            {LEGACY_GEMINI_HIDDEN}
+          </p>
+        )}
         {draft ? (
           <Button variant="primary" href={ROADMAP_NEW_HREF}>
             {DRAFT_IT_AGAIN_WORD}
@@ -1185,10 +1508,12 @@ function LegacyRoadmap({ view }: { view: RoadmapView }) {
       )}
       {closed && (
         <div className="rm-closed">
-          <Button variant="primary" href={ROADMAP_NEW_HREF}>
-            {AIM_NEW_AIM}
-          </Button>
-          <p className="t-meta">{AIM_HISTORY_LINE}</p>
+          <span className="rm-closed-r">
+            <Button variant="primary" href={ROADMAP_NEW_HREF}>
+              {AIM_NEW_AIM}
+            </Button>
+            <InfoTip topic="this roadmap's history">{AIM_HISTORY_LINE}</InfoTip>
+          </span>
         </div>
       )}
     </div>
@@ -1212,7 +1537,9 @@ export function RoadmapScreen({
   /** Fixtures only: draw a lead-only state (Gemini live, area suggestions live). The live page passes nothing: the switches decide. */
   gates?: LiveGates;
 }) {
-  const writesOffNote = view.writesOff ? (
+  // The living page carries it as the header's «writes off» chip (ui-motion.md §3.3 screen 4); the other screens keep the banner.
+  const living = !(view.state === "NONE" || !view.header) && !isLegacyView(view) && !(view.state === "RUNNING" && view.run) && !(view.state === "DRAFT" && view.draft);
+  const writesOffNote = view.writesOff && !living ? (
     <section className="card rm-note" style={{ marginBottom: 16 }}>
       <RoadmapGlyph name="info" />
       <span>{WRITES_OFF_BANNER}</span>

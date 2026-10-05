@@ -23,6 +23,11 @@
  *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
  *                practiceOnlyLineOf · sessionSwapKindsOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply ·
  *                notPausedOfReply · pausedItemsOf (TaskSeen, PauseState) · pausedOfMeasure (§19)
+ *   UI motion    seen keys (SeenBases · seenBasesOfRoadmap · seenBasesOfAimCard · seenBasesOfWeekQuests · seenKeyOf · seenBaseOf ·
+ *                proficiencyBasisKeyOf · SeenSeed · seenSeedsOf · seenStorageOf · daySeenValue) ·
+ *                rankSealOf · railNodesOf · aimRailOf · countedReachOf · pipDaysOf · rowPipsOf · horizonOfAimCard ·
+ *                horizonOfRoadmap · aimDateOfHeader · aimDateOfCard · realismFlagsOf · capacityFlagsOf · paceFlagsOf ·
+ *                geminiLaneItemsOf · healthChipShown (ui-motion.md §9.3, contracts §21)
  */
 import {
   ACTIVITY_REASON_MAX,
@@ -46,11 +51,16 @@ import {
   type ActivityConfirm,
   type ActivityConfirmView,
   type ActivityRow,
+  type AimCardView,
+  type AimRankName,
   type AimRankView,
   type BlockingFlag,
   type CueTexts,
   type CurrentMilestoneView,
+  type DateCheck,
   type Decision,
+  type Feasibility,
+  type GateStage,
   type ItemDraft,
   type ItemKind,
   type KnowledgeCheck,
@@ -60,16 +70,23 @@ import {
   type MilestoneRowView,
   type MilestoneStatus,
   type MeasureRowView,
+  type PaceResult,
   type PracticeFamily,
+  type PracticePace,
   type Origin,
   type ProficiencyView,
   type DraftView,
+  type RoadmapHeader,
+  type RoadmapStatus,
   type RoadmapView,
   type RunView,
   type RunWriter,
   type StartPreview,
+  type StageKey,
   type StatedZeroReason,
   type TextClass,
+  type Throughput,
+  type TimeCheck,
   type WeekQuestKind,
   type WeekQuestRow,
   type WeekQuestsView,
@@ -94,9 +111,14 @@ import {
   type ProgressionRung,
 } from "@/lib/roadmap-catalog";
 import { constraintExclusionsOf } from "@/lib/roadmap-validate";
-import type { DayKey } from "@/lib/life-day";
+import { addDays, weekStartKeyOf, type DayKey } from "@/lib/life-day";
+import { hashSeed } from "@/lib/motion";
 import type { Track } from "@/lib/life-types";
 import type { Segment } from "@/components/ui/Meter";
+// Types only (erased): the glyph layer's shapes the UI-motion builders fill (ui-motion.md §4.5, §5.6).
+import type { PipDay } from "@/components/glyph/PipStrip";
+import type { StageGate } from "@/components/glyph/paths/stage";
+import type { SeenKey } from "@/components/glyph/useSeen";
 import {
   DRAFTED_BY_LABEL,
   DRAFT_CAP_LINE,
@@ -107,9 +129,18 @@ import {
   activityPendingLine,
   aimConflictLine,
   closedUnreachedLine,
+  GEMINI_LANE_ITEM,
   dayLabel,
+  dueDaysLabel,
+  givesRankLine,
+  heldRowLine,
+  pastDueLine,
   pendingReachLine,
+  shortDateBy,
+  shortDatePlain,
+  shortDateYours,
   weekQuestCountLine,
+  weekdayName,
   type StageEnd,
 } from "./roadmap-copy";
 
@@ -1494,3 +1525,468 @@ export function pausedOfMeasure(row: Pick<MeasureRowView, "measureKey" | "kind" 
   const mine = ids.map((id) => paused.find((p) => p.kind === "PRACTICE" && p.templateId === id));
   return ids.length > 0 && mine.every((p): p is PausedItem => p != null) ? mine : [];
 }
+
+// ═══ UI motion (ui-motion.md §9.3, R0; contracts §21) ═════════════════════════
+//
+// What the glyphs, the composites and the shader slots read, decided here so
+// roadmap-ui-check pins it without rendering. Nothing here animates; nothing
+// here invents a fact the view doesn't carry: a field a view lacks gives no
+// seen key (so nothing moves), no strip and no whose-date word, never a guess.
+
+/**
+ * Fields the views don't carry yet (contracts §21.6: a lib round adds them).
+ * The builders below read them when present and stay silent when not; the
+ * /dev/style fixtures carry them, so the lanes can build against them.
+ *   ProficiencyView.basisKey   `${basisVersion}:${hashSeed(basisSignature(detail.basis))}` (D8; proficiencyBasisKeyOf)
+ *   AimCardView.version        the current acceptance's version (the plan seen basis on /you equals the page's)
+ *   AimCardView.dateOrigin     who set the date ("REALISTIC" the app, "USER" yours)
+ *   AimCardView.run            RUNNING's started time and staleness ("Drafting · started 09:12"; the weave stops when stale)
+ *   AimCardView.rail           the plan's milestone rows (the Aim card's RouteRail strip)
+ *   WeekQuestRow.dueDays       a RAISE row's due days in its window (the PipStrip)
+ *   WeekQuestsView.roadmapId, .acceptedDay, .version   Today's card keys its rows as the Now section does
+ */
+export interface ProficiencyBasisField {
+  basisKey?: string | null;
+}
+export interface AimCardMotionFields {
+  version?: number | null;
+  dateOrigin?: "REALISTIC" | "USER" | null;
+  run?: { startedAt: string; stale: boolean } | null;
+  rail?: readonly MilestoneRowView[] | null;
+}
+export interface WeekQuestDueDays {
+  dueDays?: readonly DayKey[] | null;
+}
+/** WeekQuestsView's roadmap and acceptance (Today's card shares the Now section's seen keys: a done check plays once). */
+export interface WeekQuestMotionFields {
+  roadmapId?: string | null;
+  acceptedDay?: DayKey | null;
+  version?: number | null;
+}
+
+// ─── Seen keys (D8, §5.6): two basis families, never a surface in `what` ───
+
+/** The `what` of each fact two surfaces share (rank, seal, reach, horizon, the headline meter, the realistic date): no surface in it, so a rise plays once per viewer. */
+export const SEEN_WHAT = { rank: "rank", seal: "seal", reach: "reach", horizon: "horizon", proficiency: "meter:proficiency", date: "date" } as const;
+export type SeenWhat = (typeof SEEN_WHAT)[keyof typeof SEEN_WHAT] | `measure:${string}` | `wq:${string}`;
+/** A MeasureRow's meter: Proficiency's basis when its target changed with a rebase, else the plan's (seenKeyOf's `proficiency` option). */
+export function seenMeasureWhat(measureKey: string): `measure:${string}` {
+  return `measure:${measureKey}`;
+}
+/** A week quest row's count (its done check plays when it reaches N): one key per week and row ("wq", so no bare name rule trips). */
+export function seenQuestWhat(weekStart: DayKey, ord: number): `wq:${string}` {
+  return `wq:${weekStart}:${ord}`;
+}
+/** The whats keyed on Proficiency's basis (D8): a rebase never animates. */
+const PROFICIENCY_WHATS: ReadonlySet<string> = new Set([SEEN_WHAT.horizon, SEEN_WHAT.proficiency]);
+
+/** D8's Proficiency basis key, from the reading's detail: the lib passes basisSignature(detail.basis) (roadmap-proficiency). */
+export function proficiencyBasisKeyOf(basisVersion: number, signature: string): string {
+  return `${basisVersion}:${hashSeed(signature)}`;
+}
+
+/**
+ * A roadmap's two seen bases, in glyph/useSeen's families (proficiencyBasis
+ * "prof/…", planBasis "plan/…"; roadmap-ui-check holds the strings equal):
+ *   prof  Proficiency-driven keys (the headline meter, the horizon front, a measure whose target changed)
+ *   plan  every other key (rank, reach, seal, the date, week quests): the acceptance day and the plan version
+ * null where the view lacks the fact (no Proficiency basis key, no version): that key plays nothing.
+ */
+export interface SeenBases {
+  roadmapId: string;
+  prof: string | null;
+  plan: string | null;
+}
+
+function seenRoadmapId(id: string | null | undefined): string | null {
+  return id && !id.includes(":") ? id : null;
+}
+function profBasisOf(p: (ProficiencyView & ProficiencyBasisField) | null | undefined): string | null {
+  const k = p?.basisKey;
+  return typeof k === "string" && k.length > 0 ? `prof/${k}` : null;
+}
+function planBasisOf(acceptedDay: DayKey | null | undefined, version: number | null | undefined): string | null {
+  return acceptedDay && typeof version === "number" && Number.isFinite(version) ? `plan/${acceptedDay}:${version}` : null;
+}
+
+/** The living roadmap's bases: the header's acceptance day and version, the Proficiency view's basis key. */
+export function seenBasesOfRoadmap(view: Pick<RoadmapView, "header" | "proficiency">): SeenBases | null {
+  const id = seenRoadmapId(view.header?.id);
+  if (!id || !view.header) return null;
+  return { roadmapId: id, prof: profBasisOf(view.proficiency), plan: planBasisOf(view.header.acceptedDay, view.header.version) };
+}
+
+/** The Aim card's bases, the same strings as the page's for the same roadmap (so the rank key on /you equals AimHeader's). */
+export function seenBasesOfAimCard(view: AimCardView & AimCardMotionFields): SeenBases | null {
+  const id = seenRoadmapId(view.roadmapId);
+  if (!id) return null;
+  return { roadmapId: id, prof: profBasisOf(view.proficiency), plan: planBasisOf(view.acceptedDay ?? null, view.version ?? null) };
+}
+
+/** A week quests card's bases (Today, the Aim card's line): the plan basis only, when the view carries its roadmap and acceptance. */
+export function seenBasesOfWeekQuests(view: Partial<WeekQuestsView> & WeekQuestMotionFields): SeenBases | null {
+  const id = seenRoadmapId(view.roadmapId);
+  return id ? { roadmapId: id, prof: null, plan: planBasisOf(view.acceptedDay ?? null, view.version ?? null) } : null;
+}
+
+/** The roadmap and basis a composite takes (RankSeal, RouteRail: their `what` is their own, "rank" and "reach"). */
+export function seenBaseOf(bases: SeenBases | null, family: "prof" | "plan"): Omit<SeenKey, "what"> | null {
+  const basis = bases ? bases[family] : null;
+  return bases && basis ? { roadmapId: bases.roadmapId, basis } : null;
+}
+
+/** One key: Proficiency's family for the headline meter and the horizon (and a measure with `proficiency`), the plan's for the rest. */
+export function seenKeyOf(bases: SeenBases | null, what: SeenWhat, opts: { proficiency?: boolean } = {}): SeenKey | null {
+  const base = seenBaseOf(bases, PROFICIENCY_WHATS.has(what) || opts.proficiency ? "prof" : "plan");
+  return base ? { ...base, what } : null;
+}
+
+/** The realistic date as a seen value (date-moved, CHANGED): a number that reads back as its day, so "moved from 7 Mar" can be said from it. */
+export function daySeenValue(day: DayKey): number {
+  return Number(day.replace(/-/g, ""));
+}
+export function dayOfSeenValue(v: number | null | undefined): DayKey | null {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 19700101 || v > 99991231) return null;
+  const s = String(v);
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+/**
+ * What a viewer last saw, for a fixture (the SEEN states: rank-new,
+ * reach-new, quest-done-new, date-moved, since-line …): the page seeds the
+ * seen store with these before its surfaces read it (glyph/useSeen writeSeen,
+ * or seenStorageOf's entries), so the fixture plays its event once.
+ */
+export interface SeenSeed {
+  key: SeenKey;
+  value: number | string;
+}
+
+/** Seeds from one roadmap's bases: [what, value, { proficiency? }]; a key the bases can't make is left out. */
+export function seenSeedsOf(bases: SeenBases | null, entries: readonly (readonly [SeenWhat, number | string, { proficiency?: boolean }?])[]): SeenSeed[] {
+  const out: SeenSeed[] = [];
+  for (const [what, value, opts] of entries) {
+    const key = seenKeyOf(bases, what, opts ?? {});
+    if (key) out.push({ key, value });
+  }
+  return out;
+}
+
+/** The seeds as glyph/useSeen stores them: one entry per roadmap and basis, `xtnl:seen:ev:${roadmapId}:${basis}` → { at, e: { [what]: token } } (strings as hashSeed). */
+export function seenStorageOf(seeds: readonly SeenSeed[], at = 0): Record<string, { at: number; e: Record<string, number> }> {
+  const out: Record<string, { at: number; e: Record<string, number> }> = {};
+  for (const s of seeds) {
+    const k = `xtnl:seen:ev:${s.key.roadmapId}:${s.key.basis}`;
+    const entry = (out[k] ??= { at, e: {} });
+    entry.e[s.key.what] = typeof s.value === "number" ? s.value : hashSeed(s.value);
+  }
+  return out;
+}
+
+// ─── The Aim rank (D5, D18): held counted reaches only ───
+
+export interface RankSealModel {
+  /** The rank held for good (confirmed reaches only; a pending reach moves nothing). */
+  index: number;
+  name: AimRankName;
+  /** The plan's top rank (RankSeal `top`: the pips above it are beyond the plan). */
+  top: number;
+  /** The next rank, drawn active (never done) beside its verb: "gives Aim rank X" / "Next · X · milestone 2". */
+  next: { index: number; name: AimRankName; milestoneOrd: number | null } | null;
+  /** The next milestone keeps the rank ("[rank.N done] keeps your rank"). */
+  keeps: boolean;
+  /** A reach waiting on ticks: no seal and no rank motion until it counts (D18). */
+  pending: { milestoneOrd: number; countsFrom: DayKey } | null;
+  /** The static "new" chip's day (RANK_NEW_DAYS); the motion is the seen event, not this. */
+  newSince: DayKey | null;
+}
+
+export function rankSealOf(rank: AimRankView | null | undefined): RankSealModel | null {
+  if (!rank) return null;
+  const n = rank.next;
+  const next =
+    n.kind === "milestone"
+      ? { index: n.index, name: n.name, milestoneOrd: n.milestoneOrd }
+      : n.kind === "paragon" && rank.top.index > rank.index
+        ? { index: rank.top.index, name: rank.top.name, milestoneOrd: null }
+        : null;
+  return { index: rank.index, name: rank.name, top: rank.top.index, next, keeps: n.kind === "keeps", pending: rank.pending, newSince: rank.newSince };
+}
+
+// ─── The milestones as a RouteRail (§4.5): one state per MilestoneRowState ───
+
+const GATE_OF: Readonly<Record<GateStage, StageGate>> = { FOUNDATION: "foundation", FAMILIAR: "familiar", RETAINED: "retained", FLUENT: "fluent", MASTERED: "mastered" };
+const GATE_AT_LEVEL: Readonly<Record<number, StageGate>> = { 4: "foundation", 6: "familiar", 8: "retained", 10: "fluent", 12: "mastered" };
+const TRACK_STAGE_N: Readonly<Record<string, number>> = { STAGE_1: 1, STAGE_2: 2, STAGE_3: 3, STAGE_4: 4, STAGE_5: 5 };
+
+/** The stage's cairn: its gate (stones), and which stage glyph (BETWEEN draws "toward", PART "part", a track plan "track" with n stones). */
+export function stageGlyphOf(stage: StageKey | string | null | undefined, gateLevel: number | null | undefined): { glyph: "stage.foundation" | "stage.familiar" | "stage.retained" | "stage.fluent" | "stage.mastered" | "stage.toward" | "stage.part" | "stage.track"; gate: StageGate | null; n: number | null } | null {
+  if (!stage) return null;
+  if (stage in GATE_OF) {
+    const gate = GATE_OF[stage as GateStage];
+    return { glyph: `stage.${gate}`, gate, n: null };
+  }
+  if (stage === "BETWEEN" && typeof gateLevel === "number") {
+    const gate = GATE_AT_LEVEL[gateLevel + 1] ?? null;
+    return gate ? { glyph: "stage.toward", gate, n: null } : null;
+  }
+  if (stage === "PART" && typeof gateLevel === "number") {
+    const gate = GATE_AT_LEVEL[gateLevel] ?? null;
+    return gate ? { glyph: "stage.part", gate, n: null } : null;
+  }
+  if (stage in TRACK_STAGE_N) return { glyph: "stage.track", gate: null, n: TRACK_STAGE_N[stage] };
+  return null;
+}
+
+/**
+ * One rail node per row, with its honest words. The rail's states map one to
+ * one (REACHED, PENDING_REACH, CURRENT, PLANNED, OUTLINE, LATER, DROPPED,
+ * SLIPPED, PAST_DUE, CLOSED_UNREACHED). A stage held when the plan began
+ * (row.held) is drawn reached, with "Held when you began" and no rank: the
+ * user holds that level; it was never a reach, and RouteRail's HELD node
+ * (a held day's HeldGlyph) would claim a freeze it isn't.
+ */
+export interface RailNodeModel {
+  n: number;
+  state: MilestoneRowView["state"];
+  /** A stage held when the plan began: drawn REACHED, no rank, "Held when you began". */
+  heldAtStart: boolean;
+  /** RouteRail counts REACHED nodes for `reach`; a pending reach is never counted (D18). */
+  counted: boolean;
+  title: string;
+  /** The title's provenance: DRAFT and KEPT_SUGGESTION carry the Gemini chip with its who-word (D25). */
+  titleClass: TextClass | null;
+  /** The title is in Gemini's words (the only rows the pv.suggest badge may sit on). */
+  gemini: boolean;
+  /** The node's one accessible label: the place, the title and the row's full line. */
+  label: string;
+  /** The visible second line a state must carry (§8): pending, closed, past due, slipped, held; null otherwise. */
+  meta: string | null;
+  /** CURRENT's measured % (the arc); a reached node's figure; null when not measured. */
+  pct: number | null;
+  gate: StageGate | null;
+  /** A reached node that gave a rank: the rank cut out of the disc (the cairn otherwise). */
+  rankIndex: number | null;
+  /** PENDING_REACH: the weekday it counts from ("Thu"). */
+  countsFrom: string | null;
+  /** CLOSED_UNREACHED: the % it closed at. */
+  closedPct: number | null;
+  /** The row's ▸: the date span, the rank it gives, the state's full line. */
+  more: string[];
+}
+
+/** One node per row, in place order; `plan` (rankPlanOf) adds "Reaching it gives the Aim rank …" to the rows not reached. */
+export function railNodesOf(rows: readonly MilestoneRowView[], opts: { today?: DayKey; plan?: Readonly<Record<string, RankPlanEntry>> } = {}): RailNodeModel[] {
+  const { today, plan } = opts;
+  return [...rows]
+    .filter((r) => r.state !== "LATER")
+    .sort((a, b) => a.ord - b.ord)
+    .map((r) => {
+      const held = r.held === true;
+      const state: MilestoneRowView["state"] = held ? "REACHED" : r.state;
+      const stage = stageGlyphOf(r.stage, r.gateLevel);
+      const line = held ? heldRowLine(r.rankIndex) : milestoneRowLine(r, today);
+      const meta =
+        held
+          ? heldRowLine(null)
+          : r.state === "PENDING_REACH"
+            ? r.countsFrom
+              ? `Reached · counts from ${weekdayName(r.countsFrom)}`
+              : "Reached · not counted yet"
+            : r.state === "CLOSED_UNREACHED"
+              ? r.closedPercent != null
+                ? `Closed at ${r.closedPercent}% · not reached`
+                : "Closed · not reached"
+              : r.state === "PAST_DUE"
+                ? "Past due"
+                : r.state === "SLIPPED"
+                  ? "Slipped"
+                  : null;
+      const more: string[] = [];
+      if (r.windowStart && r.dueDay) more.push(`${dayLabel(r.windowStart, today)} – ${dayLabel(r.dueDay, today)}`);
+      const entry = plan?.[r.id] ?? plan?.[r.lineageId];
+      if (!held && state !== "REACHED" && state !== "PENDING_REACH" && state !== "DROPPED" && state !== "CLOSED_UNREACHED" && entry) more.push(givesRankLine(entry.rankIndex, entry.gives));
+      if (r.state === "PENDING_REACH" && r.countsFrom) more.push(pendingReachLine(r.countsFrom));
+      else if (r.state === "PAST_DUE") more.push(pastDueLine(r.ord, r.dueDay, today));
+      else more.push(line);
+      const gemini = r.titleClass === "DRAFT" || r.titleClass === "KEPT_SUGGESTION";
+      return {
+        n: r.ord,
+        state,
+        heldAtStart: held,
+        counted: state === "REACHED",
+        title: r.title,
+        titleClass: r.titleClass ?? null,
+        gemini,
+        label: `Milestone ${r.ord} · ${r.title} · ${line}`,
+        meta,
+        pct: state === "REACHED" && !held ? (r.percent ?? 100) : r.state === "CURRENT" ? r.percent : null,
+        gate: stage?.gate ?? null,
+        // a reached node shows the rank it gave (the row's gaveRank, or the plan's entry); a held stage gave none
+        rankIndex: state === "REACHED" && !held && (r.gaveRank != null || entry?.gives === true) ? r.rankIndex : null,
+        countsFrom: r.state === "PENDING_REACH" && r.countsFrom ? weekdayName(r.countsFrom) : null,
+        closedPct: r.state === "CLOSED_UNREACHED" ? r.closedPercent : null,
+        more: [...new Set(more)],
+      };
+    });
+}
+
+/** The Aim card's strip (§3.3 screen 9): the plan's rows when the card carries them (AimCardView.rail), else none: the card never draws places it can't name. */
+export function aimRailOf(view: AimCardView & AimCardMotionFields, today?: DayKey): RailNodeModel[] | null {
+  return view.rail && view.rail.length > 0 ? railNodesOf(view.rail, { today }) : null;
+}
+
+/** The `reach` seen value: RouteRail's own count of REACHED nodes (a pending reach never counts; a held stage is constant). */
+export function countedReachOf(nodes: readonly Pick<RailNodeModel, "state">[]): number {
+  return nodes.filter((x) => x.state === "REACHED").length;
+}
+
+// ─── Due-day pips (a RAISE row's PipStrip) ───
+
+const PIP_KEYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+/** The life week of `day` as seven pips: due counts, today outlined, past days marked; the label in words. */
+export function pipDaysOf(dueDays: readonly DayKey[], weekOf: DayKey, today: DayKey): { days: PipDay[]; label: string } {
+  const start = weekStartKeyOf(weekOf);
+  const days: PipDay[] = PIP_KEYS.map((key, i) => {
+    const day = addDays(start, i);
+    return { key, n: dueDays.filter((d) => d === day).length, ...(day === today ? { today: true } : {}), ...(day < today ? { past: true } : {}) };
+  });
+  return { days, label: dueDaysLabel(days) };
+}
+
+/** A week quest row's pips: RAISE rows that carry their due days; null otherwise (the due sentence stays). */
+export function rowPipsOf(row: WeekQuestRow & WeekQuestDueDays, today: DayKey): { days: PipDay[]; label: string } | null {
+  if (row.kind !== "RAISE" || !row.dueDays || row.dueDays.length === 0) return null;
+  return pipDaysOf(row.dueDays, today, today);
+}
+
+// ─── The horizon band (§6.1, §6.2): the slot's inputs ───
+
+export interface HorizonModel {
+  variant: "card" | "page";
+  /** null: the unlit marks (no dawn, no dot); never an invented 0%. */
+  proficiency: (ProficiencyView & ProficiencyBasisField) | null;
+  roadmapId: string;
+  /** The Proficiency seen basis (`prof/…`, the family the headline meter shares); null: no horizon-front. */
+  basisKey: string | null;
+  /** The target depth: one contour per level. */
+  depth: number | null;
+  status: RoadmapStatus;
+  /** SELF_REPORTED: the walked path dotted, and the words "from your ticks" beside the % (outside the band). */
+  fromYourTicks: boolean;
+}
+
+/** The Aim card's band: ACTIVE, ACCEPTED, PAST_DUE and DONE (static); none on EMPTY, DRAFT or RUNNING (RUNNING has the weave). */
+export function horizonOfAimCard(view: AimCardView & AimCardMotionFields): HorizonModel | null {
+  if (view.state === "EMPTY" || view.state === "DRAFT" || view.state === "RUNNING" || !view.roadmapId || view.legacy) return null;
+  const p = view.proficiency ?? null;
+  const bases = seenBasesOfAimCard(view);
+  return { variant: "card", proficiency: p, roadmapId: view.roadmapId, basisKey: bases?.prof ?? null, depth: view.depth ?? null, status: view.state === "DONE" ? "DONE" : "ACTIVE", fromYourTicks: p?.class === "SELF_REPORTED" };
+}
+
+/** The living header's band (ACTIVE, DONE, ARCHIVED); the draft header and the empty roadmap get the unlit marks; RUNNING has the weave. */
+export function horizonOfRoadmap(view: Pick<RoadmapView, "state" | "header" | "proficiency" | "draft" | "depth">): HorizonModel | null {
+  if (view.state === "RUNNING") return null;
+  if (view.state === "NONE" || !view.header) return { variant: "page", proficiency: null, roadmapId: "", basisKey: null, depth: null, status: "DRAFT", fromYourTicks: false };
+  if (view.header.legacy) return null;
+  const draft = view.state === "DRAFT";
+  const p = draft ? null : (view.proficiency ?? null);
+  const depth = draft ? (view.draft?.depth?.depth ?? view.header.depth ?? null) : (view.header.depth ?? view.depth?.depth ?? null);
+  const bases = seenBasesOfRoadmap(view);
+  return { variant: "page", proficiency: p, roadmapId: view.header.id, basisKey: draft ? null : (bases?.prof ?? null), depth, status: view.header.status, fromYourTicks: p?.class === "SELF_REPORTED" };
+}
+
+// ─── Whose date (C2-M2): the app's estimate at month precision, or yours ───
+
+export interface AimDateModel {
+  /** "app": the app set it (an estimate, ≈, month precision, t.cal); "yours": the user's own date (t.pin + "yours"); null: the view doesn't say. */
+  whose: "app" | "yours" | null;
+  day: DayKey;
+  level: number | null;
+  estimate: boolean;
+  glyph: "t.cal" | "t.pin";
+  /** "L12 by ≈ Dec 2027" · "31 Dec 2027 · yours" · "L12 by Dec 2027". */
+  text: string;
+}
+
+function dateModel(whose: "app" | "yours" | null, day: DayKey, level: number | null): AimDateModel {
+  if (whose === "yours") return { whose, day, level, estimate: false, glyph: "t.pin", text: shortDateYours(day) };
+  if (whose === "app") return { whose, day, level, estimate: true, glyph: "t.cal", text: shortDateBy(level, day) };
+  return { whose, day, level, estimate: false, glyph: "t.cal", text: shortDatePlain(level, day) };
+}
+
+export function aimDateOfHeader(header: Pick<RoadmapHeader, "targetDay" | "depth" | "dateOrigin">): AimDateModel {
+  const o = header.dateOrigin?.origin;
+  return dateModel(o === "USER" ? "yours" : o === "REALISTIC" ? "app" : null, header.targetDay, header.depth ?? null);
+}
+
+/** The Aim card's date chip: whose from dateOrigin when the card carries it; a calibrating estimate is always the app's. */
+export function aimDateOfCard(view: AimCardView & AimCardMotionFields): AimDateModel | null {
+  const chip = view.dateChip ?? null;
+  const day = chip?.day ?? view.targetDay;
+  if (!day) return null;
+  const o = view.dateOrigin ?? null;
+  const whose = o === "USER" ? "yours" : o === "REALISTIC" || chip?.estimate ? "app" : null;
+  return dateModel(whose, day, chip?.depth ?? view.depth ?? null);
+}
+
+// ─── Honest flags (D28): unverified, best case, calibrating stay visible ───
+
+export interface RealismFlags {
+  /** Capacity calibrates (adherence or tracked time), or a milestone's time check says so: the verdict reads "Unverified · …". */
+  unverified: boolean;
+  /** The date rests on an assumed pass rate (or a reach's best case): «best case» beside it. */
+  bestCase: boolean;
+  /** The pass rate calibrates: "pass rate calibrating n/need" in place of a %. */
+  calibrating: { n: number; need: number } | null;
+  /** A measured pass rate: «reads high» beside it (neglect lapses aren't logged). */
+  readsHigh: boolean;
+  /** Task-time estimates sized by Gemini (0..1): «n% sized by Gemini». */
+  sizedByGemini: number | null;
+}
+
+export function realismFlagsOf(p: { throughput?: Throughput | null; dateCheck?: DateCheck | null; feasibility?: Feasibility | null }): RealismFlags {
+  const tp = p.throughput ?? null;
+  const pass = tp?.passShare ?? null;
+  const knowledgeBestCase = (p.feasibility?.milestones ?? []).some((m) => m.knowledge.some((k) => k.bestCase));
+  const timeUnverified = (p.feasibility?.milestones ?? []).some((m) => m.time.unverified);
+  return {
+    unverified: timeUnverified || tp?.adherence.kind === "calibrating" || tp?.trackedMinutes.kind === "calibrating",
+    bestCase: knowledgeBestCase || (p.dateCheck?.dateOrigin.calibrating ?? []).includes("p") || pass?.kind === "calibrating",
+    calibrating: pass?.kind === "calibrating" ? { n: pass.have, need: pass.need } : null,
+    readsHigh: pass?.kind === "measured",
+    sizedByGemini: typeof tp?.geminiShare === "number" && tp.geminiShare > 0 ? tp.geminiShare : null,
+  };
+}
+
+/** A CapacityGauge's verdict: "Unverified · Fits" while the time check calibrates. */
+export function capacityFlagsOf(time: Pick<TimeCheck, "unverified"> | null | undefined): { unverified: boolean } {
+  return { unverified: time?.unverified === true };
+}
+
+/** The pace phrase: «best case» when the projection rests on a calibrating pass rate. */
+export function paceFlagsOf(pace: PaceResult | PracticePace | null | undefined): { bestCase: boolean } {
+  return { bestCase: pace != null && "bestCase" in pace && pace.bestCase === true };
+}
+
+// ─── The draft header's lanes (D25) and the health chip (D12) ───
+
+/** Gemini's lane lists only what geminiV4PartsOf says it did on this draft ([]: the lane isn't drawn). */
+export function geminiLaneItemsOf(p: Pick<GeminiV4Parts, "needs" | "order" | "picks">): string[] {
+  return [...(p.needs ? [GEMINI_LANE_ITEM.needs] : []), ...(p.order != null ? [GEMINI_LANE_ITEM.order] : []), ...(p.picks > 0 ? [GEMINI_LANE_ITEM.picks] : [])];
+}
+
+/**
+ * One «Not medical advice · ask a professional» per card (D12): a body or
+ * care card, or a card with a health row (a body-plan practice, a craft card
+ * that asks); never a Field card; dropped when a HEALTH flag on the card
+ * already shows HEALTH_LINE.
+ */
+export function healthChipShown(p: { track?: Track | null; healthRows?: boolean; healthFlagShown?: boolean }): boolean {
+  if (p.healthFlagShown) return false;
+  return p.track === "BODY" || p.track === "CARE" || p.healthRows === true;
+}
+
+/** InfoTips a card renders at most, the Key included (D13). */
+export const INFO_TIPS_PER_CARD = 3;

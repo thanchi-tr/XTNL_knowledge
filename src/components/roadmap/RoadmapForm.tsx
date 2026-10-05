@@ -54,9 +54,27 @@
  * The unsent form survives in guarded localStorage (roadmap-autosave), which
  * the /you card reads and writes too; an open DRAFT is edited, not
  * duplicated ("Continuing your draft from 3 Oct · Discard it").
+ *
+ * UI motion (lane R7; ui-motion.md §3.3 screen 1, §7.1): fewer words, the
+ * full text one tap away. The form lead sits behind the (i) beside "Your
+ * aim"; the aim's question, AIM_LONG_HINT and "Shown exactly as you wrote
+ * it" are the textarea's description, held in the card Key ([m.verbatim]
+ * beside the n/140). Depth is a StageLadder over the stage buttons
+ * ("Mastered L12"), «review gap ≈ 110 d», and one (i) holding depthHint,
+ * realisticHint and the exam waypoint, said once. By when: verdict chips
+ * "[t.cal] 12 mo" over "[v.fits] possible" or "[v.imp] too soon for L12"
+ * (each chip's full verdict is its name). Hours: the stepper and a StatRow
+ * "≈ 9 h 10 seen · 5 h/wk yours" «not timed» (with the Field's cards). Exam
+ * and Syllabus are ▸ disclosures; How hard is "[intensity] Light 50%";
+ * Constraints is "Anything to avoid?". The paths: «from your numbers», or
+ * the Gemini lanes "Gemini: … / App: …" with «Google may use this». Each
+ * card's explanations fold into its Key. Motion: ladder, verdict-change and
+ * bars, each the user's own pick (ACT). No shader (data-fx="none"); the
+ * words are counted as §3.2 row 1 (data-wc-block="intake", the fold marked
+ * data-wc-fold).
  */
 import Link from "next/link";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { ChipButton } from "@/components/ui/Chip";
 import { Icon, Sigil } from "@/components/ui/Icon";
@@ -64,6 +82,14 @@ import { Segmented, Switch } from "@/components/ui/Tabs";
 import { Sheet } from "@/components/ui/Sheet";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
+import { Glyph } from "@/components/glyph/Glyph";
+import { GlyphLane } from "@/components/glyph/GlyphLane";
+import { Fig, StatRow, type GlyphStatProps } from "@/components/glyph/GlyphStat";
+import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
+import { CardKey, InfoTip, type KeyEntry } from "@/components/glyph/InfoTip";
+import { StageLadder } from "@/components/glyph/StageLadder";
+import { GLYPH_MEANS } from "@/components/glyph/paths/means";
+import { playGlyph } from "@/lib/glyph-motion";
 import { addDays, daysBetween } from "@/lib/life-day";
 import type { Track } from "@/lib/life-types";
 import {
@@ -81,6 +107,7 @@ import {
   HOURS_MAX,
   HOURS_MIN,
   INTENSITIES,
+  INTENSITY,
   NEW_CARDS_PER_WEEK_MAX,
   NEW_CARDS_PER_WEEK_MIN,
   PACK_SECTIONS,
@@ -105,6 +132,7 @@ import {
   type ActivityCardAnswer,
   type CoverageBreakdown,
   type DateMode,
+  type AimDepth,
   type DepthKey,
   type Intake,
   type IntakeFieldOption,
@@ -119,8 +147,25 @@ import { takeAimHandoff, type StoredAimHandoff } from "@/lib/roadmap-handoff";
 import { clearSheetDraftIf } from "@/lib/idea-handoff";
 import {
   ACTIVITY_NOT_SAVED_LINE,
+  AIM_CALL_PLACEHOLDER,
   AIM_LONG_HINT,
+  APP_LANE_ITEMS,
   COVERAGE_TITLE,
+  GEMINI_LANE_ITEM,
+  SHORT_AIM_LABEL,
+  SHORT_ANYTHING_TO_AVOID,
+  SHORT_DATA,
+  SHORT_EXAM_OPTIONAL,
+  SHORT_NO_KEY,
+  SHORT_NOT_TIMED,
+  SHORT_PICK_AREA,
+  SHORT_REVIEW_GAP,
+  SHORT_SEEN,
+  SHORT_SYLLABUS_OPTIONAL,
+  SHORT_YOURS,
+  depthGapDays,
+  dayFull,
+  shortTooSoon,
   EXAM_DATE_LABEL,
   EXAM_NAME_LABEL,
   EXAM_QUESTION,
@@ -491,6 +536,25 @@ export function domainChipCount(x: Pick<IntakeFieldOption["domains"][number], "c
 }
 
 /**
+ * A Domain chip's compact count, "48 cards · 6 multiple choice not counted · 18 at L6+": the counting caveat stays in
+ * view (the 48 is not what the plan counts), only "level 6+" compacts to "L6+" (aria-hidden; domainChipCount is its
+ * spoken twin and the card Key's line, D26, D13).
+ */
+export function domainChipCompact(x: Pick<IntakeFieldOption["domains"][number], "cards" | "atSix" | "nonRecall">): string {
+  return `${recallCountLine(x.cards, nonRecallOf(x))} · ${x.atSix} at L6+`;
+}
+
+/** "9 hours 10 minutes": a tracked time's spoken twin (hoursLabel's "9 h 10" in words). */
+export function hoursSpeech(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  const hours = h === 1 ? "1 hour" : `${h} hours`;
+  const mins = r === 1 ? "1 minute" : `${r} minutes`;
+  return h === 0 ? mins : r === 0 ? hours : `${hours} ${mins}`;
+}
+
+/**
  * The capture sheet's line goes only when its aim reached the intake (lens 3):
  * the no-draft merge applied the handoff, or "Use it" was tapped on an open
  * draft. A handoff only shown beside an open draft leaves the line where it is.
@@ -666,22 +730,132 @@ function OtherDomainsSheet({ open, onClose, fields, areaId, chosen, onToggle }: 
   );
 }
 
-/** The Depth control (F-R4-9): the stage name over its level, Mastered first; a lower depth is the user's choice. */
-function DepthControl({ value, onChange }: { value: DepthKey; onChange: (v: DepthKey) => void }) {
+/**
+ * The Depth control (F-R4-9): the stage name over its level, Mastered first; a lower depth is the user's choice.
+ * The stage is a name (data-wc="name"); the level is "L12", spoken "level 12" (D26). StageLadder above it is its
+ * aria-hidden visual twin (D6); these buttons stay the control.
+ */
+function DepthControl({ value, onChange, id }: { value: DepthKey; onChange: (v: DepthKey) => void; id?: string }) {
   return (
-    <div className="segc rm-seg-fill rm-seg-two" role="group" aria-label="Depth">
+    <div id={id} className="segc rm-seg-fill rm-seg-two" role="group" aria-label="Depth">
       {DEPTH_KEYS.map((k) => (
         <button key={k} type="button" aria-pressed={value === k} onClick={() => onChange(k)}>
-          <b>{depthStage(AIM_DEPTHS[k])}</b>
-          <small>level {AIM_DEPTHS[k]}</small>
+          <b data-wc="name">{depthStage(AIM_DEPTHS[k])}</b>
+          <small aria-hidden="true">L{AIM_DEPTHS[k]}</small>
+          <span className="sr-only">level {AIM_DEPTHS[k]}</span>
         </button>
       ))}
     </div>
   );
 }
 
-/** "Name the areas this needs" (F-R4-24): an empty library's Domains, the user's own names, created in the Area Field when the intake saves. */
-function NamedAreas({ names, onChange, room }: { names: readonly string[]; onChange: (n: string[]) => void; room: number }) {
+/** A By-when chip's words: "12 mo" (spoken "12 months"); the longest is "3 years". */
+export function whenChipLabel(months: number): { label: string; spoken: string } {
+  return months === 36 ? { label: "3 years", spoken: "3 years" } : { label: `${months} mo`, spoken: `${months} months` };
+}
+
+/**
+ * A By-when chip (ui-motion.md §3.3 screen 1): "[t.cal] 12 mo" and, on a Field Area, its verdict under it,
+ * "[v.fits] possible" or "[v.imp] too soon for L12" (a verdict chip: the verdict glyph sits only here, D27). The
+ * visible words are aria-hidden; the chip's name is the full verdict, "12 months before level 12 is possible"
+ * (chipVerdict, verbatim). When a depth pick changes the verdict, its glyph plays verdict-change (ACT: the user's own
+ * pick; nothing on arrival).
+ */
+function WhenChip({ months, pressed, onPick, possible, depth }: { months: 3 | 6 | 12 | 24 | 36; pressed: boolean; onPick: () => void; possible: boolean | null; depth: AimDepth }) {
+  const ref = useRef<SVGSVGElement>(null);
+  const prev = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (possible != null && prev.current != null && prev.current !== possible) void playGlyph(ref.current, "verdict-change", { licence: "ACT" });
+    prev.current = possible;
+  }, [possible]);
+  const { label, spoken } = whenChipLabel(months);
+  return (
+    <ChipButton className={possible != null ? "rm-chip-two rm-in-when" : "rm-in-when"} pressed={pressed} onClick={onPick}>
+      <span className="rm-in-when-l" aria-hidden="true">
+        <Glyph name="t.cal" size={12} inherit />
+        {label}
+      </span>
+      {possible != null && (
+        <small className="rm-in-when-v" aria-hidden="true">
+          <Glyph ref={ref} name={possible ? "v.fits" : "v.imp"} state={pressed ? "active" : "idle"} size={12} inherit />
+          {possible ? chipVerdict(true, depth) : shortTooSoon(depth)}
+        </small>
+      )}
+      <span className="sr-only">{possible != null ? `${spoken} ${chipVerdict(possible, depth)}` : spoken}</span>
+    </ChipButton>
+  );
+}
+
+const INTENSITY_GLYPH: Readonly<Record<Intensity, "intensity.light" | "intensity.steady" | "intensity.push">> = { LIGHT: "intensity.light", STEADY: "intensity.steady", PUSH: "intensity.push" };
+
+/**
+ * How hard (ui-motion.md §3.3 screen 1): "[intensity.light] Light 50% · [intensity.steady] Steady 70% ·
+ * [intensity.push] Push 90%", the share from INTENSITY (never typed). A pick plays `bars` on its glyph (ACT).
+ * intensityHint / paceShareHint is the group's description, held in the card Key.
+ */
+function HardControl({ value, onChange, labelledBy, describedBy }: { value: Intensity; onChange: (v: Intensity) => void; labelledBy: string; describedBy?: string }) {
+  const glyphs = useRef<Partial<Record<Intensity, SVGSVGElement | null>>>({});
+  return (
+    <div className="segc rm-seg-fill rm-in-hard" role="group" aria-labelledby={labelledBy} aria-describedby={describedBy}>
+      {INTENSITIES.map((i) => (
+        <button
+          key={i}
+          type="button"
+          aria-pressed={value === i}
+          onClick={() => {
+            if (value === i) return;
+            onChange(i);
+            void playGlyph(glyphs.current[i], "bars", { licence: "ACT" });
+          }}
+        >
+          <Glyph
+            ref={(el) => {
+              glyphs.current[i] = el;
+            }}
+            name={INTENSITY_GLYPH[i]}
+            state={value === i ? "active" : "idle"}
+            size={16}
+            inherit
+          />
+          {INTENSITY_WORD[i]}
+          <span className="rm-in-pct">{Math.round(INTENSITY[i] * 100)}%</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A line of a card Key's text (the explanations a card folds away; D13). `id`: a control's description reads it. */
+function KeyLine({ id, children }: { id?: string; children: ReactNode }) {
+  return (
+    <span className="rm-in-kl" id={id}>
+      {children}
+    </span>
+  );
+}
+
+/** A card's Key, at the card's foot: the glyphs it draws with their words, and the lines it folds away. */
+function FormKey({ entries, rows, children }: { entries: readonly KeyEntry[]; rows?: readonly ReactNode[]; children?: ReactNode }) {
+  return (
+    <div className="rm-in-key">
+      <CardKey entries={entries} rows={rows} topic="this part of the form">
+        {children}
+      </CardKey>
+    </div>
+  );
+}
+
+/** A disclosure's glyph in its summary (a span, so the summary's chevron rule never turns it). */
+function SummaryGlyph({ name }: { name: "quest.checkpoint" | "pv.syllabus" }) {
+  return (
+    <span className="rm-in-sg" aria-hidden="true">
+      <Glyph name={name} size={16} inherit />
+    </span>
+  );
+}
+
+/** "Name the areas this needs" (F-R4-24): an empty library's Domains, the user's own names, created in the Area Field when the intake saves. Its hint is the field's description, in the card Key. */
+function NamedAreas({ names, onChange, room, describedBy }: { names: readonly string[]; onChange: (n: string[]) => void; room: number; describedBy?: string }) {
   const [text, setText] = useState("");
   const id = useId();
   const add = () => {
@@ -702,6 +876,7 @@ function NamedAreas({ names, onChange, room }: { names: readonly string[]; onCha
           value={text}
           maxLength={80}
           placeholder="An area, in your words"
+          aria-describedby={describedBy}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -718,13 +893,12 @@ function NamedAreas({ names, onChange, room }: { names: readonly string[]; onCha
         <div className="rm-dchips" style={{ marginTop: 8 }}>
           {names.map((n) => (
             <button key={n} type="button" className="rm-dchip" aria-pressed aria-label={`Remove ${n}`} onClick={() => onChange(names.filter((x) => x !== n))}>
-              <b>{n}</b>
+              <b data-wc="own">{n}</b>
               <span>a new Domain · tap to remove</span>
             </button>
           ))}
         </div>
       )}
-      <p className="st-hint">{NAME_AREAS_HINT}</p>
     </div>
   );
 }
@@ -807,12 +981,22 @@ function LineDomainGroups({
         if (rows.length === 0) return null;
         return (
           <div key={g.id ?? "none"} className="rm-lgroup">
-            <span className="t-eyebrow">{g.name}</span>
+            <span className="t-eyebrow" data-wc={g.id ? "name" : undefined}>
+              {g.name}
+            </span>
             {rows.map(({ l, i }) => (
               <div key={`${i}:${l}`} className="rm-lrow">
                 <span className="rm-lrow-k">S{i + 1}</span>
-                <span className="rm-lrow-t">{l}</span>
-                <select className="st-input rm-lrow-sel" aria-label={`Change the Domain of S${i + 1}`} value={domains[i] ?? ""} onChange={(e) => onChange(l, e.target.value)}>
+                <span className="rm-lrow-t" data-wc="own">
+                  {l}
+                </span>
+                <select
+                  className="st-input rm-lrow-sel"
+                  aria-label={`Change the Domain of S${i + 1}`}
+                  data-wc={domains[i] ? "name" : undefined}
+                  value={domains[i] ?? ""}
+                  onChange={(e) => onChange(l, e.target.value)}
+                >
                   {chosen.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -832,6 +1016,8 @@ function LineDomainGroups({
 export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures only: draw a lead-only state. */ gates?: LiveGates }) {
   const runtime = useRoadmapRuntime();
   const ids = { aim: useId(), date: useId(), hours: useId(), newCards: useId(), typical: useId(), source: useId(), constraints: useId(), exam: useId(), examDay: useId(), syllabus: useId(), sylSource: useId() };
+  // The card Keys' lines the controls read as their descriptions (D13), and the labels the custom groups name.
+  const keyIds = { aim: useId(), area: useId(), named: useId(), date: useId(), hours: useId(), hard: useId(), constraints: useId(), newCards: useId(), depthLabel: useId(), depthGroup: useId(), hardLabel: useId() };
   const [d, setD] = useState<IntakeDraft>(() => (view.draft ? draftOfIntake(view.draft.intake) : emptyIntakeDraft(view.today)));
   const [restored, setRestored] = useState(false);
   const [handoff, setHandoff] = useState<StoredAimHandoff | null>(null);
@@ -845,6 +1031,9 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Path | null>(null);
   const [vague, setVague] = useState(false);
+  // The Exam disclosure (a Field Area): open while the aim says there is an exam and it has no name yet, and it stays
+  // open (the user's own toggle after that), so typing the name's first letter never folds it away.
+  const [examOpen, setExamOpen] = useState(false);
   // Constraint safety (contracts §19): the activity card's answer the user confirmed on this form, with its words' key (saved right after the intake).
   const [activityAnswer, setActivityAnswer] = useState<ActivityCardAnswer | null>(null);
   const loaded = useRef(false);
@@ -970,6 +1159,8 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const newCardsRequired = newCardsRequiredOf(realistic, coverage, paceMeasured);
   const askCards = fieldArea && (newCardsRequired || asksNewCards(field, d.domainIds));
   const exam = trackArea ? d.exam.trim().length > 0 : examAnswerOf(d);
+  // An exam with no name yet opens its disclosure (React's "adjust state while rendering": once, never closing it under the user).
+  if (fieldArea && exam && !d.exam.trim() && !examOpen) setExamOpen(true);
   // The practice family (contracts §20.11): the user's answer, else the aim's prefill.
   const family = practiceFamilyAnswerOf(d);
   const emptyLibrary = fieldArea && field!.domains.length === 0;
@@ -1085,13 +1276,39 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   };
   const outlineLabel = trackArea ? OUTLINE_LABEL : exam ? OUTLINE_EXAM_LABEL : OUTLINE_LABEL;
 
+  // ── UI motion (R7): what stays on screen, and what folds into the (i)s and the card Keys (D13) ──
+  const formLead = `Say what you want to be able to do. ${geminiLive ? "Gemini can arrange the milestones; the app" : "The app"} sets every date, level and target from your records, and measures progress from them.`;
+  const gap = field ? depthGapDays(depth, m) : null;
+  const hoursNum = Number(d.hours);
+  const hoursOk = d.hours.trim() !== "" && Number.isInteger(hoursNum) && hoursNum >= HOURS_MIN && hoursNum <= HOURS_MAX;
+  // "≈ 9 h 10 seen · 5 h/wk yours · 96 cards · 29 at L6+" (D26: each figure has its spoken twin; D27: ≈ beside the estimate, the pen beside the user's own figure).
+  const stats: GlyphStatProps[] = [
+    ...(tracked?.kind === "measured" ? [{ glyph: "ev.estimate" as const, value: hoursLabel(tracked.median, false), label: SHORT_SEEN, estimate: true, speech: `about ${hoursSpeech(tracked.median)} seen` }] : []),
+    ...(hoursOk ? [{ glyph: "pv.you" as const, value: hoursNum, unit: "h/wk", label: SHORT_YOURS }] : []),
+    ...(field && sums
+      ? [
+          { glyph: "s-know" as const, value: field.cards, unit: field.cards === 1 ? "card" : "cards" },
+          { glyph: "stage.familiar" as const, value: sums.atSix, label: "at L6+", speech: `${sums.atSix} at level 6 or higher` },
+        ]
+      : []),
+  ];
+  const validSpan = Number.isFinite(span) && span > 0;
+  const tooSoon = fieldArea && !realistic && validSpan && span < floorBase(depth, m);
+  const dateKeyLine = fieldArea ? (realistic || !validSpan ? null : chosenDateHint(d.targetDay, view.today, depth, m)) : validSpan ? `${dayWithWeekday(d.targetDay, view.today)} · ${count(span)} days from today` : null;
+  const whenMonths = fieldArea ? ([6, 12, 24, 36] as const) : ([3, 6, 12, 24, 36] as const);
+  const constraintsHint =
+    gatedTrack === "CRAFT"
+      ? "If your words name a limit or a strain, the app asks which activities to avoid before it places them."
+      : gatedTrack
+        ? "On a body or care plan the app asks which activities to avoid before it places them."
+        : "The app ticks the practice types your constraints seem to rule out, quoting your words; nothing is left out until you say so.";
+  // Gemini's lane lists only what the run will ask (geminiAsksOf), in the draft header's order: Domains, order, picks (D25).
+  const laneItems = asks ? [...(asks.needs ? [GEMINI_LANE_ITEM.needs] : []), ...(asks.lines > 0 ? [GEMINI_LANE_ITEM.order] : []), ...(asks.picks ? [GEMINI_LANE_ITEM.picks] : [])] : [];
+
   return (
-    <div className="rm-narrow">
-      <p className="t-meta" style={{ margin: "0 4px 12px" }}>
-        Say what you want to be able to do. {geminiLive ? "Gemini can arrange the milestones; the app" : "The app"} sets every date, level and target from your records, and measures progress from them.
-      </p>
+    <div className="rm-narrow" data-fx="none" data-wc-block="intake">
       {view.draft && (
-        <section className="card rm-note" style={{ marginBottom: 14 }}>
+        <section className="card rm-note" style={{ marginBottom: 14 }} data-wc-fold="">
           <RoadmapGlyph name="info" />
           <span style={{ flex: 1 }}>
             Continuing your draft from {dayLabel(view.draft.savedDay, view.today)} ·{" "}
@@ -1102,7 +1319,7 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
         </section>
       )}
       {view.draft && handoff && (
-        <section className="card rm-note" style={{ marginBottom: 14 }}>
+        <section className="card rm-note" style={{ marginBottom: 14 }} data-wc-fold="">
           <RoadmapGlyph name="info" />
           <span style={{ flex: 1 }}>
             {openDraftNote(handoff.aim)} ·{" "}
@@ -1120,13 +1337,13 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
         </section>
       )}
       {!view.draft && handoff && (
-        <section className="card rm-note" style={{ marginBottom: 14 }}>
+        <section className="card rm-note" style={{ marginBottom: 14 }} data-wc-fold="">
           <RoadmapGlyph name="info" />
           <span style={{ flex: 1 }}>{handoffNote(handoff.source, handoff.aim, handoffCarriedOf(handoff, view.fields))}</span>
         </section>
       )}
       {restored && !view.draft && !handoff && (
-        <section className="card rm-note" style={{ marginBottom: 14 }}>
+        <section className="card rm-note" style={{ marginBottom: 14 }} data-wc-fold="">
           <RoadmapGlyph name="info" />
           <span style={{ flex: 1 }}>
             Your unsent form, as you left it ·{" "}
@@ -1153,67 +1370,76 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
         }}
       >
         <section className="card rm-fs" aria-label="The aim">
-          <div className="rm-f" id="rm-f-aim">
-            <label className="st-label" htmlFor={ids.aim}>
-              What do you want to be able to do?
-              <span className="rm-count">
-                {d.aim.length} / {AIM_MAX}
+          <div className="rm-f" id="rm-f-aim" data-wc-fold="">
+            <div className="rm-in-hd">
+              <label className="st-label" htmlFor={ids.aim}>
+                {SHORT_AIM_LABEL}
+              </label>
+              <span className="rm-in-cnt">
+                <Glyph name="m.verbatim" size={16} inherit />
+                <Fig compact={`${d.aim.length}/${AIM_MAX}`} />
               </span>
-            </label>
-            <textarea id={ids.aim} className="st-input" rows={2} maxLength={AIM_MAX} value={d.aim} onChange={(e) => set("aim", e.target.value)} />
-            <p className="st-hint">{AIM_LONG_HINT}</p>
+              <InfoTip topic="setting an aim">{formLead}</InfoTip>
+            </div>
+            <textarea id={ids.aim} className="st-input" rows={2} maxLength={AIM_MAX} value={d.aim} placeholder={AIM_CALL_PLACEHOLDER} aria-describedby={keyIds.aim} onChange={(e) => set("aim", e.target.value)} />
             {vague && <p className="t-meta rm-ink1 rm-vague">{VAGUE_AIM_LINE}</p>}
-            <p className="st-hint">Shown exactly as you wrote it, everywhere. Never rewritten.</p>
             {problem("aim")}
           </div>
-          <div className="rm-f" id="rm-f-area">
-            <span className="st-label">Area — what this grows</span>
-            <button type="button" className="rm-pick" aria-haspopup="dialog" onClick={() => setAreaOpen(true)}>
+          <div className="rm-f" id="rm-f-area" data-wc-fold="">
+            <button type="button" className="rm-pick" aria-haspopup="dialog" aria-describedby={keyIds.area} onClick={() => setAreaOpen(true)}>
               {trackArea && d.areaTrack ? <Sigil track={TRACK_SIGIL[d.areaTrack]} /> : <Sigil track="know" />}
               <span className="rm-pick-t">
-                <b>{field ? field.name : trackArea && d.areaTrack ? `${TRACK_WORD[d.areaTrack]} · practice only` : "Pick an Area"}</b>
-                <span className="t-meta">{field ? `Field · level ${field.level} · ${plural(field.cards, "card")}` : trackArea ? "a life track: practices and steps only" : "one of your Fields, or a life track"}</span>
+                <span className="sr-only">Area — what this grows: </span>
+                {field ? (
+                  <b>
+                    <span data-wc="name">{field.name}</span> · L{field.level}
+                  </b>
+                ) : trackArea && d.areaTrack ? (
+                  <b>
+                    <span data-wc="name">{TRACK_WORD[d.areaTrack]}</span> · practice only
+                  </b>
+                ) : (
+                  <b>{SHORT_PICK_AREA}</b>
+                )}
               </span>
               <Icon name="chev" />
             </button>
-            <p className="st-hint">
-              One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.
-              {field?.inMaintenance ? " This Field is excused from quotas and Boss." : ""}
-            </p>
             {problem("area")}
           </div>
           {field && (
-            <div className="rm-f" id="rm-f-depth">
-              <span className="st-label">Depth</span>
-              <DepthControl value={depthKey} onChange={(v) => set("depth", v)} />
-              <p className="st-hint">{depthHint(depth, m)}</p>
-            </div>
-          )}
-          {field && (
-            <div className="rm-f">
-              <span className="st-label">Practices count toward</span>
-              <Segmented className="rm-seg-fill" value={d.track} label="Practices count toward" onChange={(t) => set("track", t)} options={ROADMAP_TRACKS.map((t) => ({ value: t, label: TRACK_WORD[t] }))} />
-              <p className="st-hint">The life track the practices you start will feed on Today.</p>
-            </div>
-          )}
-          {trackArea && d.areaTrack && (
-            <div className="rm-f">
-              <span className="st-label">Practices count toward</span>
-              <div className="rm-fact" style={{ marginTop: 0 }}>
-                <b className="ink-0">{TRACK_WORD[d.areaTrack]}</b> — fixed by the Area. The plan has practices and steps only; there are no cards to hold.
+            <div className="rm-f" id="rm-f-depth" data-wc-fold="">
+              <div className="rm-in-hd">
+                <span className="st-label" id={keyIds.depthLabel}>
+                  Depth
+                </span>
+                <InfoTip topic="depth" describes={keyIds.depthGroup}>
+                  <KeyLine>{depthHint(depth, m)}</KeyLine>
+                  <KeyLine>{realisticHint(m)}</KeyLine>
+                  {exam && <KeyLine>{EXAM_WAYPOINT_HINT}</KeyLine>}
+                </InfoTip>
               </div>
+              <StageLadder chosen={depth} depth={12} gapDays={gap} />
+              <DepthControl id={keyIds.depthGroup} value={depthKey} onChange={(v) => set("depth", v)} />
+              {gap != null && (
+                <Chips className="rm-in-chips">
+                  <HonestyChip kind="review-gap" label={`${SHORT_REVIEW_GAP} ≈ ${gap} d`} sr={`${SHORT_REVIEW_GAP}: about ${gap} days`} />
+                </Chips>
+              )}
             </div>
           )}
           {field && !emptyLibrary && (
             <div className="rm-f" id="rm-f-domains">
               <span className="st-label">
-                Domains you already have <span className="rm-opt">{d.domainIds.length} chosen · up to {DEPTH_DOMAINS_MAX}</span>
+                Domains{" "}
+                <span className="rm-opt">
+                  <Fig compact={`${d.domainIds.length}/${DEPTH_DOMAINS_MAX}`} speech={`${d.domainIds.length} chosen, up to ${DEPTH_DOMAINS_MAX}`} />
+                </span>
               </span>
               <div className="rm-dchips" role="group" aria-label="Domains">
                 {field.domains.map((dm) => (
                   <button key={dm.id} type="button" className="rm-dchip" aria-pressed={d.domainIds.includes(dm.id)} onClick={() => toggleDomain(dm.id)}>
-                    <b>{dm.name}</b>
-                    <span>{domainChipCount(dm)}</span>
+                    <b data-wc="name">{dm.name}</b>
+                    <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
                   </button>
                 ))}
                 {d.domainIds
@@ -1223,19 +1449,17 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
                     if (!dm) return null;
                     return (
                       <button key={id} type="button" className="rm-dchip" aria-pressed onClick={() => toggleDomain(id)}>
-                        <b>{dm.name}</b>
+                        <b data-wc="name">{dm.name}</b>
                         <span>
-                          {dm.fieldName} · {domainChipCount(dm)}
+                          <span data-wc="name">{dm.fieldName}</span> · <Fig compact={domainChipCompact(dm)} speech={domainChipCount(dm)} />
                         </span>
                       </button>
                     );
                   })}
                 <button type="button" className="rm-dchip rm-dchip-add" onClick={() => setOthersOpen(true)}>
-                  <b>+ Add a Domain from another Field</b>
-                  <span>your library only</span>
+                  <b>+ Domain from another Field</b>
                 </button>
               </div>
-              <p className="st-hint">Prefilled with the {field.name} Domains that hold cards. Counts are your cards today; the plan counts every card type but multiple choice.</p>
               {problem("domains")}
               <CoverageDisclosure
                 rows={coverage}
@@ -1247,14 +1471,23 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               {problem("coverage")}
             </div>
           )}
-          {emptyLibrary && <NamedAreas names={named} onChange={(n) => set("newDomainNames", n)} room={DEPTH_DOMAINS_MAX} />}
+          {emptyLibrary && <NamedAreas names={named} onChange={(n) => set("newDomainNames", n)} room={DEPTH_DOMAINS_MAX} describedBy={keyIds.named} />}
           {emptyLibrary && named.length > 0 && (
             <CoverageDisclosure rows={coverage} typed={d.coverage ?? {}} onType={() => undefined} unassigned={unassigned} overMax={named.length >= DEPTH_DOMAINS_MAX} />
           )}
+          <FormKey entries={[{ glyph: "m.verbatim", words: GLYPH_MEANS["m.verbatim"] }]} rows={field && !emptyLibrary ? field.domains.map((dm) => `${dm.name}: ${domainChipCount(dm)}`) : undefined}>
+            <KeyLine id={keyIds.aim}>What do you want to be able to do? {AIM_LONG_HINT} Shown exactly as you wrote it, everywhere. Never rewritten.</KeyLine>
+            <KeyLine id={keyIds.area}>
+              {`One of your Fields, or a life track for an aim that is practice only. Only you pick the Area.${field?.inMaintenance ? " This Field is excused from quotas and Boss." : ""}`}
+            </KeyLine>
+            {trackArea && d.areaTrack && <KeyLine>{`Practices count toward ${TRACK_WORD[d.areaTrack]} — fixed by the Area. The plan has practices and steps only; there are no cards to hold.`}</KeyLine>}
+            {field && !emptyLibrary && <KeyLine>{`Prefilled with the ${field.name} Domains that hold cards. Counts are your cards today; the plan counts every card type but multiple choice.`}</KeyLine>}
+            {emptyLibrary && <KeyLine id={keyIds.named}>{NAME_AREAS_HINT}</KeyLine>}
+          </FormKey>
         </section>
 
         <section className="card rm-fs" aria-label="Time and pace">
-          <div className="rm-f" id="rm-f-targetDay">
+          <div className="rm-f" id="rm-f-targetDay" data-wc-fold={fieldArea ? undefined : ""}>
             <label className="st-label" htmlFor={ids.date}>
               By when
             </label>
@@ -1264,23 +1497,10 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
                   {WHEN_REALISTIC}
                 </ChipButton>
               )}
-              {(fieldArea ? ([6, 12, 24] as const) : ([3, 6, 12, 24] as const)).map((mo) => {
-                const day = fieldArea ? chipDay(mo as 6 | 12 | 24) : addMonths(view.today, mo);
-                return (
-                  <ChipButton key={mo} className={fieldArea ? "rm-chip-two" : undefined} pressed={!realistic && d.targetDay === day} onClick={() => pickDate(day)}>
-                    {mo} months
-                    {fieldArea && <small>{chipVerdict(chipPossible(mo as 6 | 12 | 24), depth)}</small>}
-                  </ChipButton>
-                );
+              {whenMonths.map((mo) => {
+                const day = fieldArea ? chipDay(mo as 6 | 12 | 24 | 36) : mo === 36 ? addDays(view.today, SPAN_MAX_DAYS) : addMonths(view.today, mo);
+                return <WhenChip key={mo} months={mo} pressed={!realistic && d.targetDay === day} onPick={() => pickDate(day)} possible={fieldArea ? chipPossible(mo as 6 | 12 | 24 | 36) : null} depth={depth} />;
               })}
-              <ChipButton
-                className={fieldArea ? "rm-chip-two" : undefined}
-                pressed={!realistic && d.targetDay === (fieldArea ? chipDay(36) : addDays(view.today, SPAN_MAX_DAYS))}
-                onClick={() => pickDate(fieldArea ? chipDay(36) : addDays(view.today, SPAN_MAX_DAYS))}
-              >
-                3 years
-                {fieldArea && <small>{chipVerdict(chipPossible(36), depth)}</small>}
-              </ChipButton>
             </div>
             {/* "When realistic" sets no date of the user's: the box stays empty until one is picked (pickDate switches to CHOSEN). */}
             <input
@@ -1288,44 +1508,45 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               type="date"
               className="st-input"
               aria-label="A date of your own"
+              aria-describedby={dateKeyLine ? keyIds.date : undefined}
               value={realistic ? "" : d.targetDay}
               min={addDays(view.today, SPAN_MIN_DAYS)}
               max={addDays(view.today, SPAN_MAX_DAYS)}
               onChange={(e) => pickDate(e.target.value)}
             />
-            <p className="st-hint">
-              {realistic
-                ? realisticHint(m)
-                : fieldArea
-                  ? chosenDateHint(d.targetDay, view.today, depth, m)
-                  : Number.isFinite(span) && span > 0
-                    ? `${dayWithWeekday(d.targetDay)} · ${count(span)} days from today`
-                    : "Pick a date"}
-            </p>
-            {fieldArea && exam && <p className="st-hint">{EXAM_WAYPOINT_HINT}</p>}
-            {trackArea && splitLine && <p className="st-hint">{splitLine}</p>}
+            {!realistic &&
+              (validSpan ? (
+                <p className="st-hint rm-in-date" aria-hidden="true">
+                  <Glyph name="t.cal" size={12} inherit />
+                  {fieldArea ? dayFull(d.targetDay) : dayWithWeekday(d.targetDay, view.today)}
+                  {tooSoon && (
+                    <span className="chip rm-in-vd">
+                      <Glyph name="v.imp" size={12} inherit />
+                      {shortTooSoon(depth)}
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="st-hint">Pick a date</p>
+              ))}
             {problem("targetDay")}
           </div>
           <div className="rm-f" id="rm-f-hours">
-            <span className="st-label" id="hours">
-              Hours a week for this aim
-            </span>
+            <span className="st-label">Hours a week</span>
             <div className="rm-step">
               <GlyphButton glyph="minus" label="One hour less" onClick={() => set("hours", String(Math.max(HOURS_MIN, (Number(d.hours) || HOURS_MIN) - 1)))} />
-              <input id={ids.hours} className="st-input" inputMode="numeric" aria-label="Hours a week" value={d.hours} onChange={(e) => set("hours", e.target.value.replace(/[^\d]/g, ""))} />
+              <input id={ids.hours} className="st-input" inputMode="numeric" aria-label="Hours a week" aria-describedby={keyIds.hours} value={d.hours} onChange={(e) => set("hours", e.target.value.replace(/[^\d]/g, ""))} />
               <button type="button" className="icon-btn" aria-label="One hour more" onClick={() => set("hours", String(Math.min(HOURS_MAX, (Number(d.hours) || 0) + 1)))}>
                 <Icon name="plus" />
               </button>
-              <span className="t-meta">
-                h a week · {HOURS_MIN} to {HOURS_MAX}
-              </span>
             </div>
-            {trackedLine && (
-              <div className="rm-fact">
-                <span className="t-eyebrow">What the app has seen</span>
-                {trackedLine}
+            {stats.length > 0 && (
+              <div className="rm-in-stats">
+                <StatRow items={stats} />
+                {tracked?.kind === "measured" && <HonestyChip kind="not-timed" label={SHORT_NOT_TIMED} />}
               </div>
             )}
+            {tracked?.kind === "calibrating" && <p className="t-meta rm-in-cal">{trackedLine}</p>}
             {problem("hours")}
           </div>
           {trackArea && (
@@ -1334,45 +1555,62 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               <Segmented className="rm-seg-fill rm-seg-2" value={d.startPoint} label="Where you're starting" onChange={(v) => set("startPoint", v)} options={START_POINTS.map((p) => ({ value: p, label: START_POINT_WORD[p] }))} />
             </div>
           )}
-          {field && sums && (
-            <div className="rm-fact">
-              <span className="t-eyebrow">Your cards, from the app</span>
-              {field.name}: {plural(field.cards, "card")}, {sums.atSix} at level 6+, {sums.atTop} at level 12 or more. Your cards say where you start: a stage you already hold shows as held.
-            </div>
-          )}
+          <FormKey
+            entries={[...(tracked?.kind === "measured" ? [{ glyph: "ev.estimate" as const, words: `≈ ${GLYPH_MEANS["ev.estimate"]}` }] : []), ...(hoursOk ? [{ glyph: "pv.you" as const, words: GLYPH_MEANS["pv.you"] }] : [])]}
+            rows={fieldArea ? whenMonths.map((mo) => `${whenChipLabel(mo).spoken}: ${chipVerdict(chipPossible(mo as 6 | 12 | 24 | 36), depth)}`) : undefined}
+          >
+            {dateKeyLine && <KeyLine id={keyIds.date}>{dateKeyLine}</KeyLine>}
+            {trackArea && splitLine && <KeyLine>{splitLine}</KeyLine>}
+            <KeyLine id={keyIds.hours}>{`Hours a week for this aim: ${HOURS_MIN} to ${HOURS_MAX}.${trackedLine ? ` ${trackedLine}` : ""}`}</KeyLine>
+            {field && sums && (
+              <KeyLine>{`Your cards, from the app. ${field.name}: ${plural(field.cards, "card")}, ${sums.atSix} at level 6+, ${sums.atTop} at level 12 or more. Your cards say where you start: a stage you already hold shows as held.`}</KeyLine>
+            )}
+          </FormKey>
         </section>
 
         <section className="card rm-fs" aria-label="Facts only you can give">
           {fieldArea && (
-            <div className="rm-f" id="rm-f-exam">
-              <span className="st-label">{EXAM_QUESTION}</span>
-              <div className="segc rm-seg-fill" role="group" aria-label={EXAM_QUESTION}>
-                <button type="button" aria-pressed={exam} onClick={() => set("examAnswer", true)}>
-                  Yes
-                </button>
-                <button type="button" aria-pressed={!exam} onClick={() => set("examAnswer", false)}>
-                  No
-                </button>
+            <details className="rm-adv rm-adv-first" id="rm-f-exam" open={examOpen || Boolean(problems.exam)} onToggle={(e) => setExamOpen(e.currentTarget.open)}>
+              <summary>
+                <Icon name="chev" />
+                <SummaryGlyph name="quest.checkpoint" />
+                {exam && d.exam.trim() ? (
+                  <span>
+                    Exam · <span data-wc="own">{d.exam.trim()}</span>
+                  </span>
+                ) : (
+                  SHORT_EXAM_OPTIONAL
+                )}
+              </summary>
+              <div className="rm-adv-b">
+                <div className="rm-f">
+                  <span className="st-label">{EXAM_QUESTION}</span>
+                  <div className="segc rm-seg-fill" role="group" aria-label={EXAM_QUESTION}>
+                    <button type="button" aria-pressed={exam} onClick={() => set("examAnswer", true)}>
+                      Yes
+                    </button>
+                    <button type="button" aria-pressed={!exam} onClick={() => set("examAnswer", false)}>
+                      No
+                    </button>
+                  </div>
+                  {d.examAnswer == null && <p className="st-hint">Prefilled from your aim; yours to change.</p>}
+                </div>
+                {exam && (
+                  <div className="rm-f">
+                    <label className="st-label" htmlFor={ids.exam}>
+                      {EXAM_NAME_LABEL}
+                    </label>
+                    <input id={ids.exam} className="st-input" maxLength={EXAM_MAX} value={d.exam} onChange={(e) => set("exam", e.target.value)} />
+                    <label className="st-label" htmlFor={ids.examDay} style={{ marginTop: 10 }}>
+                      {EXAM_DATE_LABEL}
+                    </label>
+                    <input id={ids.examDay} type="date" className="st-input" value={d.examDay ?? ""} min={addDays(view.today, 1)} max={addDays(view.today, SPAN_MAX_DAYS)} onChange={(e) => set("examDay", e.target.value)} />
+                    {geminiLive && <p className="st-hint">It is never sent to Gemini.</p>}
+                  </div>
+                )}
+                {problem("exam")}
               </div>
-              {d.examAnswer == null && <p className="st-hint">Prefilled from your aim; yours to change.</p>}
-              {exam && (
-                <>
-                  <label className="st-label" htmlFor={ids.exam} style={{ marginTop: 10 }}>
-                    {EXAM_NAME_LABEL}
-                  </label>
-                  <input id={ids.exam} className="st-input" maxLength={EXAM_MAX} value={d.exam} onChange={(e) => set("exam", e.target.value)} />
-                  <label className="st-label" htmlFor={ids.examDay} style={{ marginTop: 10 }}>
-                    {EXAM_DATE_LABEL}
-                  </label>
-                  <input id={ids.examDay} type="date" className="st-input" value={d.examDay ?? ""} min={addDays(view.today, 1)} max={addDays(view.today, SPAN_MAX_DAYS)} onChange={(e) => set("examDay", e.target.value)} />
-                  <p className="st-hint">
-                    {EXAM_WAYPOINT_HINT}
-                    {geminiLive ? " It is never sent to Gemini." : ""}
-                  </p>
-                </>
-              )}
-              {problem("exam")}
-            </div>
+            </details>
           )}
           {fieldArea && d.practicesAllowed && (
             <div className="rm-f" id="rm-f-family">
@@ -1384,17 +1622,13 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
                 onChange={(v) => set("practiceFamily", v)}
                 options={PRACTICE_FAMILIES.map((f) => ({ value: f, label: FAMILY_WORD[f] }))}
               />
-              <p className="st-hint">
-                {FAMILY_HINT[family]}
-                {d.practiceFamily == null ? ` ${FAMILY_PREFILL_HINT}` : ""}
-              </p>
             </div>
           )}
-          <details className="rm-adv rm-adv-first" id="syllabus" open={outlineOpen || Boolean(d.syllabus) || Boolean(problems.syllabus) || (fieldArea && exam)}>
+          <details className={fieldArea ? "rm-adv" : "rm-adv rm-adv-first"} id="syllabus" open={outlineOpen || Boolean(d.syllabus) || Boolean(problems.syllabus) || (fieldArea && exam)}>
             <summary>
               <Icon name="chev" />
-              {fieldArea ? (exam ? "Official syllabus" : "Your outline") : "Official syllabus"}
-              <span className="rm-adv-aside">{lines.length ? `optional · ${plural(lines.length, "line")}` : "optional · none"}</span>
+              <SummaryGlyph name="pv.syllabus" />
+              {lines.length ? `Syllabus · ${plural(lines.length, "line")}` : SHORT_SYLLABUS_OPTIONAL}
             </summary>
             <div className="rm-adv-b" id="rm-f-syllabus">
               <p className="st-hint" style={{ margin: 0 }}>
@@ -1403,28 +1637,40 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               <textarea id={ids.syllabus} className="st-input" rows={3} placeholder={`One topic per line · up to ${SYLLABUS_MAX_LINES} lines`} aria-label="Outline lines" value={d.syllabus} onChange={(e) => set("syllabus", e.target.value)} />
               <input id={ids.sylSource} className="st-input" maxLength={SOURCE_NOTE_MAX} placeholder="Source" aria-label="Outline source" value={d.syllabusSource} onChange={(e) => set("syllabusSource", e.target.value)} />
               {fieldArea && lines.length > 0 && chosen.length > 0 && (
-                <>
-                  <p className="st-hint" style={{ margin: 0 }}>
-                    Each line&apos;s Domain is yours: the app matched the names, and it sets how many cards each Domain needs.
-                  </p>
-                  <LineDomainGroups lines={lines} domains={lineDomains} chosen={chosen} onChange={(line, id) => edit((x) => ({ ...x, lineDomainBy: { ...(x.lineDomainBy ?? {}), [line]: id } }))} />
-                </>
+                <LineDomainGroups lines={lines} domains={lineDomains} chosen={chosen} onChange={(line, id) => edit((x) => ({ ...x, lineDomainBy: { ...(x.lineDomainBy ?? {}), [line]: id } }))} />
               )}
               {problem("syllabus")}
             </div>
           </details>
           {!fieldArea && (
-            <div className="rm-f" id="rm-f-exam">
-              <label className="st-label" htmlFor={ids.exam}>
-                Exam or certificate <span className="rm-opt">optional</span>
-              </label>
-              <input id={ids.exam} className="st-input" maxLength={EXAM_MAX} placeholder="Leave blank if there isn't one" value={d.exam} onChange={(e) => set("exam", e.target.value)} />
-            </div>
+            <details className="rm-adv" id="rm-f-exam" open={Boolean(problems.exam)}>
+              <summary>
+                <Icon name="chev" />
+                <SummaryGlyph name="quest.checkpoint" />
+                {d.exam.trim() ? (
+                  <span>
+                    Exam · <span data-wc="own">{d.exam.trim()}</span>
+                  </span>
+                ) : (
+                  SHORT_EXAM_OPTIONAL
+                )}
+              </summary>
+              <div className="rm-adv-b">
+                <div className="rm-f">
+                  <label className="st-label" htmlFor={ids.exam}>
+                    Exam or certificate <span className="rm-opt">optional</span>
+                  </label>
+                  <input id={ids.exam} className="st-input" maxLength={EXAM_MAX} placeholder="Leave blank if there isn't one" value={d.exam} onChange={(e) => set("exam", e.target.value)} />
+                  {problem("exam")}
+                </div>
+              </div>
+            </details>
           )}
           <div className="rm-f">
-            <span className="st-label">How hard</span>
-            <Segmented className="rm-seg-fill" value={d.intensity} label="How hard" onChange={(v) => set("intensity", v)} options={INTENSITIES.map((i) => ({ value: i, label: INTENSITY_WORD[i] }))} />
-            <p className="st-hint">{fieldArea ? paceShareHint(d.intensity) : intensityHint()}</p>
+            <span className="st-label" id={keyIds.hardLabel}>
+              How hard
+            </span>
+            <HardControl value={d.intensity} onChange={(v) => set("intensity", v)} labelledBy={keyIds.hardLabel} describedBy={keyIds.hard} />
           </div>
           {askCards && (
             <div className="rm-f" id="rm-f-newCards">
@@ -1434,15 +1680,23 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
                   {newCardsRequired ? "needed" : "optional"} · {NEW_CARDS_PER_WEEK_MIN} to {NEW_CARDS_PER_WEEK_MAX}
                 </span>
               </label>
-              <input id={ids.newCards} className="st-input rm-num" inputMode="numeric" placeholder="e.g. 4" value={d.newCards} onChange={(e) => set("newCards", e.target.value.replace(/[^\d]/g, ""))} />
-              <p className="st-hint">{newCardsRequired ? NEW_CARDS_REQUIRED_HINT : "How many new cards a week will you write for this? Leave it blank and new cards won't be counted until your pace is measured."}</p>
+              <input
+                id={ids.newCards}
+                className="st-input rm-num"
+                inputMode="numeric"
+                placeholder="e.g. 4"
+                aria-describedby={newCardsRequired ? undefined : keyIds.newCards}
+                value={d.newCards}
+                onChange={(e) => set("newCards", e.target.value.replace(/[^\d]/g, ""))}
+              />
+              {newCardsRequired && <p className="st-hint">{NEW_CARDS_REQUIRED_HINT}</p>}
               {problem("newCards")}
             </div>
           )}
           <details className="rm-adv" id="reality" open={Boolean(d.typicalHours) || Boolean(problems.typicalHours)}>
             <summary>
               <Icon name="chev" />
-              Reality check<span className="rm-adv-aside">{d.typicalHours ? `optional · ${d.typicalHours} h` : "optional · not set"}</span>
+              Reality check<span className="rm-adv-aside">{d.typicalHours ? `optional · ${d.typicalHours} h` : "optional"}</span>
             </summary>
             <div className="rm-adv-b">
               <p className="st-hint" style={{ margin: 0 }}>
@@ -1470,20 +1724,16 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
             </div>
           </details>
           <div className="rm-f" id="rm-f-constraints">
-            <label className="st-label" htmlFor={ids.constraints}>
-              Constraints
-              <span className="rm-opt">
-                optional · {d.constraints.length} / {CONSTRAINTS_MAX}
+            <div className="rm-in-hd">
+              <label className="st-label" htmlFor={ids.constraints}>
+                {SHORT_ANYTHING_TO_AVOID}
+              </label>
+              <span className="rm-count">
+                <Fig compact={`${d.constraints.length}/${CONSTRAINTS_MAX}`} />
               </span>
-            </label>
-            <textarea id={ids.constraints} className="st-input" rows={2} maxLength={CONSTRAINTS_MAX} value={d.constraints} onChange={(e) => set("constraints", e.target.value)} />
-            <p className="st-hint">
-              {gatedTrack === "CRAFT"
-                ? "If your words name a limit or a strain, the app asks which activities to avoid before it places them."
-                : gatedTrack
-                  ? "On a body or care plan the app asks which activities to avoid before it places them."
-                  : "The app ticks the practice types your constraints seem to rule out, quoting your words; nothing is left out until you say so."}
-            </p>
+            </div>
+            <textarea id={ids.constraints} className="st-input" rows={2} maxLength={CONSTRAINTS_MAX} value={d.constraints} aria-describedby={keyIds.constraints} onChange={(e) => set("constraints", e.target.value)} />
+            {problem("constraints")}
           </div>
           {activity && <IntakeActivities view={activity.view} keyNow={activity.key} confirmed={activityAnswer} onConfirm={setActivityAnswer} today={view.today} />}
           <details className="rm-adv">
@@ -1502,25 +1752,61 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
                   <Switch checked={d.practicesAllowed} onChange={(v) => set("practicesAllowed", v)} label="Include practices" />
                 </div>
               )}
+              {field && (
+                <div className="rm-f">
+                  <span className="st-label">Practices count toward</span>
+                  <Segmented className="rm-seg-fill" value={d.track} label="Practices count toward" onChange={(t) => set("track", t)} options={ROADMAP_TRACKS.map((t) => ({ value: t, label: TRACK_WORD[t] }))} />
+                  <p className="st-hint">The life track the practices you start will feed on Today.</p>
+                </div>
+              )}
               {fieldArea && gapsLive && geminiLive && (
                 <div className="rm-sw">
                   <span className="rm-sw-t">{SUGGEST_AREAS_LABEL}</span>
                   <Switch checked={d.suggestAreas === true} onChange={(v) => set("suggestAreas", v)} label={SUGGEST_AREAS_LABEL} />
                 </div>
               )}
-              {geminiLive && (
+              {/* While the Gemini path is on a free-tier key, both lines are the «Google may use this» chip's, beside the buttons. */}
+              {geminiLive && !(askGemini && view.keyTier === "FREE") && (
                 <p className="st-hint" style={{ margin: 0 }}>
                   {privacyLine(PACK_SECTIONS)}
                 </p>
               )}
-              {geminiLive && view.keyTier === "FREE" && (
+              {geminiLive && !askGemini && view.keyTier === "FREE" && (
                 <p className="st-hint" style={{ margin: 0 }}>
                   {FREE_TIER_LINE}
                 </p>
               )}
             </div>
           </details>
+          <FormKey
+            entries={[
+              { glyph: "quest.checkpoint", words: EXAM_NAME_LABEL },
+              { glyph: "pv.syllabus", words: GLYPH_MEANS["pv.syllabus"] },
+            ]}
+          >
+            <KeyLine id={keyIds.hard}>{fieldArea ? paceShareHint(d.intensity) : intensityHint()}</KeyLine>
+            {fieldArea && d.practicesAllowed && <KeyLine>{`${FAMILY_HINT[family]}${d.practiceFamily == null ? ` ${FAMILY_PREFILL_HINT}` : ""}`}</KeyLine>}
+            {fieldArea && lines.length > 0 && chosen.length > 0 && <KeyLine>Each line&apos;s Domain is yours: the app matched the names, and it sets how many cards each Domain needs.</KeyLine>}
+            {askCards && !newCardsRequired && <KeyLine id={keyIds.newCards}>How many new cards a week will you write for this? Leave it blank and new cards won&apos;t be counted until your pace is measured.</KeyLine>}
+            <KeyLine id={keyIds.constraints}>{constraintsHint}</KeyLine>
+          </FormKey>
         </section>
+
+        {/* Who does what on each path (D25): the lanes, with what Gemini will do one tap away. */}
+        {askGemini && (
+          <div className="rm-in-lanes">
+            <GlyphLane who="gemini" items={laneItems} />
+            <GlyphLane who="app" items={APP_LANE_ITEMS} />
+            <InfoTip topic="drafting with Gemini">{geminiArrangesLine(asks)}</InfoTip>
+          </div>
+        )}
+        {geminiLive && !askGemini && (
+          <div className="rm-in-lanes">
+            <GlyphLane who="app" items={APP_LANE_ITEMS} />
+            {/* Nothing for Gemini to decide (contracts §20.5: the schema would have no property): only the app's build, and why. */}
+            <InfoTip topic="building from your numbers">{GEMINI_NOTHING_TO_ASK_LINE}</InfoTip>
+          </div>
+        )}
 
         <div className="rm-sticky" data-kb={inset > 0 ? "1" : undefined} style={inset > 0 ? ({ ["--kb" as string]: `${inset}px` } as CSSProperties) : undefined}>
           {askGemini ? (
@@ -1531,16 +1817,24 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               <Button size="lg" disabled={busy != null} onClick={() => void submit("STARTER")}>
                 {busy === "STARTER" ? "Building…" : "Build from my numbers"}
               </Button>
-              <p className="t-meta">{geminiArrangesLine(asks)}</p>
+              {view.keyTier === "FREE" && (
+                <Chips className="rm-in-path">
+                  <HonestyChip
+                    kind="data"
+                    label={SHORT_DATA}
+                    full={
+                      <>
+                        {privacyLine(PACK_SECTIONS)} {FREE_TIER_LINE}
+                      </>
+                    }
+                  />
+                </Chips>
+              )}
             </>
           ) : geminiLive ? (
-            <>
-              {/* Nothing for Gemini to decide (contracts §20.5: the schema would have no property): only the app's build, and why. */}
-              <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
-                {busy === "STARTER" ? "Building…" : "Build from my numbers"}
-              </Button>
-              <p className="t-meta">{GEMINI_NOTHING_TO_ASK_LINE}</p>
-            </>
+            <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
+              {busy === "STARTER" ? "Building…" : "Build from my numbers"}
+            </Button>
           ) : (
             <>
               <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
@@ -1549,7 +1843,9 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               <Button size="lg" disabled={busy != null} onClick={() => void submit("MANUAL")}>
                 {busy === "MANUAL" ? "Opening…" : "Write it myself"}
               </Button>
-              <p className="t-meta">{NO_KEY_LINE}</p>
+              <Chips className="rm-in-path">
+                <HonestyChip kind="no-key" label={SHORT_NO_KEY} full={NO_KEY_LINE} />
+              </Chips>
             </>
           )}
           {view.activeRoadmapId && !d.replaces && (

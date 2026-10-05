@@ -55,23 +55,58 @@
  * shimmer); the page refreshes every DRAFT_REFRESH_MS for at most
  * DRAFT_REFRESH_MAX_MS, and a run older than RUN_STALE_MS reads "Drafting
  * stopped (timed out)" with [Build from my numbers] and [Try again].
+ *
+ * Fewer words, more motion (ui-motion.md §3.3 screens 2 and 12, §6.1, §7.2,
+ * §7.12; lane R5). The header card opens on the unlit horizon marks (static
+ * SVG, contours to the chosen depth), then the eyebrow and the aim verbatim,
+ * the settings as chips (Area · L9, the depth, the exam, "6 h/wk yours ·
+ * Steady", «Google may use this» on the Gemini path), and who did what as two
+ * GlyphLanes with their who-words ("Gemini: order · picks" / "App: practices
+ * · words · numbers"; the lead line in their (i)); the run is the integrity
+ * chip (integrityLine verbatim) or its counts. The Depth and date card is a
+ * StageLadder, the Domain chips, «review gap ≈ 110 d» «App policy» «yours to
+ * judge», the DateBlock (TimeBar, the realism figures, the verdict), the idle
+ * Paragon seal with its four conditions, and the card Key. Every sentence
+ * these replace stays in the DOM, one tap away (a chip's panel, an (i), the
+ * Key, the TimeBar's list). Drafting is a WAIT card: the weave band (shader
+ * in full, ≤ 90 s, its static strands otherwise), the route.weave glyph, the
+ * 40 px pause in the heading row and the aria-live line verbatim; a re-plan's
+ * card does the same while its run is RUNNING. No bar, no %.
  */
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Chip, ChipButton } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { SectionHeader, Switch } from "@/components/ui/Tabs";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
+import { Glyph, Mark } from "@/components/glyph/Glyph";
+import { GlyphLane } from "@/components/glyph/GlyphLane";
+import { Fig } from "@/components/glyph/GlyphStat";
+import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
+import { CardKey, InfoTip, type KeyEntry } from "@/components/glyph/InfoTip";
+import { RankSeal } from "@/components/glyph/RankSeal";
+import { StageLadder } from "@/components/glyph/StageLadder";
+import { GATE_LEVEL, STAGE_GATES, type StageGate } from "@/components/glyph/paths/stage";
+import { DraftWeave } from "@/components/fx/DraftWeave";
+import { HorizonMarks } from "@/components/fx/fallbacks";
+import { ShaderSlot } from "@/components/fx/ShaderSlot";
+import { WeavePause } from "@/components/fx/WeavePause";
+import { speakFigure } from "@/lib/figure-speech";
+import { BAND, horizonParams } from "@/lib/shader/params";
 import {
   ACCEPT_UNDO_MS,
+  AIM_RANKS,
   DEPTH_DOMAINS_MAX,
   DRAFT_REFRESH_MAX_MS,
   DRAFT_REFRESH_MS,
+  PACK_SECTIONS,
   ROADMAP_GEMINI_LIVE,
   RUN_STALE_MS,
   isPracticeFamily,
+  type DepthView,
   type DraftView,
   type MilestoneDraft,
   type RoadmapHeader,
@@ -81,8 +116,26 @@ import {
 } from "@/lib/roadmap-types";
 import { catalogTrackOf, type CatalogKey } from "@/lib/roadmap-catalog";
 import {
+  APP_LANE_ITEMS,
+  APP_LANE_WORD,
   ARRANGEMENT_LINE,
   BUILT_LEAD_LINE,
+  COVERAGE_UNCHECKED_LINE,
+  FREE_TIER_LINE,
+  GEMINI_LANE_ITEM,
+  GEMINI_LANE_WORD,
+  SHORT_GEMINI_GUESS,
+  SHORT_GEMINI_ORDER,
+  SHORT_PAUSE_LABEL,
+  SHORT_REVIEW_GAP,
+  SHORT_YOURS,
+  coverageChoiceLine,
+  coverageJudgeLine,
+  depthChoiceLine,
+  depthGapDays,
+  depthLine,
+  domainOriginLine,
+  privacyLine,
   CHOICES_PLAN_LEVEL,
   CHOOSE_WORD,
   CONFIRM_WORD,
@@ -135,6 +188,9 @@ import {
   activityCardOf,
   activityWaitingOf,
   additionsDatesOf,
+  aimDateOfHeader,
+  geminiLaneItemsOf,
+  horizonOfRoadmap,
   aimConflictLineOf,
   carriedRowsOf,
   domainIndexOf,
@@ -166,8 +222,6 @@ import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { ItemEditor, type ItemEditorScope } from "./ItemEditor";
 import { MilestoneCard, type MilestoneCardContext } from "./MilestoneCard";
 import { RunFacts } from "./RunFacts";
-import { AreaChipView } from "./AimCard";
-import { DepthLines } from "./AimHeader";
 import { DateBlock } from "./DateBlock";
 import { GapPanel, type LiveGates } from "./GapPanel";
 import { RoadmapGlyph } from "./RoadmapGlyph";
@@ -348,6 +402,139 @@ export function UncoveredSyllabus({ indices, milestoneId, ord }: { indices: read
   );
 }
 
+/**
+ * Who did what on a Gemini draft, as two GlyphLanes with their who-words (D25; ui-motion.md §3.3
+ * screen 2): the lead line they replace is their (i), verbatim. Gemini's lane lists only what it
+ * did on this draft (a v4 reply: geminiV4PartsOf's needs · order · picks, geminiLaneItemsOf; a v3
+ * reply: its Domains, the order and the types; a rev-3 draft: the words). null: the lead line
+ * stays visible as it was (the app's or your own draft, a re-plan the app re-fitted, a non-English
+ * draft's language line, a rejected reply).
+ */
+export function draftLanesOf(o: { writer: RunWriter | null; keysOnly: boolean; choices: boolean; parts: GeminiV4Parts | null; nonEnglish: boolean; rejected: boolean }): { gemini: string[]; app: string[] } | null {
+  if (o.writer !== "GEMINI" || o.rejected || o.nonEnglish) return null;
+  if (o.keysOnly && o.choices) return { gemini: o.parts ? geminiLaneItemsOf(o.parts) : [GEMINI_LANE_ITEM.needs, GEMINI_LANE_ITEM.order, GEMINI_LANE_ITEM.picks], app: [...APP_LANE_ITEMS] };
+  if (o.keysOnly) return { gemini: [GEMINI_LANE_ITEM.needs, GEMINI_LANE_ITEM.order, GEMINI_LANE_ITEM.picks], app: APP_LANE_ITEMS.filter((x) => x !== "practices") };
+  return { gemini: ["words"], app: ["numbers"] };
+}
+
+/** The lanes and their (i), or the lead line itself. */
+function LeadLanes({ lead, lanes }: { lead: string | null; lanes: { gemini: string[]; app: string[] } | null }) {
+  if (!lead) return null;
+  if (!lanes) return <p className="rm-lead">{lead}</p>;
+  return (
+    <div className="rm-dh-lanes">
+      <div className="rm-dh-lane-l">
+        <GlyphLane who="gemini" items={lanes.gemini} whoWord={GEMINI_LANE_WORD} />
+        <GlyphLane who="app" items={lanes.app} whoWord={APP_LANE_WORD} />
+      </div>
+      <InfoTip topic="who did what on this draft">{lead}</InfoTip>
+    </div>
+  );
+}
+
+const TRACK_SIGIL_OF = { CRAFT: "craft", BODY: "body", CARE: "care", DUTY: "duty" } as const;
+
+/** "[s-know] Statistics · L9", or a track Area's "Body · practice only" (the name is a name; the level a figure). */
+function AreaChip({ area }: { area: RoadmapHeader["area"] }) {
+  if (area.kind === "FIELD")
+    return (
+      <Chip sigil="know">
+        <span data-wc="name">{area.name}</span>
+        <Fig compact={` · L${area.level}`} speech={`, level ${area.level}`} />
+      </Chip>
+    );
+  return (
+    <Chip sigil={TRACK_SIGIL_OF[area.track]}>
+      <span data-wc="name">{TRACK_WORD[area.track]}</span> · practice only
+    </Chip>
+  );
+}
+
+/**
+ * A date chip's words by whose date it is (C2-M2): the app's estimate "L12 by ≈ Dec 2027", your own "31 Dec 2027 ·
+ * yours"; a date whose setter the view doesn't say keeps its exact day and claims neither ("by 31 Dec 2027").
+ */
+function dateChipText(header: RoadmapHeader, today: string): string {
+  const date = aimDateOfHeader(header);
+  return date.whose ? date.text : byLine(header.targetDay, today, false);
+}
+
+/** A date chip's spoken twin (D26): "level 12 by about December 2027" (an estimate's ≈ is said "about"). */
+function speakDate(text: string): string {
+  return speakFigure(text).replace(/≈\s?/g, "about ");
+}
+
+/** The depth's cairn: the gate whose level the depth is (stage.mastered at 12). */
+function depthGateOf(depth: number): StageGate | null {
+  return STAGE_GATES.find((g) => GATE_LEVEL[g] === depth) ?? null;
+}
+
+/**
+ * The header's settings as chips (§3.3 screen 2): the Area, the depth (its name with its level) or
+ * the date (whose: "L12 by ≈ Dec 2027" the app's estimate, "31 Dec 2027 · yours"), the exam, and
+ * "6 h/wk yours · Steady"; `extra` adds «Google may use this» on the Gemini path.
+ */
+function SettingsChips({ header, today, extra }: { header: RoadmapHeader; today: string; extra?: ReactNode }) {
+  const date = aimDateOfHeader(header);
+  const gate = header.depth != null ? depthGateOf(header.depth) : null;
+  return (
+    <Chips className="rm-dh-chips">
+      <AreaChip area={header.area} />
+      {header.depth != null ? (
+        <Chip>
+          {gate && <Glyph name={`stage.${gate}`} size={12} inherit />}
+          <span data-wc="name">{depthName(header.depth)}</span>
+        </Chip>
+      ) : (
+        <Chip>
+          <Mark glyph={date.glyph} size={12} />
+          <Fig compact={dateChipText(header, today)} speech={speakDate(dateChipText(header, today))} />
+        </Chip>
+      )}
+      {header.examLabel && (
+        <Chip>
+          <Glyph name="quest.checkpoint" size={12} inherit />
+          <span data-wc="name">{header.examLabel}</span>
+        </Chip>
+      )}
+      <Chip>
+        <Glyph name="pv.you" size={12} inherit />
+        <Fig compact={`${header.hoursPerWeek} h/wk`} />
+        {` ${SHORT_YOURS} · ${INTENSITY_WORD[header.intensity]}`}
+      </Chip>
+      {extra}
+    </Chips>
+  );
+}
+
+/** The header's unlit horizon (§6.1: the draft review header): static SVG marks, contours to the chosen depth, no dawn, no context. */
+function UnlitHorizon({ depth, roadmapId }: { depth: number | null; roadmapId: string }) {
+  const p = horizonParams({ proficiency: null, status: "DRAFT", depth, roadmapId });
+  const [w, h] = BAND.page;
+  return (
+    <div className="rm-band">
+      <ShaderSlot program="horizon" kind="static" params={[p.seed]} measured={false} fallback={null} marks={<HorizonMarks w={w} h={h} front={-1} contours={p.contours} />} className="shd-band-page" />
+    </div>
+  );
+}
+
+/**
+ * The WAIT state's line (§7.12; D19): the run's words verbatim in aria-live, beside the
+ * route.weave glyph (its CSS breathe runs only inside a [data-wait] card while no weave shader is
+ * live and the card isn't paused). No bar, no %.
+ */
+function DraftingLine({ run }: { run: RunView }) {
+  return (
+    <div className="rm-drf-run" aria-live="polite">
+      <Glyph name="route.weave" state="active" size={32} />
+      <b className="rm-drf-t">
+        Drafting · {plural(Math.max(1, run.drafts), "draft")} · started {timeSecondsLabel(run.startedAt)}
+        {run.usualSeconds != null ? ` · usually about ${Math.round(run.usualSeconds)} s` : ""}
+      </b>
+    </div>
+  );
+}
+
 /** The draft's header card (a DRAFT roadmap), or the re-plan's (an ACTIVE roadmap's version + 1). */
 function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { header: RoadmapHeader; run: RunView | null; view: RoadmapView; mode: "draft" | "replan"; next: MilestoneDraft | null; keysOnly: boolean; gates?: LiveGates }) {
   const { run: act, pending, error, runtime } = useRoadmapAction();
@@ -356,7 +543,9 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
   const rejected = runRejectedOf(run);
   // The v4 header names only what the run asked and the reply used (contracts §20), read from the rows on screen.
   const parts = geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" });
-  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly, picksAreChoicesOf(run), parts);
+  const choices = picksAreChoicesOf(run);
+  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly, choices, parts);
+  const lanes = draftLanesOf({ writer, keysOnly, choices, parts, nonEnglish: draft.nonEnglish, rejected });
   const capped = run?.capped === true || run?.status === "CAPPED";
   const geminiLive = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey;
   // On a keys-only draft the uncovered lines sit under "Lines to look at", with the lines tied to no Domain.
@@ -371,20 +560,36 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
           action: { label: "Undo", onAction: () => void runtime.actions.undoDiscard(header.id).then(() => runtime.refresh()) },
         })
     );
+  // Honest eyebrows ("… · not accepted yet") are honesty marks (§8); the others are app words.
+  const eyebrowWc = /not accepted yet/.test(eyebrow) ? "honest" : undefined;
   if (mode === "replan") {
     const ords = draft.milestones.map((m) => m.ord);
     const first = ords.length > 0 ? Math.min(...ords) : null;
     const last = ords.length > 0 ? Math.max(...ords) : null;
+    // A re-plan's run in progress: this card is the page's one WAIT loop (the living header's horizon stays SVG).
+    const drafting = run != null && run.status === "RUNNING";
+    const waiting = drafting && !run.stale;
     return (
-      <section className="card rm-aim" aria-label="The re-plan draft">
-        <div className="t-eyebrow">{eyebrow}</div>
+      <section className="card rm-aim rm-dh-rp" aria-label="The re-plan draft" data-wait={waiting ? "" : undefined}>
+        {drafting && (
+          <div className="rm-band">
+            <DraftWeave stale={run.stale} startedAt={run.startedAt} />
+          </div>
+        )}
+        <div className="rm-drf-h">
+          <div className="t-eyebrow" data-wc={eyebrowWc}>
+            {eyebrow}
+          </div>
+          {waiting && <WeavePause label={SHORT_PAUSE_LABEL} />}
+        </div>
         <p className="rm-lead" style={{ marginTop: 6 }}>
           Version {draft.version}
           {first != null && last != null ? ` · ${first === last ? `Milestone ${first}` : `Milestones ${first} to ${last}`}` : ""}. Started milestones stay as they are.
         </p>
-        {lead && <p className="rm-lead">{lead}</p>}
+        {drafting && <DraftingLine run={run} />}
+        <LeadLanes lead={lead} lanes={lanes} />
         <div className="rm-lines">
-          {run && runSaysMore(run) && <RunFacts run={run} today={view.today} />}
+          {run && runSaysMore(run) && <RunFacts run={run} today={view.today} variant="chip" />}
           {uncovered}
         </div>
         <div className="rm-acts">
@@ -400,23 +605,35 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
   // The activity card below carries HEALTH_LINE itself on a body or care plan (once per screen).
   const activityCard = activityCardOf(draft.activityConfirm);
   const cardHealth = activityCard != null && activityHealthOf(activityCard);
+  // Google's free tier: what drafting sent may be used (only where a Gemini run wrote this draft).
+  const dataChip = writer === "GEMINI" && view.keyTier === "FREE" ? <HonestyChip kind="data" full={`${FREE_TIER_LINE} ${privacyLine(PACK_SECTIONS)}`} /> : null;
+  const hz = horizonOfRoadmap(view);
   return (
-    <section className="card rm-aim" aria-label="The draft">
-      <div className="t-eyebrow">{eyebrow}</div>
-      <p className="rm-aim-t">{header.aim}</p>
-      <div className="rm-chips">
-        <AreaChipView area={header.area} />
-        <Chip>{header.depth != null ? depthName(header.depth) : byLine(header.targetDay, view.today, false)}</Chip>
-        {header.examLabel && <Chip>Exam: {header.examLabel}</Chip>}
-        <Chip>
-          {header.hoursPerWeek} h a week · {INTENSITY_WORD[header.intensity]}
-        </Chip>
+    <section className="card rm-aim rm-dh" aria-label="The draft" data-wc-block="draft-header" data-wc-fold="">
+      {hz && <UnlitHorizon depth={hz.depth} roadmapId={header.id} />}
+      <div className="t-eyebrow" data-wc={eyebrowWc}>
+        {eyebrow}
       </div>
-      {rejected ? <p className="rm-lead">{RUN_REJECTED_LINE}</p> : lead && <p className="rm-lead">{lead}</p>}
-      {keysOnly && bodyTrack && !cardHealth && <p className="rm-lead">{HEALTH_LINE}</p>}
+      <p className="rm-aim-t" data-wc="own">
+        {header.aim}
+      </p>
+      <SettingsChips header={header} today={view.today} extra={dataChip} />
+      {rejected ? <p className="rm-lead">{RUN_REJECTED_LINE}</p> : <LeadLanes lead={lead} lanes={lanes} />}
+      {keysOnly && bodyTrack && !cardHealth && (
+        <Chips className="rm-dh-chips">
+          {/* a safety surface (D11): its panel opens instantly */}
+          <span className="rm-wq-safe" data-safety="">
+            <HonestyChip kind="health" full={HEALTH_LINE} />
+          </span>
+        </Chips>
+      )}
       <div className="rm-lines">
-        {run && runSaysMore(run) && <RunFacts run={run} today={view.today} />}
-        {header.constraints && !keysOnly && <span>{CONSTRAINTS_LINE}</span>}
+        {run && runSaysMore(run) && <RunFacts run={run} today={view.today} variant="chip" />}
+        {header.constraints && !keysOnly && (
+          <span className="rm-dh-line">
+            <HonestyChip kind="constraints" full={CONSTRAINTS_LINE} />
+          </span>
+        )}
         {uncovered}
         <span>
           <Link className="rm-ilink" href={ROADMAP_NEW_HREF}>
@@ -702,6 +919,99 @@ function OutlineLines({ view, next, gemini }: { view: RoadmapView; next: Milesto
   );
 }
 
+/**
+ * The Depth part of the draft's Depth and date card (ui-motion.md §3.3 screen 2): the StageLadder
+ * to the chosen depth (aria-hidden; the depth's name is in the header's chip), each required
+ * Domain with its count, «review gap ≈ 110 d», and the two chips that open the depth line
+ * («App policy») and the coverage line («yours to judge») verbatim. The lines that record a
+ * choice or a Gemini suggestion the user added stay visible, as they were.
+ */
+function DraftDepth({ depth, m, aim, today }: { depth: DepthView; m: number; aim: string; today: string }) {
+  const gap = depthGapDays(depth.depth, m);
+  const nameOf = (id: string) => depth.coverage.find((c) => c.domainId === id)?.name ?? null;
+  const origins = Object.entries(depth.domainOrigins)
+    .map(([id, o]) => {
+      const n = nameOf(id);
+      return n ? domainOriginLine(n, o, today) : null;
+    })
+    .filter((l): l is string => Boolean(l));
+  const choices = depth.coverageChoices.map((c) => {
+    const n = nameOf(c.domainId);
+    return n ? coverageChoiceLine(n, c, today) : null;
+  });
+  return (
+    <div className="rm-ms-sec rm-dd-depth" style={{ borderTop: 0 }}>
+      <StageLadder chosen={depth.depth} exam={depth.exam?.reachLevel ?? null} gapDays={gap} className="rm-dd-sl" />
+      <Chips className="rm-dd-row">
+        {depth.coverage.map((c) => (
+          <Chip key={c.domainId} sigil="know">
+            <span data-wc="name">{c.name}</span>
+            <Fig compact={` ${c.n}`} speech={`, ${c.n} ${c.n === 1 ? "card" : "cards"} held`} />
+          </Chip>
+        ))}
+        <HonestyChip kind="review-gap" label={`${SHORT_REVIEW_GAP} ≈ ${gap} d`} sr={reviewGapWords(gap)} />
+        <HonestyChip kind="policy" full={depthLine(depth.depth, depth.coverage, m)} />
+        <HonestyChip kind="judge" full={coverageJudgeLine(aim)} />
+      </Chips>
+      {[...origins, ...choices.filter((l): l is string => Boolean(l)), ...(depth.outlineChecked ? [] : [COVERAGE_UNCHECKED_LINE]), ...(depth.depthChoice ? [depthChoiceLine(depth.depthChoice, today)] : [])].map((l) => (
+        <p key={l} className="rm-date-l rm-dd-note">
+          {l}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** «review gap ≈ 110 d»'s words (sr, and in the card Key): the gap between reviews, never the time to the aim (C2-M8). */
+export function reviewGapWords(gap: number): string {
+  return `review gap about ${gap} days: the gap between a card's reviews at this depth, not the time to the aim`;
+}
+
+/** The four things Paragon needs on this plan (paragonDepthLine), as idle pips: they never light on a draft. */
+const PARAGON_CONDITIONS = ["L12", "final stage", "practice kept", "standard logged"] as const;
+
+/** The idle Paragon seal and its four conditions (§3.3 screen 2): a rank not yet held keeps its verb ("needs"); its line is in the card Key. */
+function ParagonRow() {
+  return (
+    <div className="rm-dd-para">
+      <RankSeal index={6} size={34} state="idle" />
+      <span className="rm-dd-para-t">
+        <span data-wc="name">{AIM_RANKS[6]}</span> needs
+      </span>
+      <ul className="rm-dd-pips" aria-label={`${AIM_RANKS[6]} needs`}>
+        {PARAGON_CONDITIONS.map((c) => (
+          <li key={c}>
+            <i className="rm-dd-pip" aria-hidden="true" />
+            {c === "L12" ? <Fig compact={c} /> : c}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The Depth and date card's Key (D13): each glyph on the card with its words. */
+function dateCardKeyOf(depth: boolean, exam: boolean, gap: number | null): KeyEntry[] {
+  return [
+    ...(depth
+      ? [
+          { glyph: "stage.mastered", words: "Your levels, lit up to the depth you chose (a flag at the level your exam reaches)." },
+          ...(gap != null ? [{ glyph: "t.span", words: `${reviewGapWords(gap)}.` } satisfies KeyEntry] : []),
+          { glyph: "m.policy", words: "App policy: the depth line's counts and share are the app's policy, not facts about these subjects." },
+          { glyph: "m.judge", words: "Yours to judge: whether your cards cover what the aim needs." },
+        ]
+      : []),
+    { glyph: "quest.add", words: "New cards a week: your usual pace, as the date uses it." },
+    { glyph: "ev.tested", words: "Pass rate: tested by your reviews." },
+    { glyph: "m.queue", words: "Cleared: the share of your due queue you clear." },
+    { glyph: "t.earliest", words: "Earliest: if every review passes." },
+    ...(exam ? [{ glyph: "quest.checkpoint", words: "Your exam: what the plan reaches by then." } satisfies KeyEntry] : []),
+    { glyph: "t.pin", words: "Your own date, when you set one." },
+    { glyph: "pv.app", words: "The dates and figures here: worked out by the app." },
+    ...(depth ? [{ glyph: "rank.6", state: "idle", words: `${AIM_RANKS[6]}: not held; its conditions never light on a draft.` } satisfies KeyEntry] : []),
+  ] as KeyEntry[];
+}
+
 function DraftFooter({
   view,
   next,
@@ -928,21 +1238,17 @@ export function DraftReview({
         )}
         {ctx.credentialNoSyllabus && mode === "draft" && !keysOnly && (
           <section className="card rm-banner">
-            <p className="rm-banner-t">
-              <b>{CREDENTIAL_LINE}</b>
-            </p>
+            <Chips className="rm-banner-t">
+              <HonestyChip kind="credential" label={SHORT_GEMINI_GUESS} full={CREDENTIAL_LINE} />
+            </Chips>
             <Button href={`${ROADMAP_NEW_HREF}#syllabus`}>Paste the syllabus</Button>
           </section>
         )}
         {keysOnly && (draft.depth || draft.dateCheck) && (
-          <div>
-            <SectionHeader title={draft.depth ? "Depth and date" : "Date"} aside="worked out by the app" />
-            <section className="card rm-date-card">
-              {draft.depth && (
-                <div className="rm-ms-sec" style={{ borderTop: 0 }}>
-                  <DepthLines depth={draft.depth} m={draft.feasibility.m} aim={header.aim} today={view.today} />
-                </div>
-              )}
+          <div data-wc-block="draft-date">
+            <SectionHeader title={draft.depth ? "Depth and date" : "Date"} />
+            <section className="card rm-date-card" aria-label={draft.depth ? "Depth and date" : "Date"}>
+              {draft.depth && <DraftDepth depth={draft.depth} m={draft.feasibility.m} aim={header.aim} today={view.today} />}
               {draft.dateCheck && (
                 <DateBlock
                   roadmapId={header.id}
@@ -955,19 +1261,28 @@ export function DraftReview({
                     if (draft.dateCheck?.verdict === "OVER") setOver(true);
                     scrollToId("rm-accept");
                   }}
+                  userDay={header.targetDay}
+                  today={view.today}
+                  throughput={view.throughput}
+                  feasibility={draft.feasibility}
+                  exam={draft.depth?.exam ?? null}
                 />
               )}
-              {draft.depth && draft.depth.depth === 12 && <p className="rm-ms-sec t-meta">{paragonDepthLine(draft.depth.coverage.length)}</p>}
+              <div className="rm-ms-sec rm-dd-foot">
+                {draft.depth && draft.depth.depth === 12 && <ParagonRow />}
+                <CardKey entries={dateCardKeyOf(Boolean(draft.depth), Boolean(draft.depth?.exam), draft.depth ? depthGapDays(draft.depth.depth, draft.feasibility.m) : null)} topic="the marks on the depth and date">
+                  {draft.depth && draft.depth.depth === 12 && <span className="rm-dd-tl">{paragonDepthLine(draft.depth.coverage.length)}</span>}
+                </CardKey>
+              </div>
             </section>
           </div>
         )}
         {keysOnly && arrangement && (
           <section className="card rm-arr">
-            <RoadmapGlyph name="info" />
-            <div className="rm-arr-b">
-              <span>{arrangement}</span>
+            <Chips className="rm-arr-b">
+              <HonestyChip kind="arrangement" label={SHORT_GEMINI_ORDER} full={arrangement} />
               {v4Parts?.order === "MOVED" && <KeepMyOrder roadmapId={header.id} />}
-            </div>
+            </Chips>
           </section>
         )}
         <div className="rm-grid">
@@ -1001,7 +1316,13 @@ export function DraftReview({
   );
 }
 
-/** RUNNING (F8): static text in an aria-live region; the page refreshes from the database, for at most 75 s. */
+/**
+ * RUNNING (F8; ui-motion.md §3.3 screen 12, §6.1, §7.12): one WAIT card. The weave band at its top
+ * (the shader in full while the run is live and not paused, for at most 90 s; its static strands
+ * otherwise), the 40 px pause in the heading row (never on the band), the aim, and the run's line
+ * verbatim in aria-live beside the route.weave glyph. No bar, no % and nothing that spins; the page
+ * refreshes from the database for at most 75 s. A stale run stops the weave at once and says so.
+ */
 export function DraftRunning({ view }: { view: RoadmapView }) {
   const runtime = useRoadmapRuntime();
   const { run: act, pending, error } = useRoadmapAction();
@@ -1022,61 +1343,70 @@ export function DraftRunning({ view }: { view: RoadmapView }) {
   }, [run.stale, run.id, run.startedAt, runtime]);
   const stale = run.stale || timedOut;
   return (
-    <div className="rm-stack">
-      {header && (
-        <section className="card rm-aim">
-          <div className="t-eyebrow">Draft</div>
-          <p className="rm-aim-t">{header.aim}</p>
-          <div className="rm-chips">
-            <AreaChipView area={header.area} />
-            <Chip>{byLine(header.targetDay, view.today, false)}</Chip>
-          </div>
-        </section>
-      )}
-      {stale ? (
-        <section className="card rm-run">
-          <Icon name="clock" />
-          <div className="rm-run-body">
-            <b>Drafting stopped (timed out)</b>
-            <p className="t-meta" style={{ marginTop: 4 }}>
-              Started {timeSecondsLabel(run.startedAt)}. It still counts toward today&apos;s drafts.
-            </p>
-            {header && (
-              <div className="rm-acts" style={{ marginTop: 12 }}>
-                <Button variant="primary" disabled={pending} onClick={() => act((a) => a.buildStarter(header.id))}>
-                  Build from my numbers
-                </Button>
-                <Button disabled={pending} onClick={() => act((a) => a.draftRoadmap(header.id))}>
-                  Try again
-                </Button>
-              </div>
-            )}
-            {error && <ActionError>{error}</ActionError>}
-          </div>
-        </section>
-      ) : (
-        <section className="card rm-run" aria-live="polite">
-          <RoadmapGlyph name="route" />
-          <div className="rm-run-body">
-            <b>
-              Drafting · {plural(Math.max(1, run.drafts), "draft")} · started {timeSecondsLabel(run.startedAt)}
-            </b>
-            {run.usualSeconds != null && (
-              <p className="t-meta" style={{ marginTop: 4 }}>
-                usually about {Math.round(run.usualSeconds)} s
-              </p>
-            )}
-          </div>
-        </section>
-      )}
-      {!stale && (
-        <div className="card pad" aria-hidden="true">
-          <span className="rm-sk" style={{ height: 22, width: "60%" }} />
-          <span className="rm-sk" style={{ height: 14, width: "85%", marginTop: 12 }} />
-          <span className="rm-sk" style={{ height: 14, width: "70%", marginTop: 8 }} />
-          <span className="rm-sk" style={{ height: 44, marginTop: 16 }} />
+    <div className="rm-stack" data-wc-block="roadmap-drafting">
+      <section className="card rm-aim rm-drf" aria-label="Drafting" data-wait={stale ? undefined : ""}>
+        <div className="rm-band">
+          <DraftWeave stale={stale} startedAt={run.startedAt} />
         </div>
-      )}
+        <div className="rm-drf-h">
+          <div className="t-eyebrow">Draft</div>
+          {!stale && <WeavePause label={SHORT_PAUSE_LABEL} />}
+        </div>
+        {header && (
+          <>
+            <p className="rm-aim-t" data-wc="own">
+              {header.aim}
+            </p>
+            <DraftingChips header={header} today={view.today} />
+          </>
+        )}
+        {stale ? (
+          <div className="rm-drf-run rm-drf-stale">
+            <Icon name="clock" />
+            <div className="rm-run-body">
+              <b className="rm-drf-t">Drafting stopped (timed out)</b>
+              <p className="t-meta" style={{ marginTop: 4 }}>
+                Started {timeSecondsLabel(run.startedAt)}. It still counts toward today&apos;s drafts.
+              </p>
+              {header && (
+                <div className="rm-acts" style={{ marginTop: 12 }}>
+                  <Button variant="primary" disabled={pending} onClick={() => act((a) => a.buildStarter(header.id))}>
+                    Build from my numbers
+                  </Button>
+                  <Button disabled={pending} onClick={() => act((a) => a.draftRoadmap(header.id))}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+              {error && <ActionError>{error}</ActionError>}
+            </div>
+          </div>
+        ) : (
+          <DraftingLine run={run} />
+        )}
+      </section>
     </div>
+  );
+}
+
+/** The drafting card's two settings: the Area and the depth (or the date, by whose it is). */
+function DraftingChips({ header, today }: { header: RoadmapHeader; today: string }) {
+  const date = aimDateOfHeader(header);
+  const gate = header.depth != null ? depthGateOf(header.depth) : null;
+  return (
+    <Chips className="rm-dh-chips">
+      <AreaChip area={header.area} />
+      {header.depth != null ? (
+        <Chip>
+          {gate && <Glyph name={`stage.${gate}`} size={12} inherit />}
+          <span data-wc="name">{depthName(header.depth)}</span>
+        </Chip>
+      ) : (
+        <Chip>
+          <Mark glyph={date.glyph} size={12} />
+          <Fig compact={dateChipText(header, today)} speech={speakDate(dateChipText(header, today))} />
+        </Chip>
+      )}
+    </Chips>
   );
 }

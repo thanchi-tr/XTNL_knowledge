@@ -1,0 +1,68 @@
+{
+  "$comment": "ui-motion.md D26 and section 3.1: the one figure-and-unit table. figure-speech.ts speaks every entry; scripts/word-count.mjs exempts exactly these units. Edit both sides by editing this file only.",
+  "suffix": {
+    "%": { "one": "percent", "other": "percent" },
+    "h": { "one": "hour", "other": "hours" },
+    "m": { "one": "minute", "other": "minutes" },
+    "min": { "one": "minute", "other": "minutes" },
+    "d": { "one": "day", "other": "days" },
+    "wk": { "one": "week", "other": "weeks" },
+    "mo": { "one": "month", "other": "months" },
+    "×": { "one": "time", "other": "times" },
+    "+": { "one": "or more", "other": "or more" }
+  },
+  "words": {
+    "card": { "one": "card", "other": "cards" },
+    "cards": { "one": "card", "other": "cards" },
+    "session": { "one": "session", "other": "sessions" },
+    "sessions": { "one": "session", "other": "sessions" },
+    "step": { "one": "step", "other": "steps" },
+    "steps": { "one": "step", "other": "steps" },
+    "day": { "one": "day", "other": "days" },
+    "days": { "one": "day", "other": "days" },
+    "week": { "one": "week", "other": "weeks" },
+    "weeks": { "one": "week", "other": "weeks" },
+    "wk": { "one": "week", "other": "weeks" },
+    "h": { "one": "hour", "other": "hours" },
+    "min": { "one": "minute", "other": "minutes" },
+    "d": { "one": "day", "other": "days" },
+    "×": { "one": "times", "other": "times" },
+    "h/wk": { "one": "hour a week", "other": "hours a week" },
+    "/wk": { "one": "a week", "other": "a week" },
+    "min/wk": { "one": "minute a week", "other": "minutes a week" }
+  },
+  "level": { "pattern": "^L(\\d+)(\\+?)$", "speak": "level {n}", "plus": " or higher" },
+  "prefix": {
+    "≈": "about",
+    "~": "about",
+    "↓": "down",
+    "↑": "up",
+    "+": "plus",
+    "−": "minus",
+    "-": "minus"
+  },
+  "days": {
+    "Mon": "Monday",
+    "Tue": "Tuesday",
+    "Wed": "Wednesday",
+    "Thu": "Thursday",
+    "Fri": "Friday",
+    "Sat": "Saturday",
+    "Sun": "Sunday"
+  },
+  "months": {
+    "Jan": "January",
+    "Feb": "February",
+    "Mar": "March",
+    "Apr": "April",
+    "May": "May",
+    "Jun": "June",
+    "Jul": "July",
+    "Aug": "August",
+    "Sep": "September",
+    "Oct": "October",
+    "Nov": "November",
+    "Dec": "December"
+  },
+  "separators": ["·", "→", "—", "/", "|"]
+}

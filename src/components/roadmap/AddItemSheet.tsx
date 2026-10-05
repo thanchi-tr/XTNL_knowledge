@@ -16,6 +16,12 @@
  * code's words, sized from your hours. Never a kind the gate holds; not
  * offered once the stage holds its default, you removed it there, or its
  * practices are full.
+ *
+ * UI motion (lane R4; ui-motion.md §3.3 screen 3): one 44 px "+ Add" per
+ * milestone in place of the cluster. It opens the kinds this milestone can
+ * still take ("it reads “You wrote this”" moves in with them), and each opens
+ * its sheet as before. The kinds stay in the markup (a <details>), so nothing
+ * is one more sheet away; "Add the app's practice" stays its own one tap.
  */
 import { useId, useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
@@ -40,7 +46,8 @@ import {
   type MilestoneDraft,
   type PracticeMethod,
 } from "@/lib/roadmap-types";
-import { APP_PRACTICE_WORD, CHECKPOINT_KIND_WORD, KIND_NAME, METHOD_WORD, plural } from "./roadmap-copy";
+import { Icon } from "@/components/ui/Icon";
+import { APP_PRACTICE_WORD, CHECKPOINT_KIND_WORD, KIND_NAME, METHOD_WORD, SHORT_ADD, plural } from "./roadmap-copy";
 import { useRoadmapAction, type RoadmapActions } from "./roadmap-runtime";
 import { milestoneLineOf } from "./EditItemSheet";
 import { appPracticeOf, stageRunOf } from "./roadmap-ui-model";
@@ -85,22 +92,29 @@ export function AddItemBar({ milestone, scope }: { milestone: MilestoneDraft; sc
   if (!milestone.id || kinds.length === 0) return null;
   const id = milestone.id;
   return (
-    <div className="rm-ms-sec" id={`rm-add-${milestone.id}`}>
-      <div className="rm-ms-sh">
-        <span className="t-eyebrow">Add your own</span>
-        <span className="rm-cap">it reads “You wrote this”</span>
-      </div>
-      <div className="rm-acts" style={{ marginTop: 0 }}>
+    <div className="rm-ms-sec rm-r4-add" id={`rm-add-${milestone.id}`}>
+      <div className="rm-r4-addr">
+        <details className="rm-r4-addd">
+          <summary className="rm-r4-adds" aria-label={`${SHORT_ADD} your own to milestone ${milestone.ord}`}>
+            <Icon name="plus" />
+            <span aria-hidden="true">{SHORT_ADD}</span>
+          </summary>
+          <div className="rm-r4-addb">
+            <p className="rm-cap">Add your own · it reads “You wrote this”</p>
+            <div className="rm-acts" style={{ marginTop: 6 }}>
+              {kinds.map((k) => (
+                <ChipButton key={k} onClick={() => setKind(k)}>
+                  Add {KIND_WORD[k]}
+                </ChipButton>
+              ))}
+            </div>
+          </div>
+        </details>
         {app && (
           <ChipButton disabled={pending} aria-label={`${APP_PRACTICE_WORD}: ${KIND_NAME[app]}`} onClick={() => run((a) => a.addAppPractice(id))}>
             {APP_PRACTICE_WORD}
           </ChipButton>
         )}
-        {kinds.map((k) => (
-          <ChipButton key={k} onClick={() => setKind(k)}>
-            Add {KIND_WORD[k]}
-          </ChipButton>
-        ))}
       </div>
       {error && <ActionError>{error}</ActionError>}
       <Sheet open={kind != null} onClose={() => setKind(null)} title={kind ? `Add ${KIND_WORD[kind]}` : ""} description={milestoneLineOf(milestone)}>

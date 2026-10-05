@@ -143,6 +143,9 @@ export const DEV_STYLE_PAGES: readonly SubPage[] = [
   { href: "/dev/style/art", label: "Art" },
   { href: "/dev/style/settings", label: "Settings fixtures" },
   { href: "/dev/style/roadmap", label: "Roadmap fixtures" },
+  // ui-motion.md §9.1–§9.2 (M0a, M0b): the glyph gallery and the shader slots.
+  { href: "/dev/style/glyphs", label: "Glyphs" },
+  { href: "/dev/style/fx", label: "Shader" },
 ];
 
 /**

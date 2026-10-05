@@ -36,6 +36,8 @@ State of the tree after lane 0:
 
 **The practice progression** is §20, the lead's decision after the probe's no-go (practice fit 29% of stages against 80%; arrangement 1 of 7): code owns the practice progression on every plan path, and Gemini's reply shrinks to `needs`, the outline's order and at most one pick per stage among code's candidates (ROADMAP_PROMPT_VERSION 4). Lane 0 wrote the pure progression (`progressionOf` and its rule checker in roadmap-catalog.ts), the v4 reply's shapes (roadmap-types.ts) and the sizing as one definition, first and alone, with no schema change. Each item's adoption is a HANDOFF line in roadmap-contract-check (§20.8): unlike PENDING, `--strict` (and with it life:check) passes them while the round runs, and `--handoffs` fails every one still open.
 
+**UI motion** is §21 (docs/life-plan/ui-motion.md revision 2, "fewer words, more motion"; U1 = a, U2 = a). R0 went after the progression landed, and after the shared glyph and shader layers. It added the short labels beside the full strings (none reworded), the model's seen keys and motion inputs, the RoadmapGlyph alias, one marked section per lane in roadmap.css and roadmap-ui-check, 14 fixture states with what the viewer last saw, and four harnesses that land reporting only. §21.6 lists the view fields a lib round still has to fill.
+
 **Fix round 2.** The re-review's open items added a second, smaller set (§11: the run behind the accepted plan, the acceptance-day caption, struck title numbers off the review, the plan's position count, and one definition of "what a draft milestone still needs"), and §12 lists what every lane exported in the first fix round, read from the code. ui-audit now reads R5's FIXTURE_STATES from fixtures.ts (15 states), and roadmap-contract-check passes 200 checks.
 
 ## 0. Rules every lane keeps
@@ -3341,3 +3343,281 @@ HANDOFF lines (their state when this item finished, read from the tree; the othe
 7. **A turn is a label, not a row.** Pay honesty, quests and F-R4-13 read the row's own kind (the role kind), and a re-plan reads a carried stage's kinds only; a copy settles its own turn, so nothing downstream changes until a path writes the words (§20.12.7).
 8. **IELTS with room for one:** the run-up writes and sits timed practice week about, and speaking is trained on Retained (saying it aloud ⇄ writing). The partner waits for room.
 9. **`languageExamSkillsOf` is a keyword reading of the user's label.** An exam it doesn't know reads as all four skills, the safer side for mastery.
+
+## 21. UI motion: the roadmap contract (R0; ui-motion.md revision 2)
+
+**The decision.** The user asked for fewer words, more animated icons, animation and a shader. docs/life-plan/ui-motion.md revision 2 is the spec. The user chose U1 = (a): the horizon air settles within 5 s per session, and needs no pause button. They chose U2 = (a): dashed keeps meaning "calibrating or not yet counted", and "not checked" is the balloon glyph. The lead signed off M0c's shared-file changes and the D-items marked for sign-off (D12, D16, D18, D19, D29), with the spec's recommended options.
+
+**Who did what.**
+- M0a built the glyph layer (src/components/glyph/**, glyph-motion, useSeen, figure-speech, word-count.mjs).
+- M0b built the shader layer (src/lib/shader/**, src/components/fx/**).
+- M0c built the checks and docs (redesign-contracts.md §1–§5).
+- R0 went next, alone, after the progression landed (da017d0): this section.
+
+**What R0 adds and changes:**
+- the short labels beside the full strings;
+- the model's inputs for the glyphs, composites and shader slots;
+- the RoadmapGlyph alias;
+- one marked section per lane in roadmap.css;
+- the fixtures' new states;
+- roadmap-ui-check's R0 section and the four harnesses (reporting only).
+
+**What R0 does not change.** No existing roadmap-copy string is reworded, and no number, date, target or rule changes. The only rendered change is RoadmapGlyph's markup: the same names now draw the catalogue shapes.
+
+**The lanes.** R1–R7 run in parallel after this, each on its own files (ui-motion.md §10) and its own marked sections.
+
+### 21.0 State of the tree after R0
+
+**Files:**
+- src/components/roadmap/roadmap-copy.ts: the last section, "UI motion: the short labels" (§21.2), plus two imports: `payBar` and the type `HonestyKind`.
+- src/components/roadmap/roadmap-ui-model.ts: the last section, "UI motion" (§21.3), plus its imports.
+- src/components/roadmap/RoadmapGlyph.tsx: rewritten as the alias (§21.5).
+- src/components/roadmap/roadmap.css: the marked sections R0…R7 at the end of `@layer components`. R0's holds `.rm-band`, the horizon band edge to edge at a card's top.
+- src/app/dev/style/roadmap/fixtures.ts:
+  - 14 new states;
+  - `MOTION_STATES`, `MOTION_NEW_STATES` and `FIXTURE_BASIS`;
+  - `RoadmapFixture.seen`;
+  - `WORD_BLOCK` and `WORD_BUDGET_ROWS`;
+  - the Aim card's motion fields in `aimFromView`, stripped in `liveShapedAim`;
+  - Proficiency basis keys in `proficiency()`, stripped in `liveShaped`.
+- src/app/dev/style/art/you/aim-fixtures.ts:
+  - three keys: `running-stale`, `switched-off` and `not-recorded`;
+  - `AimFixture.seen` and `AIM_MOTION_KEYS`;
+  - `version` on the trading card (2 on `replan`).
+- src/app/dev/style/today/fixtures.ts: `MOTION_QUEST_FIXTURES`, with one state, `quest-done-new`. `QUEST_FIXTURES` is untouched, because today-ui-check pins its key list.
+- scripts/roadmap-ui-check.ts:
+  - section 11, "ui motion: the roadmap contract (R0)": 75 checks plus the harness report;
+  - `r0Gate`;
+  - one marked block per lane, R1…R7, before the summary line.
+- This section and its intro paragraph.
+
+**Gates** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key):
+- **tsc.** `npx tsc --noEmit -p .` cannot run: the generated `.next/dev/types/routes.d.ts` is corrupt (M0a and M0b's handoff). The same project minus that generated import, in a scratch tsconfig, gives 0 errors across src and scripts.
+- **eslint** is clean on the seven files R0 touched that it lints.
+- **roadmap-ui-check:** 1,041 passed, 0 failed (966 before R0).
+- **you-check:** 740 passed (721 before; the three Aim card fixtures add checks).
+- **today-ui-check --strict:** 740 passed.
+- **glyph-check:** 139 passed. **shader-check:** 206 passed.
+- **`npm run ui:check`** exits 0.
+- **`npm run life:check`** exits 0. roadmap-contract-check `--strict` is 619 passed with 1 handoff open (§20.8, from before R0); ui-audit reads the 14 new states from fixtures.ts.
+
+### 21.1 The rules the lanes build on (the D-items, as signed)
+
+- **D12, health.** One «Not medical advice · ask a professional» chip per body or care card, or per card with a health row (`healthChipShown`). The chip is a button that opens HEALTH_LINE. It never appears on a Field card. A card whose HEALTH flag already shows HEALTH_LINE drops it. A blocking flag's reason stays visible beside the flag (FlagChips' contract is unchanged).
+- **D13, disclosure.**
+  - Card-level chips are buttons that open their full text.
+  - Repeated row marks are static: their glyph and short label are aria-hidden, and the full words are sr-only, read once.
+  - Every sr-only honesty or row-specific string is also in a panel a touch user can open on the same card: a chip's panel, an InfoTip, the card Key, the row's ▸, or the TimeBar's list behind Dates.
+  - No `title` anywhere.
+  - At most `INFO_TIPS_PER_CARD` (3) InfoTips per card, the Key included.
+- **The InfoTip rule.**
+  - The panel is in server markup, `hidden`, right after its button in DOM order. The button carries aria-expanded and aria-controls.
+  - The control it explains carries `aria-describedby`, which works while the panel is hidden.
+  - Escape closes the panel and returns focus. No popover and no `title`.
+  - On a safety surface it opens instantly.
+- **D18, motion on a reach.** A stage reached and an Aim rank rise are separate SEEN one-shots (`reach`, then `rank-rise`, through sequence()), and they play on a counted reach only:
+  - `railNodesOf` marks only REACHED nodes `counted`;
+  - `rankSealOf` reports `pending` and never moves the index for it;
+  - a reach waiting on ticks, a milestone or aim closed unreached, and Proficiency play nothing.
+- **D25, the who-word.** Every Gemini chip, pick and lane shows "Gemini". `SHORT_CHIP_LABEL` and glyph/HonestyChip's defaults agree, and HonestyChip throws in development on a Gemini kind whose label lacks the word.
+- **D28, honest flags.** These stay visible:
+  - "Unverified · …" (`realismFlagsOf.unverified`, `capacityFlagsOf`);
+  - «best case» (`realismFlagsOf.bestCase`, `paceFlagsOf`);
+  - "pass rate calibrating n/need" in place of a % (`realismFlagsOf.calibrating`);
+  - «reads high»;
+  - «n% sized by Gemini».
+- **Line styles (U2 = a).**
+  - dashed = calibrating or not yet counted (the pending rail node included);
+  - dotted = from your ticks;
+  - ≈ = estimate;
+  - balloon = not checked;
+  - HeldGlyph = a held day;
+  - struck = avoided, dropped, closed or pays nothing.
+- **The horizon slot** (ui-motion.md §6.1).
+  - `<HorizonField>` takes its props from `horizonOfAimCard` or `horizonOfRoadmap`, and is placed in a `.rm-band` box at the card's top.
+  - Its `basisKey` is the model's Proficiency seen basis (`prof/…`). The horizon front then shares the headline meter's store entry, and a rebase never animates it.
+  - The Aim card shows it on ACTIVE, ACCEPTED, PAST_DUE and DONE. DONE is static.
+  - The living header shows it on ACTIVE, DONE and ARCHIVED. ARCHIVED is dimmed.
+  - The empty roadmap and the draft header get the unlit marks; a draft's contours are its depth.
+  - There is no band on EMPTY, DRAFT or RUNNING, or on a legacy plan.
+- **The weave slot.**
+  - `<DraftWeave stale startedAt>` sits at the top of the drafting card, which carries `data-wait`.
+  - `<WeavePause label={SHORT_PAUSE_LABEL}/>` goes in the card's heading row.
+  - It stops when the run goes stale, which run-stale shows.
+  - Re-plan's weave runs inside the re-plan draft card, never beside the living Proficiency.
+- **Where no shader goes.** `data-fx="none"` goes on the intake, the Start sheet and the Activities card.
+
+### 21.2 roadmap-copy: the short labels (one section; none rewords a string)
+
+- **Provenance (D25):**
+  - `SHORT_GEMINI` "Gemini · not checked" and `SHORT_GEMINI_KEPT` "Gemini · kept · not checked";
+  - `SHORT_GEMINI_CHOICE` "Gemini's choice", `SHORT_NOT_CHECKED_SUFFIX` and `shortGeminiChoice(draft)`;
+  - `SHORT_GEMINI_ORDER`, `SHORT_GEMINI_GUESS` and `SHORT_SHOWN_TO_GEMINI`;
+  - `shortSizedByGemini(share)` "38% sized by Gemini";
+  - `SHORT_EDIT_NUMBERS`;
+  - `GEMINI_LANE_WORD` "Gemini:" and `APP_LANE_WORD` "App:";
+  - `GEMINI_LANE_ITEM` (needs "Domains", order "order", picks "picks") and `APP_LANE_ITEMS` ["practices", "words", "numbers"].
+- **Safety:** `SHORT_HEALTH` "Not medical advice · ask a professional".
+- **The chips of ui-motion.md §4.6:**
+  - `SHORT_DATA`, `SHORT_NO_KEY`, `SHORT_POLICY`, `SHORT_JUDGE`, `SHORT_SCHEDULE`;
+  - `SHORT_AIM_UNCHECKED`, `SHORT_UNVERIFIED`, `SHORT_BEST_CASE`, `shortCalibrating(n, need)`;
+  - `SHORT_REVIEW_GAP`, `SHORT_NOT_TIMED`, `SHORT_READS_HIGH`, `SHORT_PAYS_NOTHING`;
+  - `SHORT_AT_ACCEPTANCE`, `SHORT_CONTEXT_ONLY`, `SHORT_OVER`;
+  - `shortLowered(from, to)` and `shortBehindNewCards(n, of)`;
+  - `SHORT_RESTS_ON_ADDED`, `SHORT_CLASH`, `SHORT_WRITES_OFF`, `SHORT_NOT_RECORDED`, `SHORT_LIBRARY_UNCHECKED`, `SHORT_LEGACY`;
+  - `SHORT_CHIP_LABEL`: the visible label per fixed kind, equal to HONESTY_KINDS' defaults.
+- **Pay:** `SHORT_PAYS`, `SHORT_X_PROGRESS` and `shortFromFloor()` "from 70%" (payBar MID). The ⬡ is the lane's c-mp glyph, never a copy character.
+- **Ranks:** `SHORT_GIVES_RANK` "gives Aim rank", `SHORT_KEEPS_RANK`, `SHORT_AIM_RANK`, `SHORT_NEXT` and `shortNextRank(name, ord)`.
+- **Figures:**
+  - `SHORT_SEEN`, `SHORT_YOURS`, `SHORT_NEW_PER_WEEK`, `SHORT_PASS`, `SHORT_CLEARED`, `SHORT_NEED`, `SHORT_HAVE`, `SHORT_EARLIEST`;
+  - `shortDateBy(level, day)` "L12 by ≈ Dec 2027" (the app's estimate) and `shortDateYours(day)` "31 Dec 2027 · yours";
+  - `shortDatePlain(level, day)`, for when the view doesn't say whose;
+  - `shortTooSoon(level)` and `shortProficiencyToward(level)` "Proficiency → L12".
+- **TimeBar, WAIT and SINCE_LINE:**
+  - `SHORT_DATES_TOGGLE` "Dates" and `SHORT_PAUSE_LABEL` "Pause animation";
+  - `SINCE_LEAD_WORDS` and `sinceLine(items)`, equal to glyph-motion's sinceParts;
+  - `sinceReachItem`, `sinceRankItem`, `sinceDateItem`, `SINCE_QUEST_ITEM`, `SINCE_SEAL_ITEM`. These are the same words RouteRail and RankSeal pass.
+- **PipStrip:** `dueDaysLabel(days)` "Due: Tuesday 1, Wednesday 2, Saturday 1".
+- **Screen words (ui-motion.md §3.3):**
+  - Screen 1: `SHORT_AIM_LABEL` "Your aim", `SHORT_PICK_AREA`, `SHORT_SYLLABUS_OPTIONAL`, `SHORT_EXAM_OPTIONAL`, `SHORT_ANYTHING_TO_AVOID`.
+  - Screen 8: `SHORT_AVOID`.
+  - Screen 3: `SHORT_SECTION` (Learn, Practise, Steps, Checkpoint), `SHORT_ADD`, `shortToDecide`, `shortDroppedMatched`.
+  - Screen 5: `shortNowOf`, `shortDayOf`, `shortSinceStart`, `shortKept`, `shortBar`, `shortUntil`, `shortMore`.
+  - Screen 7: `shortRowsLeft` and `SHORT_WAITING_ACTIVITIES`.
+  - Screen 9: `shortMilestoneOf`, `SHORT_WEEK_QUESTS`, `SHORT_OPEN_ROADMAP`, `shortStartMilestone`, `shortReachedCountsFrom`, `shortAimReached`, `shortAimClosed`, `shortDraftingSince`, `SHORT_DRAFT_WAITING`.
+  - Screen 12: `shortReachedAim` and `SHORT_HISTORY`.
+- **Screen 11:** `aimLineShort(v)` → `{ lead, rest, glyph }`. It is at most 8 app words for every AIM_LINE_FIXTURES state, and START keeps "Gives [rank.N active] Aim rank X." `aimLineCopy` keeps the full words.
+
+### 21.3 roadmap-ui-model: UI motion
+
+- **Seen keys (D8, ui-motion.md §5.6).** There are two basis families, in glyph/useSeen's own strings:
+  - `prof/${basisKey}`, where basisKey = `proficiencyBasisKeyOf(basisVersion, basisSignature(detail.basis))` = `${v}:${hashSeed(sig)}`;
+  - `plan/${acceptedDay}:${version}`.
+
+  The exports:
+  - `SeenBases`, `seenBasesOfRoadmap(view)`, `seenBasesOfAimCard(view)`, `seenBasesOfWeekQuests(view)`;
+  - `seenBaseOf(bases, family)`, which RankSeal and RouteRail take;
+  - `seenKeyOf(bases, what, { proficiency? })`. The headline meter and the horizon (and a measure whose target changed) go on prof; rank, reach, seal, date, measures and week quests on plan;
+  - `SEEN_WHAT`, `seenMeasureWhat(key)` and `seenQuestWhat(weekStart, ord)` = `wq:…`;
+  - `daySeenValue(day)` and `dayOfSeenValue(n)`. The date seen value is YYYYMMDD, so "moved from 7 Mar" can be said from it;
+  - `SeenSeed`, `seenSeedsOf(bases, entries)` and `seenStorageOf(seeds)`, which writes useSeen's own entries.
+
+  A view without the field gives no key, so nothing animates. The Aim card's rank key equals the page's, so a rise plays once per viewer.
+- **Ranks.** `rankSealOf(rank)` → `{ index, name, top, next, keeps, pending, newSince }`.
+- **The rail.** `railNodesOf(rows, { today, plan })` → `RailNodeModel[]`, one node per row, LATER dropped. Each node carries:
+  - `state` and `counted` (REACHED only);
+  - `heldAtStart`: a stage held when the plan began is drawn REACHED with "Held when you began" and no rank, never RouteRail's HELD day glyph;
+  - `gemini`: the title is DRAFT or KEPT_SUGGESTION, the only rows the balloon badge may sit on;
+  - `label` (the full words);
+  - `meta`: RouteRail's own default words, which a check holds equal;
+  - `pct`, `gate`, `rankIndex` (a reached node that gave one), `countsFrom` (a weekday), `closedPct`;
+  - `more`: the date span, givesRankLine and the state's line.
+
+  The other rail exports:
+  - `stageGlyphOf(stage, gateLevel)`;
+  - `aimRailOf(aimView)`, which reads `AimCardView.rail` and is otherwise null;
+  - `countedReachOf(nodes)`, RouteRail's own reach value.
+- **Pips.** `pipDaysOf(dueDays, weekOf, today)` → `{ days, label }` for a life week. `rowPipsOf(row, today)` returns pips for a RAISE row that carries `dueDays`, and null otherwise; the due sentence stays.
+- **The horizon.** `horizonOfAimCard(view)` and `horizonOfRoadmap(view)` → `HorizonModel { variant, proficiency, roadmapId, basisKey, depth, status, fromYourTicks }`, or null where there is no band.
+- **Whose date.** `aimDateOfHeader(header)` and `aimDateOfCard(view)` → `AimDateModel { whose: "app" | "yours" | null, day, level, estimate, glyph: "t.cal" | "t.pin", text }`.
+  - An app date is an estimate: ≈ at month precision.
+  - A user's date is exact, with "yours".
+  - A rev-3 plan doesn't say whose, so it claims neither.
+- **Flags.** `realismFlagsOf({ throughput, dateCheck, feasibility })` → `{ unverified, bestCase, calibrating, readsHigh, sizedByGemini }`; `capacityFlagsOf(time)`; `paceFlagsOf(pace)`.
+- **The rest.** `geminiLaneItemsOf(parts)`, `healthChipShown({ track, healthRows, healthFlagShown })` and `INFO_TIPS_PER_CARD`.
+- **The new fields (§21.6).** The types `ProficiencyBasisField`, `AimCardMotionFields`, `WeekQuestDueDays` and `WeekQuestMotionFields`.
+
+### 21.4 The fixtures
+
+**/dev/style/roadmap.** `FIXTURE_STATES` gains 14 states, so ui-audit audits them with no edit. All of them render through the existing components, and every existing check holds on them.
+- **rank-new:** seen rank 0, reach 0.
+- **reach-new:** seen rank 1, reach 0.
+- **reach-pending:** a PENDING_REACH row counting from Sat. `rank.pending` is set, and the card's milestone is PENDING_REACH.
+- **closed-unreached:** milestone 1 closed at 82%, with no rank from it.
+- **closed-unreached-aim:** a DONE body plan, never reached, holding Journeyman.
+- **quest-done-new:** RAISE at 3 of 3, last seen at 1. Today's card carries the roadmap and acceptance, so it shares Now's key.
+- **date-moved:** the pack's realistic date, last seen a week earlier.
+- **horizon-unmeasured:** accepted, with no reading.
+- **horizon-self-reported:** the body plan, last seen at 30%.
+- **rebase-switched-off-seen-before:** Backtest switched off at milestone 2's Start, in version 1 on the same acceptance day. The seen Proficiency sits under the old basis.
+- **capacity-calibrating:** draft-v4 with every time check unverified and the throughput calibrating.
+- **since-line:** 8 SEEN events pending, more than glyph-motion's SINCE_MAX of 6.
+- **run-stale:** a timed-out run.
+- **writes-off:** a live Proficiency on a writes-off server.
+
+`MOTION_STATES` lists the spec's 17 names; past-due, depth-calibrating and archived predate it. `RoadmapFixture.seen` holds what the viewer last saw. `FIXTURE_BASIS` holds the made-up Proficiency basis keys:
+- every fixture's Proficiency carries v1's;
+- behind carries v2's;
+- depth-lowered carries a lowered signature's;
+- the rebase fixture carries a switched-off signature's.
+
+**The word budgets** (ui-motion.md §3.2):
+- `WORD_BLOCK` names each block. A lane marks the block's own element `data-wc-block="…"`, and each element in the fold `data-wc-fold`.
+- `WORD_BUDGET_ROWS` has 44 rows: rows 1–10 and 12, each with its fixture, its surface, the blocks summed (or `each`), the budget and the fold's budget.
+- Row 11 (the aim line) is held through `aimLineShort` (§21.2) and is R1's on /dev/style/today.
+
+**/dev/style/art/you.**
+- Three new keys:
+  - `running-stale` (the card's `run`);
+  - `switched-off`: a real SWITCHED_OFF reading, its basis key from the reading's own basis, seeds under the old signature;
+  - `not-recorded`: writes off, with a live Proficiency.
+- Seeds on `new-rank` (rank 0, reach 0) and `pending-reach` (rank 1, reach 1).
+- `AIM_MOTION_KEYS` maps the spec's names onto this page's keys.
+
+**/dev/style/today.** `MOTION_QUEST_FIXTURES` with quest-done-new: its basis and its seed.
+
+### 21.5 roadmap-ui-check (section 11), roadmap.css and the alias
+
+**Hard checks** (they pass now):
+- the short labels against HONESTY_KINDS, GlyphLane, glyph-motion's SINCE_LINE, RouteRail's and RankSeal's labels, statedLine and WeavePause;
+- aimLineShort ≤ 8 app words for every aim line fixture;
+- the seen bases against useSeen's own helpers and storage, including D8 with the real `basisSignature` and `rebaseCauseOf` (SWITCHED_OFF within one version gives a new key);
+- the rank model, the rail (every state, its words equal to RouteRail's, counted reaches only, held stages, the Gemini flag, ▸), the pips, the horizon, whose date, the flags, the lanes and the health rule;
+- the alias's markup;
+- every new fixture's defining fact and its seeds;
+- the aim and today fixture additions;
+- the budget rows' coverage;
+- roadmap.css's lane markers;
+- the harnesses' own mechanics on made-up markup.
+
+**The harnesses** report only. `--report` prints every row.
+- **Words:** each `WORD_BUDGET_ROWS` row, counted with word-count.mjs's `countAppWords` over the marked blocks and the fold. Now 0 of 44 hold: no block is marked yet.
+- **Visible honesty:** 46 rows from ui-motion.md §8's ✓ elements, in `visibleText` with no exemptions. Now 19 of 46 hold.
+- **Tap reachability:** every sr-only string from the survival list must also sit, on the same card, in a panel a button's aria-controls names or in a `<details>`. The ≤ 3 InfoTips cap is checked here too. There are no rows yet: no surface has sr-only honesty text or InfoTips.
+- **Full-text survival:** 35 pinned full strings stay in static markup. Now 35 of 35 hold.
+
+**Gating.** A lane gates its own rows from its marked block: `r0Gate("words" | "honesty" | "taps" | "survival", ids, "R2")`. Each lane edits only between its `// ===== Rn … =====` and `// ===== /Rn =====` markers, in roadmap-ui-check and in roadmap.css alike.
+
+**RoadmapGlyph** keeps `RoadmapGlyphName`, `RoadmapGlyph` and `GlyphButton`, and adds `ROADMAP_GLYPH_ALIAS` (ui-motion.md §4.3's table).
+- It draws `<Glyph>` in the text's colour (idle, `inherit`), keeping the kit `.i` class and an explicit size as inline width and height.
+- GlyphButton is glyph/GlyphButton: aria-label only, with no `title`.
+
+### 21.6 Fields the views don't carry yet (handoff to a lib round)
+
+The model reads each field when present and is otherwise silent: no seen key, no strip, no whose-date word, never a guess. The fixtures carry them, so R1–R7 build against them now.
+
+| Field | What | Filled by |
+|---|---|---|
+| `ProficiencyView.basisKey?: string` | `proficiencyBasisKeyOf(detail.basisVersion, basisSignature(detail.basis))` | roadmap-proficiency `proficiencyViewOf` (it has the reading's detail) |
+| `AimCardView.version?: number` | the current acceptance's version | R4's loadAimCard |
+| `AimCardView.dateOrigin?: "REALISTIC" \| "USER"` | whose date the chip shows | R4's loadAimCard |
+| `AimCardView.run?: { startedAt; stale }` | RUNNING's "Drafting · started 09:12" and the weave's stop | R4's loadAimCard |
+| `AimCardView.rail?: MilestoneRowView[]` | the Aim card's RouteRail strip | R4's loadAimCard |
+| `WeekQuestRow.dueDays?: DayKey[]` | a RAISE row's due days in its window (the PipStrip) | roadmap-quests' view builder (it has `RaiseQuestSpec.dueDays`) |
+| `WeekQuestsView.roadmapId`, `.acceptedDay`, `.version` | Today's card keys its rows as Now does | roadmap-quests' view builder, or its loaders |
+
+Until a field lands, the affected surfaces behave as follows:
+- **Without `basisKey`:** the headline meter and the horizon front play nothing.
+- **Without the Aim card's `version`:** no rank rise plays on /you. It plays on /you/roadmap.
+- **Without `rail`:** the Aim card draws no strip.
+- **Without `dueDays`:** no PipStrip.
+
+### 21.7 Deviations and open points for the lead
+
+1. **The rail's HELD node is not used for "Held when you began".** RouteRail's HELD draws a held day's HeldGlyph (it defaults to freeze); D29 reserves HeldGlyph for held days. A stage held at start is drawn REACHED, with no rank and with "Held when you began".
+2. **RouteRail badges every OUTLINE node with the Gemini balloon.** An outline row in the app's words (the pack's) would read as Gemini's. The model sets `gemini` per node. RouteRail needs a flag to badge only those (M0a's file).
+3. **HorizonField's `basisKey` gets `prof/…`**, so the horizon value shares the Proficiency entry with the headline meter (useSeen prunes per family). M0b's doc comment says `${v}:${hash}`; the prefix is deliberate. With no key, R2 and R3 should not mount the seen key. HorizonField takes `basisKey: string`, so a `null` option is needed (M0b).
+4. **A week quest's seen `what` is `wq:${weekStart}:${ord}`.** roadmap-ui-check's naming rule forbids a bare "quest" in the model's strings.
+5. **The Start sheet is not rendered statically**, so the row-7 budgets stay "not rendered" until R6 renders it in its block or ui-audit counts it (RZ).
+6. **SINCE_LINE and every SEEN event are client-only** (the seen store is localStorage). The static harness can't see them, so ui-audit or the manual pass checks them. The /dev/style pages must seed the store from `seen` before their surfaces read it: an RZ or lead edit to RoadmapFixtures.tsx, /dev/style/art/you/page.tsx and TodayFixtures.tsx, which are not R0's files.
+7. **AimLineView START doesn't name the held rank**, so "[rank.N done] Keeps your rank." has no glyph index (`aimLineShort` returns `glyph: null` there).

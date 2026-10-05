@@ -29,6 +29,8 @@ import {
 // The aim line's one rule (pure, client-importable, no clock): the page and these fixtures read it the same way.
 // hideCookieValue: the cookie the /you LATER line's "Not now" writes (fix round, the HIDDEN prompt).
 import { aimPromptOf, hideCookieValue, todayAimLineOf } from "@/lib/roadmap-invite";
+// UI motion (contracts §21): the seen keys Today's SEEN state seeds (pure, client-importable; WeekQuests reads the same model).
+import { seenBasesOfWeekQuests, seenQuestWhat, seenSeedsOf, type SeenSeed } from "@/components/roadmap/roadmap-ui-model";
 
 export const FIXTURE_TODAY: DayKey = "2026-10-01";
 
@@ -465,6 +467,38 @@ export const QUEST_FIXTURES: readonly QuestFixture[] = [
       title: "Run a sub-50 10K · stage 2 of 5",
       health: true,
     }),
+  },
+];
+
+/**
+ * UI motion (ui-motion.md §9.3, R0; contracts §21): Today's SEEN state. Kept
+ * apart from QUEST_FIXTURES (whose list today-ui-check pins): a week quest
+ * that reached its count since this viewer last looked. The card plays only
+ * the done check (D10: no loop, no burst, no shader on Today), once, and the
+ * Now section shares its key (`basis`: the roadmap and acceptance the view
+ * carries, WeekQuestsView's motion fields), so it never plays twice.
+ */
+export interface MotionQuestFixture {
+  key: "quest-done-new";
+  title: string;
+  compact: boolean;
+  input: WeekQuestsViewInput;
+  /** The roadmap and acceptance the card's rows are keyed by (seenBasesOfWeekQuests). */
+  basis: { roadmapId: string; acceptedDay: DayKey; version: number };
+  /** What the viewer last saw: the RAISE row at 1 of 3. */
+  seen: readonly SeenSeed[];
+}
+
+const MOTION_BASIS = { roadmapId: "fx-roadmap-trading", acceptedDay: addDays(FIXTURE_TODAY, -75), version: 1 } as const;
+
+export const MOTION_QUEST_FIXTURES: readonly MotionQuestFixture[] = [
+  {
+    key: "quest-done-new",
+    title: "Week quest done since you last looked · the check draws once",
+    compact: false,
+    input: questInput({ quests: CARD_QUESTS, counts: [3, 2, 1, 2, 0] }),
+    basis: MOTION_BASIS,
+    seen: seenSeedsOf(seenBasesOfWeekQuests(MOTION_BASIS), [[seenQuestWhat(Q_FROM, 1), 1]]),
   },
 ];
 

@@ -101,7 +101,21 @@ import {
   type ProgressionInput,
 } from "@/lib/roadmap-catalog";
 import { addDays } from "@/lib/life-day";
-import { undecidedOf } from "@/components/roadmap/roadmap-ui-model";
+import {
+  SEEN_WHAT,
+  daySeenValue,
+  proficiencyBasisKeyOf,
+  seenBasesOfRoadmap,
+  seenMeasureWhat,
+  seenQuestWhat,
+  seenSeedsOf,
+  undecidedOf,
+  type AimCardMotionFields,
+  type ProficiencyBasisField,
+  type SeenBases,
+  type SeenSeed,
+  type WeekQuestMotionFields,
+} from "@/components/roadmap/roadmap-ui-model";
 
 /**
  * Every state, as one literal list: scripts/ui-audit.mjs and roadmap-contract-check
@@ -155,6 +169,20 @@ export const FIXTURE_STATES = [
   "active-confirm",
   "active-answered",
   "intake-confirm",
+  "rank-new",
+  "reach-new",
+  "reach-pending",
+  "closed-unreached",
+  "closed-unreached-aim",
+  "quest-done-new",
+  "date-moved",
+  "horizon-unmeasured",
+  "horizon-self-reported",
+  "rebase-switched-off-seen-before",
+  "capacity-calibrating",
+  "since-line",
+  "run-stale",
+  "writes-off",
 ] as const;
 export type FixtureState = (typeof FIXTURE_STATES)[number];
 
@@ -197,6 +225,56 @@ type Rev4State = (typeof REV4_STATES)[number];
 /** Constraint safety's states (contracts §19: the activity card on a body, care and craft draft, a Field plan's suggestions, the living roadmap asking again and answered, the intake); each is in REV4_STATES. */
 export const CONFIRM_STATES = ["draft-confirm", "draft-words", "draft-care", "draft-craft", "active-confirm", "active-answered", "intake-confirm"] as const satisfies readonly Rev4State[];
 type ConfirmState = (typeof CONFIRM_STATES)[number];
+
+/**
+ * UI motion's states (ui-motion.md §9.3, R0; contracts §21): the spec's list,
+ * three of which predate it (past-due, depth-calibrating, archived). Each new
+ * one is an existing view with one fact changed and, for a SEEN event, what
+ * the viewer last saw (RoadmapFixture.seen): the page seeds the seen store
+ * with it, so the event plays once. A pending reach, a closed-unreached
+ * milestone or aim and a rebase play nothing by construction.
+ */
+export const MOTION_STATES = [
+  "rank-new",
+  "reach-new",
+  "reach-pending",
+  "closed-unreached",
+  "closed-unreached-aim",
+  "past-due",
+  "quest-done-new",
+  "date-moved",
+  "horizon-unmeasured",
+  "horizon-self-reported",
+  "rebase-switched-off-seen-before",
+  "depth-calibrating",
+  "capacity-calibrating",
+  "since-line",
+  "run-stale",
+  "archived",
+  "writes-off",
+] as const satisfies readonly FixtureState[];
+/** The ones R0 adds (the rest are rev-3 and rev-4 states). */
+export const MOTION_NEW_STATES = [
+  "rank-new",
+  "reach-new",
+  "reach-pending",
+  "closed-unreached",
+  "closed-unreached-aim",
+  "quest-done-new",
+  "date-moved",
+  "horizon-unmeasured",
+  "horizon-self-reported",
+  "rebase-switched-off-seen-before",
+  "capacity-calibrating",
+  "since-line",
+  "run-stale",
+  "writes-off",
+] as const satisfies readonly (typeof MOTION_STATES)[number][];
+type MotionNewState = (typeof MOTION_NEW_STATES)[number];
+
+function isMotionNewState(s: FixtureState): s is MotionNewState {
+  return (MOTION_NEW_STATES as readonly string[]).includes(s);
+}
 
 function isConfirmState(s: FixtureState): s is ConfirmState {
   return (CONFIRM_STATES as readonly string[]).includes(s);
@@ -415,7 +493,20 @@ function rank(given: number, count = 6, p: Partial<AimRankView> = {}): AimRankVi
   };
 }
 
-function proficiency(value: number, parts: ProficiencyView["parts"], reached: number, scheduled: number, p: Partial<ProficiencyView> = {}, today = TODAY): ProficiencyView {
+/**
+ * The fixtures' Proficiency basis keys (UI motion, D8): made up as the lib
+ * makes them (proficiencyBasisKeyOf over a version and a basis signature), so
+ * a re-plan (version 2) and a practice switched off at Start (same version,
+ * another signature) each read as a new basis and never animate.
+ */
+export const FIXTURE_BASIS = {
+  v1: proficiencyBasisKeyOf(1, "fixture:basis:v1"),
+  v1SwitchedOff: proficiencyBasisKeyOf(1, "fixture:basis:v1:backtest-off"),
+  v1DepthLowered: proficiencyBasisKeyOf(1, "fixture:basis:v1:depth-10"),
+  v2: proficiencyBasisKeyOf(2, "fixture:basis:v2"),
+} as const;
+
+function proficiency(value: number, parts: ProficiencyView["parts"], reached: number, scheduled: number, p: Partial<ProficiencyView & ProficiencyBasisField> = {}, today = TODAY): ProficiencyView & ProficiencyBasisField {
   const tick = parts.practice != null;
   return {
     figure: fig(value, tick ? (parts.cards != null ? "tested by your reviews and your ticks" : "from your ticks") : "tested by your reviews", tick ? "SELF" : "MEASURED"),
@@ -428,6 +519,7 @@ function proficiency(value: number, parts: ProficiencyView["parts"], reached: nu
     measuredAt: measuredAtOn(today),
     change: null,
     live: false,
+    basisKey: FIXTURE_BASIS.v1,
     ...p,
   };
 }
@@ -849,8 +941,8 @@ function bodyView(): RoadmapView {
       { ...rowsActive()[2], title: "Race pace", windowStart: "2027-02-15", dueDay: "2027-04-25" },
     ],
     weekQuests: weekQuestsFixture({ weekStart: "2027-01-04", weekEnd: "2027-01-10", milestoneOf: 3, milestoneTitle: "Build an aerobic base", level: null }, [
-      weekRow({ ord: 1, kind: "PRACTICE", label: "Easy runs · 3 sessions × 45 min", count: 3, unit: "session", figure: fig(1, "from your ticks", "SELF"), seekTemplateId: "t-run", place: "in Habits", href: "/today#t-t-run" }),
-      weekRow({ ord: 2, kind: "PRACTICE", label: "Strength for knees and hips · 2 sessions × 30 min", count: 2, unit: "session", figure: fig(0, "from your ticks", "SELF"), seekTemplateId: "t-str", place: "in Habits", href: "/today#t-t-str" }),
+      weekRow({ ord: 1, kind: "PRACTICE", label: "Easy runs · 3 sessions × 45 min", count: 3, unit: "session", figure: fig(1, "from your ticks", "SELF"), seekTemplateId: "t-run", place: "in Habits", href: "/today#t-t-run", health: true }),
+      weekRow({ ord: 2, kind: "PRACTICE", label: "Strength for knees and hips · 2 sessions × 30 min", count: 2, unit: "session", figure: fig(0, "from your ticks", "SELF"), seekTemplateId: "t-str", place: "in Habits", href: "/today#t-t-str", health: true }),
     ]),
     pastWeeks: [
       { weekStart: "2026-12-28", milestoneOrd: 2, settled: true, done: 4, total: 5, capped: false, heldDays: 0 },
@@ -919,6 +1011,13 @@ export interface RoadmapFixture {
   note: string;
   /** A lead-only state drawn with a switch on (ROADMAP_GEMINI_LIVE, ROADMAP_GAPS_LIVE are false in this build; the server still refuses). */
   gates?: { gemini?: boolean; gaps?: boolean };
+  /**
+   * UI motion (contracts §21): what this viewer last saw, for a SEEN state.
+   * The page seeds the seen store with these before its surfaces read it
+   * (glyph/useSeen writeSeen, or roadmap-ui-model seenStorageOf), so the
+   * event plays once; without them every surface is a first view (no motion).
+   */
+  seen?: readonly SeenSeed[];
 }
 
 function intakeFixture(hasKey: boolean): IntakeView {
@@ -1016,13 +1115,24 @@ export function liveShaped(v: RoadmapView): RoadmapView {
     delete out.current.practiceKept;
     delete out.current.paidOn;
   }
+  if (out.proficiency) {
+    // UI motion's basis key: not on the live view yet (contracts §21.6)
+    const p: ProficiencyView & ProficiencyBasisField = { ...out.proficiency };
+    delete p.basisKey;
+    out.proficiency = p;
+  }
   return out;
 }
 
 /** The Aim card as loadAimCard returns it without the fields derived on read: no acceptance day, no title class or struck spans. */
 export function liveShapedAim(a: AimCardView): AimCardView {
-  const out: AimCardView = { ...a, milestone: a.milestone ? { ...a.milestone } : null };
+  const out: AimCardView & AimCardMotionFields = { ...a, milestone: a.milestone ? { ...a.milestone } : null };
   delete out.acceptedDay;
+  // UI motion's fields the live card doesn't carry yet (contracts §21.6)
+  delete out.version;
+  delete out.dateOrigin;
+  delete out.run;
+  delete out.rail;
   if (out.milestone) {
     delete out.milestone.titleClass;
     delete out.milestone.titleStruck;
@@ -1030,7 +1140,7 @@ export function liveShapedAim(a: AimCardView): AimCardView {
   return out;
 }
 
-function aimFromView(v: RoadmapView, state: AimCardView["state"]): AimCardView {
+function aimFromView(v: RoadmapView, state: AimCardView["state"]): AimCardView & AimCardMotionFields {
   const cur = v.current;
   const row = cur ? v.milestones.find((r) => r.lineageId === cur.milestone.lineageId) : undefined;
   return {
@@ -1072,6 +1182,11 @@ function aimFromView(v: RoadmapView, state: AimCardView["state"]): AimCardView {
     questWeekUnfrozen: false,
     reachedDay: v.header?.reachedDay ?? null,
     doneDay: v.header?.doneDay ?? null,
+    // UI motion (contracts §21.6): the fields the card doesn't carry yet, as the lib will fill them
+    version: v.header?.version ?? null,
+    dateOrigin: v.header?.dateOrigin?.origin ?? null,
+    run: state === "RUNNING" && v.run ? { startedAt: v.run.startedAt, stale: v.run.stale } : null,
+    rail: v.milestones.length > 0 ? v.milestones : null,
   };
 }
 
@@ -1122,6 +1237,100 @@ const EMPTY_AIM = (hasKey: boolean): AimCardView => ({
   reachedDay: null,
   doneDay: null,
 });
+
+// ═══ UI motion: the word budgets as fixture blocks (ui-motion.md §3.2; contracts §21.4) ═══
+
+/**
+ * Each block a word budget counts, as the lanes mark it: data-wc-block="…"
+ * on the block's own element (a lane adds it when it lands its screen), and
+ * data-wc-fold on each element that sits in the fold (the first 600 px of
+ * main at 344 × 882). Names, not classes: a restyle never moves a budget.
+ */
+export const WORD_BLOCK = {
+  intake: "intake",
+  draftHeader: "draft-header",
+  draftDate: "draft-date",
+  nextCard: "next-card",
+  outlineNode: "outline-node",
+  aimHeader: "aim-header",
+  aimNotes: "aim-notes",
+  now: "now",
+  milestones: "milestones",
+  toward: "toward",
+  footer: "roadmap-footer",
+  startSheet: "start-sheet",
+  activities: "activities",
+  aimCard: "aim-card",
+  weekQuests: "week-quests",
+  aimLine: "aim-line",
+  empty: "roadmap-empty",
+  drafting: "roadmap-drafting",
+  doneHeader: "roadmap-done-header",
+  done: "roadmap-done",
+  legacy: "roadmap-legacy",
+} as const;
+export type WordBlock = (typeof WORD_BLOCK)[keyof typeof WORD_BLOCK];
+
+/** One §3.2 row: a fixture, the surface it renders on, the blocks summed (or each alone), the budget, and the fold's. */
+export interface WordBudgetRow {
+  id: string;
+  /** §3.2's row number (1 intake … 12 Roadmap tab). */
+  row: number;
+  fixture: FixtureState;
+  /** /dev/style/roadmap draws the page (or the intake form), the Aim card and Today's week quests card. */
+  surface: "page" | "intake" | "aim" | "today";
+  blocks: readonly WordBlock[];
+  /** Each block alone ≤ budget (outline nodes); otherwise the blocks are summed. */
+  each?: boolean;
+  budget: number;
+  /** The fold's budget: the data-wc-fold elements of the surface. */
+  fold?: number;
+  /** At most this many app words on one line (row 10). */
+  perLine?: number;
+}
+
+const B = WORD_BLOCK;
+export const WORD_BUDGET_ROWS: readonly WordBudgetRow[] = [
+  { id: "s1-intake-blank", row: 1, fixture: "intake", surface: "intake", blocks: [B.intake], budget: 90, fold: 25 },
+  { id: "s1-intake-gemini", row: 1, fixture: "intake-gemini", surface: "intake", blocks: [B.intake], budget: 105, fold: 25 },
+  { id: "s1-intake-empty-library", row: 1, fixture: "intake-empty-library", surface: "intake", blocks: [B.intake], budget: 110, fold: 25 },
+  { id: "s1-intake-body", row: 1, fixture: "intake-confirm", surface: "intake", blocks: [B.intake], budget: 130, fold: 25 },
+  { id: "s1-intake-depth", row: 1, fixture: "intake-depth", surface: "intake", blocks: [B.intake], budget: 150, fold: 25 },
+  { id: "s2-draft-header-v4", row: 2, fixture: "draft-v4", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 90, fold: 25 },
+  { id: "s2-draft-header-count-gate", row: 2, fixture: "count-gate", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 70, fold: 25 },
+  { id: "s2-draft-header-mixed", row: 2, fixture: "draft-mixed", surface: "page", blocks: [B.draftHeader, B.draftDate], budget: 40, fold: 25 },
+  { id: "s3-next-card-v4", row: 3, fixture: "draft-v4", surface: "page", blocks: [B.nextCard], budget: 120 },
+  { id: "s3-next-card-mixed", row: 3, fixture: "draft-mixed", surface: "page", blocks: [B.nextCard], budget: 160 },
+  { id: "s3-outline-node-v4", row: 3, fixture: "draft-v4", surface: "page", blocks: [B.outlineNode], each: true, budget: 12 },
+  { id: "s4-aim-header-active", row: 4, fixture: "active", surface: "page", blocks: [B.aimHeader], budget: 25 },
+  { id: "s4-aim-header-behind", row: 4, fixture: "behind", surface: "page", blocks: [B.aimHeader, B.aimNotes], budget: 45 },
+  { id: "s4-aim-header-depth", row: 4, fixture: "depth-realistic", surface: "page", blocks: [B.aimHeader], budget: 35 },
+  { id: "s5-now-active", row: 5, fixture: "active", surface: "page", blocks: [B.now], budget: 120 },
+  { id: "s5-now-behind", row: 5, fixture: "behind", surface: "page", blocks: [B.now], budget: 135 },
+  { id: "s5-now-depth", row: 5, fixture: "depth-realistic", surface: "page", blocks: [B.now], budget: 115 },
+  { id: "s6-milestones-active", row: 6, fixture: "active", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 60 },
+  { id: "s6-milestones-depth", row: 6, fixture: "depth-realistic", surface: "page", blocks: [B.milestones, B.toward, B.footer], budget: 75 },
+  { id: "s7-start-refit", row: 7, fixture: "start-refit", surface: "page", blocks: [B.startSheet], budget: 70 },
+  { id: "s7-start-exam-waypoint", row: 7, fixture: "exam-waypoint", surface: "page", blocks: [B.startSheet], budget: 50 },
+  { id: "s7-start-body-active-confirm", row: 7, fixture: "active-confirm", surface: "page", blocks: [B.startSheet], budget: 70 },
+  { id: "s8-activities-draft-confirm", row: 8, fixture: "draft-confirm", surface: "page", blocks: [B.activities], budget: 45 },
+  { id: "s8-activities-active-asking", row: 8, fixture: "active-confirm", surface: "page", blocks: [B.activities], budget: 55 },
+  { id: "s8-activities-intake", row: 8, fixture: "intake-confirm", surface: "intake", blocks: [B.activities], budget: 50 },
+  { id: "s8-activities-answered", row: 8, fixture: "active-answered", surface: "page", blocks: [B.activities], budget: 25 },
+  ...(["active", "accepted", "behind", "empty", "done", "draft-mixed", "running", "reach-pending", "closed-unreached-aim", "writes-off"] as const).map(
+    (fixture): WordBudgetRow => ({ id: `s9-aim-card-${fixture}`, row: 9, fixture, surface: "aim", blocks: [B.aimCard], budget: 14 })
+  ),
+  { id: "s10-week-quests-active", row: 10, fixture: "active", surface: "today", blocks: [B.weekQuests], budget: 30, perLine: 8 },
+  { id: "s10-week-quests-behind", row: 10, fixture: "behind", surface: "today", blocks: [B.weekQuests], budget: 34, perLine: 8 },
+  { id: "s10-week-quests-body", row: 10, fixture: "body-practice", surface: "today", blocks: [B.weekQuests], budget: 30, perLine: 8 },
+  { id: "s12-tab-empty", row: 12, fixture: "empty", surface: "page", blocks: [B.empty], budget: 8 },
+  { id: "s12-tab-drafting", row: 12, fixture: "running", surface: "page", blocks: [B.drafting], budget: 12 },
+  { id: "s12-tab-done-header", row: 12, fixture: "done", surface: "page", blocks: [B.doneHeader], budget: 25 },
+  { id: "s12-tab-done-page", row: 12, fixture: "done", surface: "page", blocks: [B.done], budget: 90 },
+  { id: "s12-tab-legacy", row: 12, fixture: "legacy", surface: "page", blocks: [B.legacy], budget: 20 },
+];
+// Row 11 (Today's aim line, every state ≤ 8) is /dev/style/today's: AimLine over AIM_LINE_FIXTURES (R1's block), and its
+// words are roadmap-copy aimLineShort's, which roadmap-ui-check holds to 8 for every fixture state.
 
 export function roadmapFixture(state: FixtureState): RoadmapFixture {
   const fx = fixtureOf(state);
@@ -1174,6 +1383,7 @@ function replanDraft(): DraftView {
 function fixtureOf(state: FixtureState): RoadmapFixture {
   seq = 0;
   if (isRev4State(state)) return rev4FixtureOf(state);
+  if (isMotionNewState(state)) return motionFixtureOf(state);
   switch (state) {
     case "active-replan": {
       const base = activeView();
@@ -1279,6 +1489,7 @@ function fixtureOf(state: FixtureState): RoadmapFixture {
         header: header({ targetLowered: { measureKey: "CARDS_AT_LEVEL|d:d-bt,d-mp,d-qs,d-rm|L10", on: "2027-01-26", from: 46, to: 38 }, version: 2, acceptedDay: "2027-01-26" }),
         proficiency: proficiency(0.4652, { cards: 0.63, practice: 0.23, milestones: 1 / 6 }, 1, 6, {
           change: { kind: "rebased", rebase: { on: "2027-01-26", from: 0.41, cause: "REPLAN", detail: "the re-plan lowered the end target 46 → 38" } },
+          basisKey: FIXTURE_BASIS.v2,
         }),
         history: [
           { version: 1, day: "2026-10-04", undone: false, changes: [] },
@@ -1459,7 +1670,7 @@ function packHeader(p: Partial<RoadmapHeader> = {}): RoadmapHeader {
 }
 
 /** Proficiency labelled with its basis (R1's ProficiencyViewR1: toward and label). */
-function packProficiency(value: number, parts: ProficiencyView["parts"], reached: number, p: Partial<ProficiencyView> = {}, today = PACK_TODAY, toward: { level: number; name: string } = { level: 12, name: "Mastered" }, scheduled = 6): ProficiencyView {
+function packProficiency(value: number, parts: ProficiencyView["parts"], reached: number, p: Partial<ProficiencyView & ProficiencyBasisField> = {}, today = PACK_TODAY, toward: { level: number; name: string } = { level: 12, name: "Mastered" }, scheduled = 6): ProficiencyView & ProficiencyBasisField {
   return Object.assign(proficiency(value, parts, reached, scheduled, p, today), { toward, label: `Proficiency toward ${toward.name} (level ${toward.level})` });
 }
 
@@ -2027,7 +2238,7 @@ function rev4FixtureOf(state: Rev4State): RoadmapFixture {
         ...base,
         header: packHeader({ depth: 10, targetDay: "2027-05-16" }),
         depth: packDepth({ depth: 10, depthChoice: { from: 12, to: 10, day: "2027-01-05", reason: "CHOICE" }, coverage: packCoverage() }),
-        proficiency: packProficiency(0.4648, { cards: 0.372, practice: 0.765, milestones: 2 / 4 }, 2, { change: { kind: "rebased", rebase: { on: "2027-01-05", from: 0.34, cause: "REPLAN", detail: "depth lowered Mastered → Fluent" } } }, PACK_TODAY, { level: 10, name: "Fluent" }, 4),
+        proficiency: packProficiency(0.4648, { cards: 0.372, practice: 0.765, milestones: 2 / 4 }, 2, { change: { kind: "rebased", rebase: { on: "2027-01-05", from: 0.34, cause: "REPLAN", detail: "depth lowered Mastered → Fluent" } }, basisKey: FIXTURE_BASIS.v1DepthLowered }, PACK_TODAY, { level: 10, name: "Fluent" }, 4),
         // The stages above the new depth are dropped: the ladder ends at Fluent's rank (every rank given is kept).
         rank: (() => {
           const r = packRank(2, { top: { index: 4, name: AIM_RANKS[4], withAim: false } });
@@ -2536,5 +2747,291 @@ function confirmFixtureOf(state: ConfirmState): RoadmapFixture {
     }
     case "intake-confirm":
       return { view: null, intake: confirmIntakeFixture(), aim: null, today: null, startPreview: null, note: "A body track Area: the activity question under Constraints, a box pre-ticked where the user's words suggest it; 'Confirm these' or 'Nothing to avoid' keeps the answer, saved with the plan." };
+  }
+}
+
+// ═══ UI motion (ui-motion.md §9.3, R0; contracts §21): the motion states ═════
+//
+// Each is an existing plan with one fact changed and, for a SEEN event, what
+// the viewer last saw (`seen`, in roadmap-ui-model's seen keys: the plan
+// basis for rank, reach, the date and week quests; the Proficiency basis for
+// the headline meter and the horizon). The Aim card beside the page reads the
+// same keys (same roadmap, acceptance day and version), so a rise plays once,
+// on whichever surface sees it first.
+
+/** The plan basis seeds for the rank and the reach this viewer last saw. */
+function rankReachSeen(v: RoadmapView, rankSeen: number, reachSeen: number): SeenSeed[] {
+  return seenSeedsOf(seenBasesOfRoadmap(v), [
+    [SEEN_WHAT.rank, rankSeen],
+    [SEEN_WHAT.reach, reachSeen],
+  ]);
+}
+
+function motionFixtureOf(state: MotionNewState): RoadmapFixture {
+  switch (state) {
+    case "rank-new": {
+      const v = activeView();
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: v.weekQuests,
+        startPreview: null,
+        note: "Milestone 1 counted (Aim rank Aspirant) since this viewer last looked: reach, then rank-rise, once each (seen: rank 0, reach 0).",
+        seen: rankReachSeen(v, 0, 0),
+      };
+    }
+    case "reach-new": {
+      const v = activeView();
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: v.weekQuests,
+        startPreview: null,
+        note: "Milestone 1's reach is new on this rail; its Aim rank was already seen on /you: reach plays, rank-rise doesn't (seen: rank 1, reach 0).",
+        seen: rankReachSeen(v, 1, 0),
+      };
+    }
+    case "reach-pending": {
+      const base = activeView();
+      const countsFrom = addDays(TODAY, 2);
+      const v: RoadmapView = {
+        ...base,
+        rank: rank(1, 6, { pending: { milestoneOrd: 2, countsFrom } }),
+        current: {
+          ...base.current!,
+          headline: fig(1, "tested by your reviews"),
+          measures: [
+            cardsRow({ figure: fig(42, "tested by your reviews"), gained: 21, pace: { kind: "reached", day: TODAY } }),
+            { ...base.current!.measures[1], figure: fig(44, "from your ticks", "SELF") },
+          ],
+        },
+        milestones: rowsActive().map((r) => (r.ord === 2 ? { ...r, state: "PENDING_REACH" as const, percent: 100, countsFrom } : r)),
+      };
+      const aim = aimFromView(v, "ACTIVE");
+      return {
+        view: v,
+        intake: null,
+        aim: { ...aim, milestone: aim.milestone ? { ...aim.milestone, status: "PENDING_REACH", percent: 100, countsFrom, pace: { kind: "reached", day: TODAY } } : null },
+        today: v.weekQuests,
+        startPreview: null,
+        note: "Milestone 2 hit 100% on a tick: 'Reached · counts from Sat' on a dashed node; no seal, no rank motion, no reach until it counts (seen: rank 1, reach 1).",
+        seen: rankReachSeen(v, 1, 1),
+      };
+    }
+    case "closed-unreached": {
+      const base = activeView();
+      const v: RoadmapView = {
+        ...base,
+        rank: rank(0, 6, { next: { kind: "milestone", index: 2, name: AIM_RANKS[2], milestoneOrd: 2 }, ladder: ladder(0, 2) }),
+        proficiency: proficiency(0.3654, { cards: 0.55, practice: 0.23, milestones: 0 }, 0, 6),
+        toward: { ...base.toward!, reached: 0 },
+        milestones: rowsActive().map((r) => (r.ord === 1 ? { ...r, state: "CLOSED_UNREACHED" as const, percent: 82, closedPercent: 82, reachedDay: null } : r)),
+      };
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: v.weekQuests,
+        startPreview: null,
+        note: "Milestone 1 closed at 82%, not reached: a struck node, 'Closed at 82% · not reached'; it gave no rank and nothing plays (seen: rank 0, reach 0).",
+        seen: rankReachSeen(v, 0, 0),
+      };
+    }
+    case "closed-unreached-aim": {
+      const b = bodyView();
+      const done: RoadmapView = {
+        ...b,
+        state: "DONE",
+        today: "2027-04-19",
+        header: { ...b.header!, status: "DONE", reachedDay: null, doneDay: "2027-04-19" },
+        rank: rank(2, 3, { next: { kind: "top" } }),
+        proficiency: proficiency(0.8227, { cards: null, practice: 0.82, milestones: 2 / 3 }, 2, 3, {}, "2027-04-19"),
+        current: null,
+        weekQuests: null,
+        milestones: b.milestones.map((r) => (r.ord < 3 ? { ...r, state: "REACHED" as const, percent: 100, reachedDay: r.dueDay } : { ...r, state: "CLOSED_UNREACHED" as const, percent: 82, closedPercent: 82 })),
+      };
+      return {
+        view: done,
+        intake: null,
+        aim: aimFromView(done, "DONE"),
+        today: null,
+        startPreview: null,
+        note: "The aim closed without being reached: the Aim rank actually held (Journeyman), no seal, 'the aim wasn't reached'; nothing plays (seen: seal 0, rank 2, reach 2).",
+        seen: seenSeedsOf(seenBasesOfRoadmap(done), [
+          [SEEN_WHAT.seal, 0],
+          [SEEN_WHAT.rank, 2],
+          [SEEN_WHAT.reach, 2],
+        ]),
+      };
+    }
+    case "quest-done-new": {
+      const wq0 = weekQuestsFixture();
+      const rows = wq0.rows.map((r) => (r.ord === 1 ? { ...r, figure: fig(3, "tested by your reviews · measured 09:12"), done: true } : r));
+      // Today's card keys its rows as Now does (WeekQuestsView's roadmap and acceptance, contracts §21.6), so the check plays once.
+      const wq: WeekQuestsView & WeekQuestMotionFields = { ...wq0, rows, done: rows.filter((r) => r.done).length, roadmapId: "rm1", acceptedDay: "2026-10-04", version: 1 };
+      const v = activeView({ weekQuests: wq });
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: wq,
+        startPreview: null,
+        note: "The RAISE week quest reached 3 of 3 since this viewer last looked (1 of 3): its done check draws once, on Today and in Now (seen: that row at 1).",
+        seen: seenSeedsOf(seenBasesOfRoadmap(v), [
+          [seenQuestWhat(wq.weekStart, 1), 1],
+          [SEEN_WHAT.rank, 1],
+          [SEEN_WHAT.reach, 1],
+        ]),
+      };
+    }
+    case "date-moved": {
+      const fx = rev4FixtureOf("depth-realistic");
+      const v = fx.view!;
+      return {
+        ...fx,
+        note: "The app's realistic date (an estimate) moved a week later since this viewer last looked: the date chip and the TimeBar's marker crossfade (CHANGED), and 'moved from 5 Mar 2028' says so; nothing draws toward the date (seen: date 5 Mar 2028).",
+        seen: seenSeedsOf(seenBasesOfRoadmap(v), [
+          [SEEN_WHAT.date, daySeenValue("2028-03-05")],
+          [SEEN_WHAT.rank, 2],
+          [SEEN_WHAT.reach, 2],
+        ]),
+      };
+    }
+    case "horizon-unmeasured": {
+      const fx = fixtureOf("accepted");
+      const v: RoadmapView = { ...fx.view!, proficiency: null };
+      return {
+        view: v,
+        intake: null,
+        aim: { ...fx.aim!, proficiency: null, measuredAt: null },
+        today: null,
+        startPreview: null,
+        note: "Accepted, no reading stored yet: the horizon's unlit marks (no dawn, no dot), never an invented 0%, and no context.",
+      };
+    }
+    case "horizon-self-reported": {
+      const v = bodyView();
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: v.weekQuests,
+        startPreview: null,
+        note: "Proficiency from the user's ticks alone: the walked path dotted, 'from your ticks' beside the %; the front moves from the last-seen 30% (seen: horizon and meter at 30).",
+        seen: seenSeedsOf(seenBasesOfRoadmap(v), [
+          [SEEN_WHAT.horizon, 30],
+          [SEEN_WHAT.proficiency, 30],
+          [SEEN_WHAT.rank, 1],
+          [SEEN_WHAT.reach, 1],
+        ]),
+      };
+    }
+    case "rebase-switched-off-seen-before": {
+      const base = activeView();
+      const today = "2026-12-23";
+      const study = base.current!.measures[1];
+      const v: RoadmapView = {
+        ...base,
+        today,
+        proficiency: proficiency(
+          0.3866,
+          { cards: 0.52, practice: 0.05, milestones: 1 / 6 },
+          1,
+          6,
+          { basisKey: FIXTURE_BASIS.v1SwitchedOff, change: { kind: "rebased", rebase: { on: "2026-12-21", from: 0.3602, cause: "SWITCHED_OFF", detail: "Backtest was switched off at Start" } } },
+          today
+        ),
+        current: {
+          ...base.current!,
+          headline: fig(0, "tested by your reviews"),
+          measures: [
+            cardsRow({ figure: fig(21, "tested by your reviews"), gained: 0, pace: { kind: "on-pace", day: "2027-03-07", pipeline: 19, bestCase: false } }),
+            { ...study, measureKey: "PRACTICE_KEPT|t:t-st|from:2026-12-21", target: 22, figure: fig(1, "from your ticks", "SELF") },
+          ],
+          stepDone: undefined,
+          practiceKept: { "lp-st": { kept: 1, of: 2 } },
+        },
+        milestones: rowsActive().map((r) => (r.ord === 2 ? { ...r, percent: 0 } : r)),
+        weekQuests: null,
+        pastWeeks: [],
+      };
+      // What the viewer saw before the switch-off: the same acceptance day and version (v1), the old basis signature.
+      const before: SeenBases = { ...seenBasesOfRoadmap(v)!, prof: `prof/${FIXTURE_BASIS.v1}` };
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: null,
+        startPreview: null,
+        note: "Backtest was switched off at Start (same version, same acceptance day, a new basis signature): 'Changed on Mon 21 Dec … (was 36%)', and nothing animates from the 36% seen before (D8).",
+        seen: [
+          ...seenSeedsOf(before, [
+            [SEEN_WHAT.proficiency, 36],
+            [SEEN_WHAT.horizon, 36],
+          ]),
+          ...rankReachSeen(v, 1, 1),
+        ],
+      };
+    }
+    case "capacity-calibrating": {
+      const fx = rev4FixtureOf("draft-v4");
+      const base = fx.view!;
+      const unverified = (f: Feasibility): Feasibility => ({ ...f, milestones: f.milestones.map((m) => ({ ...m, time: { ...m.time, unverified: true } })) });
+      const v: RoadmapView = {
+        ...base,
+        throughput: CALIBRATING_TP,
+        feasibility: base.feasibility ? unverified(base.feasibility) : null,
+        draft: base.draft ? { ...base.draft, feasibility: unverified(base.draft.feasibility) } : null,
+      };
+      return { ...fx, view: v, note: "The draft while tracked time and adherence calibrate: every verdict reads 'Unverified · …' with the dashed check, and the pass figure reads 'pass rate calibrating 12/30' with «best case»." };
+    }
+    case "since-line": {
+      const fx = rev4FixtureOf("depth-realistic");
+      const v = fx.view!;
+      const bases = seenBasesOfRoadmap(v);
+      const m0 = v.current!.measures[0];
+      const wq = v.weekQuests!;
+      return {
+        ...fx,
+        note: "Eight SEEN events pending after a long absence (more than six): none plays, each surface shows its end state, and one line names them: 'Since you last looked: …' (≤ 3 items, then '+ n more').",
+        seen: seenSeedsOf(bases, [
+          [SEEN_WHAT.rank, 0],
+          [SEEN_WHAT.reach, 0],
+          [SEEN_WHAT.proficiency, 20],
+          [SEEN_WHAT.horizon, 20],
+          [SEEN_WHAT.date, daySeenValue("2028-02-27")],
+          [seenMeasureWhat(m0.measureKey), Math.max(0, Number(m0.figure?.value ?? 0) - 4)],
+          [seenQuestWhat(wq.weekStart, 1), 0],
+          [seenQuestWhat(wq.weekStart, 2), 0],
+        ]),
+      };
+    }
+    case "run-stale": {
+      const fx = fixtureOf("running");
+      const v = fx.view!;
+      const run = { ...v.run!, stale: true };
+      const aim: AimCardView & AimCardMotionFields = { ...fx.aim!, run: { startedAt: run.startedAt, stale: true } };
+      return {
+        view: { ...v, run },
+        intake: null,
+        aim,
+        today: null,
+        startPreview: null,
+        note: "A draft run that timed out (stale): the weave stops and stays its static strands; the words say it stopped, never a %.",
+      };
+    }
+    case "writes-off": {
+      const v = activeView({ writesOff: true, proficiency: proficiency(0.4189, { cards: 0.55, practice: 0.23, milestones: 1 / 6 }, 1, 6, { live: true }), weekQuests: weekQuestsFixture({ writesOff: true, frozen: false }) });
+      return {
+        view: v,
+        intake: null,
+        aim: aimFromView(v, "ACTIVE"),
+        today: v.weekQuests,
+        startPreview: null,
+        note: "A server that records nothing: «writes off» in the header, «not recorded here» beside the Aim card's live figure; the horizon still draws the figure on screen.",
+      };
+    }
   }
 }

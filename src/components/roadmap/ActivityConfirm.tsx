@@ -29,16 +29,43 @@
  * an answer takes a started practice off Today (decision 4, R4's reply
  * `paused`), a quiet toast says so, with Undo.
  *
+ * UI motion (lane R7; ui-motion.md §3.3 screen 8, §7.8, D11, D12, D13): a
+ * safety surface, static at every level. The consent text stays word for
+ * word: the lead line (the user's words quoted once, data-wc="own"), the
+ * question, the stale line, the plan's line led by the track's sigil,
+ * activitySaveLine beside the button, the buttons, and the answered
+ * summary's two lines. Only repetition and the how-to paragraph move:
+ *   - each row is [checkbox] [sess.* glyph] + the session name; a ticked row
+ *     strikes its glyph and adds the word "avoid"; a row whose box the user's
+ *     words pre-ticked adds [m.quote]. The row's own line ("From your words:
+ *     “…”", "Not ticked on 3 Oct, before your words changed", "You said to
+ *     avoid it on 2 Jan") is read once, as its checkbox's description, from
+ *     the card Key, where a touch user opens it (no sr-only copy, no `title`);
+ *   - HEALTH_LINE is one chip per card, «Not medical advice · ask a
+ *     professional», a button that opens the line itself;
+ *   - ACTIVITY_HOW_LINE (or the intake's) sits behind an (i), which opens at
+ *     once here ([data-safety]: glyph-motion never moves anything inside);
+ *   - the answered summary names each kind beside its session glyph (struck:
+ *     avoided; with a check: the plan can include it).
+ * Nothing here plays a motion: only the kit checkbox changes state. The card
+ * carries data-safety, data-fx="none" (no shader) and data-wc-block
+ * "activities" (the §3.2 row 8 budgets).
+ *
  * Places: the draft review and the living roadmap (ActivityConfirmCard), the
  * Start sheet (its "start" variant), and the intake (IntakeActivities: the
  * answer is confirmed on the form and saved right after the intake, before
  * the plan is built). Nothing here is red, and nothing reads a cue as a
  * diagnosis or calls a session safe.
  */
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { pushToast } from "@/components/ui/toast-store";
 import { ActionError } from "@/components/home/ActionError";
+import { Glyph, Mark, type MarkRef } from "@/components/glyph/Glyph";
+import { Chips, HonestyChip } from "@/components/glyph/HonestyChip";
+import { CardKey, InfoTip, type KeyEntry } from "@/components/glyph/InfoTip";
+import { GLYPH_MEANS } from "@/components/glyph/paths/means";
+import { SESSION_KEY, type SessionName } from "@/components/glyph/paths/session";
 import type { DayKey } from "@/lib/life-day";
 import type { ActivityCardAnswer, ActivityConfirmView, ActivityRow } from "@/lib/roadmap-types";
 import { ACTIVITY_ANSWER_STALE, ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, type CatalogKey } from "@/lib/roadmap-catalog";
@@ -57,6 +84,9 @@ import {
   ACTIVITY_UNREAD_LINE,
   HEALTH_LINE,
   KIND_NAME,
+  SHORT_AVOID,
+  SHORT_HEALTH,
+  TRACK_SIGIL,
   activityLeadLine,
   activityNotPausedLine,
   activityPausedLine,
@@ -81,24 +111,157 @@ export function activityHealthOf(v: { track: string; on?: boolean }): boolean {
   return v.track === "BODY" || v.track === "CARE" || (v.track === "CRAFT" && v.on === true);
 }
 
-/** The list of boxes: each ticked box is a kind to avoid; each row's line quotes the user's words or their answer. */
-function AvoidList({ rows, avoid, onToggle, today, disabled }: { rows: readonly ActivityRow[]; avoid: ReadonlySet<CatalogKey>; onToggle: (k: CatalogKey) => void; today?: DayKey; disabled?: boolean }) {
-  const base = useId();
+// ─── The glyphs (ui-motion.md §4.4: session kinds, safety marks) ────────────
+
+/** Each catalog kind's session glyph (paths/session SESSION_KEY, inverted); a kind with no session glyph draws none. */
+const SESSION_OF: ReadonlyMap<string, SessionName> = new Map(Object.entries(SESSION_KEY).map(([glyph, kind]) => [kind, glyph as SessionName]));
+
+/** The glyph a kind draws beside its name, if it has one. */
+export function activityGlyphOf(kind: CatalogKey): SessionName | null {
+  return SESSION_OF.get(kind) ?? null;
+}
+
+/** The sigil that leads the plan's line ("[s-body] Easy, mobility and technique practice only until you confirm."). */
+function sigilOf(track: string): MarkRef {
+  return track === "BODY" || track === "CARE" || track === "CRAFT" || track === "DUTY" ? `s-${TRACK_SIGIL[track]}` : "s-know";
+}
+
+/** The row's line quotes the user's words (its box came pre-ticked from them): it shows [m.quote]. */
+export function activityQuotesRow(r: Pick<ActivityRow, "state" | "prefill" | "reason">): boolean {
+  return r.reason.trim().length > 0 && (r.state === "WORDS" || (r.prefill === "AVOID" && r.state === "PENDING"));
+}
+
+// ─── Lines with the user's words and the kinds' names marked ────────────────
+
+type LinePart = { t: "text"; s: string } | { t: "own"; s: string } | { t: "name"; s: string; kind: CatalogKey | null; tail: string };
+
+/**
+ * A line split into the app's words, the user's quoted words (“…”, kept with
+ * the punctuation right after them) and the kinds' names (kept with theirs),
+ * so each part can be marked for the word count and drawn with its glyph,
+ * while the rendered text reads exactly as the line.
+ */
+export function activityLineParts(text: string, names: readonly { name: string; kind: CatalogKey | null }[] = []): LinePart[] {
+  const byLength = [...names].filter((n) => n.name).sort((a, b) => b.name.length - a.name.length);
+  const out: LinePart[] = [];
+  let buf = "";
+  const flush = () => {
+    if (buf) out.push({ t: "text", s: buf });
+    buf = "";
+  };
+  const letter = (c: string | undefined) => c != null && /[\p{L}\p{N}]/u.test(c);
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "“") {
+      const end = text.indexOf("”", i + 1);
+      if (end > i) {
+        let j = end + 1;
+        while (j < text.length && /[.,;:]/.test(text[j])) j++;
+        flush();
+        out.push({ t: "own", s: text.slice(i, j) });
+        i = j;
+        continue;
+      }
+    }
+    const hit = letter(text[i - 1]) ? undefined : byLength.find((n) => text.startsWith(n.name, i) && !letter(text[i + n.name.length]));
+    if (hit) {
+      let j = i + hit.name.length;
+      while (j < text.length && /[.,;:]/.test(text[j])) j++;
+      flush();
+      out.push({ t: "name", s: hit.name, kind: hit.kind, tail: text.slice(i + hit.name.length, j) });
+      i = j;
+      continue;
+    }
+    buf += text[i];
+    i++;
+  }
+  flush();
+  return out;
+}
+
+/** A line as activityLineParts reads it: the user's words data-wc="own", each name data-wc="name" with its glyph (struck when avoided, with a check when the plan can include it). */
+function MarkedLine({ text, names, mark }: { text: string; names?: readonly { name: string; kind: CatalogKey | null }[]; mark?: "avoid" | "in" }) {
+  return (
+    <>
+      {activityLineParts(text, names).map((p, i) => {
+        if (p.t === "text") return p.s;
+        if (p.t === "own")
+          return (
+            <span key={i} data-wc="own">
+              {p.s}
+            </span>
+          );
+        const g = p.kind ? activityGlyphOf(p.kind) : null;
+        return (
+          <span key={i} className="rm-avd-nm" data-wc="name">
+            {mark && g && (
+              <span className="rm-avd-gl" aria-hidden="true">
+                <Glyph name={g} struck={mark === "avoid"} size={16} inherit />
+                {mark === "in" && (
+                  <span className="rm-avd-ok">
+                    <Glyph name="safe.in" size={12} inherit />
+                  </span>
+                )}
+              </span>
+            )}
+            {p.s}
+            {p.tail}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/** The kinds a card names (for MarkedLine): every row's name, with its kind. */
+function namesOf(rows: readonly Pick<ActivityRow, "kind">[]): { name: string; kind: CatalogKey }[] {
+  return rows.map((r) => ({ name: KIND_NAME[r.kind] ?? r.kind, kind: r.kind }));
+}
+
+// ─── The open card ──────────────────────────────────────────────────────────
+
+/** The id of a row's checkbox and of its line in the card Key (the checkbox's description): `${base}-${i}` and `${base}-${i}-w`. */
+function rowId(base: string, i: number): string {
+  return `${base}-${i}`;
+}
+
+/**
+ * The list of boxes: each ticked box is a kind to avoid. A row is its
+ * checkbox, its session glyph (struck once ticked) and its name (a name:
+ * data-wc="name"), then the visible word "avoid" while ticked and [m.quote]
+ * on a row the user's words pre-ticked. The row's line is its description,
+ * read from the card Key (ActivityKey), never repeated under the row.
+ */
+function AvoidList({ rows, avoid, onToggle, today, disabled, base }: { rows: readonly ActivityRow[]; avoid: ReadonlySet<CatalogKey>; onToggle: (k: CatalogKey) => void; today?: DayKey; disabled?: boolean; base: string }) {
   return (
     <ul className="rm-avd-list">
       {rows.map((r, i) => {
-        const id = `${base}-${i}`;
+        const id = rowId(base, i);
         const line = activityRowLine(r, today);
+        const on = avoid.has(r.kind);
+        const glyph = activityGlyphOf(r.kind);
         return (
-          <li key={r.kind} className="rm-avd-row" data-state={r.state}>
-            <label className="rm-avd-hit">
-              <input id={id} type="checkbox" className="rm-avd-box" checked={avoid.has(r.kind)} disabled={disabled} onChange={() => onToggle(r.kind)} aria-describedby={line ? `${id}-w` : undefined} />
-              <span className="rm-avd-n">{KIND_NAME[r.kind] ?? r.kind}</span>
-            </label>
-            {line && (
-              <p id={`${id}-w`} className="rm-avd-w">
-                {line}
-              </p>
+          <li key={r.kind} className="rm-avd-row rm-avd-r" data-state={r.state} data-avoid={on ? "" : undefined}>
+            <div className="rm-avd-lb" data-wc="name">
+              <label className="rm-avd-hit">
+                <input id={id} type="checkbox" className="rm-avd-box" checked={on} disabled={disabled} onChange={() => onToggle(r.kind)} aria-describedby={line ? `${id}-w` : undefined} />
+                <span className="rm-avd-n">{KIND_NAME[r.kind] ?? r.kind}</span>
+                {glyph && (
+                  <span className="rm-avd-g" aria-hidden="true">
+                    <Glyph name={glyph} state={on ? "idle" : "active"} struck={on} size={20} inherit />
+                  </span>
+                )}
+              </label>
+            </div>
+            {on && (
+              <span className="rm-avd-av" aria-hidden="true">
+                {SHORT_AVOID}
+              </span>
+            )}
+            {activityQuotesRow(r) && (
+              <span className="rm-avd-qm" aria-hidden="true">
+                <Glyph name="m.quote" size={16} inherit />
+              </span>
             )}
           </li>
         );
@@ -125,23 +288,69 @@ function Question({ view, today }: { view: ActivityConfirmView; today?: DayKey }
   const stale = activityAsksOf(view) ? activityStaleLine(view.staleDay, today) : null;
   return (
     <>
-      <legend className="rm-avd-q">{`${activityLeadLine(view.quotes, view.track)} ${ACTIVITY_QUESTION}`}</legend>
+      <legend className="rm-avd-q">
+        <MarkedLine text={activityLeadLine(view.quotes, view.track)} /> {ACTIVITY_QUESTION}
+      </legend>
       {stale && <p className="rm-avd-m rm-ink1">{stale}</p>}
       {view.unparseable && <p className="rm-avd-m">{ACTIVITY_UNREAD_LINE}</p>}
     </>
   );
 }
 
-/** The lines under the boxes: how to answer, what the plan places meanwhile (while it asks), the suggestions still placed, HEALTH_LINE. */
-function OpenLines({ view, how, health }: { view: ActivityConfirmView; how: string; health: boolean }) {
-  const suggested = activitySuggestedLine(view.rows.filter((r) => r.state === "WORDS").map((r) => KIND_NAME[r.kind] ?? r.kind));
+/** The health chip (D12): one per card, its visible label keeping the instruction; the chip opens HEALTH_LINE itself. */
+function HealthChip() {
+  return (
+    <Chips className="rm-avd-chips">
+      <HonestyChip kind="health" label={SHORT_HEALTH} full={HEALTH_LINE} wrap />
+    </Chips>
+  );
+}
+
+/** The lines under the boxes: what the plan places meanwhile (while it asks, led by the track's sigil), the suggestions still placed, the health chip. */
+function OpenLines({ view, health }: { view: ActivityConfirmView; health: boolean }) {
+  const words = view.rows.filter((r) => r.state === "WORDS");
+  const suggested = activitySuggestedLine(words.map((r) => KIND_NAME[r.kind] ?? r.kind));
   return (
     <>
-      <p className="rm-avd-m">{how}</p>
-      {activityAsksOf(view) && <p className="rm-avd-p">{activityPendingLine(view.safeKinds)}</p>}
-      {suggested && <p className="rm-avd-m">{suggested}</p>}
-      {health && <p className="rm-it-why">{HEALTH_LINE}</p>}
+      {activityAsksOf(view) && (
+        <p className="rm-avd-p rm-avd-pl">
+          <Mark glyph={sigilOf(view.track)} size={16} />
+          <span>{activityPendingLine(view.safeKinds)}</span>
+        </p>
+      )}
+      {suggested && (
+        <p className="rm-avd-m">
+          <MarkedLine text={suggested} names={namesOf(words)} />
+        </p>
+      )}
+      {health && <HealthChip />}
     </>
+  );
+}
+
+/**
+ * The card Key (D13) and the how-to (i): each glyph the card draws with its
+ * words, and each row's own line, which its checkbox reads as its
+ * description (the span's id is the row's `-w`), so a touch user reads it by
+ * opening the Key and a screen reader hears it once. On a safety surface
+ * both open at once.
+ */
+function CardTips({ rows, today, base, how }: { rows: readonly ActivityRow[]; today?: DayKey; base: string; how: string }) {
+  const lines = rows.map((r, i) => ({ r, i, line: activityRowLine(r, today) })).filter((x): x is { r: ActivityRow; i: number; line: string } => x.line != null);
+  const glyphs = rows.some((r) => activityGlyphOf(r.kind) != null);
+  const entries: KeyEntry[] = [...(glyphs ? [{ glyph: "safe.strike" as const, words: GLYPH_MEANS["safe.strike"] }] : []), ...(rows.some(activityQuotesRow) ? [{ glyph: "m.quote" as const, words: GLYPH_MEANS["m.quote"] }] : [])];
+  return (
+    <div className="rm-avd-tips">
+      <InfoTip topic="how to answer">{how}</InfoTip>
+      <CardKey
+        entries={entries}
+        rows={lines.map(({ r, i, line }) => (
+          <>
+            <b data-wc="name">{KIND_NAME[r.kind] ?? r.kind}</b> <span id={`${rowId(base, i)}-w`}>{line}</span>
+          </>
+        ))}
+      />
+    </div>
   );
 }
 
@@ -184,6 +393,29 @@ function summaryOf(view: Pick<ActivityConfirmView, "rows" | "answered" | "none">
   const lines = activitySummaryLines(view, today);
   if (lines.length === 0 && view.answered) return [`You answered on ${dayLabel(view.answered, today)}.`];
   return lines;
+}
+
+/** The answered summary, verbatim: each name beside its session glyph, struck on "You said to avoid:", with a check on "The plan can include:". */
+function SummaryLines({ lines, rows }: { lines: readonly string[]; rows: readonly Pick<ActivityRow, "kind">[] }) {
+  const names = namesOf(rows);
+  return (
+    <>
+      {lines.map((l) => (
+        <p key={l} className="rm-avd-m rm-ink1">
+          <MarkedLine text={l} names={names} mark={l.startsWith("You said to avoid:") ? "avoid" : l.startsWith("The plan can include:") ? "in" : undefined} />
+        </p>
+      ))}
+    </>
+  );
+}
+
+/** The safety surface's own box inside each place's wrapper: static (data-safety), no shader (data-fx), its words counted as §3.2 row 8 (data-wc-block). */
+function SafetyBox({ children }: { children: ReactNode }) {
+  return (
+    <div className="rm-avd-c" data-safety="" data-fx="none" data-wc-block="activities">
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -280,6 +512,7 @@ function ActivityCardBody({
   staleRefused: boolean;
   setStaleRefused: (v: boolean) => void;
 }) {
+  const base = useId();
   const opens = activityOpenOf(view);
   const [editing, setEditing] = useState(false);
   const { avoid, toggle, reset } = useAvoid(view.rows);
@@ -292,20 +525,17 @@ function ActivityCardBody({
   const role = place === "start" ? "group" : undefined;
 
   if (!open) {
-    const lines = summaryOf(view, today);
     return (
       <Wrap className={wrapClass} id={place === "start" ? undefined : ACTIVITY_DOM_ID} role={role} aria-label={ACTIVITY_CARD_NAME}>
-        <div className="rm-avd-sum">
-          {lines.map((l) => (
-            <p key={l} className="rm-avd-m rm-ink1">
-              {l}
-            </p>
-          ))}
-          <button type="button" className="rm-ilink" onClick={() => setEditing(true)} aria-label="Change which activities the plan avoids">
-            {ACTIVITY_CHANGE_WORD}
-          </button>
-        </div>
-        {health && <p className="rm-it-why">{HEALTH_LINE}</p>}
+        <SafetyBox>
+          <div className="rm-avd-sum">
+            <SummaryLines lines={summaryOf(view, today)} rows={view.rows} />
+            <button type="button" className="rm-ilink" onClick={() => setEditing(true)} aria-label="Change which activities the plan avoids">
+              {ACTIVITY_CHANGE_WORD}
+            </button>
+          </div>
+          {health && <HealthChip />}
+        </SafetyBox>
       </Wrap>
     );
   }
@@ -339,26 +569,29 @@ function ActivityCardBody({
 
   return (
     <Wrap className={wrapClass} id={place === "start" ? undefined : ACTIVITY_DOM_ID} role={role} aria-label={ACTIVITY_CARD_NAME}>
-      <fieldset className="rm-avd-set" disabled={pending}>
-        <Question view={view} today={today} />
-        <AvoidList rows={view.rows} avoid={avoid} onToggle={toggle} today={today} />
-      </fieldset>
-      <OpenLines view={view} how={ACTIVITY_HOW_LINE} health={health} />
-      {staleRefused && !error && (
-        <p className="rm-avd-m rm-ink1" role="status">
-          {ACTIVITY_ANSWER_STALE}
-        </p>
-      )}
-      <AnswerActs
-        ticked={tickedOf(view.rows, avoid)}
-        listed={view.rows.length}
-        pending={pending}
-        saveWord={ACTIVITY_SAVE_WORD}
-        onSave={save}
-        onNothing={() => send(activityNothingToAvoidOf(view))}
-        onCancel={editing && !opens ? cancel : undefined}
-      />
-      {error && <ActionError>{error}</ActionError>}
+      <SafetyBox>
+        <fieldset className="rm-avd-set" disabled={pending}>
+          <Question view={view} today={today} />
+          <AvoidList rows={view.rows} avoid={avoid} onToggle={toggle} today={today} base={base} />
+        </fieldset>
+        <OpenLines view={view} health={health} />
+        {staleRefused && !error && (
+          <p className="rm-avd-m rm-ink1" role="status">
+            {ACTIVITY_ANSWER_STALE}
+          </p>
+        )}
+        <AnswerActs
+          ticked={tickedOf(view.rows, avoid)}
+          listed={view.rows.length}
+          pending={pending}
+          saveWord={ACTIVITY_SAVE_WORD}
+          onSave={save}
+          onNothing={() => send(activityNothingToAvoidOf(view))}
+          onCancel={editing && !opens ? cancel : undefined}
+        />
+        {error && <ActionError>{error}</ActionError>}
+        <CardTips rows={view.rows} today={today} base={base} how={ACTIVITY_HOW_LINE} />
+      </SafetyBox>
     </Wrap>
   );
 }
@@ -394,6 +627,7 @@ export function IntakeActivities({
 }
 
 function IntakeActivitiesBody({ view, keyNow, confirmed, onConfirm, today }: { view: ActivityConfirmView; keyNow: string; confirmed: ActivityCardAnswer | null; onConfirm: (a: ActivityCardAnswer | null) => void; today?: DayKey }) {
+  const base = useId();
   const { avoid, toggle, reset } = useAvoid(view.rows);
   const [editing, setEditing] = useState(false);
   const fresh = confirmed != null && confirmed.key === keyNow;
@@ -401,21 +635,20 @@ function IntakeActivitiesBody({ view, keyNow, confirmed, onConfirm, today }: { v
   const health = activityHealthOf(view);
   if (!opens && !editing) {
     // Confirmed on this form (not saved yet), or the open draft's stored answer.
-    const lines = fresh ? activitySummaryLines({ rows: rowsAnsweredBy(view.rows, confirmed), answered: null, none: confirmed.nothingToAvoid }, today) : summaryOf(view, today);
+    const rows = fresh ? rowsAnsweredBy(view.rows, confirmed) : view.rows;
+    const lines = fresh ? activitySummaryLines({ rows, answered: null, none: confirmed.nothingToAvoid }, today) : summaryOf(view, today);
     return (
       <div className="sunk rm-avd rm-avd-in" id="rm-f-activities" role="group" aria-label={ACTIVITY_CARD_NAME}>
-        <div className="rm-avd-sum">
-          {fresh && <p className="rm-avd-m rm-ink1">{ACTIVITY_CONFIRMED_LINE}</p>}
-          {lines.map((l) => (
-            <p key={l} className="rm-avd-m rm-ink1">
-              {l}
-            </p>
-          ))}
-          <button type="button" className="rm-ilink" onClick={() => setEditing(true)} aria-label="Change which activities the plan avoids">
-            {ACTIVITY_CHANGE_WORD}
-          </button>
-        </div>
-        {health && <p className="rm-it-why">{HEALTH_LINE}</p>}
+        <SafetyBox>
+          <div className="rm-avd-sum">
+            {fresh && <p className="rm-avd-m rm-ink1">{ACTIVITY_CONFIRMED_LINE}</p>}
+            <SummaryLines lines={lines} rows={rows} />
+            <button type="button" className="rm-ilink" onClick={() => setEditing(true)} aria-label="Change which activities the plan avoids">
+              {ACTIVITY_CHANGE_WORD}
+            </button>
+          </div>
+          {health && <HealthChip />}
+        </SafetyBox>
       </div>
     );
   }
@@ -426,26 +659,29 @@ function IntakeActivitiesBody({ view, keyNow, confirmed, onConfirm, today }: { v
   };
   return (
     <div className="sunk rm-avd rm-avd-in" id="rm-f-activities">
-      <fieldset className="rm-avd-set">
-        <Question view={view} today={today} />
-        <AvoidList rows={view.rows} avoid={avoid} onToggle={toggle} today={today} />
-      </fieldset>
-      <OpenLines view={view} how={ACTIVITY_INTAKE_HOW_LINE} health={health} />
-      <AnswerActs
-        ticked={tickedOf(view.rows, avoid)}
-        listed={view.rows.length}
-        saveWord={ACTIVITY_CONFIRM_WORD}
-        onSave={() => confirm(activityCardAnswerOf({ key: keyNow, rows: view.rows }, avoid))}
-        onNothing={() => confirm(activityNothingToAvoidOf({ key: keyNow }))}
-        onCancel={
-          editing && !opens
-            ? () => {
-                reset();
-                setEditing(false);
-              }
-            : undefined
-        }
-      />
+      <SafetyBox>
+        <fieldset className="rm-avd-set">
+          <Question view={view} today={today} />
+          <AvoidList rows={view.rows} avoid={avoid} onToggle={toggle} today={today} base={base} />
+        </fieldset>
+        <OpenLines view={view} health={health} />
+        <AnswerActs
+          ticked={tickedOf(view.rows, avoid)}
+          listed={view.rows.length}
+          saveWord={ACTIVITY_CONFIRM_WORD}
+          onSave={() => confirm(activityCardAnswerOf({ key: keyNow, rows: view.rows }, avoid))}
+          onNothing={() => confirm(activityNothingToAvoidOf({ key: keyNow }))}
+          onCancel={
+            editing && !opens
+              ? () => {
+                  reset();
+                  setEditing(false);
+                }
+              : undefined
+          }
+        />
+        <CardTips rows={view.rows} today={today} base={base} how={ACTIVITY_INTAKE_HOW_LINE} />
+      </SafetyBox>
     </div>
   );
 }

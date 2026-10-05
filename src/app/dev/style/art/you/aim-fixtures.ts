@@ -83,7 +83,18 @@
 import { addDays, weekStartKeyOf, zonedToInstant, type DayKey } from "@/lib/life-day";
 import { GOAL_RULES } from "@/lib/life-economy";
 import { milestoneHeadlineOf, type MilestoneG } from "@/lib/roadmap-measures";
-import { aimRankOf, proficiencyViewOf, type ProficiencyDetailR1, type ProficiencyDomainFacts, type RankMilestone } from "@/lib/roadmap-proficiency";
+import { aimRankOf, basisSignature, proficiencyViewOf, type ProficiencyDetailR1, type ProficiencyDomainFacts, type ProficiencyViewR1, type RankMilestone } from "@/lib/roadmap-proficiency";
+// UI motion (contracts §21): the seen keys a SEEN state seeds, and the card fields the lib doesn't fill yet.
+import {
+  SEEN_WHAT,
+  proficiencyBasisKeyOf,
+  seenBasesOfAimCard,
+  seenSeedsOf,
+  type AimCardMotionFields,
+  type ProficiencyBasisField,
+  type SeenBases,
+  type SeenSeed,
+} from "@/components/roadmap/roadmap-ui-model";
 import { AIM_DONE_SHOW_DAYS, AIM_INVITE_SINCE, hideCookieValue, laterCookieValue, longGoalSeedOf, type AimPrompt, type AimSeed } from "@/lib/roadmap-invite";
 import {
   AIM_DEPTHS,
@@ -137,6 +148,7 @@ export type AimFixtureKey =
   | "empty-off"
   | "empty-off-last-aim"
   | "running"
+  | "running-stale"
   | "draft"
   | "accepted"
   | "accepted-later"
@@ -147,8 +159,10 @@ export type AimFixtureKey =
   | "new-rank"
   | "fallen"
   | "replan"
+  | "switched-off"
   | "paid-lineage"
   | "no-reading"
+  | "not-recorded"
   | "past-due"
   | "done"
   | "done-reached"
@@ -184,8 +198,28 @@ export interface AimFixture {
   depthRank?: DepthRankInput;
   /** The empty card's inputs besides the view (revision 4). */
   empty?: AimFixtureEmpty;
+  /** UI motion (contracts §21): what this viewer last saw, for a SEEN state; the page seeds the seen store with it. */
+  seen?: readonly SeenSeed[];
   build: () => AimCardView;
 }
+
+/**
+ * UI motion's states (ui-motion.md §9.3) as the Aim card shows them: the
+ * spec's name → this page's fixture. archived has no Aim card (an archived
+ * plan leaves the card EMPTY); date-moved, since-line and quest-done-new are
+ * on /dev/style/roadmap (the card has no TimeBar and one quests line).
+ */
+export const AIM_MOTION_KEYS: Readonly<Partial<Record<string, AimFixtureKey>>> = {
+  "rank-new": "new-rank",
+  "reach-pending": "pending-reach",
+  "closed-unreached": "done-unreached",
+  "past-due": "past-due",
+  "horizon-unmeasured": "no-reading",
+  "horizon-self-reported": "active",
+  "rebase-switched-off-seen-before": "switched-off",
+  "run-stale": "running-stale",
+  "writes-off": "not-recorded",
+};
 
 // ─── The two plans ──────────────────────────────────────────────────────────
 
@@ -598,8 +632,14 @@ function blank(state: AimCardState): AimCardView {
 }
 
 /** The trading plan's card. `acceptedDay` is the current version's acceptance day (RoadmapAcceptance.day): null only before any acceptance (running, draft). */
-function trading(state: AimCardState, today: DayKey, acceptedDay: DayKey | null): AimCardView {
-  return { ...blank(state), roadmapId: TRADING.roadmapId, aim: TRADING.aim, area: TRADING_AREA, targetDay: addDays(today, 450), acceptedDay };
+function trading(state: AimCardState, today: DayKey, acceptedDay: DayKey | null, version = 1): AimCardView & AimCardMotionFields {
+  // version: the acceptance's (AimCardView doesn't carry it yet, contracts §21.6), so the card's plan seen basis equals the page's
+  return { ...blank(state), roadmapId: TRADING.roadmapId, aim: TRADING.aim, area: TRADING_AREA, targetDay: addDays(today, 450), acceptedDay, version: acceptedDay ? version : null };
+}
+
+/** A Proficiency view with its basis key, from the reading's own basis (as the lib will fill it: D8, contracts §21.6). */
+function keyed(view: ProficiencyViewR1, basis: ProficiencyBasis): ProficiencyViewR1 & ProficiencyBasisField {
+  return { ...view, basisKey: proficiencyBasisKeyOf(basis.basisVersion, basisSignature(basis)) };
 }
 
 /**
@@ -693,6 +733,23 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
   const givesRank2 = aimRankName(rankIndexAt(2));
   // The version 1 acceptance every state after it reads (RoadmapAcceptance.day): before milestone 1 started.
   const acceptedV1 = addDays(today, -ACCEPTED_V1_DAYS_AGO);
+  // UI motion (contracts §21): Backtest switched off at milestone 2's Start this morning, within version 1 and the same
+  // acceptance day: a new basis signature, so nothing animates from what the viewer saw under the old one (D8).
+  const offBasis: ProficiencyBasis = { ...tradingBasis(), practice: [] };
+  const offBefore = current({ cards: 0.53, practice: 7 / 72, milestones: 1 / 6 });
+  const offReading = proficiencyReading({
+    roadmapId: TRADING.roadmapId,
+    day: today,
+    observedAt: now,
+    basis: offBasis,
+    parts: { cards: 0.53, practice: null, milestones: 1 / 6 },
+    inScope: 61,
+    reached: 1,
+    reachedOnTicks: true,
+    rebased: { on: today, from: offBefore.value, cause: "SWITCHED_OFF", detail: "Backtest was switched off at Start" },
+  });
+  const offSeenPercent = Math.floor(100 * offBefore.value + 1e-9);
+  const offSeenBefore: SeenBases = { ...seenBasesOfAimCard(trading("ACTIVE", today, acceptedV1))!, prof: `prof/${proficiencyBasisKeyOf(1, basisSignature(tradingBasis()))}` };
 
   return [
     // ── The empty card (revision 4, F-R4-1): it asks for the aim in place ──
@@ -790,6 +847,13 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
       note: "A draft is running: static text, no spinner.",
       expect: { state: "RUNNING", percent: null, rank: null, change: null },
       build: () => trading("RUNNING", today, null),
+    },
+    {
+      key: "running-stale",
+      label: "Running · timed out",
+      note: "UI motion: the draft run went stale (timed out): the weave stops and stays its static strands, the words say so, never a %.",
+      expect: { state: "RUNNING", percent: null, rank: null, change: null },
+      build: () => ({ ...trading("RUNNING", today, null), run: { startedAt: at(today, 9, 12), stale: true } }),
     },
     {
       key: "draft",
@@ -902,6 +966,11 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
       note: "Milestone 2 hit 100% on a session tick: it counts from two days on, and the Aim rank waits.",
       expect: { state: "ACTIVE", percent: 50, rank: aimRankName(1), change: null },
       rows: started,
+      // UI motion: the viewer saw rank 1 and one reach; a pending reach plays nothing until it counts (D18)
+      seen: seenSeedsOf(seenBasesOfAimCard(trading("ACTIVE", today, acceptedV1)), [
+        [SEEN_WHAT.rank, 1],
+        [SEEN_WHAT.reach, 1],
+      ]),
       build: () => {
         const countsFrom = addDays(today, REACH_CONFIRM_DAYS);
         return {
@@ -920,6 +989,11 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
       note: "Milestone 1 reached this week: marked new for a week; milestone 2 started the same day, at 0%.",
       expect: { state: "ACTIVE", percent: 36, rank: aimRankName(1), change: null },
       rows: started,
+      // UI motion: the viewer last saw Initiate and no reach: rank-rise plays once here or on the roadmap page, whichever sees it first
+      seen: seenSeedsOf(seenBasesOfAimCard(trading("ACTIVE", today, acceptedV1)), [
+        [SEEN_WHAT.rank, 0],
+        [SEEN_WHAT.reach, 0],
+      ]),
       build: () => ({
         ...trading("ACTIVE", today, acceptedV1),
         measuredAt: now,
@@ -968,7 +1042,7 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
         });
         return {
           // The re-plan was accepted today: its version is the current acceptance.
-          ...trading("ACTIVE", today, today),
+          ...trading("ACTIVE", today, today, 2),
           measuredAt: now,
           targetLowered: { measureKey: CARD_KEY, on, from: TRADING.target, to: 38 },
           rank: rankOf(started, { 1: firstReach }),
@@ -977,6 +1051,27 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
           weekQuests: { done: 2, total: 5 },
         };
       },
+    },
+    {
+      key: "switched-off",
+      label: "A practice switched off at Start",
+      note: "UI motion: Backtest switched off at milestone 2's Start, within version 1 and the same acceptance day: a new basis signature, shown as a change of plan this week, and nothing animates from the % seen before it (D8).",
+      expect: { state: "ACTIVE", percent: Math.floor(100 * offReading.value + 1e-9), rank: aimRankName(1), change: "rebased" },
+      rows: started,
+      seen: seenSeedsOf(offSeenBefore, [
+        [SEEN_WHAT.proficiency, offSeenPercent],
+        [SEEN_WHAT.horizon, offSeenPercent],
+        [SEEN_WHAT.rank, 1],
+        [SEEN_WHAT.reach, 1],
+      ]),
+      build: () => ({
+        ...trading("ACTIVE", today, acceptedV1),
+        measuredAt: now,
+        rank: rankOf(started, { 1: firstReach }),
+        proficiency: keyed(proficiencyViewOf(offReading, lastWeek({ cards: 0.5, practice: 7 / 72, milestones: 1 / 6 }), today, false), offBasis),
+        milestone: milestone2(today, 0, now),
+        weekQuests: { done: 0, total: 4 },
+      }),
     },
     {
       key: "paid-lineage",
@@ -1003,6 +1098,22 @@ export function aimCardFixtures(today: DayKey): AimFixture[] {
         writesOff: true,
         rank: rankOf(tradingRows("PLANNED"), {}),
         milestone: { ...milestone2(today, null, now), id: "fx-milestone-1", ord: 1, ...titleOf(1, TRADING.titles[0], "KEPT") },
+      }),
+    },
+    {
+      key: "not-recorded",
+      label: "Writes off · a figure not recorded",
+      note: "UI motion: this server records nothing, so the Proficiency shown was computed on this request: «not recorded here» beside it, its full words one tap away.",
+      expect: { state: "ACTIVE", percent: 41, rank: aimRankName(1), change: null },
+      rows: started,
+      build: () => ({
+        ...trading("ACTIVE", today, acceptedV1),
+        writesOff: true,
+        measuredAt: now,
+        rank: rankOf(started, { 1: firstReach }),
+        proficiency: proficiencyViewOf(current(ACTIVE_PARTS), lastWeek(LAST_WEEK_PARTS), today, true),
+        milestone: milestone2(today, 0.23, now),
+        weekQuests: { done: 2, total: 5 },
       }),
     },
     {

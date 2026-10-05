@@ -1,8 +1,20 @@
 "use client";
 
 /**
- * One item (F9 "Each item"): the label line with its provenance chip, then
- * flag chips with their reasons, then the action line.
+ * One item (F9 "Each item"), in the row grammar of the UI motion round (lane
+ * R4; ui-motion.md §3.3 screen 3, §4.5, D1, D13, D25, D27):
+ *
+ *   [KindGlyph + evidence badge] label                                  ▸
+ *   compact figures (each with its spoken twin)
+ *   «Gemini · not checked» or a glyph-only mark · flag chips
+ *   the flags' reasons (visible: the FlagChips contract is unchanged)
+ *   [Keep] [Edit] …
+ *
+ *   The kind words ("Practice · Deliberate practice", "Topic · Probability")
+ *   are sr-only beside the glyph, and in the row's ▸ with the row's other
+ *   captions (the choice line, the figures' sources) for a touch user (D13).
+ *   A KindGlyph names its kind by shape and its evidence by its badge; a
+ *   practice shows the plan's own track sigil.
  *
  *   ≥ 380 px of main: every 40 px ChipButton ([Keep] [Edit] [Remove] [I checked this]).
  *   < 380 px: [Keep] (or [Edit] for a NUMBER item, [I checked this] for a Domain
@@ -13,27 +25,33 @@
  * the server's (ItemDraft.struck/reasons, MilestoneDraft.titleStruck/
  * titleReasons); only when a row arrives without them does the device re-run
  * R3's checkLabel (useDisplayLabel). DRAFT and KEPT_SUGGESTION rows always
- * carry their words (never colour alone). Without the user's Domains on the
- * page no row offers Map to….
+ * carry their words, and the who-word "Gemini" stays visible (D25). Without
+ * the user's Domains on the page no row offers Map to….
  *
  * Revision 4 (F-R4-18): a code-worded type from the app's list says who chose
- * it beside its How: "practice type picked by Gemini from the app's list",
- * "added by the app", or "you chose this" (CatalogChip), and offers "Change
- * the type" on a draft. The practice progression (contracts §20): on a plan
- * whose picks are choices, Gemini's pick of one of its stage's options reads
- * "Gemini's choice among the app's options" (useGeminiChoice), and one that
+ * it ("added by the app" as a mark, "you chose this", or Gemini's chip), and
+ * offers "Change the type" on a draft. The practice progression (contracts
+ * §20): on a plan whose picks are choices, Gemini's pick of one of its
+ * stage's options reads «Gemini's choice · not checked» (sr "Gemini's choice
+ * among the app's options"; the choice line in the row's ▸), and one that
  * isn't the app's default offers "Use the app's default" first (one tap),
  * with "Keep Gemini's choice" beside it while accept waits on it.
+ *
+ * Motion: pv-confirm (ACT) when the user's own "I checked this" lands — the
+ * new mark's rim and check draw once; nothing else on a row moves.
  */
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { ChipButton } from "@/components/ui/Chip";
 import { StruckLabel } from "./StruckLabel";
 import { Icon } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/cx";
 import { ActionError } from "@/components/home/ActionError";
+import { KindGlyph, Mark, ProvMark, type QuestKind } from "@/components/glyph/Glyph";
+import type { TrackSigil } from "@/components/glyph/paths";
+import { playGlyph } from "@/lib/glyph-motion";
 import type { BlockingFlag, ItemDraft, MilestoneDraft } from "@/lib/roadmap-types";
 import { FlagChips, FlagReasons } from "./FlagChips";
-import { ProvenanceChip } from "./ProvenanceChip";
+import { GeminiPickChip, ProvenanceChip, ROW_DEFS, provMarkOf, provMarkWords } from "./ProvenanceChip";
 import { useItemEditor, type ActTarget, type ItemEditorScope } from "./ItemEditor";
 import { deviceLabelCheck, labelContextOf } from "./roadmap-labels";
 import {
@@ -55,7 +73,7 @@ import {
   type GeminiChoice,
   type ItemAction,
 } from "./roadmap-ui-model";
-import { catalogProvenanceWords } from "./roadmap-copy";
+import { PROVENANCE_WORDS, SHORT_GEMINI, SHORT_GEMINI_KEPT, catalogProvenanceWords, shortGeminiChoice } from "./roadmap-copy";
 
 /** A row's struck spans and reasons: the server's, else the device's re-check (a fallback; the server decides the flags). */
 export function useDisplayLabel(
@@ -87,14 +105,32 @@ export function useGeminiChoice(item: Pick<ItemDraft, "kind" | "catalogKey" | "n
   return geminiChoiceOf(item, milestone, { ...stageRunOf(scope), choices: scope.choices === true });
 }
 
-/** Who chose a code-worded type, in words (never colour alone); null for any other row. A v4 pick reads "Gemini's choice among the app's options". */
-export function CatalogChip({ item, milestone }: { item: Pick<ItemDraft, "kind" | "catalogKey" | "notes" | "origin" | "decision"> | null; milestone?: Pick<MilestoneDraft, "stage" | "measures"> | null }) {
+/**
+ * Who chose a code-worded type (never colour alone); null for any other row.
+ * Gemini's pick is its chip with the who-word («Gemini's choice · not
+ * checked», sr "Gemini's choice among the app's options" on a v4 plan, the v3
+ * words otherwise); the app's is the glyph-only mark "added by the app"; the
+ * user's the pen, "you chose this".
+ */
+export function CatalogChip({
+  item,
+  milestone,
+  className,
+}: {
+  item: Pick<ItemDraft, "kind" | "catalogKey" | "notes" | "origin" | "decision"> | null;
+  milestone?: Pick<MilestoneDraft, "stage" | "measures"> | null;
+  /** On the glyph-only mark (the app's, yours): its place beside the label. */
+  className?: string;
+}) {
   const choice = useGeminiChoice(item, milestone);
   if (!item) return null;
   const by = catalogByOf(item);
   const slot = catalogSlotOf(item.catalogKey);
   if (!by || !slot) return null;
-  return <span className={cx("rm-pv", by === "GEMINI" && "rm-pv-pick", by === "APP" && "rm-pv-app")}>{catalogProvenanceWords(slot, by, choice != null)}</span>;
+  const words = catalogProvenanceWords(slot, by, choice != null);
+  // A pick waits on you until you keep it (Keep Gemini's choice) or change it: "· not checked" until then.
+  if (by === "GEMINI") return <GeminiPickChip draft={item.decision === "PENDING"} words={words} />;
+  return <ProvMark cls={by === "APP" ? "app-added" : "you"} words={words} size={16} defs={ROW_DEFS} className={className} />;
 }
 
 /** A milestone's title outside its editor row (a card's header, Now): as written, with its NUMBER spans struck. */
@@ -103,6 +139,54 @@ export function MilestoneTitleText({ milestone }: { milestone: MilestoneDraft })
   const row = titleItemOf(milestone);
   const shown = useDisplayLabel(row, milestone, editor?.scope);
   return <StruckLabel label={row.label} struck={shown.struck} />;
+}
+
+/** The plan's own track sigil (a practice's KindGlyph; ui-motion.md §4.4): a Field plan's is knowledge's. */
+export function trackSigilOf(scope: Pick<ItemEditorScope, "areaFieldId" | "track"> | null | undefined): TrackSigil | undefined {
+  if (!scope) return undefined;
+  if (scope.areaFieldId != null) return "know";
+  return scope.track.toLowerCase() as TrackSigil;
+}
+
+const KIND_GLYPH_OF: Partial<Record<EditorRow["kind"], QuestKind>> = { PRACTICE: "practice", STEP: "step", CHECKPOINT: "checkpoint" };
+
+/** The glyph a row leads with: the quest kind (with its evidence badge) for a practice, step or checkpoint; knowledge's sigil for a Domain or a topic. */
+export function RowLead({ kind, words, track, size = 20 }: { kind: EditorRow["kind"]; words: string; track?: TrackSigil; size?: number }) {
+  const q = KIND_GLYPH_OF[kind];
+  if (q) return <KindGlyph kind={q} track={q === "practice" ? track : undefined} size={size} words={words} defs={ROW_DEFS} className="rm-r4-lead" />;
+  if (kind === "TITLE") return null;
+  return (
+    <span className="rm-r4-lead rm-r4-sig">
+      <Mark glyph="s-know" size={size >= 20 ? 18 : 16} />
+      <span className="sr-only">{words}</span>
+    </span>
+  );
+}
+
+/**
+ * The row's ▸: its captions for a touch user (D13). The summary is a 40 px
+ * chevron at the row's top right, named in words; nothing in it is counted.
+ */
+export function RowMore({ lines, about }: { lines: readonly ReactNode[]; about: string }) {
+  const shown = lines.filter((l) => l != null && l !== false && l !== "");
+  if (shown.length === 0) return null;
+  return (
+    <details className="rm-r4-more">
+      <summary aria-label={`More about ${about}`}>
+        <Icon name="chev" />
+      </summary>
+      <div className="rm-r4-mb">
+        {shown.map((l, i) => (
+          <p key={i}>{l}</p>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/** The kind words beyond the kind itself ("Practice · Deliberate practice" → yes; "Step" → no): a row's ▸ is drawn only when it has something to add. */
+function kindDetailOf(kindLabel: string): boolean {
+  return /·/.test(kindLabel);
 }
 
 export function ItemRow({
@@ -114,20 +198,29 @@ export function ItemRow({
   chipsBefore,
   children,
   hideProvenance,
+  lead,
+  more,
+  variant = "row",
 }: {
   target: ActTarget;
   stage: "draft" | "outline" | "active" | "start";
-  /** The eyebrow: "Topic · Algorithmic Backtesting", "Domain · in your library". */
+  /** The kind words: "Topic · Algorithmic Backtesting", "Domain · in your library" (sr-only beside the glyph; in the row's ▸). */
   kindLabel: string;
-  /** The facts line under the label. */
+  /** The facts line under the label: compact figures, each with its spoken twin. */
   meta?: ReactNode;
-  /** A fixed line ("Gemini picked this Domain — it sets what counts."). */
+  /** A fixed line ("Gemini picked this Domain — it sets what counts."): the first line of the row's ▸. */
   why?: string | null;
-  /** Chips before the provenance chip (a method chip, "Set the bar"). */
+  /** Chips before the provenance chip ("Set the bar"). */
   chipsBefore?: ReactNode;
-  /** Extra content under the label (a METHOD_HOW disclosure). */
+  /** Extra content under the label (a "How" disclosure, a paused line). */
   children?: ReactNode;
   hideProvenance?: boolean;
+  /** The lead glyph in place of the kind's own (a topic's outline-line badge); null draws none. */
+  lead?: ReactNode;
+  /** More lines for the row's ▸ (the figures' sources and captions). */
+  more?: readonly ReactNode[];
+  /** "title": the milestone title's own row under the card header (its words are the header's: no label, no lead). */
+  variant?: "row" | "title";
 }) {
   const editor = useItemEditor();
   const { row, item, milestone } = target;
@@ -138,56 +231,106 @@ export function ItemRow({
   const removed = row.decision === "REMOVED";
   const error = editor?.errorFor(row.id) ?? null;
   const busy = editor?.busyFor(row.id) ?? false;
-  const press = (a: ItemAction) => editor?.act(target, a);
   const reasonCtx = { constraints: editor?.scope.constraints ?? null, milestoneOrd: milestone.ord, milestoneCount: editor?.scope.milestoneCount };
   const shown = useDisplayLabel(row, milestone, editor?.scope, item?.method);
   const catalog = Boolean(item?.catalogKey && catalogByOf(item));
   const notes = catalog ? item?.notes.filter((n) => !CATALOG_PROVENANCE_NOTES.has(n)) : item?.notes;
-  const provenance = catalog ? <CatalogChip item={item} milestone={milestone} /> : <ProvenanceChip origin={row.origin} decision={row.decision} />;
+  const provenance = (className?: string) => (catalog ? <CatalogChip item={item} milestone={milestone} className={className} /> : <ProvenanceChip origin={row.origin} decision={row.decision} className={className} />);
+  // A glyph-only mark (the app's, yours, checked, your syllabus line) sits right after the label; Gemini's chip keeps its words in the chips row.
+  const geminiMark = catalog ? catalogByOf(item!) === "GEMINI" : cls === "DRAFT" || cls === "KEPT_SUGGESTION";
+  const inlineMark = hideProvenance || geminiMark ? null : provenance("rm-r4-pm");
+  const chipMark = hideProvenance || !geminiMark ? null : provenance();
+  const own = row.origin === "USER" || row.origin === "SYLLABUS" || row.decision === "EDITED";
+  const track = trackSigilOf(editor?.scope);
+  const leadGlyph = lead !== undefined ? lead : <RowLead kind={row.kind} words={removed ? `${kindLabel} · removed` : kindLabel} track={track} size={stage === "outline" ? 16 : 20} />;
+  // The row's ▸ repeats its provenance in words for a touch user (D13): Gemini's with its chip's label, a mark's as it is spoken.
+  const slot = catalog ? catalogSlotOf(item!.catalogKey) : null;
+  const provWords = catalog && slot ? catalogProvenanceWords(slot, catalogByOf(item!)!, choice != null) : geminiMark ? PROVENANCE_WORDS[cls as "DRAFT" | "KEPT_SUGGESTION"] : provMarkWords(provMarkOf(row.origin, row.decision) ?? "app-written");
+  const geminiLabel = catalog ? shortGeminiChoice(row.decision === "PENDING") : cls === "KEPT_SUGGESTION" ? SHORT_GEMINI_KEPT : SHORT_GEMINI;
+  const provLine = hideProvenance ? null : geminiMark ? `«${geminiLabel}»: ${provWords}` : provWords;
+  const hasMore = Boolean(why) || (more ?? []).some(Boolean) || kindDetailOf(kindLabel) || (geminiMark && !hideProvenance);
+  const moreLines = hasMore ? [why && !removed ? why : null, ...(more ?? []), provLine, kindLabel] : [];
+
+  // pv-confirm (ACT): the user's own "I checked this" on this row; its mark draws once when the row comes back checked.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const checkedByMe = useRef(false);
+  const prevCls = useRef(cls);
+  useEffect(() => {
+    const was = prevCls.current;
+    prevCls.current = cls;
+    if (!checkedByMe.current || was === cls) return;
+    checkedByMe.current = false;
+    if (row.decision !== "CHECKED") return;
+    void playGlyph(rowRef.current?.querySelector('[data-pm="checked"] svg'), "pv-confirm", { licence: "ACT" });
+  }, [cls, row.decision]);
+  const press = (a: ItemAction) => {
+    if (a === "CHECK") checkedByMe.current = true;
+    editor?.act(target, a);
+  };
+  // The ⋯ sheet may hold "I checked this": the user's own tap there licenses the same motion (it plays only if the row comes back checked).
+  const openMore = (list: readonly ItemAction[]) => {
+    if (list.includes("CHECK")) checkedByMe.current = true;
+    editor?.more(target, list);
+  };
+
+  const label = (
+    <p className="rm-it-l" data-wc={own ? "own" : "name"}>
+      <StruckLabel label={row.label} struck={shown.struck} />
+    </p>
+  );
 
   if (stage === "outline") {
     return (
       <li className="rm-oi" id={rowDomId(row.id)}>
-        <div className="rm-it-k">{kindLabel}</div>
-        <p className="rm-it-l">
-          <StruckLabel label={row.label} struck={shown.struck} />
-        </p>
+        <div className={cx("rm-r4-h", hasMore && "rm-r4-hm")}>
+          {label}
+          {inlineMark}
+          {leadGlyph}
+        </div>
+        {meta && <div className="rm-it-m rm-r4-m">{meta}</div>}
         <div className="rm-it-chips">
           {chipsBefore}
-          {provenance}
+          {chipMark}
           <FlagChips flags={row.flags} notes={notes} />
         </div>
         <FlagReasons flags={row.flags} ctx={reasonCtx} reasons={shown.reasons} />
+        <RowMore lines={moreLines} about={row.label} />
       </li>
     );
   }
 
   return (
     <div
+      ref={rowRef}
       id={rowDomId(row.id)}
-      className={cx("rm-it", cls === "DRAFT" && "rm-it-draft", cls === "KEPT_SUGGESTION" && "rm-it-kept", removed && "rm-it-removed")}
+      className={cx("rm-it", variant === "title" ? "rm-r4-tit" : cls === "DRAFT" ? "rm-it-draft" : cls === "KEPT_SUGGESTION" && "rm-it-kept", removed && "rm-it-removed")}
       aria-busy={busy || undefined}
     >
-      <div className="rm-it-k">{removed ? `${kindLabel} · removed` : kindLabel}</div>
-      <p className="rm-it-l">
-        <StruckLabel label={row.label} struck={shown.struck} />
-      </p>
-      {meta && <div className="rm-it-m">{meta}</div>}
+      {variant === "title" ? (
+        <span className="sr-only">{kindLabel}</span>
+      ) : (
+        <div className={cx("rm-r4-h", hasMore && "rm-r4-hm")}>
+          {label}
+          {removed ? <span className="rm-r4-rmv">removed</span> : inlineMark}
+          {leadGlyph}
+        </div>
+      )}
+      {meta && <div className="rm-it-m rm-r4-m">{meta}</div>}
       {children}
       {!removed && (
         <div className="rm-it-chips">
           {chipsBefore}
-          {!hideProvenance && provenance}
+          {chipMark}
           <FlagChips flags={row.flags} notes={notes} />
           {actions.wide.length === 0 && actions.narrow.more.length > 0 && (
-            <ChipButton className="rm-ov" style={{ marginLeft: "auto" }} aria-label={`More: ${actions.narrow.more.map((a) => ITEM_ACTION_WORD[a]).join(", ")}`} onClick={() => editor?.more(target, actions.narrow.more)}>
+            <ChipButton className="rm-ov" style={{ marginLeft: "auto" }} aria-label={`More: ${actions.narrow.more.map((a) => ITEM_ACTION_WORD[a]).join(", ")}`} onClick={() => openMore(actions.narrow.more)}>
               <Icon name="dot3" />
             </ChipButton>
           )}
         </div>
       )}
       {!removed && <FlagReasons flags={row.flags} ctx={reasonCtx} reasons={shown.reasons} />}
-      {why && !removed && <p className="rm-it-why">{why}</p>}
+      {variant !== "title" && <RowMore lines={moreLines} about={row.label} />}
       {actions.wide.length > 0 && (
         <>
           <div className="rm-acts rm-acts-w">
@@ -204,7 +347,7 @@ export function ItemRow({
               </ChipButton>
             ))}
             {actions.narrow.more.length > 0 && (
-              <ChipButton className="rm-ov" aria-label={`More: ${actions.narrow.more.map((a) => ITEM_ACTION_WORD[a]).join(", ")}`} onClick={() => editor?.more(target, actions.narrow.more)}>
+              <ChipButton className="rm-ov" aria-label={`More: ${actions.narrow.more.map((a) => ITEM_ACTION_WORD[a]).join(", ")}`} onClick={() => openMore(actions.narrow.more)}>
                 <Icon name="dot3" />
               </ChipButton>
             )}

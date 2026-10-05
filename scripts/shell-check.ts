@@ -2,7 +2,11 @@
  * Pure checks for the redesign foundation (L0): the nav model, the pre-paint
  * script, materials, the celebration contract and queue, the motion seeds,
  * figure formatting, the receipt bars, and static CSS rules (layer order,
- * animated properties, loops, opaque bars). No DB, no browser.
+ * animated properties, loops, opaque bars). Since ui-motion (M0c, §11.5):
+ * glyph.css and fx.css (keyframes, the one breathe loop, the slot's backstops,
+ * names, ink only), the shader's token whitelist and AMBIENT_ROUTES, how the
+ * runtime is reached (import() only), /today and /review never reaching a
+ * shader slot or the runtime, and no 3D library. No DB, no browser.
  *
  * Run: npx tsx scripts/shell-check.ts
  */
@@ -68,6 +72,8 @@ import { compile } from "tailwindcss";
 import { approx, formatAmount, formatMultiplier, formatNumber, formatPercent } from "../src/components/ui/format";
 import { divergingBar, factorMoved, receiptTotal } from "../src/components/ui/receipt-math";
 import { fieldLevel } from "../src/lib/xp";
+import { AMBIENT_ROUTES, SHADER_VARS } from "../src/lib/shader/params";
+import { gate, type GateInput } from "../src/lib/shader/gate";
 
 const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -729,6 +735,233 @@ eq("receipt: base × factors to one decimal", receiptTotal(20, [1, 1.1, 1, 1]), 
   off();
   eq("chime: the same id chimes once (an effect run twice, a re-render)", logged, 1);
   check("chime: hasChimed reports it", hasChimed("check:day-kept:2026-10-01") && !hasChimed("check:other"));
+}
+
+// ── ui-motion (M0c; ui-motion.md §9.2, §11.5): the glyph and shader layers ──
+// The glyph lane (glyph.css, glyph-motion) and the shader lane (fx.css, src/lib/shader)
+// are checked in depth by glyph-check and shader-check; these are the house rules
+// that sit with the other CSS, import and route rules: the two sheets' layers,
+// keyframes, loops and backstops; how the shader runtime is reached; which routes
+// may carry a shader; which tokens it may read; and no 3D library anywhere.
+{
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+  const posix = (p: string) => relative(ROOT, p).split("\\").join("/");
+  const listFiles = (dir: string, re: RegExp): string[] => {
+    const out: string[] = [];
+    const abs = join(ROOT, dir);
+    if (!existsSync(abs)) return out;
+    const go = (d: string) => {
+      for (const f of readdirSync(d)) {
+        const p = join(d, f);
+        if (statSync(p).isDirectory()) go(p);
+        else if (re.test(f)) out.push(posix(p));
+      }
+    };
+    go(abs);
+    return out;
+  };
+
+  // nav and package.json (§9.2)
+  const devLabel = (href: string) => DEV_STYLE_PAGES.find((p) => p.href === href)?.label ?? null;
+  eq("ui-motion nav: the strip links the glyph gallery and the shader slots", [devLabel("/dev/style/glyphs"), devLabel("/dev/style/fx")], ["Glyphs", "Shader"]);
+  eq("ui-motion nav: both pages are titled from the path (no ShellTitle swap)", [titleFor("/dev/style/glyphs"), titleFor("/dev/style/fx")], [
+    { eyebrow: "Dev · Style", title: "Glyphs" },
+    { eyebrow: "Dev · Style", title: "Shader" },
+  ]);
+  const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  const scripts = pkg.scripts ?? {};
+  eq("ui-motion package.json: ui:glyph and ui:shader", [scripts["ui:glyph"], scripts["ui:shader"]], ["tsx scripts/glyph-check.ts", "tsx scripts/shader-check.ts"]);
+  const chain = (scripts["ui:check"] ?? "").split("&&").map((s) => s.trim());
+  check("ui-motion package.json: ui:check runs glyph-check and shader-check", chain.includes("tsx scripts/glyph-check.ts") && chain.includes("tsx scripts/shader-check.ts"), scripts["ui:check"]);
+
+  // the two sheets (§5.7, §6.6)
+  const ORDER = "@layer theme, base, components, art, effects, utilities;";
+  const GLYPH_CSS = "src/components/glyph/glyph.css";
+  const FX_CSS = "src/components/fx/fx.css";
+  const sheet = (p: string) => (existsSync(join(ROOT, p)) ? read(p) : "");
+  const glyphCss = sheet(GLYPH_CSS);
+  const fxCss = sheet(FX_CSS);
+  check("ui-motion css: glyph.css and fx.css exist and start with the layer order", [glyphCss, fxCss].every((c) => c.split(/\r?\n/)[0].trim() === ORDER));
+  const gRules = cssRules(glyphCss);
+  const fRules = cssRules(fxCss);
+  const propsOf = (body: string) => [...body.replace(/[^{}]*\{/g, "{").matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
+  const DRAW = new Set(["transform", "opacity", "stroke-dashoffset", "stroke-dasharray"]);
+  const gKf = gRules.filter((r) => /^@keyframes\b/.test(r.selector));
+  const gKfBad = gKf.flatMap((r) => propsOf(r.body).filter((p) => !DRAW.has(p)).map((p) => `${r.selector}: ${p}`));
+  check("ui-motion css: glyph.css keyframes animate only transform, opacity, stroke-dashoffset and stroke-dasharray", gKfBad.length === 0, gKfBad.join("; "));
+  const fAnim = fRules.filter((r) => /^@keyframes\b/.test(r.selector) || /(?:^|;)\s*animation(?:-name)?\s*:/.test(r.body));
+  check("ui-motion css: fx.css has no @keyframes and no animation (an SVG layer never moves on its own)", fAnim.length === 0, fAnim.map((r) => r.selector).join(", "));
+
+  // the one CSS loop of the WAIT / AMBIENT class (D19): finite, opacity only, scoped, on --ambient-play
+  const BREATHE_SCOPE = "[data-wait]:not([data-weave-live]):not([data-paused]) svg.mg-weave";
+  const animated = gRules.filter((r) => !r.selector.startsWith("@") && /(?:^|;)\s*animation(?:-name)?\s*:/.test(r.body));
+  const loopProblems: string[] = [];
+  for (const r of animated) {
+    const decl = /(?:^|;)\s*animation\s*:\s*([^;]+)/.exec(r.body)?.[1]?.trim() ?? "";
+    const tokens = decl.split(/\s+/);
+    const name = tokens.find((t) => gKf.some((k) => k.selector === `@keyframes ${t}`)) ?? "";
+    const ms = tokens.map((t) => /^([\d.]+)(ms|s)$/.exec(t)).find(Boolean);
+    const dur = ms ? Number(ms[1]) * (ms[2] === "s" ? 1000 : 1) : NaN;
+    const iters = tokens.find((t) => /^\d+$/.test(t));
+    const n = iters ? Number(iters) : NaN;
+    const where = `${r.selector.slice(0, 60)}: ${decl}`;
+    if (name !== "mg-breathe") loopProblems.push(`${where} (not mg-breathe)`);
+    if (r.selector.replace(/\s+/g, " ").trim() !== BREATHE_SCOPE) loopProblems.push(`${where} (scope)`);
+    if (!r.at.some((a) => /^@layer effects\b/.test(a))) loopProblems.push(`${where} (outside @layer effects)`);
+    if (tokens.includes("infinite") || !(n <= 74) || n % 2 !== 0) loopProblems.push(`${where} (iterations must be even and ≤ 74)`);
+    if (!tokens.includes("alternate")) loopProblems.push(`${where} (not alternate)`);
+    if (!(dur * n < 90_000)) loopProblems.push(`${where} (runs ${dur * n} ms; WAIT stops by 90 s)`);
+    if (!/animation-play-state\s*:\s*var\(--ambient-play\)/.test(r.body)) loopProblems.push(`${where} (no --ambient-play)`);
+  }
+  const breatheProps = gKf.filter((k) => k.selector === "@keyframes mg-breathe").flatMap((k) => propsOf(k.body));
+  check(
+    "ui-motion css: glyph.css's one animation is mg-breathe on the drafting glyph: opacity only, ≤ 74 even half-periods (< 90 s), alternate, in @layer effects, on --ambient-play",
+    animated.length === 1 && gKf.length === 1 && breatheProps.length > 0 && breatheProps.every((p) => p === "opacity") && loopProblems.length === 0,
+    [...loopProblems, `${animated.length} animated rules, ${gKf.length} keyframes, props ${breatheProps.join(",")}`].join("; ")
+  );
+  const effects = gRules.filter((r) => r.at.some((a) => /^@layer effects\b/.test(a)));
+  check("ui-motion css: glyph.css's @layer effects holds only mg-breathe and its one rule", effects.length === 2 && effects.every((r) => r.selector === "@keyframes mg-breathe" || r.selector.replace(/\s+/g, " ").trim() === BREATHE_SCOPE), effects.map((r) => r.selector).join(" | "));
+
+  // the slot (§6.6): the canvas takes no input; the measured marks sit above the soft layer; the backstops
+  const norm = (s: string) => s.replace(/\s+/g, " ").replace(/\s*>\s*/g, " > ").trim();
+  const sels = (r: { selector: string }) => r.selector.split(",").map(norm);
+  const ruleFor = (sel: string, at?: RegExp) => fRules.filter((r) => sels(r).includes(sel) && (at ? r.at.some((a) => at.test(a)) : !r.at.some((a) => /^@media\b/.test(a))));
+  const decl = (body: string, prop: string) => new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(body)?.[1]?.trim() ?? null;
+  check("ui-motion css: .shd canvas has pointer-events: none", ruleFor(".shd canvas").some((r) => decl(r.body, "pointer-events") === "none"));
+  const marksZ = Math.max(-Infinity, ...ruleFor(".shd > .shd-marks").map((r) => Number(decl(r.body, "z-index"))).filter(Number.isFinite));
+  const fbZ = Math.max(0, ...fRules.filter((r) => sels(r).some((s) => /\.shd-fb$/.test(s))).map((r) => Number(decl(r.body, "z-index"))).filter(Number.isFinite));
+  check("ui-motion css: .shd-marks sits above .shd-fb (z-index)", marksZ >= 1 && marksZ > fbZ, `marks ${marksZ}, fb ${fbZ}`);
+  check("ui-motion css: a live slot hides its SVG soft layer (.shd[data-live] > .shd-fb)", ruleFor(".shd[data-live] > .shd-fb").some((r) => decl(r.body, "visibility") === "hidden"));
+  const slotRules = fRules.filter((r) => sels(r).includes(".shd"));
+  check("ui-motion css: the slot's own rules (.shd) sit in @layer art", slotRules.length > 0 && slotRules.every((r) => r.at.some((a) => /^@layer art\b/.test(a))), slotRules.map((r) => r.at.join(" ")).join(" | "));
+  const HIDE = [".shd canvas", ".shd > .shd-fb", ".shd-marks .shd-contour"];
+  const MARKS = /\.shd-(marks|hair|path|walk|front)(?![\w-])/;
+  for (const [label, at] of [
+    ["prefers-contrast: more", /^@media\s*\(\s*prefers-contrast\s*:\s*more\s*\)/],
+    ["forced-colors: active", /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)/],
+  ] as const) {
+    const inMedia = fRules.filter((r) => r.at.some((a) => at.test(a)));
+    const hides = inMedia.some((r) => HIDE.every((h) => sels(r).includes(h)) && decl(r.body, "display") === "none");
+    const emptied = inMedia.filter((r) => sels(r).some((s) => MARKS.test(s.split(" ").pop() ?? "")) && (decl(r.body, "display") === "none" || decl(r.body, "visibility") === "hidden" || decl(r.body, "opacity") === "0"));
+    check(`ui-motion css: the ${label} backstop hides the canvas, the soft layer and the contours`, hides);
+    check(`ui-motion css: under ${label} the band is never empty (the hairline, the path and the dot stay)`, emptied.length === 0, emptied.map((r) => r.selector).join(" | "));
+  }
+  check(
+    "ui-motion css: under forced colours the marks take the system colours (.shd-marks { forced-color-adjust: auto })",
+    fRules.some((r) => r.at.some((a) => /forced-colors\s*:\s*active/.test(a)) && sels(r).includes(".shd-marks") && decl(r.body, "forced-color-adjust") === "auto")
+  );
+
+  // names and colours (§5.7, D22, H7)
+  const classesIn = (rules: { selector: string }[]) => new Set(rules.filter((r) => !r.selector.startsWith("@")).flatMap((r) => [...r.selector.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)].map((m) => m[1])));
+  const CONTEXT = new Set(["theme-night"]); // a kit scope the slot's cap follows (Night inside Vellum)
+  const gForeign = [...classesIn(gRules)].filter((c) => c !== "mg" && !c.startsWith("mg-"));
+  const fForeign = [...classesIn(fRules)].filter((c) => !c.startsWith("shd") && !CONTEXT.has(c));
+  check("ui-motion css: glyph.css styles mg-* classes only, fx.css shd-* only", gForeign.length === 0 && fForeign.length === 0, [...gForeign, ...fForeign].join(", "));
+  const motionFiles = [...listFiles("src/components/glyph", /\.(tsx?|css)$/), ...listFiles("src/components/fx", /\.(tsx?|css)$/), ...listFiles("src/lib/shader", /\.ts$/), "src/lib/glyph-motion.ts"];
+  const spin = motionFiles.filter((f) => existsSync(join(ROOT, f)) && /spin|shimmer/i.test(code(read(f))));
+  check("ui-motion names: no class, keyframe or identifier in the glyph and shader layers contains 'spin' or 'shimmer' (H7)", spin.length === 0, spin.join(", "));
+  const FORBIDDEN_VAR = /var\(\s*--(owed|gold[\w-]*|mp|xp|pts|light[\w-]*|on-[\w-]+)\s*[,)]/;
+  const hueBad = [[GLYPH_CSS, glyphCss], [FX_CSS, fxCss]].filter(([, c]) => FORBIDDEN_VAR.test(code(c))).map(([f]) => f);
+  check("ui-motion css: ink only (no --owed, gold, --mp, --xp, --pts or --light in glyph.css or fx.css; D22)", hueBad.length === 0, hueBad.join(", "));
+  check("ui-motion css: fx.css paints with tokens only (no hex, rgb() or hsl() literals)", !/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(code(fxCss)));
+
+  // the shader's tokens (§6.3): the whitelist, and nothing in the shader code reads past it
+  eq("ui-motion shader: SHADER_VARS is the whitelist (--ink-0, --ink-2, --ink-mute, --card)", [...SHADER_VARS], ["--ink-0", "--ink-2", "--ink-mute", "--card"]);
+  const shaderCode = [...listFiles("src/lib/shader", /\.ts$/), ...listFiles("src/components/fx", /\.tsx?$/)];
+  const readsPast = shaderCode.flatMap((f) =>
+    [...code(read(f)).matchAll(/["'`](--[a-z][\w-]*)["'`]/g)].map((m) => m[1]).filter((v) => !(SHADER_VARS as readonly string[]).includes(v) && !v.startsWith("--shd-")).map((v) => `${f} ${v}`)
+  );
+  check("ui-motion shader: the shader code names no custom property outside SHADER_VARS (its own --shd-* aside)", readsPast.length === 0, readsPast.join("; "));
+
+  // the routes (D16, D10, §6.4): AMBIENT_ROUTES is the lead's list; /today and /review never carry a shader
+  eq("ui-motion shader: AMBIENT_ROUTES is exactly the lead's list", [...AMBIENT_ROUTES], ["/you", "/you/roadmap", "/dev/style/art/you", "/dev/style/roadmap", "/dev/style/fx"]);
+  const restRoute = (r: string) => ["/today", "/review"].some((p) => r === p || r.startsWith(`${p}/`));
+  check("ui-motion shader: AMBIENT_ROUTES excludes /today and /review", !AMBIENT_ROUTES.some(restRoute), AMBIENT_ROUTES.join(", "));
+  const clear: GateInput = {
+    level: "full", osReducedMotion: false, contrastMore: false, forcedColors: false, supported: true, highp: true, degraded: false, noFx: false, saveData: false, deviceMemory: 8,
+    program: "horizon", kind: "ambient", route: "/you", power: false, hidden: false, inView: true, offscreenMs: 0, live: false, otherLoopLive: false, measured: true,
+    ambientLeftMs: 4600, stale: false, paused: false, runAgeMs: 0, horizonAir: true,
+  };
+  eq(
+    "ui-motion shader: the gate loops an AMBIENT slot on /you, and never on /today, /today/week or /review (everything else clear)",
+    ["/you", "/today", "/today/week", "/review"].map((route) => gate({ ...clear, route })[0]),
+    ["loop", "css", "css", "css"]
+  );
+
+  // how the runtime is reached (§6.2, §6.5 step 3): only import() from ShaderSlot; engine only from runtime; programs only from engine
+  const srcCode = listFiles("src", /\.(tsx?|mjs|jsx?)$/);
+  const EXTS = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
+  const resolveFrom = (spec: string, from: string): string | null => {
+    let base: string;
+    if (spec.startsWith("@/")) base = `src/${spec.slice(2)}`;
+    else if (spec.startsWith("./") || spec.startsWith("../")) base = posix(join(ROOT, from, "..", spec));
+    else return null;
+    for (const e of EXTS) {
+      const p = base + e;
+      if (existsSync(join(ROOT, p)) && statSync(join(ROOT, p)).isFile()) return p;
+    }
+    return null;
+  };
+  const importsOf = (f: string) => {
+    const src = code(read(f));
+    const stat = [
+      ...[...src.matchAll(/(?:^|[\n;])\s*import\s+(?!type\b)(?:[^'"`;]*?\sfrom\s*)?["']([^"']+)["']/g)].map((m) => m[1]),
+      ...[...src.matchAll(/(?:^|[\n;])\s*export\s+(?!type\b)[^'"`;]*?\sfrom\s*["']([^"']+)["']/g)].map((m) => m[1]),
+      ...[...src.matchAll(/\brequire\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]),
+    ];
+    const dyn = [...src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]);
+    return { stat, dyn };
+  };
+  const graph = new Map(srcCode.map((f) => [f, importsOf(f)] as const));
+  const who = (target: string, kind: "stat" | "dyn") => srcCode.filter((f) => graph.get(f)![kind].some((s) => resolveFrom(s, f) === target));
+  const RUNTIME = "src/lib/shader/runtime.ts";
+  const ENGINE = "src/lib/shader/engine.ts";
+  const PROGRAMS = "src/lib/shader/programs.ts";
+  eq("ui-motion shader: nothing imports the runtime statically (only import())", who(RUNTIME, "stat"), []);
+  eq("ui-motion shader: ShaderSlot is the one import() of the runtime", who(RUNTIME, "dyn"), ["src/components/fx/ShaderSlot.tsx"]);
+  eq("ui-motion shader: only the runtime imports the engine (the lazy chunk)", [...who(ENGINE, "stat"), ...who(ENGINE, "dyn")], [RUNTIME]);
+  eq("ui-motion shader: only the engine imports the programs (the GLSL stays in the lazy chunk)", [...who(PROGRAMS, "stat"), ...who(PROGRAMS, "dyn")], [ENGINE]);
+
+  // /today and /review (and the root layout they sit in) never reach a shader slot or the runtime (D10, §6.1, §11.5).
+  // The pure helpers (params, gate, env) may be shared: they draw nothing and create no context.
+  const roots = [...listFiles("src/app/today", /\.(tsx?|jsx?)$/), ...listFiles("src/app/review", /\.(tsx?|jsx?)$/), ...["layout", "loading", "template", "error", "not-found", "global-error"].flatMap((n) => [`src/app/${n}.tsx`, `src/app/${n}.ts`]).filter((p) => existsSync(join(ROOT, p)))];
+  const parent = new Map<string, string | null>(roots.map((r) => [r, null]));
+  const queue = [...roots];
+  const reached: string[] = [];
+  while (queue.length) {
+    const f = queue.shift()!;
+    if (/^src\/components\/fx\//.test(f) || [RUNTIME, ENGINE, PROGRAMS].includes(f)) {
+      reached.push(f);
+      continue;
+    }
+    const deps = graph.get(f);
+    if (!deps) continue;
+    for (const s of [...deps.stat, ...deps.dyn]) {
+      const t = resolveFrom(s, f);
+      if (t && !parent.has(t)) {
+        parent.set(t, f);
+        queue.push(t);
+      }
+    }
+  }
+  const chainOf = (f: string) => {
+    const out = [f];
+    for (let p = parent.get(f); p; p = parent.get(p)) out.unshift(p);
+    return out.join(" → ");
+  };
+  check(
+    `ui-motion shader: nothing under /today, /review or the root layout reaches @/components/fx or the shader runtime (${parent.size} files walked, static and import())`,
+    reached.length === 0 && parent.size > roots.length,
+    reached.map(chainOf).join("; ")
+  );
+
+  // no 3D library, and no framer-motion in the motion layers (D20)
+  const THREE_D = /^(three|ogl|regl|twgl(\.js)?|pixi(\.js)?|@pixi\/.+|@react-three\/.+|babylonjs|@babylonjs\/.+|playcanvas)$/;
+  const deps = Object.keys({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }).filter((d) => THREE_D.test(d));
+  const users = srcCode.flatMap((f) => [...graph.get(f)!.stat, ...graph.get(f)!.dyn].filter((s) => THREE_D.test(s) || THREE_D.test(s.split("/").slice(0, s.startsWith("@") ? 2 : 1).join("/"))).map((s) => `${f} ${s}`));
+  check("ui-motion: no three, ogl, regl, twgl or pixi in package.json or src", deps.length === 0 && users.length === 0, [...deps, ...users].join("; "));
+  const framer = motionFiles.filter((f) => /\.tsx?$/.test(f) && existsSync(join(ROOT, f)) && [...importsOf(f).stat, ...importsOf(f).dyn].some((s) => /^(framer-motion|motion)(\/|$)/.test(s)));
+  check("ui-motion: the glyph and shader layers never import framer-motion", framer.length === 0, framer.join(", "));
 }
 
 // ── /dev/style: gated per request, linked from one strip ────────────────────

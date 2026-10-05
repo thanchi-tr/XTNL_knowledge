@@ -15,8 +15,14 @@
  *       ink-0/1/2 ≥ 4.5 on --bar (the top bar, tab bar, rail and sidebar),
  *       --light ≥ 3 as a mark on every surface (motes, a lit ring)
  *     the legacy --ink-3 alias renders at ≥ 7.2 on card (it points at --ink-2)
+ *     ui-motion (ui-motion.md §11.6): glyph and chip ink on card, raised, sunken and overlay
+ *       (ink-0/1/2 text ≥ 4.5; ink-mute, ink-1 strokes, the 12 px badge and the pv.suggest
+ *       rim ≥ 3); the horizon's walked path ≥ 3 on the dawn (card + ink-0 at fx.css's cap,
+ *       and at the air's peak); the unwalked path and the hairline ≥ 3 where they sit; the
+ *       dawn cap in fx.css equals the runtime's capFor (one number, two layers)
  *   Vellum (ships after launch): the same checks (its --mp is a glyph colour, so non-text),
  *     reported as warnings unless --strict-vellum.
+ *   A shortfall already handed to the lead (PENDING in the ui-motion block) is a WARN.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -38,6 +44,7 @@ import {
   wash,
   type Rgb,
 } from "../src/app/dev/style/color-lab";
+import { capFor, frontPoint, horizonGeometry, parseCssColor } from "../src/lib/shader/params";
 
 const ROOT = join(__dirname, "..");
 const css = readFileSync(join(ROOT, "src/app/styles/tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -45,6 +52,8 @@ const strictVellum = process.argv.includes("--strict-vellum");
 
 let failed = 0;
 let warned = 0;
+/** Warnings that are ui-motion PENDING handoffs (the lead decides), not Vellum. */
+let pendingWarned = 0;
 let passed = 0;
 function check(name: string, ok: boolean, detail = "", warnOnly = false) {
   if (ok) {
@@ -195,6 +204,101 @@ runTheme("Vellum", vellum, !strictVellum);
   check("components.css: .pill.paid.pts washes --pts at the measured %", pctIn(".pill.paid.pts", "--pts") === PAID_WASH["--pts"], String(pctIn(".pill.paid.pts", "--pts")));
 }
 
+// ── ui-motion (M0c; ui-motion.md §11.6): the glyph and horizon pairs, Night and Vellum ──
+// The glyphs and chips are ink on the four surfaces a card can be; the horizon band
+// layers the measured marks (SVG) over the dawn, card mixed with --ink-0 at the
+// layer's cap (fx.css --shd-cap, the number the runtime takes from the card's
+// luminance). The dawn sits above the hairline only, and the air moves it ±20%.
+// A known shortfall already handed to the lead is a WARN until it is decided
+// (the PENDING list; a fixed one prints a NOTE so its key can be deleted).
+{
+  const PENDING: Record<string, string> = {
+    hairline:
+      "fx.css .shd-hair is --ink-mute at stroke-opacity .55 (ui-motion.md §6.6), about 2:1, against §11.6's ≥ 3; the lead decides: the hairline opaque (4.1 on the card, 3.2 Night / 3.5 Vellum on its dawn row), or §11.6 names it decorative",
+  };
+  const pendingSeen = new Set<string>();
+  const checkUm = (name: string, ok: boolean, detail: string, warnOnly: boolean, pending?: string) => {
+    if (pending && pending in PENDING) {
+      if (!ok) {
+        pendingSeen.add(pending);
+        warned++;
+        pendingWarned++;
+        console.log(`WARN ${name} — ${detail} (handed off: ${PENDING[pending]})`);
+        return;
+      }
+    }
+    check(name, ok, detail, warnOnly);
+  };
+  const fx = readFileSync(join(ROOT, "src/components/fx/fx.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const firstRule = (selectorRe: string) => new RegExp(`(?:^|[{};])\\s*${selectorRe}\\s*\\{([^}]*)\\}`).exec(fx)?.[1] ?? "";
+  const num = (body: string, prop: string) => {
+    const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([\\d.]+)`).exec(body);
+    return m ? Number(m[1]) : NaN;
+  };
+  const caps = { Night: num(firstRule("\\.shd"), "--shd-cap"), Vellum: num(firstRule(':root\\[data-theme="vellum"\\] \\.shd'), "--shd-cap") };
+  const hairAlpha = num(firstRule("\\.shd-hair"), "stroke-opacity");
+  check("ui-motion: fx.css declares the dawn cap per theme and the hairline's opacity", Number.isFinite(caps.Night) && Number.isFinite(caps.Vellum) && Number.isFinite(hairAlpha), JSON.stringify({ caps, hairAlpha }));
+
+  // The unwalked path sits below the hairline (where no dawn is drawn) everywhere but its end on the aim point.
+  const g = horizonGeometry(312, 56);
+  const below = Array.from({ length: 99 }, (_, i) => frontPoint(g, i / 100)).every(([, y]) => y > g.yh);
+  check("ui-motion: the horizon path runs below the hairline (the dawn is drawn above it only) up to the aim point", below && frontPoint(g, 1)[1] === g.yh);
+
+  const surfaces = ["--card", "--raised", "--sunken", "--overlay"] as const;
+  for (const [label, theme, warnOnly] of [
+    ["Night", night, false],
+    ["Vellum", vellum, !strictVellum],
+  ] as const) {
+    for (const s of surfaces) {
+      const bg = solid(theme, s);
+      for (const t of ["--ink-0", "--ink-1", "--ink-2"]) {
+        const r = contrast(solid(theme, t, bg), bg);
+        check(`${label}: ui-motion chip text ${t} on ${s} ≥ ${TEXT_MIN}`, r >= TEXT_MIN, r.toFixed(2), warnOnly);
+      }
+      const mute = contrast(solid(theme, "--ink-mute", bg), bg);
+      check(`${label}: ui-motion --ink-mute glyph (non-text) on ${s} ≥ ${MARK_MIN}`, mute >= MARK_MIN, mute.toFixed(2), warnOnly);
+      const ink1 = contrast(solid(theme, "--ink-1", bg), bg);
+      check(`${label}: ui-motion --ink-1 glyph strokes beside a badge on ${s} ≥ ${MARK_MIN}`, ink1 >= MARK_MIN, ink1.toFixed(2), warnOnly);
+      const rim = contrast(solid(theme, "--ink-2", bg), bg);
+      check(`${label}: ui-motion the pv.suggest balloon rim (--ink-2) on ${s} ≥ ${MARK_MIN}`, rim >= MARK_MIN, rim.toFixed(2), warnOnly);
+    }
+    const card = solid(theme, "--card");
+    const disc = contrast(solid(theme, "--ink-1", card), card);
+    check(`${label}: ui-motion a 12 px badge (--ink-1 on its --card disc) ≥ ${MARK_MIN}`, disc >= MARK_MIN, disc.toFixed(2), warnOnly);
+
+    // the dawn cap: fx.css and the runtime agree (one number, two layers)
+    const cap = caps[label];
+    const runtimeCap = capFor("horizon", parseCssColor(resolve(theme, "--card")));
+    check(`${label}: ui-motion the dawn cap in fx.css (${cap}) is the runtime's capFor (${runtimeCap})`, Math.abs(cap - runtimeCap) < 1e-9);
+
+    const ink0 = solid(theme, "--ink-0", card);
+    const mute = solid(theme, "--ink-mute", card);
+    for (const [k, air] of [
+      ["at the cap", 1],
+      ["at the air's peak (cap × 1.2)", 1.2],
+    ] as const) {
+      const dawn = wash(ink0, cap * air * 100, card);
+      const walked = contrast(ink0, dawn);
+      check(`${label}: ui-motion the walked path (--ink-0) on the dawn ${k} ≥ ${MARK_MIN}`, walked >= MARK_MIN, walked.toFixed(2), warnOnly);
+    }
+    // the unwalked path: on the card below the hairline, and on the hairline's own row at its end (the dawn there is half the cap)
+    const edge = wash(ink0, cap * 50, card);
+    const pathOnCard = contrast(mute, card);
+    const pathAtEnd = contrast(mute, edge);
+    check(`${label}: ui-motion the unwalked path (--ink-mute) on the card below the hairline ≥ ${MARK_MIN}`, pathOnCard >= MARK_MIN, pathOnCard.toFixed(2), warnOnly);
+    check(`${label}: ui-motion the unwalked path's end on the hairline row (dawn at half the cap) ≥ ${MARK_MIN}`, pathAtEnd >= MARK_MIN, pathAtEnd.toFixed(2), warnOnly);
+    // the hairline: --ink-mute at fx.css's stroke-opacity, on the card and on its dawn row
+    const hair = (bg: Rgb) => contrast(wash(mute, hairAlpha * 100, bg), bg);
+    const hairCard = hair(card);
+    const hairEdge = hair(edge);
+    checkUm(`${label}: ui-motion the hairline (--ink-mute at ${hairAlpha}) on the card and its dawn row ≥ ${MARK_MIN}`, Math.min(hairCard, hairEdge) >= MARK_MIN, `${hairCard.toFixed(2)} / ${hairEdge.toFixed(2)}`, warnOnly, "hairline");
+    // under prefers-contrast: more the soft layer is gone and the hairline and path are --ink-1
+    const hc = contrast(solid(theme, "--ink-1", card), card);
+    check(`${label}: ui-motion under prefers-contrast: more the hairline and path (--ink-1 on --card) ≥ ${MARK_MIN}`, hc >= MARK_MIN, hc.toFixed(2), warnOnly);
+  }
+  for (const k of Object.keys(PENDING)) if (!pendingSeen.has(k)) console.log(`NOTE ui-motion: "${k}" passes now; delete it from PENDING`);
+}
+
 // Gate 2: every legacy alias is gone (the former --ink-3 text now reads --ink-2 directly).
 {
   for (const legacy of ["--ink-3", "--line", "--green", "--green-10", "--nav-h"]) {
@@ -202,5 +306,5 @@ runTheme("Vellum", vellum, !strictVellum);
   }
 }
 
-console.log(`\ncontrast-check: ${passed} passed, ${failed} failed, ${warned} warnings${warned && !strictVellum ? " (Vellum ships after launch)" : ""}`);
+console.log(`\ncontrast-check: ${passed} passed, ${failed} failed, ${warned} warnings${warned > pendingWarned && !strictVellum ? " (Vellum ships after launch)" : ""}${pendingWarned ? ` (${pendingWarned} handed to the lead)` : ""}`);
 process.exit(failed ? 1 : 0);

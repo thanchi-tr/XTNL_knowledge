@@ -1,0 +1,16 @@
+@layer theme, base, components, art, effects, utilities;
+/* /dev/style/fx layout only (fixture chrome; the slots style themselves in fx.css). */
+@layer components {
+  .fxp { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; max-width: 640px; margin: 0 auto; }
+  .fxp-lead { font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 0; }
+  .fxp-modes { display: flex; flex-wrap: wrap; gap: 8px 8px; }
+  .fxp-modes a { min-height: 40px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); color: var(--ink-1); font: 600 13px/1 var(--font-ui); text-decoration: none; }
+  .fxp-modes a[aria-current="true"] { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
+  .fxp-card { overflow: hidden; }
+  .fxp-cap { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 10px 14px 12px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .fxp-cap b { color: var(--ink-0); font-weight: 600; }
+  .fxp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 6px 14px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .fxp-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 18px; }
+  .fxp-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  @container main (min-width: 760px) { .fxp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+}

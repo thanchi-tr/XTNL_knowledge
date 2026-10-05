@@ -1,0 +1,34 @@
+@layer theme, base, components, art, effects, utilities;
+/* /dev/style/glyphs (lane M0a): the gallery's own layout. gxl-* names only.
+   A frame is the 312 px content box of the page at 344; its card's content is
+   278 px (344 − 2 × 16 gutter − 2 × 16 padding − 2 px border). */
+@layer components {
+  .gxl { display: flex; flex-direction: column; gap: 24px; }
+  .gxl-head { display: flex; flex-direction: column; gap: 8px; max-width: 72ch; }
+  .gxl-bar { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 8px; }
+  .gxl-bar .chip.btn-chip[aria-current="page"] { background: var(--ink-0); color: var(--page); border-color: var(--ink-0); }
+  .gxl-calls { font-variant-numeric: tabular-nums; }
+  .gxl-sec { display: flex; flex-direction: column; gap: 16px; }
+  .gxl-fam { display: flex; flex-direction: column; gap: 8px; }
+  .gxl-fh { font: 600 15px/20px var(--font-ui); color: var(--ink-0); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 0; }
+  .gxl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 278px), 1fr)); gap: 12px; }
+  .gxl-tile { background: var(--card); border: 1px solid var(--line-1); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .gxl-th { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .gxl-th code { font: 600 12px/16px var(--font-mono); color: var(--ink-0); overflow-wrap: anywhere; }
+  .gxl-states { display: flex; flex-wrap: wrap; gap: 8px; }
+  .gxl-states figure { flex: 1 1 56px; margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px 6px; border-radius: 10px; background: var(--sunken); }
+  .gxl-states figcaption { font: 600 12px/14px var(--font-mono); color: var(--ink-2); }
+  .gxl-cell { display: grid; place-items: center; min-height: 40px; color: var(--ink-0); }
+  .gxl-play { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; align-self: flex-start; border: 1px solid var(--line-ctl); border-radius: 10px; background: none; color: var(--ink-0); cursor: pointer; }
+  .gxl-comp { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .gxl-frame { width: 312px; max-width: 100%; flex: none; }
+  .gxl-card { background: var(--card); border: 1px solid var(--line-1); border-radius: var(--r-card); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: hidden; }
+  .gxl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .gxl-row.gxl-end { align-items: flex-end; }
+  .gxl-col { display: inline-flex; flex-direction: column; align-items: center; gap: 10px; }
+  .gxl-lab { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .gxl-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .gxl-stack { display: flex; flex-direction: column; gap: 16px; }
+  .gxl-seg { display: flex; flex-wrap: wrap; gap: 8px; }
+  .gxl-wait { display: flex; align-items: center; gap: 10px; }
+}

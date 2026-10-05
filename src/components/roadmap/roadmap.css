@@ -535,4 +535,465 @@
   .rm-avd-sum .rm-avd-m { color: var(--ink-1); }
   .rm-avd-sum .rm-avd-m:first-child { margin-top: 0; }
   .rm-avd-sum .rm-ilink { margin: -4px 0; }
+
+  /* =====================================================================
+     UI MOTION (ui-motion.md §9.3, §10): one marked section per lane. Each
+     lane edits only between its own markers. Layout hooks only: no
+     @keyframes, no gold, no --owed, no --mp; text ≥ 12 px; targets 40/44 px;
+     transitions on transform and opacity only. The glyphs' own rules live in
+     glyph/glyph.css (mg-*), the shader slots' in fx/fx.css (shd-*).
+     ===================================================================== */
+
+  /* ===== R0 roadmap contract: shared hooks ===== */
+  /* The horizon band (HorizonField) edge to edge at the top of a card: the
+     negative margins cancel the card's padding (--rm-band-pad: .rm-aim 16,
+     .rm-ac 14); the band keeps the card's top corners. */
+  .rm-band { display: block; margin: calc(-1 * var(--rm-band-pad, 16px)) calc(-1 * var(--rm-band-pad, 16px)) 12px; border-radius: var(--r-card) var(--r-card) 0 0; overflow: hidden; }
+  .rm-ac > .rm-band { --rm-band-pad: 14px; }
+  /* Chip rows use glyph/HonestyChip's <Chips> (mg-chips: column gap 8, row gap 16; D31), not a roadmap class. */
+  /* ===== /R0 ===== */
+
+  /* ===== R1 Today: AimLine, WeekQuests (all variants) ===== */
+  /* Today's aim line: the rank a START gives, its next-rank medallion beside the verb (static; D10). */
+  .rm-al-rank { width: 16px; height: 16px; margin: -3px 1px 0; vertical-align: middle; }
+  /* A week quest row's KindGlyph (20 px; its 12 px badges overhang into the column gap). */
+  .rm-quest-line > .rm-wq-kg { align-self: center; }
+  /* The glyph line under a row: due-day pips, [m.link], "↓n", the Now row's + Add and «context only». */
+  .rm-wq-aux { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 16px; margin-top: 6px; font: 600 12px/16px var(--font-ui); color: var(--ink-1); }
+  .rm-wq-pips { max-width: 196px; }
+  .rm-wq-link { color: var(--ink-1); }
+  .rm-wq-slip { color: var(--ink-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rm-wq-ctx { margin-left: 6px; vertical-align: middle; }
+  /* Today's card: «pays nothing» (+ the one health chip) and the Key on one row; the Key's panel opens under it. */
+  .rm-wq-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; column-gap: 8px; min-height: 44px; padding: 2px 6px 2px 14px; border-bottom: 1px solid var(--line-1); }
+  .rm-wq-chips { flex: 1 1 auto; min-width: 0; padding: 8px 0; }
+  .rm-wq-kl { display: block; margin: 0 0 6px; }
+  /* The Aim card's line: PromiseRing "2/5 Week quests →". */
+  .rm-quest-one.rm-wq-line { grid-template-columns: 24px auto minmax(0, 1fr) 16px; }
+  .rm-wq-ring { display: grid; place-items: center; }
+  /* a safety mark's wrapper ([data-safety]: its chip opens instantly; D11), out of the chip row's layout */
+  .rm-wq-safe { display: contents; }
+  .rm-wq-n { font: 600 13px/19px var(--font-ui); color: var(--ink-0); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* The Now section: the sub-head "Week quests · until Sun «pays nothing»" and the basis button. */
+  .rm-ms-sh.rm-wq-sh { flex-wrap: wrap; align-items: center; justify-content: flex-start; column-gap: 10px; row-gap: 8px; }
+  .rm-wq-sh .rm-cap { text-align: left; }
+  .rm-wq-sh > .rm-wq-chips { padding: 0; }
+  .rm-wq-basis { margin: -8px -8px -8px 0; }
+  /* A Now row: glyph · label · count · its 40 px ▸, then the panel right after the button's row. */
+  .rm-quest-row.rm-wq-r { grid-template-columns: 20px minmax(0, 1fr) auto 40px; }
+  .rm-wq-x { grid-column: 4; grid-row: 1; display: grid; place-items: center; width: 40px; height: 40px; min-width: 40px; min-height: 40px; margin: -10px 0; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--ink-2); cursor: pointer; }
+  .rm-wq-x svg { width: 16px; height: 16px; transition: transform var(--t-quick) var(--ease-out); }
+  .rm-wq-x[aria-expanded="true"] { color: var(--ink-0); background: var(--raised); }
+  .rm-wq-x[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .rm-wq-p { grid-column: 2 / -1; margin-top: 6px; padding: 8px 10px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line-2); }
+  .rm-wq-p[hidden] { display: none; }
+  .rm-wq-add { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; min-width: 40px; margin: -10px 0; padding: 0 8px; border-radius: 10px; color: var(--ink-0); font: 600 13px var(--font-ui); text-decoration: none; }
+  .rm-wq-add svg { width: 16px; height: 16px; }
+  /* ===== /R1 ===== */
+
+  /* ===== R2 Rank & Aim card: ProficiencyBlock, PlanRanks, AimCard, AimFigure ===== */
+  /* The rank and Proficiency row (ui-motion.md §3.3 screens 4 and 9): the seal and its label on the left,
+     the % column on the right (it wraps its own short lines, so a long rank name keeps the room it needs). */
+  .rm-rp.rm-rp-card, .rm-rp.rm-rp-page { grid-template-columns: minmax(0, 1fr) minmax(96px, 132px); align-items: start; }
+  .rm-rs-u { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .rm-rs-l { display: flex; flex-direction: column-reverse; min-width: 0; }
+  .rm-rs-k { font: 400 12px/16px var(--font-ui); color: var(--ink-2); }
+  .rm-rs-nw { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
+  .rm-rs-n { font: 600 17px/22px var(--font-display); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-rp .rm-rp-pf { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; }
+  .rm-pf-v { display: flex; align-items: center; gap: 4px; font: 600 19px/23px var(--font-display); font-variant-numeric: tabular-nums lining-nums; color: var(--ink-0); }
+  .rm-pf-n { font-weight: 600; }
+  .rm-pf-ev { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-1); }
+  .rm-pf-t { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 2px 6px; margin-top: 2px; font: 400 12px/16px var(--font-ui); color: var(--ink-2); }
+  .rm-pf-at { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+  .rm-pf-ticks { color: var(--ink-1); }
+  .rm-pf-l { margin-top: 2px; font: 400 12px/16px var(--font-ui); color: var(--ink-2); text-align: right; }
+  .rm-rp-none .rm-pf-t { color: var(--ink-1); }
+  /* The meter and the block's one (i): the panel opens full width under the row (its flex-basis is 100%). */
+  .rm-rp-mrow { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; margin-top: 8px; }
+  .rm-rp-meter { flex: 1 1 0; min-width: 0; }
+  .rm-rp-meter > .meter { margin-top: 0; }
+  .rm-rp-tip { flex: none; }
+  .rm-rp-tp { display: block; }
+  .rm-rp-tp + .rm-rp-tp { margin-top: 6px; }
+  .rm-rp-chg, .rm-rp-pend { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  /* The page's three mini-meters (static), its next rank, and the ladder's medallions. */
+  .rm-rp-parts { grid-column: 1 / -1; margin-top: 10px; }
+  .rm-rp-parts-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .rm-rp-part { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px; font: 600 12px/16px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .rm-rp-bar { grid-column: 1 / -1; position: relative; display: block; height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ink-0) 10%, var(--sunken)); }
+  .rm-rp-bar::after { content: ""; position: absolute; inset: 0; border-radius: 2px; background: var(--ink-1); transform-origin: left; transform: scaleX(var(--v, 0)); }
+  .rm-rp-next { grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-rp-next > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .rm-rp-next b { color: var(--ink-0); font-weight: 600; }
+  .rm-ladder.rm-ladder-g li::before { content: none; display: none; }
+  .rm-rung-g { align-self: center; }
+
+  /* The Aim card (§7.9): one chip row, the milestone block under a hairline, the RUNNING and ASK rows. */
+  .rm-ac-chips { margin-top: 10px; }
+  .rm-ac-date { gap: 4px; }
+  .rm-ac-msb { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-1); }
+  .rm-ac-strip { margin: 0 0 8px; }
+  .rm-ac-mh { margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); overflow-wrap: anywhere; }
+  .rm-ac-mh > span:first-child { color: var(--ink-0); font-weight: 600; }
+  .rm-ac-prog { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .rm-ac-prog-v { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--ink-1); }
+  .rm-ac-prog-v b { color: var(--ink-0); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rm-ac-sep { color: var(--ink-2); }
+  .rm-ac-start { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin: -8px 0; color: var(--ink-0); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .rm-ac-num { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-0); font: 600 12px/16px var(--font-ui); text-decoration: none; }
+  .rm-ac-gives > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .rm-ac-gives b { color: var(--ink-0); font-weight: 600; }
+  .rm-ac-done { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-1); color: var(--ink-0); font-weight: 600; }
+  .rm-ac-seal { display: inline-grid; place-items: center; flex: none; color: var(--ink-0); }
+  .rm-ac-wq { display: block; }
+  .rm-ac-run { padding-bottom: 6px; }
+  .rm-ac-runrow { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .rm-ac-rung { flex: none; }
+  .rm-ac-callh { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
+  .rm-ac-callh > .rm-ac-h { flex: 1 1 0; min-width: 0; }
+  .rm-ac-tip { flex: none; }
+  .rm-ac-ask { display: flex; align-items: flex-start; gap: 10px; margin-top: 6px; }
+  .rm-ac-ask > .rm-ac-box { flex: 1 1 0; min-width: 0; margin-top: 0; }
+  .rm-ac-ask-g { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; padding-top: 2px; color: var(--ink-2); }
+  .rm-ac-last-gr { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 6px; align-items: center; }
+  .rm-ac-last-gr > p { grid-column: 2; }
+  .rm-ac-last-gr > .rm-ac-last-g { grid-column: 1; grid-row: 1 / span 2; }
+  .rm-ac-last-g { flex: none; color: var(--ink-1); }
+  /* ===== /R2 ===== */
+
+  /* ===== R3 Living page: AimHeader, MeasureRow, PastWeekQuests, PaysLine, TowardAim, RoadmapView ===== */
+  /* Panels (an InfoTip's, a chip's): one full sentence a line. */
+  .rm-tip-l { display: block; }
+  .rm-tip-l + .rm-tip-l { margin-top: 6px; }
+  .rm-chev { flex: none; color: var(--ink-2); transition: transform var(--t-quick) var(--ease-out); }
+  details[open] > summary .rm-chev { transform: rotate(90deg); }
+
+  /* The Aim header: one chip row (the date, whose it is, the honesty chips), the closed hero, SINCE_LINE. */
+  .rm-aim-chips { margin-top: 12px; }
+  .rm-date, .rm-area, .rm-exam { gap: 5px; }
+  .rm-date-was { font-weight: 500; color: var(--ink-2); }
+  .rm-since { margin: 12px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-hero { display: flex; align-items: center; gap: 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-1); }
+  .rm-hero-l { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-hero-seal { display: inline-grid; place-items: center; flex: none; }
+
+  /* Now: the static elapsed bar (H6), the headline's evidence, the pay floor tick, the pace in ink. */
+  .rm-el { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .rm-el-bar { position: relative; display: block; width: 56px; height: 4px; border-radius: 2px; overflow: hidden; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-2); }
+  .rm-el-bar > i { position: absolute; inset: 0; background: var(--ink-2); transform-origin: left center; transform: scaleX(var(--rm-el, 0)); }
+  .rm-now-chips { align-items: center; }
+  .rm-rkg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-rkg b { color: var(--ink-0); font-weight: 600; }
+  .rm-head-ev { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 13px; line-height: 18px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .rm-sep { color: var(--ink-mute); }
+  .rm-floor { position: relative; display: block; }
+  .rm-floor-t { position: absolute; top: 7px; height: 14px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink-1); pointer-events: none; }
+  .rm-head-pay { margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-pays { overflow-wrap: anywhere; }
+  .rm-pays-floor { font-weight: 600; color: var(--ink-0); }
+  .rm-pace { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-step { align-items: start; }
+
+  /* A measure: glyph, Domains · level, %, meter; the facts line is its ▸ (a 40 px summary). */
+  .rm-mr-k { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .rm-mr-g { display: inline-flex; align-items: center; gap: 2px; flex: none; color: var(--ink-1); }
+  .rm-mr-l { min-width: 0; overflow-wrap: anywhere; }
+  .rm-mr-lv { font-weight: 500; color: var(--ink-2); white-space: nowrap; }
+  .rm-mr-f { margin: 6px 0 0; }
+  .rm-mr-gain { font-variant-numeric: tabular-nums; }
+  .rm-mr-d { margin: 0; }
+  .rm-mr-s { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; margin: -4px 0 -8px; list-style: none; cursor: pointer; }
+  .rm-mr-s::-webkit-details-marker { display: none; }
+  .rm-mr-more { display: flex; flex-direction: column; gap: 2px; padding: 6px 0 2px; }
+  .rm-mr-more .t-meta { margin: 0; }
+
+  /* Past week quests: the ▸ over a static five-week strip (a cell filled to its share done; dashed while it settles: not counted yet, D29). */
+  .rm-past-d { margin-top: 12px; }
+  .rm-past-s { display: flex; align-items: center; gap: 10px; min-height: 44px; list-style: none; cursor: pointer; }
+  .rm-past-s::-webkit-details-marker { display: none; }
+  .rm-past-s .t-eyebrow { color: var(--ink-1); }
+  .rm-pw { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 14px; gap: 4px; height: 16px; margin-left: auto; }
+  .rm-pw-c { position: relative; display: block; height: 16px; border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line-ctl); }
+  .rm-pw-c::after { content: ""; position: absolute; inset: 0; background: var(--ink-0); transform-origin: center bottom; transform: scaleY(var(--rm-pw, 0)); }
+  .rm-pw-c:not([data-settled]) { box-shadow: none; outline: 1px dashed var(--ink-mute); outline-offset: -1px; }
+  .rm-past-more { padding-bottom: 4px; }
+  .rm-past-more .rm-cap { display: block; margin: 0 0 6px; }
+
+  /* Toward the aim. */
+  .rm-tw { padding: 0 14px; }
+  .rm-tw-row + .rm-tw-row { border-top: 1px solid var(--line-1); }
+  .rm-tw-ms, .rm-tw-f { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 44px; padding: 8px 0; }
+  .rm-tw-ms .rm-strip { flex: 1 1 120px; margin: 0; }
+  .rm-tw-k { display: inline-grid; place-items: center; width: 16px; flex: none; color: var(--ink-1); }
+  .rm-tw-v { flex: 1 1 140px; min-width: 0; font-size: 14px; line-height: 19px; color: var(--ink-1); overflow-wrap: anywhere; }
+  .rm-tw-foot { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; padding: 12px 0; border-top: 1px solid var(--line-1); }
+
+  /* QUESTS_BEHIND: the chip, then the levers. */
+  .rm-behind .rm-lever { margin-top: 12px; }
+
+  /* The milestones as a rail; the top rank's (i) under it. */
+  .rm-ml-card { padding: 6px 14px; }
+  .rm-rail { margin: 0; }
+  .rm-rr-gives { display: flex; align-items: center; gap: 6px; }
+  .rm-ml-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line-1); color: var(--ink-mute); }
+
+  /* The empty roadmap (unlit band, unlit seal) and the closed footer. */
+  .rm-none > .rm-band { margin-top: -20px; }
+  .rm-none-g { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 4px; color: var(--ink-mute); }
+  .rm-none-hr { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; column-gap: 4px; margin-top: 8px; }
+  .rm-none-hr .rm-none-h { margin-top: 0; }
+  .rm-closed-r { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  /* ===== /R3 ===== */
+
+  /* ===== R4 Rows: MilestoneCard, ItemRow, PracticeRow, TopicRow, DomainRow, ProvenanceChip, FlagChips, AddItemSheet ===== */
+  /* D29 (U2 = a): "not checked" is the balloon glyph on the chip, never a dashed rim; dashed means calibrating or not yet counted. */
+  .rm-pv-draft, .rm-pv-kept, .rm-pv-pick { border-style: solid; }
+  .rm-it-draft, .rm-it-kept { border-style: solid; }
+  /* A row (ItemRow): [KindGlyph] label, its ▸ a 40 px chevron at the row's top right; compact figures on one wrapping line. */
+  .rm-it, .rm-oi { position: relative; }
+  .rm-r4-h { display: flex; align-items: flex-start; gap: 10px; }
+  .rm-r4-h.rm-r4-hm { padding-right: 36px; }
+  .rm-r4-h > .rm-it-l { flex: 1 1 auto; min-width: 0; }
+  .rm-r4-lead { flex: none; }
+  .rm-r4-h > .rm-r4-lead { order: -1; }
+  .rm-r4-pm { flex: none; margin-top: 2px; }
+  .rm-ms-t > .rm-r4-pm, .rm-ms-t > .rm-pv { margin-left: 6px; vertical-align: 2px; }
+  .rm-r4-sig { display: inline-grid; place-items: center; width: 20px; height: 20px; color: var(--ink-1); }
+  .rm-r4-sb { display: inline-grid; place-items: center; min-width: 28px; height: 20px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--line-ctl); font: 600 12px/16px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .rm-r4-rmv { flex: none; font: 600 12px/20px var(--font-ui); color: var(--ink-2); }
+  .rm-r4-m, .rm-r4-dl { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 4px; }
+  /* The title's own row under the card header: its flags, reasons and Keep / Edit, unboxed (the header is its label). */
+  .rm-it.rm-r4-tit { border: 0; padding: 0; background: none; }
+  .rm-r4-tit .rm-it-chips { margin-top: 0; }
+  .rm-r4-tit .rm-acts { margin-top: 6px; }
+  .rm-r4-more > summary { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--ink-2); cursor: pointer; list-style: none; }
+  .rm-oi > .rm-r4-more > summary { top: 0; right: -4px; }
+  .rm-r4-more > summary::-webkit-details-marker { display: none; }
+  .rm-r4-more > summary svg { width: 16px; height: 16px; transition: transform var(--t-quick) var(--ease-out); }
+  .rm-r4-more[open] > summary { color: var(--ink-0); background: var(--raised); }
+  .rm-r4-more[open] > summary svg { transform: rotate(90deg); }
+  .rm-r4-mb { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line-2); font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-r4-mb p { margin: 0; }
+  .rm-r4-mb p + p { margin-top: 4px; }
+  /* Figures and their small marks: a Domain's "42 · 18 at L6+", its "L5" badge, a syllabus ref, "yours", a practice's "10/16 kept" ring. */
+  .rm-r4-df { display: inline-flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+  .rm-r4-df > [data-wc="name"] { color: var(--ink-1); font-weight: 600; }
+  .rm-r4-lv, .rm-r4-sref { display: inline-grid; place-items: center; min-height: 20px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--line-2); font: 600 12px/16px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .rm-r4-yours { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; color: var(--ink-1); }
+  .rm-r4-kept { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-1); font-weight: 600; }
+  /* The next card: its Key's 40 px (i) at the card's top right, its panel under the header. */
+  .rm-r4-card { position: relative; }
+  .rm-r4-card > .rm-ms-h { padding-right: 52px; }
+  .rm-r4-key { padding: 0 14px; }
+  .rm-r4-key > button { position: absolute; top: 10px; right: 8px; margin: 0; }
+  .rm-r4-stg { flex: none; margin-right: 6px; vertical-align: -3px; }
+  .rm-ms-why > svg:first-child, .rm-r4-dates > svg { flex: none; margin-right: 4px; vertical-align: -2px; }
+  .rm-r4-dates { display: flex; flex-wrap: wrap; align-items: center; column-gap: 2px; row-gap: 2px; }
+  .rm-r4-rk { display: flex; flex-wrap: wrap; align-items: center; column-gap: 5px; row-gap: 2px; }
+  .rm-r4-pg { display: inline-flex; flex-wrap: wrap; align-items: center; column-gap: 5px; flex-basis: 100%; }
+  /* An outline node's checks: the time verdict, then its measures with their verdicts. */
+  .rm-r4-ck > * + * { margin-top: 12px; }
+  .rm-r4-tv { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  /* Section heads: "[glyph] Learn"; a chip («context only», «Gemini's guess») beside. */
+  .rm-ms-sh.rm-r4-sh { justify-content: flex-start; align-items: center; flex-wrap: wrap; column-gap: 10px; row-gap: 8px; }
+  .rm-r4-se { display: inline-flex; align-items: center; gap: 6px; }
+  .rm-r4-grp { margin-top: 10px; }
+  /* A measure: "[ev.tested] Probability 18 → 34 · L6+ [Fits]", its ▸ at the right. */
+  .rm-r4-mr { position: relative; }
+  .rm-r4-mh { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 8px; padding-right: 36px; min-height: 28px; }
+  .rm-r4-mv { display: inline-flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; font: 600 14px/19px var(--font-ui); color: var(--ink-0); font-variant-numeric: tabular-nums; }
+  .rm-r4-mv > [data-wc="name"] { font-weight: 500; color: var(--ink-1); overflow-wrap: anywhere; }
+  /* An outline node (a collapsed rail node): [n] [cairn] title, its chips and glyph counts; the milestone behind its ▸. */
+  .rm-r4-ns { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 10px 12px 10px 14px; cursor: pointer; list-style: none; }
+  .rm-r4-ns::-webkit-details-marker { display: none; }
+  .rm-r4-ns > svg:last-child { flex: none; width: 16px; height: 16px; margin-top: 6px; color: var(--ink-2); transition: transform var(--t-quick) var(--ease-out); }
+  .rm-r4-nd[open] > .rm-r4-ns > svg:last-child { transform: rotate(90deg); }
+  .rm-r4-nn { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--ink-mute); font: 600 13px/16px var(--font-display); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  /* A stage held when you began is drawn reached (a solid disc), never a held day's glyph (contracts §21.7, 1). */
+  .rm-r4-nn.rm-ms-n-held { border: 1px solid var(--ink-0); background: var(--ink-0); color: var(--page); }
+  .rm-r4-ns > .rm-r4-stg { margin: 5px 0 0; }
+  .rm-r4-nt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .rm-r4-ntt { font: 600 15px/20px var(--font-display); overflow-wrap: anywhere; color: var(--ink-0); }
+  .rm-r4-ntt s { color: var(--ink-2); text-decoration-thickness: 2px; }
+  .rm-r4-nch { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 8px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .rm-r4-nch > .rm-r4-why { flex: 0 0 100%; margin: 0; }
+  .rm-r4-ncs { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+  .rm-r4-nci { display: inline-flex; align-items: center; gap: 3px; font: 600 12px/16px var(--font-ui); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  .rm-r4-nb { border-top: 1px solid var(--line-1); }
+  .rm-r4-nb > .rm-it-why, .rm-r4-tw { margin: 10px 14px 0; }
+  .rm-r4-nh { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px 12px; }
+  .rm-r4-hc { margin: 0; }
+  .rm-r4-node > .rm-r4-nd > .rm-r4-ns { border-radius: var(--r-card); }
+  .rm-r4-nc { display: inline-flex; align-items: center; }
+  .rm-r4-add { padding-top: 12px; }
+  /* "+ Add" (44 px) with the kinds behind it; "Add the app's practice" stays its own one tap beside it. */
+  .rm-r4-addr { display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: 8px; row-gap: 16px; }
+  .rm-r4-addd[open] { flex-basis: 100%; }
+  .rm-r4-adds { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-ctl); font: 600 14px/20px var(--font-ui); color: var(--ink-0); cursor: pointer; list-style: none; }
+  .rm-r4-adds::-webkit-details-marker { display: none; }
+  .rm-r4-adds svg { width: 16px; height: 16px; }
+  .rm-r4-addd[open] > .rm-r4-adds { background: var(--raised); }
+  .rm-r4-addb { margin-top: 10px; }
+  /* Bulk keep with its (i): the button fills the row, the panel opens under it. */
+  .rm-r4-bk { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .rm-r4-bk > .btn { flex: 1 1 0; min-width: 0; }
+  /* ===== /R4 ===== */
+
+  /* ===== R5 Draft review: DraftReview (DraftRunning, the re-plan card), RunFacts, DateBlock, ChecksPanel, ThroughputPanel ===== */
+  /* Layout hooks only (ui-motion.md §5.7, §7.2, §7.12): no keyframes, ink only. Chip rows are glyph/HonestyChip's
+     <Chips> (column gap 8, row gap 16; D31); the bands are fx's (.shd), set edge to edge by R0's .rm-band. */
+  /* The draft header: the settings chips, who did what (two GlyphLanes and their (i)), the run's chip. */
+  .rm-dh > .t-eyebrow { min-height: 18px; }
+  /* D31: chip buttons overhang their 24 px row by 8 px each side, so rows that hold them sit ≥ 16 px apart. */
+  .rm-dh-chips { margin-top: 16px; }
+  .rm-dh-chips .chip { white-space: normal; max-width: 100%; }
+  .rm-dh-lanes { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; margin-top: 16px; }
+  .rm-dh .rm-lines, .rm-dh-rp .rm-lines { margin-top: 16px; }
+  .rm-lines > .rm-rf, .rm-lines > .rm-dh-line { margin-block: 8px; }
+  .rm-dh-lane-l { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .rm-rf { display: inline-flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; min-width: 0; }
+  /* Drafting: one WAIT card (the weave band, the pause in the heading row, the aria-live line). */
+  .rm-drf .rm-aim-t { margin-top: 2px; }
+  .rm-drf-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; }
+  .rm-drf-run { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
+  .rm-drf-run > svg { width: 32px; height: 32px; flex: none; color: var(--ink-1); }
+  .rm-drf-t { display: block; min-width: 0; font: 600 15px/20px var(--font-ui); color: var(--ink-0); overflow-wrap: anywhere; }
+  .rm-drf-stale { align-items: flex-start; }
+  .rm-drf-stale > svg { width: 22px; height: 22px; margin-top: 2px; }
+  /* Depth and date: the ladder, the Domain and honesty chips, the TimeBar, the realism figures, Paragon's four conditions. */
+  .rm-dd-depth { min-width: 0; }
+  .rm-dd-sl { margin-bottom: 10px; }
+  .rm-dd-row { margin-top: 10px; }
+  .rm-dd-note { margin-top: 10px; }
+  .rm-dd-tb { margin: 2px 0 6px; }
+  .rm-dd-stats { min-width: 0; }
+  .rm-dd-pair { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .rm-dd-tl { display: block; }
+  .rm-dd-tl + .rm-dd-tl { margin-top: 6px; }
+  .rm-dd-foot { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+  .rm-dd-para { flex: 1 1 200px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .rm-dd-para-t { font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-dd-pips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .rm-dd-pips li { display: inline-flex; align-items: center; gap: 5px; }
+  .rm-dd-pip { width: 8px; height: 8px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--ink-mute); }
+  /* The checks: Targets' verdicts, the CapacityGauge, the chips and the capacity (i), the aim check. */
+  .rm-ck2 { display: flex; flex-direction: column; gap: 16px; }
+  .rm-ck2-as { margin: 0; }
+  .rm-ck2-k { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .rm-ck2-k > svg { width: 16px; height: 16px; flex: none; }
+  .rm-ck2-g { min-width: 0; }
+  .rm-ck2-row { min-width: 0; }
+  .rm-ck2-l { margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  /* Your capacity: the honesty chips beside each figure. */
+  .rm-tp2 .rm-tp-v { font-variant-numeric: tabular-nums lining-nums; }
+  .rm-tp2-s { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; row-gap: 16px; }
+  .rm-tp2-s svg { flex: none; }
+  /* ===== /R5 ===== */
+
+  /* ===== R6 Start sheet: StartSheet ===== */
+  /* The sheet's body (data-wc-block="start-sheet", data-fx="none"; ui-motion.md §7.7): one column at 344
+     (about 304 px inside the sheet), text at 12 px or more, every control its own 40 or 44 px box.
+     Nothing moves here: unlock and pay-swap run through glyph-motion (ACT), and nothing loops. */
+  .rm-ss { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .rm-ss-dates { display: inline-flex; align-items: center; gap: 6px; }
+  .rm-ss-dates > svg { flex: none; color: var(--ink-2); }
+  /* The target row: its label, the two choices, then the Key pushed right (its panel wraps full width). */
+  .rm-ss-top { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  .rm-ss-lbl { font: 600 14px/20px var(--font-ui); color: var(--ink-0); }
+  .rm-ss-ok { font-size: 14px; line-height: 20px; color: var(--ink-1); }
+  .rm-ss-sp { flex: 1 1 0; min-width: 0; }
+  .rm-ss-over { display: inline-flex; align-items: center; gap: 4px; }
+  .rm-ss-tl { display: block; }
+  .rm-ss-tl + .rm-ss-tl { margin-top: 6px; }
+  /* Time: the CapacityGauge on a sunken panel (its sentence is the gauge's sr text and in the Key). */
+  .rm-ss-cap { min-width: 0; padding: 12px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line-2); }
+  .rm-ss-capx { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .rm-ss-capx > .t-meta { margin: 0; }
+  /* A group: its head, then its rows (.rm-it + .rm-it keeps its 8 px). */
+  .rm-ss-list { min-width: 0; }
+  .rm-ss-eb { display: block; margin: 0 0 6px; }
+  .rm-ss-sec { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; margin: 0 0 6px; }
+  .rm-ss-sec > .rm-ss-eb { margin: 0; }
+  /* A Today-bound row: kind glyph | label | glyph-only provenance; a Gemini chip takes its own line under the label. */
+  .rm-ss-tr { min-width: 0; }
+  .rm-ss-tr > .rm-acts { margin-top: 8px; }
+  .rm-ss-tr-h { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 10px; row-gap: 6px; align-items: start; }
+  .rm-ss-tr-h > .chip { grid-column: 2 / -1; justify-self: start; max-width: 100%; }
+  .rm-ss-tr-h > span:not(.chip):last-child { margin-top: 2px; }
+  .rm-ss-g { display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; color: var(--ink-1); }
+  .rm-ss-lock { flex: none; color: var(--ink-1); }
+  .rm-ss-held { display: flex; align-items: center; gap: 6px; }
+  .rm-ss-held > svg { flex: none; }
+  /* Pay: the stated line and its chips, then the floor tick (where the pay starts; a scale, nothing measured on it). */
+  .rm-ss-pay { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; font-size: 14px; line-height: 20px; color: var(--ink-0); }
+  .rm-ss-payv { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+  .rm-ss-floor { position: relative; display: block; flex: 0 0 100%; max-width: 200px; height: 9px; }
+  .rm-ss-floor::before { content: ""; position: absolute; left: 0; right: 0; top: 4px; height: 1px; background: var(--ink-mute); }
+  .rm-ss-floor > i { position: absolute; top: 0; left: calc(var(--f, .7) * 100%); width: 2px; height: 9px; margin-left: -1px; border-radius: 1px; background: var(--ink-0); }
+  /* The rank it gives (the next rank's open shape beside its verb), and the week's quests as glyph counts. */
+  .rm-ss-rank { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); }
+  .rm-ss-rank b { color: var(--ink-0); font-weight: 600; }
+  .rm-ss-wq { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 16px; margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-1); }
+  .rm-ss-wqn { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-0); }
+  /* The jump to the page's own activity card (it isn't duplicated in the sheet): a 44 px link. */
+  .rm-ss-act { display: flex; flex-direction: column; gap: 6px; }
+  .rm-ss-act > .t-meta { margin: 0; }
+  .rm-ss-jump { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; font: 600 14px/20px var(--font-ui); color: var(--ink-0); text-decoration: underline; text-underline-offset: 3px; }
+  .rm-ss-jump > svg { flex: none; }
+  /* The gate: "2 rows left" and its (i), full width under the button. */
+  .rm-ss-gate { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; margin-top: 4px; }
+  .rm-ss-gate > .t-meta { margin: 0; }
+  /* ===== /R6 ===== */
+
+  /* ===== R7 Intake & safety: RoadmapForm, ActivityConfirm ===== */
+  /* The Activities card (ui-motion.md §7.8): a safety surface, static at every level (D11). Its box
+     (.rm-avd-c) carries data-safety and data-fx="none". A row is [checkbox] [session glyph] name, then
+     the word "avoid" while ticked (its glyph struck) and the quote mark on a row the user's words
+     pre-ticked; the row's own line is its checkbox's description, in the card Key. Ink only. */
+  .rm-avd-c { min-width: 0; container-type: inline-size; }
+  .rm-avd-r { display: flex; align-items: center; flex-wrap: wrap; column-gap: 8px; padding: 0; }
+  .rm-avd-lb { flex: 1 1 auto; min-width: 0; }
+  .rm-avd-hit > .rm-avd-n { order: 2; }
+  .rm-avd-g { order: 1; display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; color: var(--ink-1); }
+  .rm-avd-r[data-avoid] .rm-avd-g { color: var(--ink-2); }
+  .rm-avd-av { flex: none; font: 600 12px/18px var(--font-ui); padding: 0 6px; border-radius: 6px; border: 1px solid var(--line-ctl); color: var(--ink-0); }
+  .rm-avd-qm { display: inline-grid; place-items: center; flex: none; color: var(--ink-2); }
+  .rm-avd-pl { display: flex; align-items: flex-start; gap: 8px; }
+  .rm-avd-pl > svg { flex: none; margin-top: 1px; color: var(--ink-1); }
+  .rm-avd-chips { margin-top: 12px; }
+  /* The (i) for how to answer and the card Key, at the card's foot; their panels open full width under them. */
+  .rm-avd-tips { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; column-gap: 4px; margin-top: 8px; }
+  /* The answered summary: each name beside its session glyph (struck: avoided; a check: the plan can include it). */
+  .rm-avd-nm { overflow-wrap: anywhere; }
+  .rm-avd-gl { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 4px; vertical-align: -3px; color: var(--ink-1); }
+  .rm-avd-ok { position: absolute; right: -6px; top: -5px; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; background: var(--card); box-shadow: 0 0 0 2px var(--card); color: var(--ink-0); }
+  .rm-avd-in .rm-avd-ok { background: var(--sunken); box-shadow: 0 0 0 2px var(--sunken); }
+  /* Only the kit checkbox changes state here: a chip's press scale stays still (D11). */
+  .rm-avd-c .chip { transition: none; }
+  .rm-avd-c button:active > .chip { transform: none; }
+  /* From 600 px of card the rows may sit in two columns (§7.8). */
+  @container (min-width: 600px) { .rm-avd-c .rm-avd-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; } }
+
+  /* The intake (ui-motion.md §7.1): a label row with its count and (i); each (i) and card Key opens full
+     width under its row. The chips' and the stats' text is 12 px HTML; no field carries a shader. */
+  .rm-in-hd { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; margin-bottom: 6px; }
+  .rm-in-hd > .st-label { flex: 1 1 auto; margin: 0; }
+  .rm-in-cnt { display: inline-flex; align-items: center; gap: 4px; font: 500 12px/18px var(--font-mono); color: var(--ink-2); }
+  .rm-in-chips { margin-top: 10px; }
+  .rm-in-when-l, .rm-in-when-v { display: inline-flex; align-items: center; gap: 4px; }
+  .rm-in-date { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .rm-in-vd { gap: 4px; color: var(--ink-0); }
+  .rm-in-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 10px; }
+  .rm-in-cal { margin: 8px 0 0; }
+  .rm-in-hard button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .rm-in-pct { font-weight: 500; font-variant-numeric: tabular-nums; }
+  .rm-in-sg { display: inline-grid; place-items: center; flex: none; color: var(--ink-1); }
+  .rm-in-key { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: -4px; }
+  .rm-in-kl { display: block; }
+  .rm-in-kl + .rm-in-kl { margin-top: 6px; }
+  /* Who does what on each path (the lanes) sits above the sticky buttons; the path's chip rides with them. */
+  .rm-in-lanes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 14px 4px 0; }
+  .rm-sticky > .rm-in-path { flex-basis: 100%; }
+  /* ===== /R7 ===== */
 }

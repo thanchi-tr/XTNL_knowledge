@@ -1,0 +1,70 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   SHADER SLOTS (lane M0b; ui-motion.md §6). Imported by ShaderSlot.tsx.
+   - shd-* names only (none is a Tailwind utility; none contains "spin" or
+     "shimmer"). No @keyframes: an SVG layer never moves on its own.
+   - Ink only: --ink-0 / --ink-2 / --ink-mute / --card. No gold, --mp, --xp,
+     --owed or --light.
+   - The measured marks (.shd-marks) sit above the soft layer (.shd-fb); the
+     canvas replaces .shd-fb only while the slot is live (data-live), and is
+     hidden until then, so the swap never pops. No text sits on a band.
+   - Bands have fixed heights: the canvas causes no layout shift.
+   - --shd-cap is the dawn's alpha cap, the same number the runtime takes
+     from the card's luminance (Night .20, Vellum .14).
+   ===================================================================== */
+@layer art {
+  .shd { position: relative; overflow: hidden; contain: content; height: var(--shd-h, 56px); color: var(--ink-0); --shd-cap: .2; }
+  :root[data-theme="vellum"] .shd { --shd-cap: .14; }
+  :root[data-theme="vellum"] .theme-night .shd { --shd-cap: .2; }
+  .shd > .shd-fb, .shd > canvas, .shd > .shd-marks { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .shd canvas { pointer-events: none; }
+  .shd > .shd-marks { z-index: 1; }
+  .shd[data-live] > .shd-fb { visibility: hidden; }
+  .shd:not([data-live]) > canvas { visibility: hidden; }
+
+  /* Sizes at 344, then from a 600 px container. */
+  .shd-band-card { --shd-h: 56px; }
+  .shd-band-page { --shd-h: 64px; }
+  .shd-weave { --shd-h: 48px; color: var(--ink-2); }
+  @container (min-width: 600px) {
+    .shd-band-card { --shd-h: 64px; }
+    .shd-band-page { --shd-h: 72px; }
+  }
+  .shd-dim { opacity: .6; }
+
+  /* horizon: the dawn (soft) and the measured marks */
+  .shd-dawn { opacity: var(--shd-cap); }
+  .shd-marks { fill: none; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+  .shd-contour { stroke: var(--ink-mute); stroke-width: 1; }
+  .shd-hair { stroke: var(--ink-mute); stroke-opacity: .55; stroke-width: 1; }
+  .shd-path { stroke: var(--ink-mute); stroke-width: 1; }
+  .shd-walk { stroke: var(--ink-0); stroke-width: 1.5; }
+  .shd-walk.shd-dots { stroke-width: 2.6; }
+  .shd-front-ring { stroke: var(--card); stroke-width: 9; }
+  .shd-front { stroke: var(--ink-0); stroke-width: 6; }
+
+  /* weave: the strands at TIME 0 */
+  .shd-weave .shd-fb { opacity: .7; }
+  .shd-strand { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+
+  /* Backstops: the gate already says css under both queries, so no canvas exists.
+     The hairline, the path and the dot stay, so a band is never empty. */
+  @media (prefers-contrast: more) {
+    .shd canvas, .shd > .shd-fb, .shd-marks .shd-contour { display: none; }
+    .shd-hair, .shd-path { stroke: var(--ink-1); stroke-opacity: 1; }
+  }
+  /* /dev/style/fx?contrast=more only (the attribute is set there and nowhere else). */
+  [data-fx-sim~="contrast"] .shd canvas, [data-fx-sim~="contrast"] .shd > .shd-fb, [data-fx-sim~="contrast"] .shd-marks .shd-contour { display: none; }
+  [data-fx-sim~="contrast"] .shd-hair, [data-fx-sim~="contrast"] .shd-path { stroke: var(--ink-1); stroke-opacity: 1; }
+  @media (forced-colors: active) {
+    .shd canvas, .shd > .shd-fb, .shd-marks .shd-contour { display: none; }
+    .shd-marks { forced-color-adjust: auto; }
+    .shd-walk, .shd-path, .shd-hair, .shd-front { stroke: CanvasText; stroke-opacity: 1; }
+    .shd-front-ring { stroke: Canvas; }
+  }
+}
+
+@layer components {
+  /* WeavePause is GlyphButton size 40 (glyph.css: a real 40 × 40 box, the pressed look); this pins the minimum. */
+  .shd-pause { min-width: 40px; min-height: 40px; }
+}

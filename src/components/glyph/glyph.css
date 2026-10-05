@@ -1,0 +1,221 @@
+@layer theme, base, components, art, effects, utilities;
+/* =====================================================================
+   GLYPHS (ui-motion.md §4, §5.7; lane M0a). Imported by Glyph.tsx.
+   - mg-* names only: no class here is also a Tailwind utility.
+   - Ink only: no gold, --mp, --xp, --owed or --light (D22). A state is a
+     shape (a here-ring, a started pip, a fill, a check badge), never colour alone.
+   - Text is HTML at 12 px or more; no composite carries SVG text.
+   - Targets are real boxes: 40 px (chips, InfoTips, Dates) or 44 px (GlyphButton,
+     rail rows), measured on the element itself (D31).
+   - Motion: transitions on transform and opacity only; the one CSS loop is
+     mg-breathe in @layer effects (opacity, ≤ 74 half-periods, --ambient-play).
+   ===================================================================== */
+@layer components {
+  /* ---------- the glyph ---------- */
+  /* the size is the svg's own width / height attributes (Glyph `size`, default 20); composites size it in context */
+  .mg { display: inline-block; vertical-align: middle; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+  .mg.mg-is-idle { stroke-width: 1.5; color: var(--ink-2); }
+  .mg.mg-is-active, .mg.mg-is-done { color: var(--ink-0); }
+  .mg.mg-inh { color: inherit; }
+  .mg.mg-z12, .mg.mg-z12.mg-is-idle { stroke-width: 2; }
+  .mg .mg-c0 { color: var(--ink-0); }
+  .mg .mg-c2 { color: var(--ink-2); }
+  .mg .mg-cm { color: var(--ink-mute); }
+  .mg .mg-k { stroke: var(--card); }
+  .mg .mg-core { fill: var(--card); }
+  .mg [data-part] { transform-box: fill-box; transform-origin: center; }
+  .mg [data-part="ping"] { opacity: 0; }
+  .mg .mg-shackle { transform-box: view-box; transform-origin: 8px 11px; }
+  .mg.mg-open .mg-shackle { transform: translateY(-2.5px) rotate(-12deg); }
+  .mg.mg-intensity [data-part] { transform-origin: center bottom; }
+  .mg.mg-flame { transform-origin: 50% 100%; }
+  /* armed: the from-state while offscreen, before a SEEN motion plays at 50% in view (D30) */
+  .mg[data-mg-armed], .mg-kg[data-mg-armed], .mg-rs[data-mg-armed], .mg-rr-row[data-mg-armed] .mg-rr-node { opacity: 0; }
+  /* a glyph with a 12 px badge */
+  .mg-bx { position: relative; display: inline-grid; place-items: center; flex: none; vertical-align: middle; }
+  .mg-bdg { position: absolute; right: -7px; bottom: -6px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 2px var(--card); display: grid; place-items: center; color: var(--ink-1); }
+  .mg-bdg .mg { width: 12px; height: 12px; }
+  .mg-kit { color: inherit; }
+
+  /* ---------- KindGlyph: quest glyph + evidence badge (bottom-right) + done check (top-right) ---------- */
+  .mg-kg { position: relative; display: inline-grid; place-items: center; flex: none; vertical-align: middle; color: var(--ink-0); }
+  .mg-kg > .mg { width: 100%; height: 100%; }
+  .mg-kg-b { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 2px var(--card); display: grid; place-items: center; color: var(--ink-1); }
+  .mg-kg-b .mg { width: 12px; height: 12px; }
+  .mg-kg-ev { right: -7px; bottom: -6px; }
+  .mg-kg-ok { right: -7px; top: -6px; color: var(--ink-0); }
+  .mg-kg-l .mg-kg-ev { right: -5px; bottom: -4px; }
+  .mg-kg-l .mg-kg-ok { right: -5px; top: -4px; }
+
+  /* ---------- ProvMark ---------- */
+  .mg-pm { display: inline-flex; align-items: center; flex: none; color: var(--ink-1); vertical-align: middle; }
+
+  /* ---------- GlyphButton (44, or 40) ---------- */
+  .mg-gb { width: 44px; height: 44px; }
+  .mg-gb.mg-gb-40 { width: 40px; height: 40px; border-radius: 10px; }
+  .mg-gb[aria-pressed="true"] { background: var(--raised); color: var(--ink-0); }
+
+  /* ---------- HonestyChip: the kit .chip look; a button has a real 40 × 40 box (D31) ---------- */
+  .mg-chips { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 16px; }
+  .mg-hc { gap: 5px; }
+  .mg-hc .mg { width: 12px; height: 12px; }
+  .mg-hc-l { min-width: 0; }
+  .mg-hcb { display: inline-flex; align-items: center; min-height: 40px; min-width: 40px; margin: -8px 0; padding: 0; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; cursor: pointer; vertical-align: middle; text-align: left; }
+  .mg-hcb > .mg-hc { border-color: var(--line-ctl); color: var(--ink-0); transition: transform var(--t-press) var(--ease-out); }
+  .mg-hcb[aria-expanded="true"] > .mg-hc { background: var(--raised); }
+  .mg-hcb:active > .mg-hc { transform: scale(.98); }
+  .mg-hc.mg-wrap { white-space: normal; padding-top: 3px; padding-bottom: 3px; line-height: 16px; }
+  /* a verdict chip: glyph(s) + the verdict word */
+  .mg-vc { gap: 5px; color: var(--ink-0); }
+  .mg-vc .mg { width: 12px; height: 12px; }
+
+  /* ---------- InfoTip and the panels it and the chips open (inline, right after their button) ---------- */
+  .mg-tip { width: 40px; height: 40px; min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; margin: -8px 0; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--ink-2); flex: none; cursor: pointer; vertical-align: middle; }
+  .mg-tip .mg { width: 20px; height: 20px; }
+  .mg-tip[aria-expanded="true"] { color: var(--ink-0); background: var(--raised); }
+  .mg-tp { display: block; flex: 0 0 100%; width: 100%; box-sizing: border-box; margin: 6px 0 2px; padding: 10px 12px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--line-2); font: 400 13px/18px var(--font-ui); color: var(--ink-1); white-space: normal; text-align: left; letter-spacing: 0; text-transform: none; }
+  .mg-tp[hidden] { display: none; }
+  .mg-tp b { color: var(--ink-0); font-weight: 600; }
+  .mg-key { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .mg-key-i { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; }
+  .mg-key-g { display: grid; place-items: center; min-height: 18px; color: var(--ink-0); }
+  .mg-key-g .mg { width: 16px; height: 16px; }
+  .mg-key-r { display: block; }
+  .mg-key-rows { margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-1); display: flex; flex-direction: column; gap: 4px; list-style: none; }
+
+  /* ---------- GlyphStat, StatRow ---------- */
+  .mg-stat { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+  .mg-stat .mg { width: 14px; height: 14px; }
+  .mg-stat-f { font-weight: 600; color: var(--ink-0); }
+  .mg-stat-u { color: var(--ink-2); }
+  .mg-fig { font-variant-numeric: tabular-nums lining-nums; }
+  .mg-statrow { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 8px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .mg-sep { color: var(--ink-2); }
+
+  /* ---------- GlyphLane ---------- */
+  .mg-lane { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .mg-lane .mg { width: 16px; height: 16px; color: var(--ink-1); }
+  .mg-lane-w { font-weight: 600; color: var(--ink-0); }
+  .mg-lane-i { min-width: 0; }
+
+  /* ---------- RankSeal ---------- */
+  .mg-rs { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; flex: none; color: var(--ink-0); vertical-align: middle; }
+  .mg-rs .mg { width: var(--rs, 40px); height: var(--rs, 40px); }
+  .mg-rs-34 .mg, .mg-rs-40 .mg { stroke-width: 1.5; }
+  .mg-rs-48 .mg, .mg-rs-72 .mg { stroke-width: 1.25; }
+  .mg-rs-pips { display: flex; gap: 3px; }
+  .mg-rs-pip { width: 5px; height: 5px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--ink-mute); }
+  .mg-rs-pip[data-on] { background: var(--ink-0); box-shadow: none; }
+  .mg-rs-pip[data-next] { box-shadow: inset 0 0 0 1.25px var(--ink-0); }
+  .mg-rs-pip[data-beyond] { opacity: .6; }
+
+  /* ---------- StageLadder: a 12-column HTML grid; numerals never scale ---------- */
+  .mg-sl { width: 100%; min-width: 0; }
+  .mg-sl-g { display: grid; grid-template-columns: repeat(var(--sl-n, 12), minmax(0, 1fr)); height: 56px; }
+  .mg-sl-c { position: relative; display: grid; grid-template-rows: 14px 1fr 16px; align-items: center; justify-items: center; min-width: 0; }
+  .mg-sl-gl { display: grid; place-items: center; height: 12px; color: var(--ink-mute); }
+  .mg-sl-gl .mg { width: 12px; height: 12px; }
+  .mg-sl-r { width: calc(100% - 3px); height: 16px; border-radius: 3px; background: color-mix(in srgb, var(--ink-mute) 35%, transparent); }
+  .mg-sl-r[data-on] { background: var(--ink-0); }
+  .mg-sl-c[data-on] .mg-sl-gl { color: var(--ink-0); }
+  .mg-sl-n { font: 600 12px/16px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .mg-sl-c[data-on] .mg-sl-n { color: var(--ink-0); }
+  .mg-sl-ex { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; color: var(--page); display: grid; place-items: center; }
+  .mg-sl-c:not([data-on]) .mg-sl-ex { color: var(--ink-0); }
+  .mg-sl-ex .mg { width: 12px; height: 12px; }
+  .mg-sl-gap { display: block; width: 100%; height: 8px; overflow: visible; margin-top: 2px; }
+  .mg-sl-gap line { stroke: var(--ink-1); stroke-width: 2; stroke-linecap: round; }
+
+  /* ---------- TimeBar: the line and markers in %, labels as 12 px HTML ---------- */
+  .mg-tb { position: relative; width: 100%; min-width: 0; }
+  .mg-tb-bar { position: relative; width: 100%; }
+  .mg-tb-line { position: absolute; left: 0; top: 6px; width: 100%; height: 16px; overflow: visible; }
+  .mg-tb-line line { stroke-linecap: round; }
+  .mg-tb-line .mg-tb-run { stroke: var(--ink-0); stroke-width: 2; }
+  .mg-tb-line .mg-tb-axis { stroke: var(--ink-mute); stroke-width: 1; }
+  .mg-tb-m { position: absolute; top: 6px; width: 16px; height: 16px; margin-left: -8px; display: grid; place-items: center; color: var(--ink-0); }
+  .mg-tb-m .mg { width: 16px; height: 16px; }
+  .mg-tb-dia { width: 9px; height: 9px; background: var(--ink-0); transform: rotate(45deg); border-radius: 1px; box-shadow: 0 0 0 2px var(--card); }
+  .mg-tb-today { width: 2px; height: 12px; border-radius: 1px; background: var(--ink-2); }
+  .mg-tb-l { position: absolute; font: 600 12px/16px var(--font-ui); color: var(--ink-1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mg-tb-l[data-k="realistic"] { color: var(--ink-0); }
+  .mg-tb-foot { display: flex; align-items: center; gap: 8px; }
+  .mg-tb-dates { min-height: 40px; min-width: 40px; padding: 0 10px; border: 0; border-radius: 10px; background: none; color: var(--ink-1); font: 600 13px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .mg-tb-dates[aria-expanded="true"] { color: var(--ink-0); background: var(--raised); text-decoration: none; }
+  .mg-tb-list { margin: 4px 0 0; padding: 0 0 0 16px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  .mg-tb-list li + li { margin-top: 2px; }
+
+  /* ---------- RouteRail: one state per MilestoneRowState; never pulses ---------- */
+  .mg-rr { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .mg-rr-row { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; }
+  .mg-rr-nw { position: relative; grid-column: 1; grid-row: 1; width: 28px; align-self: stretch; }
+  .mg-rr-node { position: absolute; left: 0; top: 8px; width: 28px; height: 28px; overflow: visible; display: block; }
+  .mg-rr-node path, .mg-rr-node circle { fill: none; stroke: var(--ink-0); stroke-width: 1.5; stroke-linecap: round; transform-box: fill-box; transform-origin: center; }
+  .mg-rr-node .mg-rr-disc { fill: var(--ink-0); stroke: none; }
+  .mg-rr-node .mg-rr-in path { stroke: var(--card); stroke-width: 2; }
+  .mg-rr-node .mg-rr-in path[fill] { fill: var(--card); stroke: none; }
+  .mg-rr-node .mg-rr-thin { stroke: var(--ink-mute); stroke-width: 1; }
+  .mg-rr-node .mg-rr-track { stroke: color-mix(in srgb, var(--ink-0) 14%, transparent); stroke-width: 2.5; }
+  .mg-rr-node .mg-rr-arc { stroke-width: 2.5; }
+  .mg-rr-node .mg-rr-here { stroke-width: 1.25; }
+  .mg-rr-node [data-part="ping"] { opacity: 0; }
+  .mg-rr-node .mg-rr-mute { stroke: var(--ink-mute); }
+  .mg-rr-node use { color: var(--ink-0); }
+  .mg-rr-seg { position: absolute; left: 13px; width: 2px; overflow: visible; }
+  .mg-rr-seg line { stroke: var(--ink-mute); stroke-width: 1; }
+  .mg-rr-seg[data-on] line { stroke: var(--ink-0); stroke-width: 2; }
+  .mg-rr-up { top: 0; height: 8px; }
+  .mg-rr-down { top: 36px; bottom: 0; height: calc(100% - 36px); }
+  .mg-rr-badge { position: absolute; left: 20px; top: 27px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 2px var(--card); display: grid; place-items: center; color: var(--ink-1); }
+  .mg-rr-badge .mg { width: 12px; height: 12px; }
+  .mg-rr-d { grid-column: 2; grid-row: 1; min-width: 0; }
+  .mg-rr-d > summary, .mg-rr-flat { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 0; list-style: none; }
+  .mg-rr-d > summary { cursor: pointer; }
+  .mg-rr-flat { grid-column: 2; grid-row: 1; min-width: 0; }
+  .mg-rr-d > summary::-webkit-details-marker { display: none; }
+  .mg-rr-n { font: 600 12px/16px var(--font-mono); color: var(--ink-2); min-width: 12px; flex: none; }
+  .mg-rr-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 6px 0; }
+  .mg-rr-title { font: 500 14px/19px var(--font-ui); overflow-wrap: anywhere; color: var(--ink-0); }
+  .mg-rr-row[data-state="DROPPED"] .mg-rr-title, .mg-rr-row[data-state="CLOSED_UNREACHED"] .mg-rr-title { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--ink-2); }
+  .mg-rr-row[data-state="PLANNED"] .mg-rr-title, .mg-rr-row[data-state="LATER"] .mg-rr-title, .mg-rr-row[data-state="OUTLINE"] .mg-rr-title { color: var(--ink-1); }
+  .mg-rr-meta { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .mg-rr-aside { font: 600 13px/19px var(--font-ui); color: var(--ink-0); flex: none; }
+  .mg-rr-chev { width: 16px; height: 16px; color: var(--ink-2); flex: none; transition: transform var(--t-quick) var(--ease-out); }
+  .mg-rr-d[open] .mg-rr-chev { transform: rotate(90deg); }
+  .mg-rr-more { padding: 0 0 12px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
+  /* the strip: repeat(n, 1fr) of 16 px nodes inside 278 px */
+  .mg-rr.mg-rr-strip { position: relative; display: grid; grid-template-columns: repeat(var(--rr-n, 6), minmax(0, 1fr)); align-items: center; height: 20px; }
+  .mg-rr-strip > li { position: relative; display: grid; place-items: center; z-index: 1; }
+  .mg-rr-strip > .mg-rr-lines { position: absolute; inset: 0; display: block; z-index: 0; }
+  .mg-rr-strip .mg-rr-node { position: static; width: 16px; height: 16px; background: var(--card); border-radius: 50%; }
+  .mg-rr-line { position: absolute; top: 50%; left: calc(50% / var(--rr-n, 6)); right: calc(50% / var(--rr-n, 6)); height: 1px; background: var(--ink-mute); transform: translateY(-50%); }
+  .mg-rr-line.mg-rr-on { right: auto; height: 2px; background: var(--ink-0); }
+
+  /* ---------- PipStrip: seven 12 px HTML day letters with counts ---------- */
+  .mg-pp { display: inline-grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; width: 100%; max-width: 220px; vertical-align: middle; }
+  .mg-pp-d { display: flex; flex-direction: column; align-items: center; gap: 1px; border-radius: 6px; padding: 1px 0; font: 600 12px/14px var(--font-ui); color: var(--ink-1); }
+  .mg-pp-d b { font-weight: 600; }
+  .mg-pp-d i { font: 700 12px/14px var(--font-ui); font-style: normal; color: var(--ink-0); min-height: 14px; font-variant-numeric: tabular-nums; }
+  .mg-pp-d[data-past], .mg-pp-d[data-past] i { color: var(--ink-2); }
+  .mg-pp-d[data-today] { box-shadow: inset 0 0 0 1.5px var(--ink-0); }
+
+  /* ---------- CapacityGauge: two 6 px bars on one scale ---------- */
+  .mg-cg { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .mg-cg-r { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+  .mg-cg-b { position: relative; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink-0) 8%, var(--sunken)); box-shadow: inset 0 0 0 1px var(--line-2); overflow: hidden; }
+  .mg-cg-b > i { position: absolute; inset: 0; border-radius: 3px; background: var(--ink-1); transform-origin: left; transform: scaleX(var(--v, 0)); }
+  .mg-cg-r[data-k="have"] .mg-cg-b > i { background: var(--ink-0); }
+  .mg-cg-f { font: 600 12px/16px var(--font-ui); color: var(--ink-0); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mg-cg-v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+}
+
+@layer effects {
+  /* The one CSS loop (D19, §5.7): the drafting glyph breathes in opacity on its outer svg, no direction,
+     74 half-periods (≈ 89 s, so it stops by itself under 90 s; even, so it ends on opacity 1). It is
+     still while the weave shader is live (data-weave-live) or the card is paused (data-paused). */
+  @keyframes mg-breathe { to { opacity: .45; } }
+  [data-wait]:not([data-weave-live]):not([data-paused]) svg.mg-weave {
+    animation: mg-breathe 1200ms ease-in-out 74 alternate;
+    animation-play-state: var(--ambient-play);
+  }
+}

@@ -2316,10 +2316,115 @@ async function aimPageRenderChecks() {
   }
 }
 
+// ===== R2 Rank & Aim card (ui-motion.md §3.3 screen 9, §7.9, §11.4 /you): its checks, between these markers only =====
+/**
+ * The Aim card states on /dev/style/art/you after the UI-motion lane R2 (the real
+ * AimCard inside the fixtures provider, as aimPageRenderChecks renders them):
+ * ≤ 14 app words per card (the ASK card with a last aim or a seed is noted, §3.3
+ * keeps both lines), the ASK card with no band and a static route, the rank key
+ * with no surface in it (the page's), the seal only on a reached aim, and the
+ * honest lines each state must keep visible.
+ */
+async function r2AimCardChecks() {
+  (Module as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions[".css"] = (m) => {
+    m.exports = {};
+  };
+  let html = "";
+  try {
+    const { default: Page } = await import("../src/app/dev/style/art/you/page");
+    html = renderToStaticMarkup(createElement(Page));
+  } catch (err) {
+    check("R2 aim card (/you fixtures): the page renders", false, err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const wc = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+  const model = await import("../src/components/roadmap/roadmap-ui-model");
+  const copy = await import("../src/components/roadmap/roadmap-copy");
+  const { planBasis } = await import("../src/components/glyph/useSeen");
+  const segs = html.split(/data-aim-card="/).slice(1);
+  const boxOf = (key: string) => {
+    const seg = segs.find((s) => s.startsWith(`${key}"`)) ?? "";
+    const end = seg.indexOf("data-aim-fixture=");
+    return end >= 0 ? seg.slice(0, end) : seg;
+  };
+  /** The card itself: the section marked data-wc-block="aim-card", balanced. */
+  const cardOf = (key: string) => {
+    const b = boxOf(key);
+    const m = /<section\b[^>]*data-wc-block="aim-card"/.exec(b);
+    if (!m) return "";
+    const re = /<(\/?)section\b[^>]*>/g;
+    re.lastIndex = m.index;
+    let depth = 0;
+    for (let t = re.exec(b); t; t = re.exec(b)) {
+      depth += t[1] ? -1 : 1;
+      if (depth === 0) return b.slice(m.index, re.lastIndex);
+    }
+    return b.slice(m.index);
+  };
+  const visible = (h: string) => wc.visibleText(h, { width: 344 }).replace(/\s+/g, " ");
+  const words = (h: string) => wc.countAppWords(h, { width: 344 }).count;
+  const keys = aimCardFixtures("2026-12-22").map((f) => f.key);
+  const withCard = keys.filter((k) => cardOf(k).length > 0);
+
+  // §3.2 row 9: every state ≤ 14 app words; the ASK card with a last aim or a seed is noted (its two lines are §3.3's and pinned).
+  const askLong = (h: string) => /class="card rm-ac-call/.test(h) && /rm-ac-last|rm-ac-seed/.test(h);
+  const over = withCard.filter((k) => !askLong(cardOf(k)) && words(cardOf(k)) > 14);
+  check("R2 aim card (/you fixtures, §3.2 row 9): every card holds ≤ 14 app words, its own section marked data-wc-block", withCard.length > 25 && over.length === 0, over.map((k) => `${k}: ${words(cardOf(k))}`).join(", "));
+  for (const k of withCard.filter((x) => askLong(cardOf(x)))) notes.push(`R2 aim card: ${k} (the ASK card with a last aim or a seed) reads ${words(cardOf(k))} app words; §3.3 keeps both lines and the pinned last-aim markup can't mark the quoted aim own — a lead decision (R2 handoff)`);
+
+  // §11.4: the ASK card has no band and no route-invite motion: an unlit seal and the static [route], nothing armed.
+  const askKeys = ["empty-ask", "empty-ask-seed", "empty-ask-last-aim", "empty-ask-continue", "empty-ask-seed-last-aim", "done-30"];
+  const askBad = askKeys.filter((k) => {
+    const c = cardOf(k);
+    return !c || /class="shd\b|data-wait|data-play|data-mg-armed/.test(c) || !/<span class="mg-rs mg-rs-34" data-rank="0" data-s="idle"/.test(c) || !/data-g="route"/.test(c);
+  });
+  const askSrc = /function AskCard[\s\S]*?\n\}\n/.exec(read("src/components/roadmap/AimCard.tsx"))?.[0] ?? "";
+  check("R2 aim card (§11.4): the ASK card has no band and no route-invite motion — an unlit RankSeal 34 and the static [route], no seen event in AskCard", askSrc.length > 0 && askBad.length === 0 && !/usePlayOnSeen|useSeenEvent|playGlyph/.test(askSrc), askBad.join(", "));
+  check("R2 aim card: the ASK card's why is one tap away (the (i) panel holds the body and the rank line; the box's description points at it)", askKeys.every((k) => cardOf(k).includes(copy.AIM_CALL_BODY)) && /describes=\{ids\.box\}/.test(askSrc));
+
+  // §11.4: the Aim card's rank seen key equals AimHeader's — the plan basis, `what` "rank", no surface in it.
+  const ranked = aimCardFixtures("2026-12-22")
+    .map((f) => buildAimFixture(f).view)
+    .filter((v): v is AimCardView => v != null && v.rank != null && !v.legacy && ["ACTIVE", "ACCEPTED", "PAST_DUE", "DONE"].includes(v.state));
+  const keyBad = ranked.filter((v) => {
+    const k = model.seenKeyOf(model.seenBasesOfAimCard(v), model.SEEN_WHAT.rank);
+    const mv = v as AimCardView & { version?: number | null };
+    if (!k) return v.acceptedDay != null && typeof mv.version === "number";
+    return k.what !== "rank" || k.roadmapId !== v.roadmapId || k.basis !== planBasis(v.acceptedDay!, mv.version!);
+  });
+  check("R2 aim card (§11.4): the rank seen key is the page's — the plan basis (acceptance day and version), what 'rank', no surface", ranked.length > 10 && keyBad.length === 0, keyBad.map((v) => v.roadmapId).join(", "));
+  check("R2 aim card: the card's RankSeal keys on that basis (ProficiencyBlock's seal, the bases the card hands it)", /seen=\{bases\}/.test(read("src/components/roadmap/AimCard.tsx")) && /const sealKey = seenBaseOf\(bases, "plan"\)/.test(read("src/components/roadmap/ProficiencyBlock.tsx")));
+
+  // §11.4: DONE closed unreached shows no [m.seal]; reached shows it.
+  check("R2 aim card (§11.4): DONE closed unreached shows no [m.seal]; reached shows it", !/data-g="m\.seal"/.test(cardOf("done-unreached")) && /data-g="m\.seal"/.test(cardOf("done-reached")) && visible(cardOf("done-unreached")).includes("the aim wasn't reached"));
+
+  // The honest lines each state keeps visible (§8).
+  const fallen = cardOf("fallen");
+  check("R2 aim card: fallen — '↓ 1 since Sun' visible in ink (spoken 'down 1 since Sunday'), the cause in the (i)", /↓ 1 since Sun/.test(visible(fallen)) && fallen.includes("down 1 since Sunday") && /data-tip-panel="info"[^>]*>[\s\S]*card levels slipped/.test(fallen));
+  const switched = cardOf("switched-off");
+  check("R2 aim card: switched off at Start — no fall line (a rebase is no fall), the Changed line in the (i)", !/↓/.test(visible(switched)) && /data-tip-panel="info"[^>]*>[\s\S]*Changed on/.test(switched));
+  const notRec = cardOf("not-recorded");
+  check("R2 aim card: not recorded — «not recorded here» opens NOT_RECORDED_HERE and the banner; no clock beside a live figure", /data-hc="not-recorded"/.test(notRec) && notRec.includes(copy.WRITES_OFF_BANNER.replace(/'/g, "&#x27;")) && !/data-g="ev\.measured"/.test(/class="rm-rp-pf"[\s\S]*?class="rm-pf-l"/.exec(notRec)?.[0] ?? ""));
+  check("R2 aim card: new rank — the held rank's seal (done) and the static 'new' marker beside its name", /data-s="done"/.test(cardOf("new-rank")) && /<span class="rm-new">new /.test(cardOf("new-rank")));
+  const pend = cardOf("pending-reach");
+  check(
+    "R2 aim card: pending reach — 'counts from' once in all the card's text; a strip (when the card carries the rows) draws its node as a dashed ring",
+    (wc.textOfNode(wc.parseMarkup(pend) as never) as string).split("counts from").length - 1 === 1 && (!/mg-rr-strip/.test(pend) || /data-state="PENDING_REACH"[\s\S]*?stroke-dasharray="4 4"/.test(pend))
+  );
+  check("R2 aim card: accepted — «at acceptance» beside the %; accepted later — the measured time, never 'at acceptance'", /data-hc="at-acceptance"/.test(cardOf("accepted")) && !/at acceptance/.test(cardOf("accepted-later")) && /data-g="ev\.measured"/.test(cardOf("accepted-later")));
+  check("R2 aim card: running with no run in the view, and a stale run — the weave is static SVG (no data-wait, no pause button)", ["running", "running-stale"].every((k) => /data-shd="weave" data-shd-kind="static"/.test(cardOf(k)) && !/data-wait|Pause animation/.test(cardOf(k))));
+  check("R2 aim card: no reading — the band's unlit marks (no walked path, no dot), the % column says so", /data-shd="horizon"/.test(cardOf("no-reading")) && !/shd-walk|shd-front/.test(cardOf("no-reading")) && /class="rm-rp-pf rm-rp-none"/.test(cardOf("no-reading")));
+  const legacyBad = ["legacy-active", "legacy-draft", "legacy-done"].filter((k) => !/data-hc="legacy"/.test(cardOf(k)) || /class="shd\b/.test(cardOf(k)));
+  check("R2 aim card: a legacy plan's banner is «older plan» (its banner one tap away), with no band", legacyBad.length === 0, legacyBad.join(", "));
+  check("R2 aim card: no title attribute and nothing red on any card", withCard.every((k) => !/ title="|owed|danger/.test(cardOf(k))));
+}
+// ===== /R2 =====
+
 (async () => {
   await redirects();
   await aimCardGuardChecks();
   await aimPageRenderChecks();
+  await r2AimCardChecks(); // R2 (ui-motion.md §11.4 /you)
   await settingsRenderChecks();
   await carryOverChecks();
   const tw = await tailwindUtilities();

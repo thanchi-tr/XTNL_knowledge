@@ -25,6 +25,8 @@
  *   GEMINI_NOTHING_TO_ASK_LINE · GEMINI_CHOICE_WORDS · choicesWaitingLine · keepChoicesWord · appDefaultsWord ·
  *   CHOICES_PLAN_LEVEL · KEEP_MY_ORDER_WORD · APP_PRACTICE_WORD · PRACTICE_TURN_LINE · geminiChoiceLine · STAGE_WHY_WORD · StageEnd ·
  *   STAGE_END_WORD · stageWhyPartsOf · stageWhyLine (the practice progression, contracts §20)
+ *   SHORT_* · short*() · SHORT_CHIP_LABEL · sinceLine · aimLineShort (UI motion, ui-motion.md §9.3,
+ *   contracts §21: the short visible labels beside the full strings; none rewords one)
  *   + the formatting, flag, rank, Proficiency, pace and pay lines below.
  */
 import { LIFE_TZ, addDays, dayKeyOf, daysBetween, type DayKey } from "@/lib/life-day";
@@ -94,6 +96,10 @@ import {
 } from "@/lib/roadmap-types";
 import { ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, CATALOG, catalogHowOf, type CatalogKey, type CatalogTrack } from "@/lib/roadmap-catalog";
 import { AIM_LATER_DAYS } from "@/lib/roadmap-invite";
+// The pay bar behind "from 70%" (goals.ts already imports this module, so the short labels add no dependency).
+import { payBar } from "@/lib/life-economy";
+// Type only (erased): the chip kinds the short labels name (ui-motion.md §4.6).
+import type { HonestyKind } from "@/components/glyph/HonestyChip";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
 
@@ -2057,4 +2063,358 @@ export const ACTIVITY_NOT_PAUSED_TITLE = "Still on Today";
 export function activityNotPausedLine(names: readonly string[]): string | null {
   if (names.length === 0) return null;
   return `${andList(names)} couldn't be taken off Today here. Archive ${names.length === 1 ? "it" : "them"} from Today if you want ${names.length === 1 ? "it" : "them"} off.`;
+}
+
+// ═══ UI motion: the short labels (ui-motion.md §9.3, R0; contracts §21) ══════
+//
+// "Fewer words, more motion": the visible short form of a block, added beside
+// the full string it shortens (D21). None rewords an existing constant; the
+// full string stays in the DOM, one tap away (a chip's panel, an InfoTip, the
+// card Key or the row's ▸; D13). Honesty labels keep their words (D25, D28):
+// every Gemini label carries the who-word "Gemini"; "not checked", "best
+// case", "Unverified ·", "calibrating", "≈" and "yours" stay visible. The chip
+// labels equal glyph/HonestyChip's HONESTY_KINDS defaults (roadmap-ui-check
+// holds the two equal). Honesty labels are exempt from the word budgets
+// (data-wc="honest", ui-motion.md §3.1); every other label here is app words.
+
+// ─── Provenance: the who-word stays (D25) ───
+
+/** A Gemini row, not checked (full: PROVENANCE_WORDS.DRAFT). */
+export const SHORT_GEMINI = "Gemini · not checked";
+/** A Gemini row the user kept, still not checked (full: PROVENANCE_WORDS.KEPT_SUGGESTION). */
+export const SHORT_GEMINI_KEPT = "Gemini · kept · not checked";
+/** Gemini's pick among the app's options (full: GEMINI_CHOICE_WORDS; geminiChoiceLine in the row's ▸). */
+export const SHORT_GEMINI_CHOICE = "Gemini's choice";
+/** Added while the picked row is a DRAFT. */
+export const SHORT_NOT_CHECKED_SUFFIX = " · not checked";
+/** "Gemini's choice · not checked" on a DRAFT row; "Gemini's choice" once the row is kept. */
+export function shortGeminiChoice(draft: boolean): string {
+  return draft ? `${SHORT_GEMINI_CHOICE}${SHORT_NOT_CHECKED_SUFFIX}` : SHORT_GEMINI_CHOICE;
+}
+/** The arrangement chip (full: ARRANGEMENT_V4_LINE / ARRANGEMENT_LINE). */
+export const SHORT_GEMINI_ORDER = "Gemini's order";
+/** A credential aim's topics (full: CREDENTIAL_LINE). */
+export const SHORT_GEMINI_GUESS = "Gemini's guess";
+/** The constraints chip on a v3 or mixed draft (full: CONSTRAINTS_LINE). */
+export const SHORT_SHOWN_TO_GEMINI = "Shown to Gemini · not checked";
+/** "40% sized by Gemini" beside the task-time median (full: the throughput sentence). `share` is Throughput.geminiShare (0..1), rounded as ThroughputPanel rounds it. */
+export function shortSizedByGemini(share: number): string {
+  return `${Math.round(share * 100)}% sized by Gemini`;
+}
+/** A plan-only edit of Gemini's words (full: EDIT_NUMBERS_NOTE). */
+export const SHORT_EDIT_NUMBERS = "your numbers · Gemini's words";
+/** The draft header's two GlyphLanes (D25): the visible who-words. */
+export const GEMINI_LANE_WORD = "Gemini:";
+export const APP_LANE_WORD = "App:";
+/** What Gemini did on a v4 draft, one word each, listed only when geminiV4PartsOf says it did (roadmap-ui-model geminiLaneItemsOf). */
+export const GEMINI_LANE_ITEM: Readonly<{ needs: string; order: string; picks: string }> = { needs: "Domains", order: "order", picks: "picks" };
+/** What the app did on every draft. */
+export const APP_LANE_ITEMS: readonly string[] = ["practices", "words", "numbers"];
+
+// ─── Safety (D12): the one actionable instruction stays on screen ───
+
+/** One chip per body or care card (full: HEALTH_LINE). */
+export const SHORT_HEALTH = "Not medical advice · ask a professional";
+
+// ─── The chips of ui-motion.md §4.6 (button chips open the full string) ───
+
+/** Google's free tier, while the Gemini path is on (full: FREE_TIER_LINE + privacyLine). */
+export const SHORT_DATA = "Google may use this";
+/** No key: the plan is built from the user's numbers (full: NO_KEY_LINE). */
+export const SHORT_NO_KEY = "from your numbers";
+/** The depth line is the app's policy (full: depthLine). */
+export const SHORT_POLICY = "App policy";
+/** Coverage and the Toward note are the user's to judge (full: coverageJudgeLine / the honesty note). */
+export const SHORT_JUDGE = "yours to judge";
+/** The date is set by the review schedule (full: scheduleBoundLine). */
+export const SHORT_SCHEDULE = "set by reviews";
+/** The aim's usual length is unknown (full: AIM_UNCHECKED_LINE). */
+export const SHORT_AIM_UNCHECKED = "Aim not checked";
+/** Before a verdict word while capacity calibrates; verdictWord(v, true) is the chip's whole word ("Unverified · Fits"). */
+export const SHORT_UNVERIFIED = "Unverified";
+/** A pace or reach resting on a calibrating pass rate (full: "best case — your pass rate is still calibrating"). */
+export const SHORT_BEST_CASE = "best case";
+/** The pass figure while the pass rate calibrates, in place of a %: "pass rate calibrating 12/30". */
+export function shortCalibrating(n: number, need: number): string {
+  return `pass rate calibrating ${n}/${need}`;
+}
+/** Beside "≈ 110 d" from depthGapDays: the gap between reviews, never time to the aim. */
+export const SHORT_REVIEW_GAP = "review gap";
+/** The tracked time is an estimate (full: the tracked-time sentence). */
+export const SHORT_NOT_TIMED = "not timed";
+/** The pass rate reads high (full: the calibration sentence). */
+export const SHORT_READS_HIGH = "reads high";
+/** Week quests (full: weekQuestsFooter) and a milestone that pays nothing (full: statedLine with its reason). */
+export const SHORT_PAYS_NOTHING = "pays nothing";
+/** ACCEPTED's % was measured at acceptance (full: acceptanceCaption). */
+export const SHORT_AT_ACCEPTANCE = "at acceptance";
+/** A checkpoint and the Toward sessions (full: WEEK_QUEST_CAPTIONS.CHECKPOINT). */
+export const SHORT_CONTEXT_ONLY = "context only";
+/** The user's date kept over the pace (full: overKeptLine). = verdictWord("OVER"). */
+export const SHORT_OVER = "Over";
+/** "Target lowered 46 → 38", once (full: the Changed line). */
+export function shortLowered(from: number, to: number): string {
+  return `Target lowered ${from} → ${to}`;
+}
+/** "Behind on new cards · 4 of 9" (full: the behind banner). */
+export function shortBehindNewCards(n: number, of: number): string {
+  return `Behind on new cards · ${n} of ${of}`;
+}
+/** The Start sheet's pay rests on a practice the app added (full: restsOnAddedLine). */
+export const SHORT_RESTS_ON_ADDED = "rests on an added practice";
+/** Under the activity card (full: aimConflictLine). */
+export const SHORT_CLASH = "May clash with your aim";
+/** The living header on a server that records nothing (full: WRITES_OFF_BANNER). */
+export const SHORT_WRITES_OFF = "writes off";
+/** The Aim card's live figure on such a server (full: NOT_RECORDED_HERE + WRITES_OFF_BANNER). */
+export const SHORT_NOT_RECORDED = "not recorded here";
+/** The intake and a draft whose library wasn't loaded (full: LIBRARY_UNCHECKED_LINE). */
+export const SHORT_LIBRARY_UNCHECKED = "library not checked";
+/** A plan from before revision 4 (full: LEGACY_DRAFT_BANNER / LEGACY_ACTIVE_BANNER). */
+export const SHORT_LEGACY = "older plan";
+
+/**
+ * The visible label of each fixed chip kind (ui-motion.md §4.6), the words
+ * glyph/HonestyChip draws by default: a lane passes these as `label`. The
+ * kinds with a figure or a verbatim constant are built by their function
+ * (shortSizedByGemini, shortCalibrating, shortLowered, shortBehindNewCards,
+ * shortGeminiChoice; integrityLine verbatim).
+ */
+export const SHORT_CHIP_LABEL: Readonly<Partial<Record<HonestyKind, string>>> = {
+  gemini: SHORT_GEMINI,
+  "gemini-kept": SHORT_GEMINI_KEPT,
+  "gemini-pick": shortGeminiChoice(true),
+  constraints: SHORT_SHOWN_TO_GEMINI,
+  credential: SHORT_GEMINI_GUESS,
+  arrangement: SHORT_GEMINI_ORDER,
+  "edit-numbers": SHORT_EDIT_NUMBERS,
+  health: SHORT_HEALTH,
+  data: SHORT_DATA,
+  "no-key": SHORT_NO_KEY,
+  policy: SHORT_POLICY,
+  judge: SHORT_JUDGE,
+  schedule: SHORT_SCHEDULE,
+  "aim-unchecked": SHORT_AIM_UNCHECKED,
+  unverified: SHORT_UNVERIFIED,
+  "best-case": SHORT_BEST_CASE,
+  "review-gap": SHORT_REVIEW_GAP,
+  "not-timed": SHORT_NOT_TIMED,
+  "reads-high": SHORT_READS_HIGH,
+  "pays-nothing": SHORT_PAYS_NOTHING,
+  "pays-nothing-ms": SHORT_PAYS_NOTHING,
+  "at-acceptance": SHORT_AT_ACCEPTANCE,
+  "context-only": SHORT_CONTEXT_ONLY,
+  over: SHORT_OVER,
+  "rests-on-added": SHORT_RESTS_ON_ADDED,
+  clash: SHORT_CLASH,
+  live: SHORT_WRITES_OFF,
+  "not-recorded": SHORT_NOT_RECORDED,
+  "library-unchecked": SHORT_LIBRARY_UNCHECKED,
+  legacy: SHORT_LEGACY,
+};
+
+// ─── Pay: "pays ⬡ 6 × progress «from 70%»" (the ⬡ is the c-mp glyph, drawn by the lane) ───
+
+export const SHORT_PAYS = "pays";
+export const SHORT_X_PROGRESS = "× progress";
+/** "from 70%": a milestone goal's pay bar (payBar MID), the floor tick on the meter. */
+export function shortFromFloor(): string {
+  return `from ${Math.round(payBar("MID") * 100)}%`;
+}
+
+// ─── Ranks: a rank not yet held always carries its verb (C2-B3) ───
+
+/** "gives Aim rank [rank.2 active] Journeyman": the glyph sits between the words and the name. */
+export const SHORT_GIVES_RANK = "gives Aim rank";
+/** "[rank.N done] keeps your rank". */
+export const SHORT_KEEPS_RANK = "keeps your rank";
+/** The label under a RankSeal ("Aspirant / Aim rank"). */
+export const SHORT_AIM_RANK = "Aim rank";
+/** "Next · [rank.2 active] Journeyman · milestone 2". */
+export const SHORT_NEXT = "Next";
+export function shortNextRank(name: string, milestoneOrd: number | null): string {
+  return milestoneOrd != null ? `${SHORT_NEXT} · ${name} · milestone ${milestoneOrd}` : `${SHORT_NEXT} · ${name}`;
+}
+
+// ─── Figures and their unit words (D26, D27: two figures side by side each carry a unit word) ───
+
+/** "≈ 9 h seen · 10 h/wk yours": the app's estimate of tracked time … */
+export const SHORT_SEEN = "seen";
+/** … and the user's own declared figure, beside the pv.you glyph; also beside t.pin. */
+export const SHORT_YOURS = "yours";
+/** The realism StatRow: "3 new/wk · 80% pass «reads high» · 92% cleared". */
+export const SHORT_NEW_PER_WEEK = "new/wk";
+export const SHORT_PASS = "pass";
+export const SHORT_CLEARED = "cleared";
+/** CapacityGauge's two bars: "need ≈ 3 h 20 · have ≈ 4 h 30 /wk". */
+export const SHORT_NEED = "need";
+export const SHORT_HAVE = "have";
+/** The TimeBar's ghost tick: earliest if every review passes. */
+export const SHORT_EARLIEST = "earliest";
+/** The app's date, an estimate at month precision (C2-M2): "L12 by ≈ Dec 2027" (no depth: "by ≈ Dec 2027"). */
+export function shortDateBy(level: number | null, day: DayKey): string {
+  return level != null ? `L${level} by ≈ ${monthYear(day)}` : `by ≈ ${monthYear(day)}`;
+}
+/** The user's own date, exact, always with "yours": "31 Dec 2027 · yours". */
+export function shortDateYours(day: DayKey): string {
+  return `${dateFull(day)} · ${SHORT_YOURS}`;
+}
+/** A date whose setter the view doesn't say: month precision, no ≈ and no "yours" (no claim either way). */
+export function shortDatePlain(level: number | null, day: DayKey): string {
+  return level != null ? `L${level} by ${monthYear(day)}` : `by ${monthYear(day)}`;
+}
+/** A By-when chip's verdict word beside chipVerdict (the full words stay sr-only and in the Key): "too soon for L12". */
+export function shortTooSoon(level: number): string {
+  return `too soon for L${level}`;
+}
+/** "Proficiency → L12" under the % (the basis stays named, C2-M2); "Proficiency" alone without a depth. */
+export function shortProficiencyToward(level: number | null | undefined): string {
+  return typeof level === "number" ? `Proficiency → L${level}` : "Proficiency";
+}
+
+// ─── The TimeBar, the WAIT pause, SINCE_LINE (H13) ───
+
+/** The TimeBar's toggle that shows its marker list to touch users. */
+export const SHORT_DATES_TOGGLE = "Dates";
+/** The 40 px WAIT pause button's aria-label (icon only, aria-pressed). */
+export const SHORT_PAUSE_LABEL = "Pause animation";
+/** SINCE_LINE's lead: the same words as glyph-motion SINCE_LEAD (roadmap-ui-check holds them equal). */
+export const SINCE_LEAD_WORDS = "Since you last looked:";
+/** "Since you last looked: milestone 2 reached · date moved to 7 Mar" (≤ 3 items, then "+ n more"; the rest in the (i)). */
+export function sinceLine(items: readonly string[]): string {
+  const shown = items.slice(0, 3);
+  const more = items.length - shown.length;
+  return `${SINCE_LEAD_WORDS} ${shown.join(" · ")}${more > 0 ? ` + ${more} more` : ""}`;
+}
+/** SINCE_LINE's items, one per skipped SEEN event (usePlayOnSeen's `label`; RouteRail and RankSeal use the same words). */
+export function sinceReachItem(ord: number): string {
+  return `milestone ${ord} reached`;
+}
+export function sinceRankItem(name: string): string {
+  return `Aim rank ${name} reached`;
+}
+export function sinceDateItem(day: DayKey, today?: DayKey): string {
+  return `date moved to ${dayLabel(day, today)}`;
+}
+export const SINCE_QUEST_ITEM = "a week quest done";
+export const SINCE_SEAL_ITEM = "aim reached";
+
+// ─── The PipStrip's label (a RAISE row's due days) ───
+
+const WEEKDAY_FULL: Readonly<Record<string, string>> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
+/** "Due: Tuesday 1, Wednesday 2, Saturday 1" (the strip is role="img"; its letters are presentational). */
+export function dueDaysLabel(days: readonly { key: string; n: number }[]): string {
+  const due = days.filter((d) => d.n > 0);
+  return due.length === 0 ? "Nothing due this week" : `Due: ${due.map((d) => `${WEEKDAY_FULL[d.key] ?? d.key} ${d.n}`).join(", ")}`;
+}
+
+// ─── Screen words (ui-motion.md §3.3): the short visible forms the lanes draw ───
+
+/** Screen 1: the aim field's label (the question moves to the Key panel the field describes). */
+export const SHORT_AIM_LABEL = "Your aim";
+export const SHORT_PICK_AREA = "Pick an Area";
+export const SHORT_SYLLABUS_OPTIONAL = "Syllabus · optional";
+export const SHORT_EXAM_OPTIONAL = "Exam · optional";
+export const SHORT_ANYTHING_TO_AVOID = "Anything to avoid?";
+/** Screen 8: a ticked activity row's word beside its struck session glyph. */
+export const SHORT_AVOID = "avoid";
+
+/** Screen 3: the Next card's section heads (their subtitles move to the card Key). */
+export const SHORT_SECTION: Readonly<{ learn: string; practise: string; steps: string; checkpoint: string }> = { learn: "Learn", practise: "Practise", steps: "Steps", checkpoint: "Checkpoint" };
+/** One "+ Add" per milestone (it opens AddItemSheet). */
+export const SHORT_ADD = "Add";
+/** The draft footer: "3 to decide". */
+export function shortToDecide(n: number): string {
+  return `${n} to decide`;
+}
+/** A v3 or mixed draft's constraint counts: "3 dropped · 5 matched". */
+export function shortDroppedMatched(dropped: number, matched: number): string {
+  return `${dropped} dropped · ${matched} matched`;
+}
+
+/** Screen 5: "Now · milestone 2 of 6" and the static elapsed bar "day 39/77" (H6). */
+export function shortNowOf(ord: number, of: number): string {
+  return `Now · milestone ${ord} of ${of}`;
+}
+export function shortDayOf(day: number, of: number): string {
+  return `day ${day}/${of}`;
+}
+/** A measure's gain: "+5/21 since start". */
+export function shortSinceStart(gained: number, needed: number): string {
+  return `+${gained}/${needed} since start`;
+}
+/** A PromiseRing's figure: "10/16 kept". */
+export function shortKept(kept: number, of: number): string {
+  return `${kept}/${of} kept`;
+}
+/** A checkpoint's bar: "bar 8/10". */
+export function shortBar(score: number, max: number): string {
+  return `bar ${score}/${max}`;
+}
+/** The week quests' heading tail: "until Sun". */
+export function shortUntil(day: DayKey): string {
+  return `until ${weekdayName(day)}`;
+}
+/** Rows past WEEK_QUEST_ROWS_TODAY: "2 more". */
+export function shortMore(n: number): string {
+  return `${n} more`;
+}
+
+/** Screen 7: the Start sheet's gate count, "2 rows left". */
+export function shortRowsLeft(n: number): string {
+  return `${n} ${n === 1 ? "row" : "rows"} left`;
+}
+/** The jump link to the page's activity card (the card isn't duplicated in the sheet). */
+export const SHORT_WAITING_ACTIVITIES = "Waiting on your answer about activities";
+
+/** Screen 9: the Aim card's lines. */
+export function shortMilestoneOf(ord: number, of: number): string {
+  return `Milestone ${ord} of ${of}`;
+}
+export const SHORT_WEEK_QUESTS = "Week quests";
+export const SHORT_OPEN_ROADMAP = "Open roadmap";
+export function shortStartMilestone(ord: number): string {
+  return `Start milestone ${ord}`;
+}
+/** A pending reach, visible (D18: no seal and no rank motion until it counts). */
+export function shortReachedCountsFrom(ord: number, countsFrom: DayKey): string {
+  return `Milestone ${ord} reached · counts from ${weekdayName(countsFrom)}`;
+}
+export function shortAimReached(day: DayKey): string {
+  return `Aim reached ${dateFull(day)}`;
+}
+/** DONE closed unreached: the rank actually held, no seal. */
+export function shortAimClosed(day: DayKey): string {
+  return `Closed ${dateFull(day)} · the aim wasn't reached`;
+}
+/** RUNNING over the weave band: "Drafting · started 09:12". */
+export function shortDraftingSince(startedAt: string): string {
+  return `Drafting · started ${timeLabel(startedAt)}`;
+}
+export const SHORT_DRAFT_WAITING = "Draft waiting";
+
+/** Screen 12: the Roadmap tab's done header, "Reached 18 Dec 2026 · Aim rank Paragon · 96%", and its eyebrow. */
+export function shortReachedAim(day: DayKey, rankName: string, percent: number): string {
+  return `Reached ${dateFull(day)} · Aim rank ${rankName} · ${percent}%`;
+}
+export const SHORT_HISTORY = "History";
+
+/**
+ * Screen 11: Today's aim line in ≤ 8 app words (aimLineCopy keeps the full
+ * words; the year-or-three question moves to the ASK card's (i) and the
+ * intake Key). START keeps its verb: a rank not yet held never reads as held.
+ * `glyph` sits between `before` and `after` ("Gives [rank.4 active] Aim rank
+ * Expert."); null when the view names no rank (keeps: "Keeps your rank.").
+ */
+export function aimLineShort(v: AimLineView): { lead: string; rest: string; glyph: { rank: number; before: string; after: string } | null } {
+  if (v.kind === "SET") {
+    if (v.variant === "NEXT") return { lead: "Last aim done.", rest: "Set the next.", glyph: null };
+    const lead = v.variant === "MONTH" ? "A new month." : v.variant === "BACK" ? "Welcome back." : "A new week.";
+    return { lead, rest: "Set an aim.", glyph: null };
+  }
+  if (v.kind === "DRAFT") return { lead: SHORT_DRAFT_WAITING, rest: "for your check.", glyph: null };
+  const lead = v.stageName ? `Milestone ${v.ord} · ${v.stageName} is ready.` : `Milestone ${v.ord} is ready.`;
+  if (!v.givesRank) return { lead, rest: "Keeps your rank.", glyph: null };
+  const after = `Aim rank ${v.givesRank}.`;
+  return { lead, rest: `Gives ${after}`, glyph: { rank: AIM_RANKS.indexOf(v.givesRank), before: "Gives", after } };
 }

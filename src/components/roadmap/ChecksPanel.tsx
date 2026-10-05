@@ -1,25 +1,33 @@
 "use client";
 
 /**
- * "Is this realistic?" for one milestone (F4, F9 Checks panel, decision 6).
- * Never beside the aim, and no plan-level verdict chip exists.
+ * "Is this realistic?" for one milestone (F4, F9 Checks panel, decision 6;
+ * ui-motion.md §3.3 screen 3, lane R5). Never beside the aim, and no
+ * plan-level verdict chip exists. Fewer words, the same facts:
  *
- *   Targets vs your pace  a fitted target reads "Fitted" with its arithmetic
- *                         and no verdict (one would be true by construction);
- *                         a typed target gets Fits, Tight, Over or Impossible.
- *   App-tracked time      the worst calendar week's verdict as a word and a
- *                         glyph ("Unverified · Fits" while calibrating), its
- *                         arithmetic, and the fixed line, always.
- *   Aim check             a line, only against the user's own figure.
+ *   Targets vs your pace  "[ev.tested] Targets" and a verdict chip per target: a fitted target reads
+ *                         "Fitted" (its arithmetic in the (i)); a typed one Fits, Tight, Over or Impossible.
+ *   App-tracked time      CapacityGauge "need ≈ 3 h 20 · have ≈ 4 h 30 /wk" with the worst week's verdict
+ *                         chip ("Unverified · Fits" while capacity calibrates); «38% sized by Gemini» beside
+ *                         it when Gemini sized part of the tracked time.
+ *   (i)                   one per panel (the capacity (i)): every sentence the panel said before, verbatim,
+ *                         the fixed line (TIME_FIXED_LINE) included, always.
+ *   Aim check             «Aim not checked» (its line one tap away) and Add a figure; a checked aim keeps
+ *                         its line.
  *
  * A "Why" sheet lists every input with what kind of number it is, the policy
  * constants, and the remedies as one-tap buttons. Ink only; never red.
+ * VerdictChip is glyph/HonestyChip's: a verdict glyph sits only in a verdict chip (D27).
  */
 import Link from "next/link";
 import { useState } from "react";
 import { ChipButton } from "@/components/ui/Chip";
 import { Sheet } from "@/components/ui/Sheet";
 import { ActionError } from "@/components/home/ActionError";
+import { CapacityGauge } from "@/components/glyph/CapacityGauge";
+import { Glyph } from "@/components/glyph/Glyph";
+import { Chips, HonestyChip, VerdictChip as GlyphVerdictChip } from "@/components/glyph/HonestyChip";
+import { InfoTip } from "@/components/glyph/InfoTip";
 import {
   CARD_WRITE_MIN,
   INTENSITY,
@@ -38,43 +46,35 @@ import {
   type TimeCheck,
 } from "@/lib/roadmap-types";
 import {
+  AIM_UNCHECKED_LINE,
   INTENSITY_WORD,
+  SHORT_HAVE,
+  SHORT_NEED,
+  SHORT_YOURS,
   TIME_FIXED_LINE,
   aimCheckLine,
   dayLabel,
   dayWithWeekday,
   hoursLabel,
   plural,
+  shortSizedByGemini,
   verdictWord,
   whyTitle,
 } from "./roadmap-copy";
 import { ROADMAP_NEW_HREF } from "./roadmap-links";
+import { capacityFlagsOf, realismFlagsOf } from "./roadmap-ui-model";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { AddFigureLink } from "./AimFigure";
-import { RoadmapGlyph, type RoadmapGlyphName } from "./RoadmapGlyph";
+import { sizedSentence } from "./ThroughputPanel";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
-/** A verdict chip: a word and a glyph, never colour alone. */
+/**
+ * A verdict chip: a word and a glyph, never colour alone (glyph/HonestyChip's VerdictChip, D27):
+ * "Unverified · Fits" adds v.unv while capacity calibrates; Fitted and Impossible are never unverified.
+ */
 export function VerdictChip({ verdict, unverified }: { verdict: KnowledgeCheck["verdict"] | TimeCheck["verdict"]; unverified?: boolean }) {
-  const glyph: RoadmapGlyphName = unverified
-    ? "v-unv"
-    : verdict === "FITTED"
-      ? "v-fitted"
-      : verdict === "FITS"
-        ? "v-fits"
-        : verdict === "TIGHT"
-          ? "v-tight"
-          : verdict === "OVER"
-            ? "v-over"
-            : "v-imp";
-  const cls = verdict === "IMPOSSIBLE" ? "rm-vd rm-vd-x" : verdict === "FITTED" || unverified ? "rm-vd rm-vd-q" : "rm-vd";
-  return (
-    <span className={cls}>
-      <RoadmapGlyph name={glyph} />
-      {verdictWord(verdict, unverified)}
-    </span>
-  );
+  return <GlyphVerdictChip verdict={verdict} unverified={unverified} word={verdictWord(verdict, unverified)} />;
 }
 
 /**
@@ -199,69 +199,84 @@ export function ChecksPanel({
   asOf?: { kind: "START" | "ACCEPTED"; day: string } | null;
 }) {
   const [why, setWhy] = useState(false);
+  const asOfWhen = asOf?.kind === "START" ? "then" : "now";
+  const unverified = mf ? capacityFlagsOf(mf.time).unverified : false;
+  const gauge = mf ? gaugeOf(mf.time) : null;
+  const sized = realismFlagsOf({ throughput }).sizedByGemini;
   return (
-    <div className="rm-ms-sec">
-      <div className="rm-ms-sh">
-        <span className="t-eyebrow">Is this realistic?</span>
-        {asOf && <span className="rm-cap">{asOf.kind === "START" ? `worked out at Start on ${dayLabel(asOf.day, today)}` : `as accepted on ${dayLabel(asOf.day, today)}`}</span>}
-        {mf && (
+    <div className="rm-ms-sec rm-ck2">
+      {asOf && <p className="rm-cap rm-ck2-as">{asOf.kind === "START" ? `worked out at Start on ${dayLabel(asOf.day, today)}` : `as accepted on ${dayLabel(asOf.day, today)}`}</p>}
+      {!mf && <p className="t-meta">The checks run once the plan has dates.</p>}
+      {mf && mf.knowledge.length > 0 && (
+        <div className="rm-ck2-k">
+          <Glyph name="ev.tested" size={16} inherit />
+          <span>Targets</span>
+          {mf.knowledge.map((k) => (
+            <VerdictChip key={k.measureKey} verdict={k.verdict} />
+          ))}
+        </div>
+      )}
+      {mf &&
+        (gauge ? (
+          <CapacityGauge
+            need={gauge.need}
+            have={gauge.have}
+            unit="/wk"
+            verdict={mf.time.verdict}
+            unverified={unverified}
+            label={timeSentence(mf.time)}
+            needWord={SHORT_NEED}
+            haveWord={gauge.yours ? SHORT_YOURS : SHORT_HAVE}
+            className="rm-ck2-g"
+          />
+        ) : (
+          <div className="rm-ck2-k">
+            <Glyph name="ev.estimate" size={16} inherit />
+            <span>App-tracked time</span>
+            <VerdictChip verdict={mf.time.verdict} unverified={unverified} />
+          </div>
+        ))}
+      {mf && (
+        <Chips className="rm-ck2-row">
+          {sized != null && throughput && <HonestyChip kind="sized-by-gemini" label={shortSizedByGemini(sized)} full={sizedSentence(throughput, sized)} />}
+          <InfoTip topic="whether this is realistic">
+            {mf.knowledge.map((k) => (
+              <span key={k.measureKey} className="rm-dd-tl">
+                <b>{`Targets vs your pace · ${verdictWord(k.verdict)}.`}</b> {knowledgeSentence(k, { intensity, dueDay, m, today, asOf: asOfWhen })}
+                {knowledgeNotesOf(k).map((b) => ` ${b}`)}
+                {k.verdict === "IMPOSSIBLE" && k.earliestDay ? ` Earliest day it fits: ${dayWithWeekday(k.earliestDay, today)}.` : ""}
+              </span>
+            ))}
+            <span className="rm-dd-tl">
+              <b>{`App-tracked time · ${verdictWord(mf.time.verdict, unverified)}.`}</b> {timeSentence(mf.time)}
+            </span>
+            {mf.time.basis.map((b) => (
+              <span key={b} className="rm-dd-tl">
+                {b}
+              </span>
+            ))}
+            <span className="rm-dd-tl">{TIME_FIXED_LINE}</span>
+          </InfoTip>
           <button type="button" className="rm-ilink rm-cap" onClick={() => setWhy(true)} style={{ minHeight: 40 }}>
             Why
           </button>
-        )}
-      </div>
-      {!mf && <p className="t-meta">The checks run once the plan has dates.</p>}
-      {mf?.knowledge.map((k) => (
-        <div key={k.measureKey} className="rm-ck">
-          <div className="rm-ck-h">
-            <b>Targets vs your pace</b>
-            <VerdictChip verdict={k.verdict} />
-          </div>
-          <p>{knowledgeSentence(k, { intensity, dueDay, m, today, asOf: asOf?.kind === "START" ? "then" : "now" })}</p>
-          {knowledgeNotesOf(k).map((b) => (
-            <p key={b}>{b}</p>
-          ))}
-          {k.verdict === "IMPOSSIBLE" && k.earliestDay && <p>Earliest day it fits: {dayWithWeekday(k.earliestDay, today)}.</p>}
-        </div>
-      ))}
-      {mf && (
-        <div className="rm-ck">
-          <div className="rm-ck-h">
-            <b>App-tracked time</b>
-            <VerdictChip verdict={mf.time.verdict} unverified={mf.time.unverified} />
-          </div>
-          <p>{timeSentence(mf.time)}</p>
-          {mf.time.basis.map((b) => (
-            <p key={b}>{b}</p>
-          ))}
-          <p className="rm-ck-fixed">{TIME_FIXED_LINE}</p>
-        </div>
+        </Chips>
       )}
-      {aimCheck && (
-        <div className="rm-ck">
-          <div className="rm-ck-h">
-            <b>Aim check</b>
-          </div>
-          <p>
-            {aimCheckLine(aimCheck)}
-            {aimCheck.kind === "unchecked" && intakeEditable && (
-              <>
-                {" · "}
-                <Link className="rm-ilink" href={`${ROADMAP_NEW_HREF}#reality`}>
-                  Add a figure
-                </Link>
-              </>
+      {aimCheck &&
+        (aimCheck.kind === "unchecked" ? (
+          <Chips className="rm-ck2-row">
+            <HonestyChip kind="aim-unchecked" full={AIM_UNCHECKED_LINE} />
+            {intakeEditable && (
+              <Link className="rm-ilink" href={`${ROADMAP_NEW_HREF}#reality`}>
+                Add a figure
+              </Link>
             )}
             {/* An accepted plan's intake is closed: the figure goes through setAimFigure instead. */}
-            {aimCheck.kind === "unchecked" && !intakeEditable && roadmapId && (
-              <>
-                {" · "}
-                <AddFigureLink roadmapId={roadmapId} />
-              </>
-            )}
-          </p>
-        </div>
-      )}
+            {!intakeEditable && roadmapId && <AddFigureLink roadmapId={roadmapId} />}
+          </Chips>
+        ) : (
+          <p className="rm-ck2-l">{aimCheckLine(aimCheck)}</p>
+        ))}
       {mf && roadmapId && (mf.worst === "IMPOSSIBLE" || mf.worst === "OVER") && <RemedyButtons roadmapId={roadmapId} remedies={mf.remedies} mf={mf} today={today} />}
       {mf && (
         <WhySheet
@@ -279,6 +294,18 @@ export function ChecksPanel({
       )}
     </div>
   );
+}
+
+/**
+ * The worst week as the gauge's two figures (minutes on one scale): what the milestone needs and
+ * what you have (`yours`: the hours you gave, unverified, rather than tracked time). null when the
+ * week or what you have can't be worked out yet (the panel then shows the verdict alone).
+ */
+export function gaugeOf(t: Pick<TimeCheck, "worstWeek">): { need: { value: number; text: string }; have: { value: number; text: string }; yours: boolean } | null {
+  const w = t.worstWeek;
+  if (!w || w.availableMin == null) return null;
+  const load = w.reviewMin + w.writeMin + w.practiceMin;
+  return { need: { value: load, text: hoursLabel(load, false) }, have: { value: w.availableMin, text: hoursLabel(w.availableMin, false) }, yours: w.availableClass === "YOURS" };
 }
 
 /** Every input, what kind of number it is, and the policy constants (F9 "Why"). */

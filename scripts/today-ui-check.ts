@@ -3720,6 +3720,132 @@ function addedEntry(id: string, at: number, line = { text: `line ${id}`, reverte
   );
 }
 
+// ===== R1 Today (UI motion lane R1: AimLine, WeekQuests; ui-motion.md §3.2 rows 10–11, §7.10, §7.11, §11.4) =====
+// The /dev/style/today states rendered for real (WeekQuests over weekQuestsViewOf, AimLine over todayAimLineOf),
+// counted with scripts/word-count.mjs: fewer words, the honesty kept on the card or one tap away, and Today calm
+// (D10): no shader, no WAIT card, no loop, no burst, a static aim line. Only this block is lane R1's.
+asyncChecks.push(
+  (async () => {
+    const { default: NodeModule } = await import("node:module");
+    const ext = (NodeModule as unknown as { _extensions: Record<string, (m: { exports: unknown }) => void> })._extensions;
+    // The roadmap and glyph components import their CSS (Node can't load it).
+    if (!ext[".css"]) ext[".css"] = (m) => void (m.exports = {});
+    const wc = (await import("./word-count.mjs")) as typeof import("./word-count.mjs");
+    const { WeekQuests, weekQuestKeyRowsOf } = await import("../src/components/roadmap/WeekQuests");
+    const { AimLine } = await import("../src/components/roadmap/AimLine");
+    const { FixtureRoadmapProvider } = await import("../src/components/roadmap/roadmap-runtime");
+    const { weekQuestsViewOf } = await import("../src/lib/roadmap-quests");
+    const rmCopy = await import("../src/components/roadmap/roadmap-copy");
+    const { MOTION_QUEST_FIXTURES } = await import("../src/app/dev/style/today/fixtures");
+    const R = (el: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(createElement(FixtureRoadmapProvider, null, el));
+    const flat = (t: string) => t.replace(/\s+/g, " ").trim();
+    const visible = (h: string) => flat(wc.visibleText(h, { width: 344 }).replace(/\n/g, " "));
+    const words = (h: string) => wc.countAppWords(h, { width: 344 }).count;
+    type El = { tag?: string; attrs: Record<string, string>; children: El[] };
+    const elsOf = (h: string) => wc.elementsOf(wc.parseMarkup(h) as never) as unknown as El[];
+    const textIn = (e: El) => flat(wc.textOfNode(e as never) as string);
+    /** The marked block (data-wc-block="…"): from its opening tag to its balanced close. */
+    const blockOf = (h: string, name: string): string => {
+      const m = new RegExp(`<([a-z][\\w-]*)\\b[^>]*\\sdata-wc-block="${name}"`).exec(h);
+      if (!m) return "";
+      const re = new RegExp(`<(/?)${m[1]}\\b[^>]*?(/?)>`, "g");
+      re.lastIndex = m.index;
+      let depth = 0;
+      for (let t = re.exec(h); t; t = re.exec(h)) {
+        if (t[1]) depth--;
+        else if (!t[2]) depth++;
+        if (depth === 0) return h.slice(m.index, re.lastIndex);
+      }
+      return h.slice(m.index);
+    };
+    /** App words on each visible line (row 10: ≤ 8 a line). */
+    const worstLine = (h: string): { n: number; line: string } => {
+      type Run = { text: string; kind: string; block?: boolean };
+      const runs = wc.runsOf(wc.parseMarkup(h) as never, { width: 344 }) as unknown as Run[];
+      const rules = wc.wordRules();
+      let worst = { n: 0, line: "" };
+      let cur: Run[] = [];
+      const flush = () => {
+        const toks = wc.classifyRuns(cur as never, rules) as unknown as { text: string; kind: string }[];
+        const n = toks.filter((t) => t.kind === "app").length;
+        if (n > worst.n) worst = { n, line: toks.map((t) => t.text).join(" ") };
+        cur = [];
+      };
+      for (const r of runs) {
+        if (r.block) flush();
+        else cur.push(r);
+      }
+      flush();
+      return worst;
+    };
+    const calm = (h: string) => !/class="[^"]*\bshd\b|data-wait|data-play|data-burst|owed|danger|gold/.test(h);
+
+    // Week quests: every /dev/style/today state (and the SEEN state), as the page draws it.
+    const states = [...QUEST_FIXTURES, ...MOTION_QUEST_FIXTURES].map((f) => ({ key: f.key, view: weekQuestsViewOf(f.input), html: "" }));
+    for (const s of states) s.html = R(createElement(WeekQuests, { variant: "today", view: s.view }));
+    const open = states.filter((s) => s.view.done < s.view.total);
+    check("R1 week quests: every Today state renders, and no card draws a shader slot, a WAIT card, data-play or a burst hook, or anything red (D10)", states.length === 10 && states.every((s) => s.html.length > 0 && calm(s.html)));
+    const counted = open.map((s) => ({ key: s.key, v2: s.view.rows.some((r) => r.parts), n: words(blockOf(s.html, "week-quests")), line: worstLine(blockOf(s.html, "week-quests")) }));
+    const overWords = counted.filter((x) => x.n > 34 || x.n === 0 || (!x.v2 && x.line.n > 8));
+    check(
+      "R1 week quests (§3.2 row 10): each open card is ≤ 34 app words (ui-audit's live gate), counted in its data-wc-block; no line over 8 on the generator-1 states",
+      open.length >= 8 && overWords.length === 0,
+      overWords.map((x) => `${x.key}: ${x.n} (line ${x.line.n}: ${x.line.line})`).join(" | ")
+    );
+    // A generator-2 practice's name (a catalog name over Domain names) is a name (§3.1), but Today's practice row can't
+    // mark it while roadmap-ui-check pins the bare 'Backtest<span class="rm-q-dim">' markup (R1 handoff): reported only.
+    for (const x of counted.filter((c) => c.v2 && c.line.n > 8)) console.log(`NOTE R1 week quests: ${x.key}'s longest line is ${x.line.n} app words with its practice name counted (${x.line.line})`);
+    check(
+      "R1 week quests (§11.4): ≤ 3 rows before 'n more'; «pays nothing» on every open card",
+      open.every((s) => {
+        const block = blockOf(s.html, "week-quests");
+        const rows = (block.match(/class="rm-quest-(?:row|line)(?:[ "])/g) ?? []).length;
+        const more = s.view.rows.length - 3;
+        return rows === Math.min(3, s.view.rows.length) && (more > 0 ? block.includes(`${more} more</button>`) : !block.includes("rm-quest-more")) && visible(block).includes(rmCopy.SHORT_PAYS_NOTHING);
+      })
+    );
+    const keyMissing = open.flatMap((s) => {
+      const key = elsOf(s.html).find((e) => e.attrs["data-tip-panel"] === "key");
+      const kt = key ? textIn(key) : "";
+      return weekQuestKeyRowsOf(s.view)
+        .filter((l) => !kt.includes(flat(l)))
+        .map((l) => `${s.key}: ${l}`);
+    });
+    const placed = open.flatMap((s) => s.view.rows.filter((r) => r.place || r.dueLine)).length;
+    check("R1 week quests (§11.4): the card Key lists each row's place and due sentence (and its quota and slip), in a hidden panel", placed > 5 && keyMissing.length === 0, keyMissing.slice(0, 3).join(" | "));
+    const body = states.find((s) => s.key === "body-health")!;
+    check(
+      "R1 week quests (D12, §11.4): the body plan's card shows one «Not medical advice · ask a professional», opening HEALTH_LINE (once in the markup); no other state shows one",
+      (visible(body.html).match(/Not medical advice · ask a professional/g) ?? []).length === 1 &&
+        body.html.split(rmCopy.HEALTH_LINE).length === 2 &&
+        /<button[^>]*data-hc="health"[^>]*aria-controls="[^"]+"/.test(body.html) &&
+        states.filter((s) => s !== body).every((s) => !visible(s.html).includes(rmCopy.SHORT_HEALTH))
+    );
+    const strip = (src: string) => src.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const wqSrc = strip(read("src/components/roadmap/WeekQuests.tsx"));
+    check("R1 week quests (H9): Today's card moves only by SEEN — the done check (a check draw: today) and meters from the last-seen count; no burst, no shader", /"quest-done", \{\s*today: onToday,/.test(wqSrc) && !/burst|@\/components\/fx|ShaderSlot|HorizonField|DraftWeave/.test(wqSrc));
+
+    // The aim line: every state, ≤ 8 app words, static, and START keeps its verb.
+    const lines = AIM_LINE_FIXTURES.map((f) => ({ key: f.key, v: aimLineOfFixture(f) })).flatMap((x) => (x.v ? [{ key: x.key, v: x.v, html: R(createElement(AimLine, { view: x.v })) }] : []));
+    const overLine = lines.map((l) => ({ key: l.key, n: words(blockOf(l.html, "aim-line")) })).filter((x) => x.n > 8 || x.n === 0);
+    check("R1 aim line (§3.2 row 11): every state is ≤ 8 app words in its data-wc-block", lines.length > 5 && overLine.length === 0, overLine.map((x) => `${x.key}: ${x.n}`).join(", "));
+    const starts = lines.filter((l) => l.v.kind === "START" && l.v.givesRank);
+    check(
+      "R1 aim line (C2-B3, §11.4): START keeps 'Gives … Aim rank X', the rank's medallion in its next-rank (active) shape, never held",
+      starts.length >= 3 &&
+        starts.every((l) => l.v.kind === "START" && visible(l.html).endsWith(`Gives Aim rank ${l.v.givesRank}.`) && /data-g="rank\.\d" data-s="active"/.test(l.html) && !/data-g="rank\.\d" data-s="done"/.test(l.html))
+    );
+    const lineSrc = strip(read("src/components/roadmap/AimLine.tsx"));
+    check(
+      "R1 aim line (D10, §11.4): no animated glyph — no usePlayOnSeen, seen hook or glyph motion — no shader, no data-play, no title",
+      !/usePlayOnSeen|useSeen|playGlyph|glyph-motion|@\/components\/fx/.test(lineSrc) && lines.every((l) => calm(l.html) && !/\stitle="/.test(l.html) && !/year or three/.test(l.html))
+    );
+    const fxSrc = strip(read("src/app/dev/style/today/TodayFixtures.tsx"));
+    check("R1 (§11.4): /dev/style/today imports no shader slot and sets no data-play or data-wait", !/@\/components\/fx|data-play|data-wait/.test(fxSrc));
+  })()
+);
+// ===== /R1 =====
+
 // The async checks (withMoments) settle before the tally.
 void Promise.all(asyncChecks).then(() => {
   console.log(`\n${passed} passed, ${failed} failed${pendingCount > 0 ? `, ${pendingCount} PENDING (another lane's; --strict fails them)` : ""}`);
