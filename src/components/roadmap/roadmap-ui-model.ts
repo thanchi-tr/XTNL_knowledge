@@ -19,7 +19,7 @@
  *   Activities   activityCardOf · activityAsksOf · activitySuggestsOf · activityOpenOf · activityAvoidOf · activityCardAnswerOf ·
  *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
  *                practiceOnlyLineOf · sessionSwapKindsOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply ·
- *                notPausedOfReply · pausedItemsOf · pausedOfMeasure (§19)
+ *                notPausedOfReply · pausedItemsOf (TaskSeen, PauseState) · pausedOfMeasure (§19)
  */
 import {
   ACTIVITY_REASON_MAX,
@@ -1031,21 +1031,51 @@ export function notPausedOfReply(reply: unknown): PausedTemplate[] {
   return pausedListOf(reply, "notPaused");
 }
 
-/** A started practice or step of the current milestone an answer paused: its lineage and task, its row's words, and the day. */
+/**
+ * What this page saw happen to a started item's Today task, keyed by its
+ * template (roadmap-pauses: the save's reply and the notice's Undo, in this
+ * tab): taken off Today (R4's `paused`), refused or failed (`notPaused`:
+ * still on Today), or brought back by Undo. The view carries no task state
+ * yet, so a task the page saw nothing happen to reads as the answer left it.
+ */
+export type TaskSeen = "PAUSED" | "NOT_PAUSED" | "UNDONE";
+
+/**
+ * How a started practice or step stands after the user's answer (the lead's
+ * ruling 3: never a silent change to the milestone):
+ *   - PAUSED      the AVOID stands and its task is off Today;
+ *   - NOT_PAUSED  the AVOID stands, but its task couldn't be taken off Today
+ *                 (R4's `notPaused`): still there, so the row says so and why,
+ *                 and keeps its On Today link;
+ *   - UNDONE      the AVOID stands, and the user brought the task back with
+ *                 the notice's Undo: on Today again, link kept;
+ *   - LIFTED      no AVOID stands any more (the user changed the answer, or
+ *                 the row asks again), but its Practice kept stopped paying
+ *                 when one did: R4 never turns it back (the days it was
+ *                 paused would count against the user), so the row and the
+ *                 measure still say it no longer counts.
+ */
+export type PauseState = "PAUSED" | "NOT_PAUSED" | "UNDONE" | "LIFTED";
+
+/** A started practice or step of the current milestone an answer touched: its lineage and task, its row's words, its state and the day. */
 export interface PausedItem {
   lineageId: string;
   templateId: string;
   kind: "PRACTICE" | "STEP";
   label: string;
-  /** The AVOID's day: the pause is immediate, a must included (the lead's ruling 2). */
-  day: DayKey;
+  /** The AVOID's day: the pause is immediate, a must included (the lead's ruling 2). Null once LIFTED (the card no longer holds it). */
+  day: DayKey | null;
   /**
    * A practice whose own Practice kept measure no longer pays (role CONTEXT:
    * R4's offTargetOpsOf, the lead's ruling 3): from `day` it no longer counts
    * toward the milestone. False for a step, and for a practice whose measure
-   * still pays (it shares one with a practice the user didn't avoid).
+   * still pays (it shares one with a practice the user didn't avoid, or R4
+   * left it paying).
    */
   offTarget: boolean;
+  state: PauseState;
+  /** Its task is known to be off Today (PAUSED, or LIFTED after this page saw it paused): the row shows no On Today link. */
+  offToday: boolean;
 }
 
 /** The task ids a Practice kept measure counts (its key's `t:`); [] for another measure. */
@@ -1055,40 +1085,57 @@ function keptTemplatesOf(measureKey: string): string[] {
 }
 
 /**
- * The current milestone's practices and steps an answer took off Today
- * (decision 4), shown on the roadmap page for as long as the AVOID stands
- * (the lead's ruling 3: never a silent change to the milestone). Read from
- * the view, as R4 leaves it: an item Start put on Today (its templateId)
- * whose type the user said to avoid on or after the milestone's start day
- * (an AVOID row and its day); a practice is `offTarget` when its Practice
- * kept measure turned CONTEXT. An AVOID given before Start never reaches
- * Today (Start holds the kind back), so it is no pause. [] before Start,
- * without the gate's view, or with nothing avoided; a finished step
- * (stepDone) is never called paused.
+ * The current milestone's practices and steps an answer touched (decision
+ * 4, ruling 3), shown on the roadmap page so the milestone never changes
+ * silently. Read from the view as R4 leaves it, and from what this page saw
+ * (`seen`, roadmap-pauses):
+ *   - an item Start put on Today (its templateId) whose type the user said to
+ *     avoid on or after the milestone's start day (an AVOID row and its day):
+ *     PAUSED, unless this page saw its pause refused (NOT_PAUSED) or undone
+ *     (UNDONE);
+ *   - a started practice whose own Practice kept turned CONTEXT while no
+ *     AVOID stands for its type any more: LIFTED.
+ * A practice is `offTarget` when its Practice kept measure is CONTEXT. An
+ * AVOID given before Start never reaches Today (Start holds the kind back),
+ * so it is no pause. [] before Start, without the gate's view, or with
+ * nothing avoided; a finished step (stepDone) is never called paused.
  */
 export function pausedItemsOf(
   current: Pick<CurrentMilestoneView, "milestone" | "measures" | "startedDay" | "stepDone"> | null | undefined,
-  confirm: Pick<ActivityConfirmView, "rows"> | null | undefined
+  confirm: Pick<ActivityConfirmView, "rows"> | null | undefined,
+  seen?: ReadonlyMap<string, TaskSeen> | null
 ): PausedItem[] {
   const from = current?.startedDay ?? null;
   if (!current || !from || !confirm || !Array.isArray(confirm.rows)) return [];
   const avoidedOn = new Map<string, DayKey>();
-  for (const r of confirm.rows) if (r.state === "AVOID" && typeof r.day === "string" && r.day >= from) avoidedOn.set(r.kind, r.day);
+  const avoided = new Set<string>();
+  for (const r of confirm.rows) {
+    if (r.state !== "AVOID") continue;
+    avoided.add(r.kind);
+    if (typeof r.day === "string" && r.day >= from) avoidedOn.set(r.kind, r.day);
+  }
   const context = new Set((current.measures ?? []).filter((x) => x.kind === "PRACTICE_KEPT" && x.role === "CONTEXT").flatMap((x) => keptTemplatesOf(x.measureKey)));
   const out: PausedItem[] = [];
   for (const it of [...current.milestone.items].sort((a, b) => a.ord - b.ord)) {
     if ((it.kind !== "PRACTICE" && it.kind !== "STEP") || it.decision === "REMOVED" || !it.templateId || !isCatalogKey(it.catalogKey)) continue;
     if (it.kind === "STEP" && current.stepDone?.[it.lineageId]) continue;
-    const day = avoidedOn.get(it.catalogKey);
-    if (day) out.push({ lineageId: it.lineageId, templateId: it.templateId, kind: it.kind, label: it.label, day, offTarget: it.kind === "PRACTICE" && context.has(it.templateId) });
+    const offTarget = it.kind === "PRACTICE" && context.has(it.templateId);
+    const saw = seen?.get(it.templateId);
+    const day = avoidedOn.get(it.catalogKey) ?? null;
+    let state: PauseState;
+    if (day) state = saw === "NOT_PAUSED" ? "NOT_PAUSED" : saw === "UNDONE" ? "UNDONE" : "PAUSED";
+    else if (offTarget && !avoided.has(it.catalogKey)) state = "LIFTED";
+    else continue;
+    out.push({ lineageId: it.lineageId, templateId: it.templateId, kind: it.kind, label: it.label, day, offTarget, state, offToday: state === "PAUSED" || (state === "LIFTED" && saw === "PAUSED") });
   }
   return out;
 }
 
 /**
  * The paused practices a Practice kept measure row speaks for (the lead's
- * ruling 3): a CONTEXT measure every one of whose tasks is a paused
- * practice. [] for a measure that still pays or counts another practice.
+ * ruling 3): a CONTEXT measure every one of whose tasks is a practice an
+ * answer touched (paused, refused, undone or lifted: it no longer counts in
+ * every one). [] for a measure that still pays or counts another practice.
  */
 export function pausedOfMeasure(row: Pick<MeasureRowView, "measureKey" | "kind" | "role">, paused: readonly PausedItem[]): PausedItem[] {
   if (row.kind !== "PRACTICE_KEPT" || row.role !== "CONTEXT") return [];

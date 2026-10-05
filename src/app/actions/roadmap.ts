@@ -391,7 +391,11 @@ export async function confirmDomainAdditions(roadmapId: string, version: number,
   return act("confirmDomainAdditions", true, (userId, now) => confirmDomainAdditionsCore(userId, roadmapId, version, domainIds, now, depsOf()));
 }
 
-/** A body or care plan's session picks (F-R4-17): [Keep them] or [Use easy, mobility and technique instead]. */
+/**
+ * A body or care plan's session picks (F-R4-17): [Keep them], or EASY, the swap to the track's own safe practices
+ * ([Use easy, mobility and technique instead] on a body plan, [Use Plan the week ahead and Keep a log instead] on a
+ * care plan, less any the user said to avoid).
+ */
 export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "EASY"): Promise<RoadmapActionResult<null>> {
   if (!isRef(roadmapId) || (choice !== "KEEP" && choice !== "EASY")) return { ok: false, error: NO_REF };
   return act("confirmSessionPicks", true, (userId, now) => confirmSessionPicksCore(userId, roadmapId, choice, now, depsOf()));

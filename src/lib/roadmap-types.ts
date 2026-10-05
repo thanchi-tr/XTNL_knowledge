@@ -4797,9 +4797,11 @@ export interface RoadmapView {
 // sessions on BODY; planning the week and keeping a log on CARE) for the
 // track's practice and for the activity itself. A CRAFT plan asks the same
 // way when any of the user's texts carries a cue or can't be read (wrist
-// RSI, voice strain …). Answering takes an explicit act: tick what to avoid
-// and Save, or tap "Nothing to avoid"; an unticked row is never taken as an
-// answer by itself, so Save with nothing ticked unlocks nothing. The answer
+// RSI, voice strain, a condition named with no pain word: "Acid reflux
+// affects my singing.", tinnitus, a tremor …). Answering takes an explicit
+// act: tick what to avoid and Save, or tap "Nothing to avoid"; an unticked
+// row is never taken as an answer by itself, so Save with nothing ticked
+// unlocks nothing. The answer
 // carries the key of the words it was given against, and a changed text asks
 // again (an AVOID stands). The parser's exclusions (R3's
 // constraintExclusionsOf) only SUGGEST: a pre-ticked box with the user's
@@ -4876,6 +4878,9 @@ export const CUE_INJURY_WORDS: readonly string[] = [
   // Craft and voice: the hands, the voice, the ears (a CRAFT plan asks on these).
   "rsi", "repetitive strain", "carpal tunnel", "trigger finger", "tennis elbow", "golfers elbow", "dystonia", "nodule*",
   "hoarse*", "lost my voice", "voice loss", "tinnitus", "hearing loss",
+  // The follow-up round: more of the hands and the voice ("Dupuytren's", "a ganglion on my wrist", "vocal polyps", "eyestrain").
+  "trigger thumb", "mallet finger", "quervain*", "dupuytren*", "ganglion", "cyst", "cysts", "polyp", "polyps", "eyestrain",
+  "lose my voice", "losing my voice",
 ];
 export const CUE_PAIN_WORDS: readonly string[] = [
   "pain", "pains", "painful", "painfully", "ache", "aches", "aching", "achy", "achey", "sore", "soreness", "hurt", "hurts",
@@ -4883,7 +4888,7 @@ export const CUE_PAIN_WORDS: readonly string[] = [
   "swell", "swells", "swelling", "swollen", "inflam*", "numb", "numbness", "tingl*", "throb*", "twinge*", "discomfort",
   "uncomfortable", "flare", "flares", "irritat*", "aggravat*", "bother", "bothers", "bothering", "bothered", "kills my",
   "killing my", "kill my", "kills me", "killing me", "niggl*", "acting up", "plays up", "playing up", "play up", "played up",
-  "gives me grief", "giving me grief",
+  "gives me grief", "giving me grief", "earache*", "backache*",
 ];
 export const CUE_HEALTH_WORDS: readonly string[] = [
   "pregnan*", "expecting", "trimester", "postpartum", "post partum", "postnatal", "post natal", "prenatal", "antenatal",
@@ -4917,6 +4922,18 @@ export const CUE_HEALTH_WORDS: readonly string[] = [
   "neuropath*", "retina*", "glaucoma", "cataract*", "haemophil*", "hemophil*", "sickle cell", "gout", "rheumat*", "fibroid*",
   "prostat*", "stoma", "catheter*", "oxygen", "walking frame", "zimmer", "mobility scooter", "hearing aid*", "bppv", "svt",
   "ckd", "chf", "hiv", "mnd",
+  // The follow-up round: conditions a craft names with no pain word, for the voice, the ears, the eyes and the hands
+  // ("Acid reflux affects my singing.", "Sing with GERD", "Paint with a tremor", "Sew with poor eyesight").
+  "reflux", "gerd", "lpr", "heartburn", "post nasal drip", "postnasal drip", "sinus", "sinuses", "dysphoni*", "tmj", "tmd",
+  "hyperacusis", "meniere*", "ringing in my ears", "ringing in the ears", "ringing ears", "ears ring", "ears ringing",
+  "ear ringing", "noise sensitivity", "sound sensitivity", "sensitive to noise", "sensitive to sound", "hearing damage",
+  "hearing problem*", "hearing issue*", "poor hearing", "bad hearing", "dry eyes", "dry eye", "floaters", "astigmatism",
+  "short sighted", "shortsighted", "near sighted", "nearsighted", "long sighted", "longsighted", "far sighted", "farsighted",
+  "macular", "photophobi*", "light sensitivity", "sensitive to light", "blurred vision", "blurry vision", "double vision",
+  "low vision", "poor vision", "bad vision", "vision loss", "vision problem*", "poor eyesight", "bad eyesight",
+  "failing eyesight", "weak eyesight", "eyesight problem*", "tremor*", "trembl*", "shaky hands", "shaky hand", "hands shake",
+  "raynaud*", "chilblain*", "eczema", "psoriasis", "paralys*", "paralyz*", "palsy", "ataxia", "dyspraxi*", "weak grip",
+  "poor grip", "bad posture", "poor posture", "posture problem*", "stage fright",
 ];
 export const CUE_AVOID_WORDS: readonly string[] = [
   "no", "not", "never", "none", "nothing", "nor", "neither", "avoid*", "without", "cant", "cannot", "can not", "couldnt",
@@ -4970,7 +4987,8 @@ export const CUE_BODY_PARTS_MORE: readonly string[] = [
   "back", "leg", "legs", "arm", "arms", "foot", "feet", "hand", "hands", "chest", "head", "toe", "toes", "finger", "fingers",
   "thumb", "thumbs", "calf", "calves", "quad", "quads", "glute", "glutes", "core", "abs", "stomach", "belly", "tummy", "eye",
   "eyes", "ear", "ears", "muscle", "muscles", "bone", "bones", "body", "jaw", "skin", "retina", "voice", "vocal", "throat",
-  "lung", "lungs", "heart",
+  "lung", "lungs", "heart", "forearm", "forearms", "fingertip", "fingertips", "knuckle", "knuckles", "lip", "lips", "mouth",
+  "larynx",
 ];
 /** Adjectives that make a following body part a cue (up to two words between: "bad left knee", "sore lower back"). */
 export const CUE_BODY_ADJECTIVES: readonly string[] = [
@@ -4984,8 +5002,8 @@ export const CUE_BODY_ADJECTIVES: readonly string[] = [
 export const CUE_POSSESSIVES: readonly string[] = ["my", "his", "her", "their", "our", "mums", "moms", "dads", "mothers", "fathers", "grandmas", "grandpas", "nans", "wifes", "husbands", "partners"];
 /** Words between an adjective or possessive and its body part. */
 export const CUE_BODY_FILLERS: readonly string[] = ["my", "his", "her", "their", "our", "left", "right", "lower", "upper", "both", "the", "a", "an", "up", "bad", "weak"];
-/** A body part followed by one of these is a cue anywhere ("back problems", "leg issues"). */
-export const CUE_PART_TROUBLE: readonly string[] = ["problem", "problems", "issue", "issues", "trouble", "troubles", "niggle", "niggles"];
+/** A body part followed by one of these is a cue anywhere ("back problems", "leg issues", "ear damage"). */
+export const CUE_PART_TROUBLE: readonly string[] = ["problem", "problems", "issue", "issues", "trouble", "troubles", "niggle", "niggles", "damage"];
 /**
  * Pain, injury, health and limit words in other languages, written without
  * accents (Spanish, Portuguese, French, Italian, German, Dutch, Indonesian
@@ -5051,6 +5069,7 @@ export const CUE_FUZZY_WORDS: readonly string[] = [
   "physiotherapist", "doctor", "asthma", "diabetes", "diabetic", "hernia", "sciatica", "concussion", "dislocated", "ligament",
   "cartilage", "meniscus", "achilles", "hamstring", "shoulder", "migraine", "epilepsy", "seizure", "condition", "recovering",
   "recovery", "operation", "hospital", "medication", "dementia", "disability", "disabled", "chronic", "illness", "fatigue",
+  "tinnitus",
 ];
 /** Real words one slip from a CUE_FUZZY_WORDS entry that are not a cue ("Spain" is not "sprain", "meditation" not "medication"). */
 export const CUE_FUZZY_GUARD: readonly string[] = [
@@ -5064,7 +5083,7 @@ export const CUE_APOSTROPHE_GUARD: readonly string[] = ["ill"];
  * MS", "I have POTS", "a TIA last year"): in lower case they are everyday
  * words ("ms", "pots", "als"). Not read in a text that is mostly capitals.
  */
-export const CUE_ACRONYMS: readonly string[] = ["MS", "POTS", "TIA", "ALS", "RA", "OA", "EDS", "HEDS", "CRPS", "RSI", "TMJ", "TBI", "DVT", "COPD", "IBS", "PCOS", "CFS", "BPPV", "SVT", "MND"];
+export const CUE_ACRONYMS: readonly string[] = ["MS", "POTS", "TIA", "ALS", "RA", "OA", "EDS", "HEDS", "CRPS", "RSI", "TMJ", "TBI", "DVT", "COPD", "IBS", "PCOS", "CFS", "BPPV", "SVT", "MND", "GORD"];
 /**
  * Word endings that name an operation or a condition ("meniscectomy",
  * "arthroscopy", "angioplasty", "bursitis", "fibromyalgia", "neuropathy"): a

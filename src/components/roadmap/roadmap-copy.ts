@@ -1452,6 +1452,45 @@ export function sessionPicksSwapLine(kinds: readonly CatalogKey[]): string {
   return `Nothing reaches Today before you answer. Without Gemini's picks, ${tail}.`;
 }
 
+/** The start of R4's accept refusal while Gemini's session picks wait (roadmap-server CONFIRM_PICKS). */
+export const SESSION_PICKS_FIRST_LEAD = "Confirm Gemini's session picks first:";
+/** The start of R4's refusal of a choice that is neither (confirmSessionPicksCore). */
+export const SESSION_PICKS_CHOICE_LEAD = "Keep the picks, or ";
+
+/**
+ * Accept's refusal while the picks wait, in the card's own words for this
+ * track (the swap's button, sessionPicksSwapWord): "Confirm Gemini's session
+ * picks first: keep them, or use Plan the week ahead and Keep a log
+ * instead." on a care plan, "… or use easy, mobility and technique instead."
+ * on a body plan, "… or leave them out." when the user avoided every one.
+ */
+export function sessionPicksFirstLine(kinds: readonly CatalogKey[]): string {
+  return `${SESSION_PICKS_FIRST_LEAD} ${sessionPicksChoiceLine(kinds).replace(/^K/u, "k")}`;
+}
+
+/** The two choices in the card's words for this track: "Keep them, or use Plan the week ahead and Keep a log instead." */
+export function sessionPicksChoiceLine(kinds: readonly CatalogKey[]): string {
+  const w = sessionPicksSwapWord(kinds);
+  return `Keep them, or ${w.charAt(0).toLowerCase()}${w.slice(1)}.`;
+}
+
+/**
+ * The server's session-picks refusals in this plan's words (R4's
+ * CONFIRM_PICKS and its choice refusal name a body plan's sessions on every
+ * track; the card names the track's own): a message that starts with either
+ * has that first sentence replaced (sessionPicksFirstLine, or
+ * sessionPicksChoiceLine for the choice refusal), the card's pointer or
+ * anything else after it kept. Any other message is returned as it is.
+ */
+export function sessionPicksRefusalOf(message: string, kinds: readonly CatalogKey[]): string {
+  const first = message.startsWith(SESSION_PICKS_FIRST_LEAD);
+  if (!first && !message.startsWith(SESSION_PICKS_CHOICE_LEAD)) return message;
+  const line = first ? sessionPicksFirstLine(kinds) : sessionPicksChoiceLine(kinds);
+  const end = message.search(/[.!?](?:\s|$)/u);
+  const rest = end < 0 ? "" : message.slice(end + 1).replace(/^\s+/u, "");
+  return rest ? `${line} ${rest}` : line;
+}
+
 /** Gemini's Domain additions (F-R4-21): "Gemini suggests adding 2 of your Domains: Risk Management (14 cards · 3 at level 6+), Calculus (30 cards). Each would count at every milestone, at 25 and 30 cards." */
 export function additionsLine(adds: readonly Pick<DomainAddition, "name" | "cards" | "atSix" | "n">[]): string {
   const each = adds.map((a) => `${a.name} (${plural(a.cards, "card")}${a.atSix > 0 ? ` · ${a.atSix} at level 6+` : ""})`).join(", ");
@@ -1749,17 +1788,65 @@ export function pausedItemLine(day: DayKey, offTarget: boolean, today?: DayKey):
   return offTarget ? `${head} From that day it no longer counts toward this milestone.` : head;
 }
 
+/** How a started item stands after an answer touched it (roadmap-ui-model PausedItem: its PauseState, the AVOID's day, its Practice kept, its task). */
+export interface PauseRowState {
+  state: "PAUSED" | "NOT_PAUSED" | "UNDONE" | "LIFTED";
+  day: DayKey | null;
+  offTarget: boolean;
+  offToday?: boolean;
+}
+
+/** A LIFTED practice's count line (no AVOID stands; R4 never turns its Practice kept back to paying). */
+const LIFTED_COUNT_LINE = "It stopped counting toward this milestone when you said to avoid it, and changing your answer doesn't make it count again.";
+
+/**
+ * The line on a started practice's or step's row once an answer touched it
+ * (the lead's ruling 3: never a silent change), true in every state:
+ *   - PAUSED: "Paused on 5 Oct because you said to avoid it." (pausedItemLine;
+ *     the row shows no On Today link);
+ *   - NOT_PAUSED (R4's `notPaused`): "You said to avoid it on 5 Oct, but it
+ *     couldn't be taken off Today: that change didn't go through, so it's
+ *     still there. Archive it from Today if you want it off.";
+ *   - UNDONE: "Back on Today: you chose Undo after saying to avoid it on 5 Oct.";
+ *   - LIFTED: "It stopped counting toward this milestone when you said to
+ *     avoid it, and changing your answer doesn't make it count again.", led
+ *     by "Still off Today since you said to avoid it." when the page saw it
+ *     paused.
+ * With its Practice kept no longer paying, the AVOID states add that from
+ * that day it no longer counts toward this milestone.
+ */
+export function pauseRowLine(p: PauseRowState, today?: DayKey): string {
+  if (p.state === "LIFTED" || !p.day) return p.offToday ? `Still off Today since you said to avoid it. ${LIFTED_COUNT_LINE}` : LIFTED_COUNT_LINE;
+  if (p.state === "PAUSED") return pausedItemLine(p.day, p.offTarget, today);
+  const d = dayLabel(p.day, today);
+  const count = p.offTarget ? ` From ${d} it no longer counts toward this milestone.` : "";
+  if (p.state === "NOT_PAUSED") return `You said to avoid it on ${d}, but it couldn't be taken off Today: that change didn't go through, so it's still there. Archive it from Today if you want it off.${count}`;
+  return `Back on Today: you chose Undo after saying to avoid it on ${d}.${count}`;
+}
+
 /**
  * Under a Practice kept measure that no longer pays (the lead's ruling 3;
- * R4 turns it CONTEXT from the day the last of its practices was paused):
- * "Strength session is paused because you said to avoid it, so from 5 Oct
- * this no longer counts toward the milestone." Null with none.
+ * R4 turns it CONTEXT from the day the last of its practices was paused),
+ * true whatever happened to the tasks since:
+ *   - every one paused: "Strength session is paused because you said to
+ *     avoid it, so from 5 Oct this no longer counts toward the milestone.";
+ *   - one still on Today (its pause refused) or back by Undo: "You said to
+ *     avoid Strength session, so from 5 Oct this no longer counts toward the
+ *     milestone.";
+ *   - the AVOID lifted (no day): "This stopped counting toward the milestone
+ *     when you said to avoid Strength session, and changing your answer
+ *     doesn't make it count again."
+ * Null with none.
  */
-export function practiceKeptPausedLine(rows: readonly { label: string; day: DayKey }[], today?: DayKey): string | null {
+export function practiceKeptPausedLine(rows: readonly { label: string; day: DayKey | null; state?: PauseRowState["state"] }[], today?: DayKey): string | null {
   if (rows.length === 0) return null;
   const one = rows.length === 1;
-  const last = rows.map((r) => r.day).reduce((a, b) => (b > a ? b : a));
-  return `${andList(rows.map((r) => r.label))} ${one ? "is" : "are"} paused because you said to avoid ${one ? "it" : "them"}, so from ${dayLabel(last, today)} this no longer counts toward the milestone.`;
+  const names = andList(rows.map((r) => r.label));
+  const days = rows.map((r) => r.day);
+  if (days.some((d) => !d)) return `This stopped counting toward the milestone when you said to avoid ${names}, and changing your answer doesn't make it count again.`;
+  const last = (days as DayKey[]).reduce((a, b) => (b > a ? b : a));
+  if (rows.some((r) => r.state != null && r.state !== "PAUSED")) return `You said to avoid ${names}, so from ${dayLabel(last, today)} this no longer counts toward the milestone.`;
+  return `${names} ${one ? "is" : "are"} paused because you said to avoid ${one ? "it" : "them"}, so from ${dayLabel(last, today)} this no longer counts toward the milestone.`;
 }
 
 /** The toast's title and body when a started practice the user now avoids couldn't be taken off Today (R4's `notPaused`): where to do it. */

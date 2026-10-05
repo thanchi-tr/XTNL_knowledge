@@ -1,7 +1,7 @@
 {
-  "sha256": "25b08ff54d41059da9ec4ed6747a5811a32e6cc2afbe6151a06e17462cb5f81a",
+  "sha256": "4c4417efb77ed4719d08eff091fc60f702bbe071e73dd898e1a80ff382751c78",
   "counts": {
-    "runs": 162,
+    "runs": 169,
     "A": 5000,
     "B": 1000,
     "C": 2000,
@@ -20,7 +20,7 @@
     "K_suggest": 98,
     "K_overExclusion": 2103,
     "M": 2200,
-    "F": 0
+    "F": 707
   },
   "packs": {
     "actuarial-probability": "88245bd3a0bdeca6",
@@ -36,5 +36,13 @@
     "trading": "e3da5d8bdccd9e0d",
     "vietnamese-japanese": "1edef685ba5a5978"
   },
-  "probes": []
+  "probes": [
+    "probe-care-routine",
+    "probe-guitar",
+    "probe-ielts",
+    "probe-lose-8kg",
+    "probe-python-cert",
+    "probe-run-10k",
+    "probe-vietnamese-japanese"
+  ]
 }

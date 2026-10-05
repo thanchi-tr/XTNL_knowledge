@@ -58,7 +58,7 @@
  *   Intake      saveIntakeCore · loadIntakeView · discardDraftCore · undoDiscardCore · validateIntake
  *   Drafting    claimDraftCore · runDraftCore · buildStarterCore · startManualCore · claimPlanOf
  *   Review      decideItemCore · editItemCore · addItemCore · keepUnflaggedCore · resolveDomainCore · applyRemedyCore
- *   Accept      acceptCore · undoAcceptCore · acceptBlockersOf
+ *   Accept      acceptCore · undoAcceptCore · acceptBlockersOf · confirmPicksOf · picksChoiceRefusalOf
  *   Start       startPreview · startMilestoneCore · finishStartCore · returnStartingCore · startAgainCore
  *   Measures    logCheckpointCore
  *   Lifecycle   replanCore · archiveRoadmapCore · markRoadmapDoneCore · practiceAftercare · keepOnTodayCore
@@ -148,7 +148,9 @@
  *     intakeOf reads it, intakeData writes the column through coverageJsonOf,
  *     an intake save carries it and re-gates the draft to the new words
  *     (draftGateOps through regatedDrafts: the track's safe kinds take the
- *     released kinds' place, as in a fresh build), and both writes are
+ *     released kinds' place, as in a fresh build; a changed track rebuilds
+ *     the rows for the new track, onTrackRowOf dropping the old track's
+ *     rows), and both writes are
  *     guarded on the row as read (ROADMAP_IS updatedAt). On a DRAFT the
  *     answer re-syncs the draft (regatedDrafts); on an ACTIVE plan it offers
  *     a re-plan, and an AVOID given after Start pauses the started task at
@@ -2782,30 +2784,41 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
  * gate now blocks leaves its row, and the track's safe kinds take the place
  * the starter gives them (a CARE draft keeps Plan the week ahead and Keep a
  * log, a CRAFT draft the technique session), so a changed text leaves the
- * same plan a fresh build would, never empty stages. Otherwise (the gate
- * didn't move, or the track changed: the rows are another track's until the
- * user builds again) only the blocked kinds leave (gatePlanRows). A row of
- * the user's own of a kind that waits again stays, held (gatePlanRows).
- * Through the one writer, each row guarded on its status. None when the
- * gate blocks nothing and didn't move, the roadmap holds no draft, or it is
- * a legacy draft; a write the tripwire refuses leaves the rows (logged):
- * accept refuses a draft that still holds one (acceptBlockersOf).
+ * same plan a fresh build would, never empty stages. When the plan's track
+ * changed (a BODY draft saved as CARE), the rows are rebuilt for the new
+ * track: the old track's rows leave them (onTrackRowOf: every item of a kind
+ * the new track doesn't use, whoever placed it, and every item in code's
+ * words the new track doesn't render), then regatedDrafts with no `since`
+ * fills each stage with the new track's starter kinds through its gate (its
+ * safe kinds while its card waits), so the draft is the plan a fresh build
+ * of the new track would place, never a dead end at accept, Start or a
+ * re-plan. Otherwise (the gate didn't move) only the blocked kinds leave
+ * (gatePlanRows). A row of the user's own of a kind that waits again stays,
+ * held (gatePlanRows). Through the one writer, each row guarded on its
+ * status, the tripwire reading the row as it will read (its track, aim and
+ * exam). None when the gate blocks nothing, didn't move and the track is
+ * the same, the roadmap holds no draft, or it is a legacy draft; a write the
+ * tripwire refuses leaves the rows (logged): accept refuses a draft that
+ * still holds one (acceptBlockersOf).
  */
 async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: RoadmapRec, tree: readonly TreeField[], now: Date): Promise<StoreOp[]> {
   const gate = planGateOf(e, next).gate;
   const before = planGateOf(e, prev).gate;
-  const moved = before.track === gate.track && JSON.stringify(gate.blocked) !== JSON.stringify(before.blocked);
-  if (!moved && gate.blocked.length === 0) return [];
+  const switched = before.track !== gate.track;
+  const moved = !switched && JSON.stringify(gate.blocked) !== JSON.stringify(before.blocked);
+  if (!switched && !moved && gate.blocked.length === 0) return [];
   const b = await e.store.bundle(userId, next.id);
   if (!b || legacyOf(b)) return [];
   const group = draftRowsOf(b);
   if (group.length === 0) return [];
-  const drafts = group.map(draftOf);
-  let afters = gatePlanRows(drafts, gate, next.fieldId == null, e.makeId);
-  if (moved) {
+  const trackArea = next.fieldId == null;
+  const textCtx = modelTextContextOf({ ...b, roadmap: next }, tree, true);
+  const drafts = switched ? group.map((m) => onTrackRowOf(draftOf(m), gate.track, textCtx, trackArea, e.makeId)) : group.map(draftOf);
+  let afters = gatePlanRows(drafts, gate, trackArea, e.makeId);
+  if (moved || switched) {
     try {
       const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
-      afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf({ roadmap: next }, group)), before.blocked);
+      afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf({ roadmap: next }, group)), switched ? null : before.blocked);
     } catch (err) {
       console.error("roadmap: the draft wasn't re-synced to the new words (the blocked kinds left it):", err instanceof Error ? err.message : err);
     }
@@ -2816,7 +2829,7 @@ async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: Road
       const after = afters.find((d) => d.id != null && d.id === row.id) ?? afters.find((d) => d.lineageId === row.lineageId) ?? afters[i];
       if (!after || JSON.stringify(after) === JSON.stringify(draftOf(row))) return;
       ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: row.id, statuses: [row.status as MilestoneStatus] } });
-      writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((d) => d !== after) }, modelTextContextOf(b, tree, true));
+      writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((d) => d !== after) }, textCtx);
     });
   } catch (err) {
     if (!(err instanceof ModelTextError)) throw err;
@@ -2824,6 +2837,29 @@ async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: Road
     return [];
   }
   return ops;
+}
+
+/**
+ * A draft row once its plan's track changed (draftGateOps), pure: the old
+ * track's rows leave it, whoever placed them and whatever their decision
+ * (a REMOVED row included): every item of a catalog kind the new track
+ * doesn't use (a BODY session on a CARE plan: its gate never asks about it,
+ * so an answer on the new track could never hold it back), and every item in
+ * code's words the new track doesn't render (the tripwire's codeLabelOk over
+ * `ctx`, the row as it will read). An item of no catalog kind in the user's
+ * own words stays, as does every item the new track holds as written; the
+ * gate then holds those back as on any plan (gatePlanRows). Measures follow
+ * a changed row (syncMeasures); a carried row is never touched.
+ */
+function onTrackRowOf(m: MilestoneDraft, track: CatalogTrack, ctx: ModelTextContext, trackArea: boolean, makeId: () => string): MilestoneDraft {
+  if (isCarried(m)) return m;
+  const code = catalogOriginOf();
+  const items = m.items.filter((it) => {
+    const entry = catalogEntryOf(it.catalogKey);
+    if (entry && !entry.tracks.includes(track)) return false;
+    return it.origin !== code || codeLabelOk(it, m, ctx);
+  });
+  return items.length === m.items.length ? m : syncMeasures({ ...m, items }, trackArea, makeId);
 }
 
 /** The named areas of an empty library (F-R4-24): each created in the Area Field (taxonomy createDomain), or the existing one of that name reused. */
@@ -3709,8 +3745,10 @@ function withStagePractices(e: Env, ctx: PlanContext, plan: readonly MilestoneDr
  * gate allows now but didn't under `since` — the blocked kinds the rows were
  * built with — is placed where the starter places it, and so is the safe
  * kind standing in for one now avoided), then R2's stage practices and
- * allocation (withStagePractices). `carried` are the started rows beside
- * them (never changed).
+ * allocation (withStagePractices). `since` null (the plan's track changed,
+ * draftGateOps: the rows were built for another track) places every starter
+ * kind of the new track a stage lacks, as a fresh build of it would.
+ * `carried` are the started rows beside them (never changed).
  */
 function regatedDrafts(
   e: Env,
@@ -3718,7 +3756,7 @@ function regatedDrafts(
   carried: readonly MilestoneDraft[],
   drafts: readonly MilestoneDraft[],
   names: Readonly<Record<string, DomainName>>,
-  since: readonly CatalogKey[]
+  since: readonly CatalogKey[] | null
 ): MilestoneDraft[] {
   const gate = gateOf(e, ctx);
   const trackArea = ctx.intake.fieldId == null;
@@ -3726,7 +3764,7 @@ function regatedDrafts(
   let filled = pruned;
   if (trackArea) {
     try {
-      filled = e.lanes.syncTrackStarter([...carried, ...pruned], ctx.intake, e.makeId, { gate, excluded: gate.blocked, since }).filter((d) => !isCarried(d));
+      filled = e.lanes.syncTrackStarter([...carried, ...pruned], ctx.intake, e.makeId, { gate, excluded: gate.blocked, ...(since ? { since } : {}) }).filter((d) => !isCarried(d));
     } catch (err) {
       console.error("roadmap: the track starter wasn't re-synced:", err instanceof Error ? err.message : err);
     }
@@ -5698,7 +5736,7 @@ export function acceptBlockersOf(
   drafts: readonly MilestoneDraft[],
   feasibility: Feasibility | null,
   scheduledTotal: number,
-  opts: { picksNeedConfirm?: boolean; gate?: Pick<ActivityGate, "blocked"> | null } = {}
+  opts: { picksNeedConfirm?: boolean; gate?: SwapGate } = {}
 ): AcceptCheck {
   const blockers: string[] = [];
   // Confirm to unlock (contracts §19): a draft never becomes the plan holding a live item of a kind the gate blocks,
@@ -5711,7 +5749,7 @@ export function acceptBlockersOf(
   const pendingAdd = drafts.flatMap((d) => d.items.filter(pendingAddition));
   const pendingPicks = opts.picksNeedConfirm ? drafts.flatMap((d) => d.items.filter(pendingPick)) : [];
   if (pendingAdd.length) blockers.push(DECIDE_ADDITIONS);
-  if (pendingPicks.length) blockers.push(CONFIRM_PICKS);
+  if (pendingPicks.length) blockers.push(confirmPicksOf(gate));
   // A held stage ("Held when you began") is never the milestone to decide.
   const next = drafts.find((d) => d.status !== "LATER" && !heldRow(d)) ?? null;
   if (!next) blockers.push("There's no milestone to accept.");
@@ -5739,7 +5777,48 @@ export function acceptBlockersOf(
 
 /** Revision 4 accept refusals, in words. */
 export const DECIDE_ADDITIONS = "Decide Gemini's suggested Domains first: add them or leave them out.";
+/** A body plan's session-picks blocker (confirmPicksOf on BODY, with no safe session avoided). */
 export const CONFIRM_PICKS = "Confirm Gemini's session picks first: keep them, or use easy, mobility and technique sessions.";
+
+/** The gate the session-picks words read: what it blocks and, where given, its track (BODY's words without one). */
+type SwapGate = (Pick<ActivityGate, "blocked"> & Partial<Pick<ActivityGate, "track">>) | null | undefined;
+
+/** The safe sessions read as one "… sessions" phrase on a body plan ("easy, mobility and technique sessions"). */
+const SWAP_SESSION_WORD: Partial<Readonly<Record<CatalogKey, string>>> = { EASY_SESSION: "easy", MOBILITY_SESSION: "mobility", TECHNIQUE_SESSION: "technique" };
+
+/**
+ * What the session picks' swap puts in their place, named (confirmSessionPicksCore's EASY; the card's button,
+ * roadmap-copy sessionPicksSwapWord, names the same): the plan's track's safe practices (cueSafeKindsOf), less any its
+ * gate blocks (a safe kind is blocked only when the user said to avoid it). "easy, mobility and technique sessions" on
+ * BODY, "Plan the week ahead and Keep a log" on CARE (each type's own name: its template before any fill); null when
+ * the user avoided every one. A gate without its track reads as BODY's.
+ */
+function swapWordsOf(gate: SwapGate): string | null {
+  const blocked = new Set<string>(gate?.blocked ?? []);
+  const kinds = cueSafeKindsOf(gate?.track ?? "BODY").filter((k) => catalogEntryOf(k)?.slot === "PRACTICE" && !blocked.has(k));
+  if (kinds.length === 0) return null;
+  const sessions = kinds.every((k) => SWAP_SESSION_WORD[k] != null);
+  const names = kinds.map((k) => (sessions ? (SWAP_SESSION_WORD[k] as string) : (catalogEntryOf(k)?.template ?? k).replace(/:.*$/, "")));
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+  return sessions ? `${list} sessions` : list;
+}
+
+/**
+ * The accept blocker while Gemini's session picks wait (F-R4-17), naming what the swap places on the plan's track
+ * (swapWordsOf): CONFIRM_PICKS on a body plan; "…keep them, or use Plan the week ahead and Keep a log." on a care plan;
+ * "…keep them, or leave them out." when the user avoided every safe practice.
+ */
+export function confirmPicksOf(gate: SwapGate): string {
+  const words = swapWordsOf(gate);
+  return `Confirm Gemini's session picks first: keep them, or ${words ? `use ${words}` : "leave them out"}.`;
+}
+
+/** confirmSessionPicksCore's refusal of a choice other than KEEP or EASY, naming the plan's swap (swapWordsOf): "Keep the picks, or use Plan the week ahead and Keep a log." on a care plan. */
+export function picksChoiceRefusalOf(gate: SwapGate): string {
+  const words = swapWordsOf(gate);
+  return `Keep the picks, or ${words ? `use ${words}` : "leave them out"}.`;
+}
+
 /**
  * Confirm to unlock (contracts §19): the draft still holds a session type the gate holds back (it waits on the user's
  * answer to the activity card, or they said to avoid it). acceptCore adds the card's pointer while the card waits.
@@ -9810,7 +9889,9 @@ async function confirmDomainAdditionsUnpointed(userId: string, roadmapId: string
  * BODY, planning the week and keeping a log on CARE; code's, within the
  * caps), in one
  * transaction through the one writer. Refused with writes off and with no
- * pick waiting.
+ * pick waiting; any other choice is refused in the plan's own words
+ * (picksChoiceRefusalOf: "Keep the picks, or use Plan the week ahead and
+ * Keep a log." on a care plan), as accept's blocker is (confirmPicksOf).
  */
 export async function confirmSessionPicksCore(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   return pointedRefusal(deps, userId, { roadmapId }, await confirmSessionPicksUnpointed(userId, roadmapId, choice, now, deps));
@@ -9819,11 +9900,12 @@ export async function confirmSessionPicksCore(userId: string, roadmapId: string,
 /** confirmSessionPicksCore's work; confirmSessionPicksCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
 async function confirmSessionPicksUnpointed(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
-  if (choice !== "KEEP" && choice !== "EASY") return fail("Keep the picks, or use easy, mobility and technique sessions.");
   const e = envOf(deps);
   const res = await withRetry<null>(async () => {
     const b = await e.store.bundle(userId, roadmapId);
     if (!b) return fail(NO_ROADMAP);
+    // Another choice is refused in the plan's own words: what its swap places on its track (picksChoiceRefusalOf).
+    if (choice !== "KEEP" && choice !== "EASY") return fail(picksChoiceRefusalOf(planGateOf(e, b.roadmap).gate));
     const group = draftRowsOf(b);
     if (!picksNeedConfirmOf(b.roadmap) || !group.some((m) => m.items.some((i) => pendingPick(itemDraftOf(i))))) return fail("There are no session picks to confirm.");
     const tree = await e.io.fieldTree();

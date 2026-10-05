@@ -403,6 +403,11 @@ interface Lexicon {
   limitNumber: Set<string>;
   /** Advice to go gently, as constraint tokens hold it (constraint.gentle). */
   gentle: string[][];
+  // The follow-up round: a rehearsal of the exam is never the exam (constraint.fill; roadmap-lexicon.ts CONSTRAINT_REHEARSAL_WORDS).
+  /** Stems that make the exam word after them a rehearsal ("mock", "practice"). */
+  rehearsalStems: Set<string>;
+  /** Stems of the exam words ("exam", "test", "paper"). */
+  examStems: Set<string>;
   areaGerunds: string[][];
   startTerms: string[][];
   startNouns: Set<string>;
@@ -505,6 +510,8 @@ function compileLexicon(lx: LexiconModule): Lexicon {
     frequencies: lx.CONSTRAINT_FREQUENCY_PHRASES.map(closedWords).filter((w) => w.length > 0).sort((a, b) => b.length - a.length),
     limitNumber: new Set(lx.CONSTRAINT_LIMIT_NUMBER_WORDS.flatMap(closedWords)),
     gentle: lx.CONSTRAINT_GENTLE_PHRASES.map(closedWords).filter((w) => w.length > 0).sort((a, b) => b.length - a.length),
+    rehearsalStems: new Set(lx.CONSTRAINT_REHEARSAL_WORDS.flatMap(closedWords).map(stem)),
+    examStems: new Set(lx.CONSTRAINT_EXAM_WORDS.flatMap(closedWords).map(stem)),
     areaGerunds: lx.AREA_GERUNDS.map((g) => g.toLowerCase().split(/\s+/u).filter(Boolean)),
     startTerms: lx.START_TERM_PHRASES.map((g) => g.toLowerCase().split(/\s+/u).filter(Boolean)),
     startNouns: new Set(lx.START_NOUN_WORDS),
@@ -3347,13 +3354,43 @@ function activityStemsOf(track: CatalogTrack | null): ReadonlySet<string> {
  * Domain-filled Field kinds, "Mum's care is too much for me alone" no care
  * kind, "Knee injury, I'd like to get fitter" never meets "Feel fitter by
  * summer"; while "running hurts my knee" still meets "Performance check: Run
- * a sub-50 10K".
+ * a sub-50 10K". The follow-up round (the lead's aim-conflict ruling): a
+ * rehearsal of the exam (rehearsalStemsOf: "mock exams", "practice tests")
+ * never may, however it was read.
  */
-function fillable(t: NegatedTerm, activity: ReadonlySet<string>, L: Lexicon, R: Rules): boolean {
+function fillable(t: NegatedTerm, activity: ReadonlySet<string>, L: Lexicon, R: Rules, rehearsal?: ReadonlySet<string>): boolean {
+  if (rehearsal?.has(t.stem) && R.on("constraint.fill")) return false;
   if (!t.read || !R.on("constraint.fill")) return true;
   if (activity.has(t.stem)) return true;
   const head = R.on("constraint.compound") ? compoundHeadOf(t, L) : null;
   return head != null && activity.has(head);
+}
+
+/**
+ * The follow-up round (the lead's aim-conflict ruling; constraint.fill): the
+ * stems of the exam words the constraints use only as a rehearsal of the
+ * exam, each right after a rehearsal word in its clause or a compound of the
+ * two ("No mock exams until the last month", "no practice tests",
+ * "mock-exams"; roadmap-lexicon.ts CONSTRAINT_REHEARSAL_WORDS). One use of
+ * the word on its own ("No mock exams. No exams at all.") and it names the
+ * exam again. Such a term meets a type by the type's own words, and through
+ * its fill only a type that is itself a rehearsal (Mock test: SOA Exam P):
+ * never the aim, the exam's booking or a full attempt at the aim. Never
+ * throws.
+ */
+function rehearsalStemsOf(constraints: string | null | undefined, L: Lexicon): Set<string> {
+  const only = new Map<string, boolean>();
+  if (typeof constraints !== "string" || L.examStems.size === 0) return new Set();
+  for (const piece of constraints.slice(0, 2000).matchAll(SENTENCE_PIECE)) {
+    const toks = constraintTokens(piece[0]);
+    toks.forEach((w, i) => {
+      const parts = w.stem.split("-").filter(Boolean);
+      if (parts.length === 0 || !L.examStems.has(parts[parts.length - 1])) return;
+      const rehearsed = parts.length > 1 ? L.rehearsalStems.has(parts[parts.length - 2]) : i > 0 && !w.afterPause && L.rehearsalStems.has(toks[i - 1].stem);
+      only.set(w.stem, (only.get(w.stem) ?? true) && rehearsed);
+    });
+  }
+  return new Set(Array.from(only).flatMap(([s, r]) => (r ? [s] : [])));
 }
 
 /** A term meets a text's stems: by its stem, or (byHead) a compound by its last part. */
@@ -3397,7 +3434,13 @@ export function constraintExclusionsOf(constraints: string | null, kinds: readon
     const L = lexiconOf(opts);
     const track = fill?.track ?? "FIELD";
     const activity = activityStemsOf(track);
-    const usable = (t: NegatedTerm): boolean => fillable(t, activity, L, R);
+    // The follow-up round (the lead's aim-conflict ruling): a rehearsal of the exam ("No mock exams until the last month")
+    // meets through its fill only a type that is itself a rehearsal (Mock test), never "Book SOA Exam P" (rehearsalStemsOf).
+    const rehearsal = rehearsalStemsOf(constraints, L);
+    const usableFor =
+      (rehearses: boolean) =>
+      (t: NegatedTerm): boolean =>
+        fillable(t, activity, L, R, rehearses ? undefined : rehearsal);
     // The safety-gaps round (contracts §19, decision 7: what this names is a suggestion, never a block). A word too general to
     // name a type names none (constraint.generic: "No timed practice" never names Writing practice); on a Field plan a term
     // from a sentence about the body names none (constraint.field-body: knowledge practice is never held by a body cue, so
@@ -3425,6 +3468,8 @@ export function constraintExclusionsOf(constraints: string | null, kinds: readon
       const slots = Array.from(template.matchAll(/\{(\w+)\}/g), (m) => m[1]);
       const own = ownStemsOf(entry, track);
       const filled = new Set(constraintTokens(slots.map(fillText).join(" \n ")).map((t) => t.stem));
+      // A type that is itself a rehearsal of the exam: its own words hold a rehearsal word and an exam word (Mock test).
+      const usable = usableFor(Array.from(own).some((x) => L.rehearsalStems.has(x)) && Array.from(own).some((x) => L.examStems.has(x)));
       // termMeeting's order (by stem, then a compound by its last part), with a held-back term meeting the kind's own words only.
       const meets = (list: readonly NegatedTerm[], byHead: boolean): NegatedTerm | undefined => list.find((t) => meetsStems(t, own, byHead, L) || (meetsStems(t, filled, byHead, L) && usable(t)));
       const pick = (byHead: boolean): NegatedTerm | undefined => meets(terms, byHead);
@@ -3518,6 +3563,16 @@ export interface AimConflictQuote extends AimConflict {
  * daily"), and a word held to a limit is no conflict (constraint.limit:
  * "Shin splints flare up if I run more than twice a week" against "Run a
  * sub-25 5K"). Show it only while it is unresolved (unresolvedAimConflictOf).
+ *
+ * The lead's aim-conflict ruling (the follow-up round, contracts §19):
+ *   - a frequency limit is not an exclusion: "Shin splints flare up if I run
+ *     more than twice a week." names nothing and raises no line here, while
+ *     BODY's activity card (always on) quotes the sentence;
+ *   - "No mock exams until the last month." on a Field exam plan is a timing
+ *     limit on a rehearsal of the exam, never a clash with "Pass SOA Exam P"
+ *     (constraint.fill, rehearsalStemsOf): no line here. Its one suggestion,
+ *     Mock test, shows on the card as a pre-ticked box quoting the sentence;
+ *     the gate places it (a suggestion never blocks).
  */
 export function aimConflictOf(constraints: string | null | undefined, aim: string, opts?: RuleOpts): AimConflictQuote | null {
   const placed = placedTermsOf(constraints, opts);
@@ -3529,7 +3584,10 @@ export function aimConflictOf(constraints: string | null | undefined, aim: strin
   const activity = activityStemsOf(null);
   const terms = placed.map((p) => p.term);
   const named = R.on("constraint.generic") ? terms.filter((t) => !L.genericKind.has(t.stem)) : terms;
-  const usable = named.filter((t) => fillable(t, activity, L, R));
+  // The follow-up round (the lead's aim-conflict ruling): a rehearsal of the exam is never the exam the aim names ("No mock
+  // exams until the last month" against "Pass SOA Exam P"), unless the aim is itself a rehearsal (rehearsalStemsOf).
+  const rehearsal = Array.from(stems).some((s) => s.split("-").some((x) => L.rehearsalStems.has(x))) ? undefined : rehearsalStemsOf(constraints, L);
+  const usable = named.filter((t) => fillable(t, activity, L, R, rehearsal));
   const hit = termMeeting(usable, stems, L, R);
   if (!hit && usable.length < named.length && termMeeting(named, stems, L, silent)) R.fire("constraint.fill");
   if (!hit && named.length < terms.length && termMeeting(terms, stems, L, silent)) R.fire("constraint.generic");

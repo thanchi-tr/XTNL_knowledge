@@ -479,6 +479,42 @@ async function main() {
   const ref = activeHtml.slice(at(activeHtml, "rm-ref rm-o5"));
   check("page: the four reference sections sit in one disclosure", ["Your capacity", "Is this realistic?", "How this was drafted", "How this is measured"].every((s) => ref.includes(s)) && (activeHtml.match(/rm-ref-toggle/g) ?? []).length === 1);
   check("page: the reference disclosure is a 40+ px button with aria-expanded", /<button type="button" class="rm-ref-toggle" aria-expanded="false"/.test(activeHtml));
+  // The disclosure row at 344–375 (fix round): a flexed title (flex: 1; min-width: 0) beside the meta collapsed to one word a
+  // line. The title now has a row of its own under 600 px of main (the meta under it, wrapping there) and, from 600, a
+  // max-content column the meta can never squeeze; the grid areas key on the button's three children, in this order.
+  {
+    const rmCss = read("src/components/roadmap/roadmap.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = (sel: string) => {
+      const line = rmCss.split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith(`${sel} {`));
+      return line ? line.slice(sel.length + 2, line.lastIndexOf("}")) : "";
+    };
+    const toggle = rule(".rm-ref-toggle");
+    const title = rule(".rm-ref-toggle b");
+    const meta = rule(".rm-ref-toggle span");
+    const wide = /@container main \(min-width: 600px\) \{\s*\.rm-ref-toggle \{([^}]*)\}\s*\.rm-ref-toggle span \{([^}]*)\}\s*\}/.exec(rmCss);
+    check(
+      "page: the disclosure row's title never shrinks to one word a line (no flex, no min-width: 0 on it); under 600 px of main it has its own row and the meta wraps on the row under it",
+      /display: grid;/.test(toggle) &&
+        /grid-template-columns: minmax\(0, 1fr\) 16px;/.test(toggle) &&
+        /grid-template-areas: "t i" "m i";/.test(toggle) &&
+        /grid-area: t;/.test(title) &&
+        !/\bflex\b|min-width|white-space|overflow|text-overflow/.test(title) &&
+        /grid-area: m;/.test(meta) &&
+        /min-width: 0;/.test(meta) &&
+        !/white-space: nowrap/.test(meta),
+      JSON.stringify({ toggle, title, meta })
+    );
+    check(
+      "page: from 600 px of main the meta follows the title on its row: the title's column is max-content (it keeps its natural width) and the meta takes what is left, right-aligned",
+      !!wide && /grid-template-columns: max-content minmax\(0, 1fr\) 16px;/.test(wide[1]) && /grid-template-areas: "t m i";/.test(wide[1]) && /text-align: right;/.test(wide[2]) && !/text-align: right/.test(meta),
+      wide?.[0] ?? "no 600 px rule"
+    );
+    check(
+      "page: the disclosure button holds exactly its title, its meta and the chevron, in that order (the grid areas key on them)",
+      /<button type="button" class="rm-ref-toggle" aria-expanded="false"><b>How this is worked out<\/b><span>capacity · realism · drafting · measuring<\/span><svg[^>]*>[\s\S]*?<\/svg><\/button>/.test(activeHtml),
+      /<button type="button" class="rm-ref-toggle"[\s\S]{0,240}/.exec(activeHtml)?.[0]
+    );
+  }
   check("page: week quests come first inside Now", at(activeHtml, 'id="week-quests"') > at(activeHtml, 'id="now"') && at(activeHtml, 'id="week-quests"') < at(activeHtml, ">Measures<"));
   check("page: no verdict chip in the Aim header", (() => { const h = activeHtml.slice(0, at(activeHtml, 'id="now"')); return !h.includes("rm-vd"); })());
   const headerHtml = R(createElement(AimHeader, { header: activeFx.view!.header!, rank: activeFx.view!.rank, proficiency: activeFx.view!.proficiency, today: T, scheduled: 6, writesOff: false }));
@@ -1262,6 +1298,43 @@ async function main() {
           !/easy|mobility|technique/i.test(carePicksCard),
         `${bodyPicksCard.slice(0, 200)} || ${carePicksCard.slice(0, 260)}`
       );
+      // The server's picks refusals (R4's CONFIRM_PICKS on accept, its choice refusal) name a body plan's sessions on every
+      // track; the page shows them in the card's words for the plan's own track, pointer kept (fix round).
+      {
+        const { sessionSwapOfView } = await import("../src/components/roadmap/DraftReview");
+        const serverPicks = /export const CONFIRM_PICKS = "([^"]+)";/.exec(read("src/lib/roadmap-server.ts"))?.[1] ?? "Confirm Gemini's session picks first: keep them, or use easy, mobility and technique sessions.";
+        const pointed = CATP.withActivityPointer({ on: true, pending: ["HARDER_SESSION" as const] }, serverPicks);
+        const careFirst = "Confirm Gemini's session picks first: keep them, or use Plan the week ahead and Keep a log instead.";
+        check(
+          "session picks: accept's refusal per track in the card's words — care “… or use Plan the week ahead and Keep a log instead.”, body “… or use easy, mobility and technique instead.”, “… or leave them out.” with none left",
+          copy.sessionPicksFirstLine(careSwap) === careFirst &&
+            copy.sessionPicksFirstLine(bodySwap) === "Confirm Gemini's session picks first: keep them, or use easy, mobility and technique instead." &&
+            copy.sessionPicksFirstLine(careAllAvoided) === "Confirm Gemini's session picks first: keep them, or leave them out." &&
+            copy.sessionPicksChoiceLine(careSwap) === "Keep them, or use Plan the week ahead and Keep a log instead." &&
+            !/easy|mobility|technique/i.test(copy.sessionPicksFirstLine(careSwap) + copy.sessionPicksChoiceLine(careSwap)),
+          copy.sessionPicksFirstLine(careSwap)
+        );
+        check(
+          "session picks: the server's refusal (as R4 words it now, and pointed at the activity card) reads in the plan's words — never easy, mobility and technique on a care plan — the pointer kept; any other message is left as it is",
+          serverPicks.startsWith(copy.SESSION_PICKS_FIRST_LEAD) &&
+            copy.sessionPicksRefusalOf(serverPicks, careSwap) === careFirst &&
+            copy.sessionPicksRefusalOf(pointed, careSwap) === `${careFirst} ${CATP.ACTIVITY_PENDING_POINTER}` &&
+            copy.sessionPicksRefusalOf(serverPicks, bodySwap) === copy.sessionPicksFirstLine(bodySwap) &&
+            copy.sessionPicksRefusalOf("Keep the picks, or use easy, mobility and technique sessions.", careSwap) === "Keep them, or use Plan the week ahead and Keep a log instead." &&
+            copy.sessionPicksRefusalOf("That change couldn't be saved.", careSwap) === "That change couldn't be saved." &&
+            copy.sessionPicksRefusalOf("Decide Gemini's suggested Domains first: add them or leave them out.", careSwap) === "Decide Gemini's suggested Domains first: add them or leave them out.",
+          copy.sessionPicksRefusalOf(pointed, careSwap)
+        );
+        const dr = code(read("src/components/roadmap/DraftReview.tsx"));
+        check(
+          "session picks: the plan's swap is one helper (sessionSwapOfView: care's on a care draft, body's on a body draft), and both the picks card's error and Accept's go through sessionPicksRefusalOf",
+          JSON.stringify(sessionSwapOfView(careFx)) === JSON.stringify(careSwap) &&
+            JSON.stringify(sessionSwapOfView(bodyFx)) === JSON.stringify(bodySwap) &&
+            (dr.match(/<ActionError>\{sessionPicksRefusalOf\(error, (?:swap|sessionSwapOfView\(view\))\)\}<\/ActionError>/g) ?? []).length === 2 &&
+            dr.includes("const swap = sessionSwapOfView(view);"),
+          String((dr.match(/sessionPicksRefusalOf\([^)]*\)/g) ?? []).join(" | "))
+        );
+      }
     }
     const noExam = catalogChoicesOf("PRACTICE", { areaFieldId: "f-st", track: "CRAFT", examLabel: null, excluded: [], allowed: [] }, { lastStage: false });
     const withExamCk = catalogChoicesOf("CHECKPOINT", { areaFieldId: "f-st", track: "CRAFT", examLabel: "Exam P", excluded: [], allowed: [] }, { lastStage: true });
@@ -2404,8 +2477,8 @@ async function main() {
         "paused: read from the view as R4 leaves it — a practice and an open step Start put on Today whose type the user said to avoid on or after the start day; the practice off target once its own Practice kept is CONTEXT",
         JSON.stringify(pausedNow) ===
           JSON.stringify([
-            { lineageId: "lp-str", templateId: "t-str", kind: "PRACTICE", label: "Strength for knees and hips", day: "2027-01-05", offTarget: true },
-            { lineageId: "ls-5k", templateId: "t-5k", kind: "STEP", label: "Run a timed 5 km", day: "2027-01-05", offTarget: false },
+            { lineageId: "lp-str", templateId: "t-str", kind: "PRACTICE", label: "Strength for knees and hips", day: "2027-01-05", offTarget: true, state: "PAUSED", offToday: true },
+            { lineageId: "ls-5k", templateId: "t-5k", kind: "STEP", label: "Run a timed 5 km", day: "2027-01-05", offTarget: false, state: "PAUSED", offToday: true },
           ]) && model.pausedItemsOf(sharedCur, after)[0]?.offTarget === false,
         JSON.stringify(pausedNow)
       );
@@ -2463,6 +2536,165 @@ async function main() {
       const plainHtml = R(createElement(RoadmapScreen, { view: { ...pausedView, activityConfirm: before } }));
       check("paused: nothing paused, no paused line (an AVOID from before Start held the practice back instead)", !flat(plainHtml).includes("Paused on") && !flat(plainHtml).includes("no longer counts") && !flat(pageOf("body-practice")).includes("Paused on"));
       check("paused: never red on the paused lines", !/danger|owed/.test(practise + measures + steps));
+      // ── Ruling 3 in every state (fix round): the row and the measure line stay true when the pause was refused (R4's
+      // notPaused: still on Today), after the notice's Undo (back on Today), and once the AVOID is lifted (answered again,
+      // or its row waits again) while its Practice kept stays CONTEXT (R4 never turns it back). What this tab saw happen to
+      // each task is roadmap-pauses', noted by the save (announceActivitySaved) and its Undo. ──
+      {
+        const pauses = await import("../src/components/roadmap/roadmap-pauses");
+        const D = pausedView.today;
+        const rowLines = {
+          refused: copy.pauseRowLine({ state: "NOT_PAUSED", day: "2027-01-05", offTarget: false }, "2027-01-07"),
+          refusedOff: copy.pauseRowLine({ state: "NOT_PAUSED", day: "2027-01-05", offTarget: true }, "2027-01-07"),
+          undone: copy.pauseRowLine({ state: "UNDONE", day: "2027-01-05", offTarget: false }, "2027-01-07"),
+          undoneOff: copy.pauseRowLine({ state: "UNDONE", day: "2027-01-05", offTarget: true }, "2027-01-07"),
+          lifted: copy.pauseRowLine({ state: "LIFTED", day: null, offTarget: true }),
+          liftedOff: copy.pauseRowLine({ state: "LIFTED", day: null, offTarget: true, offToday: true }),
+        };
+        check(
+          "pause states: each state's row line is true — refused: it couldn't be taken off Today, why, and where to archive it; Undo: back on Today; lifted: it stopped counting and a changed answer doesn't count it again; paused is pausedItemLine",
+          copy.pauseRowLine({ state: "PAUSED", day: "2027-01-05", offTarget: true }, "2027-01-07") === copy.pausedItemLine("2027-01-05", true, "2027-01-07") &&
+            rowLines.refused === "You said to avoid it on 5 Jan, but it couldn't be taken off Today: that change didn't go through, so it's still there. Archive it from Today if you want it off." &&
+            rowLines.refusedOff === `${rowLines.refused} From 5 Jan it no longer counts toward this milestone.` &&
+            rowLines.undone === "Back on Today: you chose Undo after saying to avoid it on 5 Jan." &&
+            rowLines.undoneOff === "Back on Today: you chose Undo after saying to avoid it on 5 Jan. From 5 Jan it no longer counts toward this milestone." &&
+            rowLines.lifted === "It stopped counting toward this milestone when you said to avoid it, and changing your answer doesn't make it count again." &&
+            rowLines.liftedOff === `Still off Today since you said to avoid it. ${rowLines.lifted}` &&
+            !/Paused/.test(rowLines.refused + rowLines.undone + rowLines.lifted),
+          JSON.stringify(rowLines)
+        );
+        const keptLines = {
+          paused: copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-05", state: "PAUSED" }], "2027-01-07"),
+          refused: copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-05", state: "NOT_PAUSED" }], "2027-01-07"),
+          undone: copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-05", state: "UNDONE" }], "2027-01-07"),
+          lifted: copy.practiceKeptPausedLine([{ label: "Strength session", day: null, state: "LIFTED" }]),
+        };
+        check(
+          "pause states: the measure line calls the practice paused only while it is; refused or undone it says the user's answer and the day; lifted it says why it stopped counting and that a changed answer doesn't count it again",
+          keptLines.paused === "Strength session is paused because you said to avoid it, so from 5 Jan this no longer counts toward the milestone." &&
+            keptLines.refused === "You said to avoid Strength session, so from 5 Jan this no longer counts toward the milestone." &&
+            keptLines.undone === keptLines.refused &&
+            keptLines.lifted === "This stopped counting toward the milestone when you said to avoid Strength session, and changing your answer doesn't make it count again.",
+          JSON.stringify(keptLines)
+        );
+        const stateWords = [...Object.values(rowLines), ...Object.values(keptLines)].join(" ");
+        check("pause states: their words claim no medical knowledge and never say 'fine'", !MEDICAL.test(stateWords) && !/\bfine\b/i.test(stateWords), MEDICAL.exec(stateWords)?.[0]);
+
+        const seenOf = (entries: [string, "PAUSED" | "NOT_PAUSED" | "UNDONE"][]) => new Map(entries);
+        const refused = model.pausedItemsOf(startedCur, after, seenOf([["t-str", "NOT_PAUSED"], ["t-5k", "NOT_PAUSED"]]));
+        const undone = model.pausedItemsOf(startedCur, after, seenOf([["t-str", "UNDONE"]]));
+        check(
+          "pause states: a task the save's reply listed in notPaused reads NOT_PAUSED and one Undo brought back reads UNDONE — both on Today (not offToday), with the AVOID's day and the measure as they are; with nothing seen each reads PAUSED, off Today",
+          JSON.stringify(refused.map((p) => [p.lineageId, p.state, p.offToday, p.day, p.offTarget])) ===
+            JSON.stringify([
+              ["lp-str", "NOT_PAUSED", false, "2027-01-05", true],
+              ["ls-5k", "NOT_PAUSED", false, "2027-01-05", false],
+            ]) &&
+            JSON.stringify(undone.map((p) => [p.lineageId, p.state, p.offToday])) === JSON.stringify([["lp-str", "UNDONE", false], ["ls-5k", "PAUSED", true]]) &&
+            model.pausedItemsOf(startedCur, after, new Map()).every((p) => p.state === "PAUSED" && p.offToday) &&
+            JSON.stringify(model.pausedOfMeasure(perPractice[1], refused).map((p) => p.state)) === JSON.stringify(["NOT_PAUSED"]),
+          JSON.stringify({ refused, undone })
+        );
+        // The AVOID lifted: Strength answered again unticked (its row FINE), the 5 km step still avoided since 5 Jan.
+        const savedBoth = CAT.answerActivityCard(null, st, { key: st.key, avoid: ["STRENGTH_SESSION", "FULL_ATTEMPT"], nothingToAvoid: false }, "2027-01-05");
+        const savedLift = savedBoth.ok ? CAT.answerActivityCard(savedBoth.value, st, { key: st.key, avoid: ["FULL_ATTEMPT"], nothingToAvoid: false }, "2027-01-07") : null;
+        const liftedView = savedLift?.ok ? CAT.activityConfirmViewOf(st, CAT.allowedKindsFor(st, savedLift.value)) : null;
+        // …and the same with Strength's row waiting again (PENDING: the card asks again under new words).
+        const waitingView = liftedView ? { ...liftedView, rows: liftedView.rows.map((r) => (r.kind === "STRENGTH_SESSION" ? { ...r, state: "PENDING" as const, cls: null } : r)) } : null;
+        const lifted = model.pausedItemsOf(startedCur, liftedView);
+        check(
+          "pause states: once the AVOID is lifted (answered again, or its row waiting again) a practice whose Practice kept stays CONTEXT reads LIFTED with no day, off Today only once this tab saw it paused; the step still avoided stays PAUSED; a lifted practice whose measure pays reads nothing",
+          liftedView?.rows.find((r) => r.kind === "STRENGTH_SESSION")?.state === "FINE" &&
+            JSON.stringify(lifted.map((p) => [p.lineageId, p.state, p.day, p.offTarget, p.offToday])) ===
+              JSON.stringify([
+                ["lp-str", "LIFTED", null, true, false],
+                ["ls-5k", "PAUSED", "2027-01-05", false, true],
+              ]) &&
+            model.pausedItemsOf(startedCur, liftedView, seenOf([["t-str", "PAUSED"]])).find((p) => p.lineageId === "lp-str")?.offToday === true &&
+            JSON.stringify(model.pausedItemsOf(startedCur, waitingView).map((p) => [p.lineageId, p.state])) === JSON.stringify([["lp-str", "LIFTED"], ["ls-5k", "PAUSED"]]) &&
+            model.pausedItemsOf(sharedCur, liftedView).every((p) => p.lineageId !== "lp-str") &&
+            JSON.stringify(model.pausedOfMeasure(perPractice[1], lifted).map((p) => p.state)) === JSON.stringify(["LIFTED"]),
+          JSON.stringify({ rows: liftedView?.rows.map((r) => [r.kind, r.state]), lifted })
+        );
+
+        // Rendered, each state on its own roadmap id (the store is per roadmap, so no other check sees these notes).
+        const asRoadmap = (id: string, v: RoadmapView): RoadmapView => ({ ...v, header: { ...v.header!, id } });
+        const partsOf = (html: string) => ({
+          practise: chunkOf(html, "What to practise"),
+          kept: chunkOf(html, "Measures").split('<div class="rm-mr">').slice(1),
+          steps: chunkOf(html, "Steps"),
+        });
+        const unseen = partsOf(nowOf(asRoadmap("rm-seen-none", pausedView)));
+        pauses.notePauseSeen("rm-seen-refused", [
+          { templateId: "t-str", seen: "NOT_PAUSED" },
+          { templateId: "t-5k", seen: "NOT_PAUSED" },
+        ]);
+        const refusedHtml = nowOf(asRoadmap("rm-seen-refused", pausedView));
+        const r = partsOf(refusedHtml);
+        check(
+          "pause states: rendered, a refused pause never reads 'Paused': the practice and the step say they couldn't be taken off Today and why, keep their On Today links, and the measure line says the user's answer and the day",
+          !flat(refusedHtml).includes("Paused on") &&
+            !flat(refusedHtml).includes("is paused because") &&
+            flat(r.practise).includes(copy.pauseRowLine({ state: "NOT_PAUSED", day: "2027-01-05", offTarget: true }, D)) &&
+            r.practise.includes(`href="${todayTaskHref("t-str")}"`) &&
+            flat(r.steps).includes(copy.pauseRowLine({ state: "NOT_PAUSED", day: "2027-01-05", offTarget: false }, D)) &&
+            r.steps.includes(`href="${todayTaskHref("t-5k")}"`) &&
+            r.kept.length === 2 &&
+            flat(r.kept[1]).includes(copy.practiceKeptPausedLine([{ label: "Strength for knees and hips", day: "2027-01-05", state: "NOT_PAUSED" }], D)!) &&
+            // The same view with nothing seen still reads paused (the save saw nothing refused).
+            flat(unseen.practise).includes(copy.pausedItemLine("2027-01-05", true, D)) &&
+            !unseen.practise.includes(`href="${todayTaskHref("t-str")}"`),
+          flat(r.practise).slice(0, 500)
+        );
+        // The save's own notes: announceActivitySaved records the reply's notPaused and paused, and the Undo that landed.
+        {
+          const fake = { actions: { ...runtimeMod.FIXTURE_ACTIONS, unarchiveTask: async (id: string) => (id === "t-str" ? { ok: true as const, value: null } : { ok: false as const, error: "No." }) }, refresh: () => {} };
+          const before = toasts.getToasts().length;
+          ac.announceActivitySaved({ replan: false, paused: [{ templateId: "t-str", title: "Strength", kind: "STRENGTH_SESSION" }, { templateId: "t-5k", title: "5 km", kind: "FULL_ATTEMPT" }], notPaused: [{ templateId: "t-run", title: "Run", kind: "EASY_SESSION" }] }, "rm-seen-save", fake);
+          const noted = [...pauses.pauseSeenOf("rm-seen-save")];
+          const pushed = toasts.getToasts().slice(before);
+          pushed.find((t) => t.title === copy.ACTIVITY_PAUSED_TITLE)?.action?.onAction();
+          await new Promise((res) => setTimeout(res, 0));
+          await new Promise((res) => setTimeout(res, 0));
+          const afterUndo = [...pauses.pauseSeenOf("rm-seen-save")];
+          for (const t of toasts.getToasts().slice(before)) toasts.dismissToast(t.id);
+          check(
+            "pause states: the save notes what happened to each task (notPaused still on Today, paused off it), and its Undo notes only the tasks that came back (one refused stays paused)",
+            JSON.stringify(noted) === JSON.stringify([["t-run", "NOT_PAUSED"], ["t-str", "PAUSED"], ["t-5k", "PAUSED"]]) &&
+              JSON.stringify(afterUndo) === JSON.stringify([["t-run", "NOT_PAUSED"], ["t-str", "UNDONE"], ["t-5k", "PAUSED"]]) &&
+              pauses.pauseSeenOf("rm-seen-none").size === 0,
+            JSON.stringify({ noted, afterUndo })
+          );
+        }
+        pauses.notePauseSeen("rm-seen-undone", [{ templateId: "t-str", seen: "UNDONE" }]);
+        const undoneHtml = nowOf(asRoadmap("rm-seen-undone", pausedView));
+        const u = partsOf(undoneHtml);
+        check(
+          "pause states: rendered, after Undo the practice says it is back on Today (link kept) and still no longer counts; the step nobody undid still reads paused",
+          flat(u.practise).includes(copy.pauseRowLine({ state: "UNDONE", day: "2027-01-05", offTarget: true }, D)) &&
+            !flat(u.practise).includes("Paused on") &&
+            u.practise.includes(`href="${todayTaskHref("t-str")}"`) &&
+            flat(u.kept[1] ?? "").includes(copy.practiceKeptPausedLine([{ label: "Strength for knees and hips", day: "2027-01-05", state: "UNDONE" }], D)!) &&
+            flat(u.steps).includes(copy.pausedItemLine("2027-01-05", false, D)) &&
+            !u.steps.includes(`href="${todayTaskHref("t-5k")}"`),
+          flat(u.practise).slice(0, 500)
+        );
+        const liftedOf = (id: string) => partsOf(nowOf(asRoadmap(id, { ...pausedView, activityConfirm: liftedView })));
+        const l = liftedOf("rm-seen-lifted");
+        pauses.notePauseSeen("rm-seen-lifted-off", [{ templateId: "t-str", seen: "PAUSED" }]);
+        const lo = liftedOf("rm-seen-lifted-off");
+        check(
+          "pause states: rendered, with the AVOID lifted the practice still says it no longer counts (never a silent stop) on its row and under its Practice kept, with its link; once this tab saw it paused it says it is still off Today, with no link",
+          flat(l.practise).includes(copy.pauseRowLine({ state: "LIFTED", day: null, offTarget: true }, D)) &&
+            !flat(l.practise).includes("Paused on") &&
+            l.practise.includes(`href="${todayTaskHref("t-str")}"`) &&
+            flat(l.kept[1] ?? "").includes(copy.practiceKeptPausedLine([{ label: "Strength for knees and hips", day: null, state: "LIFTED" }])!) &&
+            flat(lo.practise).includes(copy.pauseRowLine({ state: "LIFTED", day: null, offTarget: true, offToday: true }, D)) &&
+            !lo.practise.includes(`href="${todayTaskHref("t-str")}"`),
+          flat(l.practise).slice(0, 500)
+        );
+        check("pause states: never red on any state's lines", ![r, u, l, lo].some((x) => /danger|owed/.test(x.practise + x.kept.join("") + x.steps)));
+      }
     }
     check(
       "health: every body or care card carries HEALTH_LINE, and a craft card that asks; a Field card never does",

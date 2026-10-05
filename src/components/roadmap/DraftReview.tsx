@@ -108,6 +108,7 @@ import {
   paragonDepthLine,
   plural,
   sessionPicksLine,
+  sessionPicksRefusalOf,
   sessionPicksSwapLine,
   sessionPicksSwapWord,
   timeSecondsLabel,
@@ -512,8 +513,7 @@ function SessionPicksCard({ view }: { view: RoadmapView }) {
   const picks = draft.sessionPicks;
   const { run, pending, error } = useRoadmapAction();
   if (!picks || picks.decision !== "PENDING" || picks.kinds.length === 0) return null;
-  const h = view.header!;
-  const swap = sessionSwapKindsOf(catalogTrackOf({ fieldId: h.area.kind === "FIELD" ? h.area.fieldId : null, track: h.track }), activityConfirmOfView(view));
+  const swap = sessionSwapOfView(view);
   return (
     <section className="card rm-adds" id={PICKS_DOM_ID} aria-label="Gemini's session picks">
       <p className="rm-adds-t">{sessionPicksLine(picks)}</p>
@@ -526,9 +526,20 @@ function SessionPicksCard({ view }: { view: RoadmapView }) {
         </Button>
       </div>
       <p className="t-meta">{sessionPicksSwapLine(swap)}</p>
-      {error && <ActionError>{error}</ActionError>}
+      {error && <ActionError>{sessionPicksRefusalOf(error, swap)}</ActionError>}
     </section>
   );
+}
+
+/**
+ * What the session picks' swap places on this plan (sessionSwapKindsOf over
+ * the plan's catalog track and its answers): the card's button and line, and
+ * the words a picks refusal is shown in (sessionPicksRefusalOf).
+ */
+export function sessionSwapOfView(view: Pick<RoadmapView, "header" | "draft" | "activityConfirm">): CatalogKey[] {
+  const h = view.header;
+  if (!h) return [];
+  return sessionSwapKindsOf(catalogTrackOf({ fieldId: h.area.kind === "FIELD" ? h.area.fieldId : null, track: h.track }), activityConfirmOfView(view));
 }
 
 /**
@@ -686,7 +697,7 @@ function DraftFooter({
           {hint}
         </p>
       )}
-      {error && <ActionError>{error}</ActionError>}
+      {error && <ActionError>{sessionPicksRefusalOf(error, sessionSwapOfView(view))}</ActionError>}
     </div>
   );
 }

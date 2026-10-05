@@ -80,7 +80,7 @@ import {
   paragonDepthLine,
   pastDueLine,
   paceLine,
-  pausedItemLine,
+  pauseRowLine,
   practiceKeptPausedLine,
   spanLabel,
   statedLine,
@@ -106,6 +106,7 @@ import {
   type LibraryDomain,
 } from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
+import { usePauseSeen } from "./roadmap-pauses";
 import { ItemEditor } from "./ItemEditor";
 import { editorScopeOf, DraftReview, DraftRunning } from "./DraftReview";
 import { AimHeader } from "./AimHeader";
@@ -263,8 +264,11 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
   const prevBest = Math.max(0, ...rows.filter((r) => r.ord < m.ord && r.rankIndex != null).map((r) => r.rankIndex!));
   // Constraint safety (contracts §19): while the plan waits on the user's answer about activities.
   const practiceOnly = practiceOnlyLineOf(view.activityConfirm);
-  // Started practices and steps an answer took off Today (decision 4): said on their rows, and under a Practice kept that no longer pays (the lead's ruling 3).
-  const paused = started ? pausedItemsOf(current, view.activityConfirm) : [];
+  // Started practices and steps an answer touched (decision 4): how each stands — off Today, still there (its pause refused), back by
+  // Undo, or no longer avoided — said on its row, and under a Practice kept that no longer pays (the lead's ruling 3). What this tab
+  // saw happen to each task (the save's reply, the notice's Undo) is roadmap-pauses'.
+  const seen = usePauseSeen(view.header?.id);
+  const paused = started ? pausedItemsOf(current, view.activityConfirm, seen) : [];
   const pausedOf = new Map(paused.map((p) => [p.lineageId, p] as const));
   const rank = { rankIndex: m.rankIndex, gives: m.rankIndex != null && m.rankIndex > prevBest, paragonAfter: false };
 
@@ -468,9 +472,8 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
                     <p className="rm-it-l">{it.label}</p>
                     {started && it.templateId && (
                       <div className="rm-it-m">
-                        {pausedOf.has(it.lineageId) ? (
-                          pausedItemLine(pausedOf.get(it.lineageId)!.day, false, today)
-                        ) : (
+                        {pausedOf.has(it.lineageId) && `${pauseRowLine(pausedOf.get(it.lineageId)!, today)}${pausedOf.get(it.lineageId)!.offToday ? "" : " "}`}
+                        {!pausedOf.get(it.lineageId)?.offToday && (
                           <Link className="rm-ilink" href={todayTaskHref(it.templateId)}>
                             On Today
                           </Link>

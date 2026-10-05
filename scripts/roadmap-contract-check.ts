@@ -2477,6 +2477,62 @@ console.log("— confirm to unlock (§19): the cue detector —");
   const read = shortForeign.filter((a) => !cuesOf(a, "AIM").unparseable);
   check("a short aim in another language is unparseable (a cue): a loan word ('Marathon', 'km', 'Tennis') or a number ('10K') doesn't make it English (the lead's decision 8)", read.length === 0, read.join(" | "));
   check("…in the constraints too ('Abends'); a note needs CUE_LANGUAGE_MIN_WORDS such words ('SOA Exam P', 'Arpeggios' are read)", cuesOf("Abends").unparseable && !cuesOf("SOA Exam P", "NOTES").unparseable && !cuesOf("Arpeggios", "NOTES").unparseable && cuesOf("Rodilla mala siempre", "NOTES").unparseable);
+
+  // The follow-up round (ver.still_open, roadmap-types): CRAFT cues for a condition that affects the craft (the voice, the
+  // ears, the eyes, the hands, the back). The fourth verifier's 38 phrasings caught 37: "Acid reflux affects my singing." was
+  // the miss. A cue is a reason to ask, never a reading of what the user can do.
+  const verifierCraft: [string, RT.CueSource][] = [
+    ...[
+      "I get hoarse after an hour.", "I lose my voice after long rehearsals.", "Throat gets sore when I sing high.", "Vocal fatigue by Friday.", "My voice cracks on high notes.",
+      "Laryngitis twice this year.", "Acid reflux affects my singing.", "TMJ flares when I play.", "Jaw pain from the mouthpiece.", "Tennis elbow from bowing.",
+      "Trigger finger on my left hand.", "Focal dystonia in my right hand.", "Ganglion cyst on my wrist.", "Neck gets stiff after practice.", "Eye strain from reading music.",
+      "Migraines from bright stage lights.", "Back spasms at the wheel.", "De Quervain's in my thumb.", "Golfer's elbow.", "Bursitis in my shoulder.",
+      "Some hearing loss.", "Numb fingers after 30 minutes.", "Pins and needles in my hands.", "Hand cramps.", "Forearm aches after scales.",
+      "Wrist gets sore when I type.", "My fingertips blister.", "Tendons in my hand flare up.", "Can't hold the bow long.", "Thumb joint is arthritic.",
+    ].map((t): [string, RT.CueSource] => [t, "CONSTRAINTS"]),
+    ...[
+      "Play guitar again after a broken finger", "Sing again after vocal nodules", "Return to the violin after a wrist fracture", "Paint again after a stroke", "Play piano with arthritis",
+      "Sing after laryngitis", "Drum again after shoulder surgery", "Learn guitar with carpal tunnel",
+    ].map((t): [string, RT.CueSource] => [t, "AIM"]),
+  ];
+  const craftSilent = verifierCraft.filter(([t, src]) => cuesOf(t, src).cues.length === 0).map(([t]) => t);
+  check(`the fourth verifier's ${verifierCraft.length} craft phrasings each raise a quoted cue (30 constraints, 8 aims; 'Acid reflux affects my singing.' was the miss)`, verifierCraft.length === 38 && craftSilent.length === 0, craftSilent.join(" | "));
+  eq("'Acid reflux affects my singing.' is a HEALTH cue on 'reflux', with the user's own sentence", cuesOf("Acid reflux affects my singing.").cues.map((c) => [c.cls, c.cue, c.quote, c.clause]), [["HEALTH", "reflux", "reflux", "Acid reflux affects my singing"]]);
+  // A condition named with no pain word, as a constraint (with no body part a possessive could reach) and as an aim.
+  const craftConditions = [
+    "Acid reflux affects my singing.", "GERD makes high notes harder.", "Silent reflux since spring.", "Heartburn when I sing after dinner.", "Postnasal drip all winter.",
+    "Sinus trouble most mornings.", "Ringing in my ears after band practice.", "Hyperacusis, loud rehearsals are hard.", "Ménière's disease.", "Tinnitus after gigs.",
+    "Dry eyes after an hour of drawing.", "Short-sighted, so the music stand is a squint.", "Blurry vision late at night.", "Essential tremor.", "Hands shake when I hold a brush.",
+    "Raynaud's, cold fingers at the wheel.", "Eczema from the clay.", "Dupuytren's in the ring finger.", "Ganglion on the back of the wrist.", "Stage fright before recitals.",
+    "Bad posture at the drawing desk.", "Earaches after loud gigs.", "Backache after a day at the loom.", "Eyestrain from fine embroidery.", "Lower back pain at the potter's wheel.",
+    "Hearing damage from years of drumming.", "Vocal polyps.", "LPR flares in spring.", "Bell's palsy last year.", "Mallet finger from volleyball.",
+  ];
+  const conditionAims = [
+    "Sing with acid reflux", "Sing with GERD", "Sing with silent reflux", "Play drums with tinnitus", "Play violin with hearing loss",
+    "Paint with a tremor", "Knit with Raynaud's", "Read music with low vision", "Sew with poor eyesight", "Play guitar with Dupuytren's",
+    "Get over stage fright", "Throw pots with eczema", "Play flute after Bell's palsy", "Sing again after vocal polyps", "Draw with eye strain",
+    "Play piano with essential tremor", "Learn cello with a bad back", "Play trumpet with TMJ", "Sing with LPR", "Paint with dry eyes",
+  ];
+  const conditionSilent = [...craftConditions.flatMap((t) => (["CONSTRAINTS", "AIM"] as const).filter((src) => cuesOf(t, src).cues.length === 0).map((src) => `${src}: ${t}`)), ...conditionAims.filter((a) => cuesOf(a, "AIM").cues.length === 0)];
+  check(
+    `${craftConditions.length} craft conditions named with no pain word raise a quoted cue in the constraints and in the aim, and so do ${conditionAims.length} craft aims naming one (reflux, GERD, LPR, tinnitus, hearing loss, a tremor, Raynaud's, low vision, stage fright …)`,
+    conditionSilent.length === 0,
+    conditionSilent.join(" | ")
+  );
+  check("…a one-letter slip of 'tinnitus' is one ('Tinitus after gigs'), and 'GORD' only in capitals", json(cuesOf("Tinitus after gigs").cues.map((c) => [c.cls, c.cue])) === json([["INJURY", "~tinnitus"]]) && cuesOf("GORD since June").cues.some((c) => c.cue === "GORD") && !cuesOf("Help Gord move house", "AIM").cues.some((c) => c.cue === "GORD"));
+  // Controls: everyday craft aims, and the body and care aims above, raise no cue (the new words never fire on a plain aim).
+  const everydayCraft = [
+    "Sing in a choir", "Learn to sing harmony", "Play by ear", "Ear training for jazz guitar", "Learn sight reading", "Play the drums in a band", "Learn violin vibrato",
+    "Paint landscapes in oils", "Sketch every day", "Draw portraits from life", "Learn calligraphy", "Carve a wooden spoon", "Build a bookshelf", "Make a quilt",
+    "Write 1,000 words a day", "Bake sourdough", "Learn chess openings", "Practise scales daily", "Sing in tune", "Learn tremolo picking", "Sing Renaissance polyphony",
+    "Record an album", "Learn to read sheet music", "Perform at an open mic", "Play a recital", "Photograph the night sky", "Learn hand lettering", "Train my ear for intervals",
+    "Improve my vibrato", "Sew a summer dress", "Knit socks on double-pointed needles", "Paint with a dry brush", "Sing with a strong voice", "Learn lip trills",
+    "Play the blues harp", "Sing from the diaphragm", "Learn finger picking", "Grade 8 singing", "Learn to throw on the wheel", "Make a dovetail joint",
+    "Restore a water-damaged chair", "Learn to solder", "Photograph light and shadow", "Write a sonnet", "Play the Moonlight Sonata", "Sing a solo at the spring concert",
+  ];
+  const everydayBody = ["Improve grip strength", "Improve my posture", "Visit Grandma every Sunday", "Call Mum most evenings"];
+  const falseCues = [...everydayCraft, ...everydayBody, ...craftAims, ...bodyShort].filter((a) => cuesOf(a, "AIM").hasCue);
+  check(`0 false cues: ${everydayCraft.length + everydayBody.length + craftAims.length + bodyShort.length} everyday craft, body and care aims raise none ('Learn tremolo picking', 'Sing Renaissance polyphony', 'Paint with a dry brush', 'Improve grip strength')`, falseCues.length === 0, falseCues.join(" | "));
 }
 
 console.log("— confirm to unlock (§19): the gate —");
@@ -2554,6 +2610,55 @@ console.log("— confirm to unlock (§19): the gate —");
     const easy = stateOf("BODY", "My GP said to take it easy for a month", "Run a sub-50 10K", [{ kind: "EASY_SESSION", word: "easy" }]);
     const ge = CAT.allowedKindsFor(easy, null);
     check("'take it easy' never blocks Easy session: a pre-ticked suggestion, still placed", ge.allowed.includes("EASY_SESSION") && ge.rows.find((r) => r.kind === "EASY_SESSION")?.state === "WORDS");
+  }
+  {
+    // A craft condition named with no pain word turns the CRAFT gate on (the follow-up round's cue words).
+    const reflux = CAT.allowedKindsFor(stateOf("CRAFT", "Acid reflux affects my singing.", "Sing jazz standards"), null);
+    eq("CRAFT with 'Acid reflux affects my singing.': it asks; only the technique session and the preparation steps are placed", [reflux.on, reflux.pending, reflux.allowed], [true, ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], ["TECHNIQUE_SESSION", "SET_UP", "BOOK_EXAM", "EXAM_DAY"]]);
+    check("…and so does an aim naming one ('Sing with GERD', 'Paint with a tremor', 'Sew with poor eyesight')", ["Sing with GERD", "Paint with a tremor", "Sew with poor eyesight"].every((a) => CAT.allowedKindsFor(stateOf("CRAFT", null, a), null).on));
+  }
+
+  // The lead's aim-conflict ruling (the follow-up round; R3's aimConflictOf and constraintExclusionsOf). A limit is never a
+  // clash with the aim. A frequency limit ("…if I run more than twice a week") is not an exclusion: it names nothing, the
+  // activity card quotes it, and no aim-conflict line shows. "No mock exams until the last month" on a Field exam plan is a
+  // timing limit on a rehearsal of the exam: the card shows it as a quote (Mock test's pre-ticked box), never a block, and no
+  // aim-conflict line shows (a mock exam is never the exam the aim names).
+  {
+    const kindsOf = (track: CAT.CatalogTrack, exam: boolean) => (["PRACTICE", "STEP", "CHECKPOINT"] as const).flatMap((slot) => CAT.catalogKindsFor(slot, { track, exam, practicesAllowed: true }));
+    const shin = "Shin splints flare up if I run more than twice a week.";
+    const shinEx = V.constraintExclusionsOf(shin, kindsOf("BODY", false), { track: "BODY", aim: "Run a sub-25 5K" });
+    const shinState = stateOf("BODY", shin, "Run a sub-25 5K", shinEx);
+    const shinGate = CAT.allowedKindsFor(shinState, null);
+    const shinView = CAT.activityConfirmViewOf(shinState, shinGate);
+    eq(
+      "ruling: a frequency limit is not an exclusion — it names nothing (no pre-tick), BODY's card asks and quotes the sentence, and no aim-conflict line shows",
+      [shinEx, shinGate.on, shinView.quotes, shinGate.rows.filter((r) => r.prefill === "AVOID").length, V.aimConflictOf(shin, "Run a sub-25 5K")],
+      [[], true, ["Shin splints flare up if I run more than twice a week"], 0, null]
+    );
+    const mock = "No mock exams until the last month.";
+    const examFill = { track: "FIELD" as const, domains: ["Probability", "Inference"], aim: "Pass SOA Exam P", exam: "SOA Exam P" };
+    const mockEx = V.constraintExclusionsOf(mock, kindsOf("FIELD", true), examFill);
+    const mockState = CAT.constraintsStateOf({ track: "FIELD", texts: { constraints: mock, aim: examFill.aim, notes: [examFill.exam] }, exam: true, exclusions: mockEx });
+    const mockGate = CAT.allowedKindsFor(mockState, null);
+    const mockView = CAT.activityConfirmViewOf(mockState, mockGate);
+    eq(
+      "ruling: 'No mock exams until the last month.' on a Field exam plan — one suggestion, Mock test (never the exam's booking or a full attempt at the aim); the card shows it pre-ticked with the user's sentence; nothing is blocked; no aim-conflict line",
+      [mockEx, mockGate.on, mockGate.blocked, mockGate.allowed.includes("MOCK_TEST"), mockGate.rows.map((r) => [r.kind, r.state, r.prefill, r.reason]), mockView.quotes, V.aimConflictOf(mock, examFill.aim)],
+      [[{ kind: "MOCK_TEST", word: "mock" }], false, [], true, [["MOCK_TEST", "WORDS", "AVOID", "No mock exams until the last month"]], ["No mock exams until the last month"], null]
+    );
+    check(
+      "…a mock is never the exam, whatever the timing ('No mock exams.', 'No practice tests on weekdays.' against 'Pass the driving test'); the exam itself still is ('No exams until the last month.'; 'No mock exams. No exams at all.'), and so is a rehearsal the aim names ('Pass all my mock exams')",
+      V.aimConflictOf("No mock exams.", examFill.aim) === null &&
+        V.aimConflictOf("No practice tests on weekdays.", "Pass the driving test") === null &&
+        V.aimConflictOf("No exams until the last month.", examFill.aim)?.word === "exams" &&
+        V.aimConflictOf("No mock exams. No exams at all.", examFill.aim)?.word === "exams" &&
+        V.aimConflictOf("No mock exams.", "Pass all my mock exams")?.word === "mock"
+    );
+    check(
+      "…and a rehearsal still names the rehearsal type through its own words and the exam's name ('No practice exams.' → Mock test; 'No practice tests.' → Self-test and Mock test)",
+      json(V.constraintExclusionsOf("No practice exams.", kindsOf("FIELD", true), examFill).map((x) => x.kind)) === json(["MOCK_TEST"]) &&
+        json(V.constraintExclusionsOf("No practice tests.", kindsOf("FIELD", true), examFill).map((x) => x.kind)) === json(["SELF_TEST", "MOCK_TEST"])
+    );
   }
   const pre = stateOf("BODY", "Running causes me knee pain.", "Run a sub-50 10K", [{ kind: "HARDER_SESSION", word: "running" }, { kind: "LONGER_SESSION", word: "running" }, { kind: "RECALL_DRILLS", word: "running" }]);
   const knee = stateOf("BODY", "Running causes me knee pain.");

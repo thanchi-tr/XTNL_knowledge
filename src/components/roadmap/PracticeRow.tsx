@@ -9,16 +9,18 @@
  * "from your ticks" with a link to the task on Today. A catalog type says who
  * chose it ("practice type picked by Gemini from the app's list", "added by
  * the app", "you chose this"). A body session always carries HEALTH_LINE.
- * A started practice an answer took off Today (decision 4) says so in place
- * of its link, and, once its Practice kept no longer pays, that it no longer
- * counts toward the milestone (the lead's ruling 3).
+ * A started practice an answer touched says how it stands (the lead's
+ * ruling 3, roadmap-copy pauseRowLine): paused, in place of its link; still
+ * on Today because its pause was refused, or back by Undo, with its link;
+ * and, once its Practice kept no longer pays, that it no longer counts
+ * toward the milestone, the AVOID lifted included.
  */
 import Link from "next/link";
 import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { practiceBandMinutes } from "@/lib/roadmap-types";
 import type { CatalogKey } from "@/lib/roadmap-catalog";
-import { HEALTH_LINE, KIND_HOW, METHOD_HOW, METHOD_WORD, pausedItemLine, practicePlanLine } from "./roadmap-copy";
+import { HEALTH_LINE, KIND_HOW, METHOD_HOW, METHOD_WORD, pauseRowLine, practicePlanLine } from "./roadmap-copy";
 import { todayTaskHref } from "./roadmap-links";
 import type { PausedItem } from "./roadmap-ui-model";
 import { ItemRow } from "./ItemRow";
@@ -61,8 +63,8 @@ export function PracticeRow({
   target: ActTarget;
   stage: "draft" | "outline" | "active" | "start";
   kept?: { kept: number; of: number } | null;
-  /** An answer took this started practice off Today (roadmap-ui-model pausedItemsOf); null while it is on Today. */
-  paused?: Pick<PausedItem, "day" | "offTarget"> | null;
+  /** An answer touched this started practice (roadmap-ui-model pausedItemsOf): how it stands; null when none did. */
+  paused?: Pick<PausedItem, "day" | "offTarget" | "state" | "offToday"> | null;
   today?: string;
 }) {
   const it = target.item;
@@ -81,7 +83,7 @@ export function PracticeRow({
           {" so far · from your ticks"}
         </>
       )}
-      {stage === "active" && it?.templateId && !paused && (
+      {stage === "active" && it?.templateId && !paused?.offToday && (
         <>
           {" · "}
           <Link className="rm-ilink" href={todayTaskHref(it.templateId)}>
@@ -95,7 +97,7 @@ export function PracticeRow({
   const how = it ? howLinesOf(it) : [];
   return (
     <ItemRow target={target} stage={stage} kindLabel={kindLabel} meta={meta} chipsBefore={it?.method && stage !== "outline" ? <Chip>{METHOD_WORD[it.method]}</Chip> : null}>
-      {stage === "active" && paused && <p className="t-meta rm-ink1">{pausedItemLine(paused.day, paused.offTarget, today)}</p>}
+      {stage === "active" && paused && <p className="t-meta rm-ink1">{pauseRowLine(paused, today)}</p>}
       {stage !== "outline" && <HowLines lines={how} />}
       {stage !== "outline" && it?.method === "WORKOUT" && <p className="rm-it-why">{HEALTH_LINE}</p>}
     </ItemRow>

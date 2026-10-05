@@ -1097,6 +1097,19 @@ export const CONSTRAINT_GENTLE_PHRASES: readonly string[] = [
 ];
 
 /**
+ * The follow-up round (the lead's aim-conflict ruling; constraint.fill): a
+ * rehearsal of the exam is never the exam. An exam word the constraints use
+ * only right after one of these ("No mock exams until the last month",
+ * "no practice tests") meets a type by the type's own words (Mock test)
+ * and never through its fill (the aim, the exam's name): it raises no
+ * aim-conflict line against "Pass SOA Exam P", and it never pre-ticks
+ * "Book SOA Exam P" or a full attempt at the aim. Matched by stem.
+ */
+export const CONSTRAINT_REHEARSAL_WORDS: readonly string[] = ["mock", "practice", "practise", "trial", "sample"];
+/** The exam words a rehearsal word turns into a rehearsal (constraint.fill; CONSTRAINT_REHEARSAL_WORDS). Matched by stem. */
+export const CONSTRAINT_EXAM_WORDS: readonly string[] = ["exam", "exams", "examination", "examinations", "test", "tests", "paper", "papers", "quiz", "quizzes"];
+
+/**
  * F-R4-19: the gerunds of a skill. A gap name may hold one although its stem
  * is a LABEL_START_WORD ("Listening", "Sight reading").
  */

@@ -32,7 +32,7 @@ State of the tree after lane 0:
 
 **The finishing round and the hardening round** are §18: the finishing round closed §17.3's handoffs (code comments call it "fix round 3"), and §18 records its exports and changed signatures, the hallucination bar's numbers after it (the re-blessed pin among them), and the minors a verifier still found open, with what the hardening round did about each. The hardening round (code comments: "fix round 4") also taught the constraint parser to read a negation written after its term, which re-blessed the pin append-only again (§18.1, §18.2). A second verifier's list after it is §18.5.
 
-**Constraint safety, confirm to unlock** is §19, the lead's decision after the hardening round (roadmap-rev4.md decision 55, F-R4-25). On a BODY or CARE plan, safety rests on a broad cue detector and the user's per-kind answer, not on the parser: the parser's exclusions only pre-fill. Lane 0 wrote the contract and every pure part first and alone, with no schema change. Each plan path's adoption is a PENDING line (§19.5), so `--strict`, and with it life:check, failed until they landed; all have landed, and a fourth verifier's run of life:check exited 0 (roadmap-contract-check `--strict` 493 passed, 0 PENDING). After a third verifier, the lead's eight decisions (roadmap-rev4.md decision 56, "the safety-gaps round") rewrote §19 in place: every BODY or CARE plan asks once whatever the user wrote, CRAFT asks on a cue, answering is an explicit act that carries the key of the words it answers, CARE has two safe kinds, and the parser's reading is only a suggestion (§19.8). R3's vocabulary item in §19's first round re-blessed the hostile pin append-only to 6a7ed5cd…, and its suggest item in the safety-gaps round to **25b08ff54d41059d…**, the live pin (scripts/fixtures/roadmap-hostile/pin.json: K 3,007, 2,103 over-exclusion lines); §19.9 holds the pin's history, the bar's figures and the check chain's state. After the fourth verifier the lead ruled three follow-ups (roadmap-rev4.md decision 57): the release is per card (a Save with a tick answers every row the card listed, and "Nothing to avoid" stays hidden while any box is ticked); safety overrides the akrasia horizon (a pause caused by an "Avoid" is immediate even for a must, and the must's days before it keep their rules and debts); and a paused practice stops counting toward its started milestone's practice-kept target from the pause day, said on the roadmap.
+**Constraint safety, confirm to unlock** is §19, the lead's decision after the hardening round (roadmap-rev4.md decision 55, F-R4-25). On a BODY or CARE plan, safety rests on a broad cue detector and the user's per-kind answer, not on the parser: the parser's exclusions only pre-fill. Lane 0 wrote the contract and every pure part first and alone, with no schema change. Each plan path's adoption is a PENDING line (§19.5), so `--strict`, and with it life:check, failed until they landed; all have landed, and a fourth verifier's run of life:check exited 0 (roadmap-contract-check `--strict` 493 passed, 0 PENDING). After a third verifier, the lead's eight decisions (roadmap-rev4.md decision 56, "the safety-gaps round") rewrote §19 in place: every BODY or CARE plan asks once whatever the user wrote, CRAFT asks on a cue, answering is an explicit act that carries the key of the words it answers, CARE has two safe kinds, and the parser's reading is only a suggestion (§19.8). R3's vocabulary item in §19's first round re-blessed the hostile pin append-only to 6a7ed5cd…, and its suggest item in the safety-gaps round to **25b08ff54d41059d…**, the live pin (scripts/fixtures/roadmap-hostile/pin.json: K 3,007, 2,103 over-exclusion lines); §19.9 holds the pin's history, the bar's figures and the check chain's state. After the fourth verifier the lead ruled three follow-ups (roadmap-rev4.md decision 57): the release is per card (a Save with a tick answers every row the card listed, and "Nothing to avoid" stays hidden while any box is ticked); safety overrides the akrasia horizon (a pause caused by an "Avoid" is immediate even for a must, and the must's days before it keep their rules and debts); and a paused practice stops counting toward its started milestone's practice-kept target, said on the roadmap (as built, its whole practice-kept measure switches to context from the pause, so its sessions before the pause stop counting too). §19.11 records ruling (1) and the track's key (lane 0), §19.12 rulings (2) and (3) with the server's and the page's other follow-up items (R4, R5), §19.13 the lead's aim-conflict ruling (a limit is not an exclusion; roadmap-rev4.md 57.4), and §19.14 the probe run (7 of 7 production-configuration replies CLEAN; the gap schema and thinking LOW rejected by the API; once labelled, a no-go). After the follow-up round life:check was green again. Blessing the probe's 7 replies (42072fa) then moved the hostile pin, so roadmap-hostile-check's PIN item fails until the lead re-blesses pin.json (§19.9).
 
 **Fix round 2.** The re-review's open items added a second, smaller set (§11: the run behind the accepted plan, the acceptance-day caption, struck title numbers off the review, the plan's position count, and one definition of "what a draft milestone still needs"), and §12 lists what every lane exported in the first fix round, read from the code. ui-audit now reads R5's FIXTURE_STATES from fixtures.ts (15 states), and roadmap-contract-check passes 200 checks.
 
@@ -2271,7 +2271,7 @@ Lane 0 wrote the contract and every pure part. §19.0–§19.7 describe it as it
 - **Gates** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key):
   - `npx tsc --noEmit -p .` is clean, and eslint is clean on the three code files.
   - **roadmap-contract-check** passes **489, with 0 failed and 4 PENDING** (§19.5). `--strict`, and with it `npm run life:check`, fails until the owners land them.
-  - roadmap-model-check 932, roadmap-quests-check 334, roadmap-measures-check 366, roadmap-invite-check 57 and today-ui-check `--strict` 740 pass with 0 failed. roadmap-hostile-check passes 54 of 54; the pin is unchanged (6a7ed5cd…, §19.9), because the corpus carries catalog keys, not the gate.
+  - roadmap-model-check 932, roadmap-quests-check 334, roadmap-measures-check 366, roadmap-invite-check 57 and today-ui-check `--strict` 740 pass with 0 failed. roadmap-hostile-check passes 54 of 54; the pin is unchanged (6a7ed5cd…), because the corpus carries catalog keys, not the gate. *(R3's suggest item re-blessed it later in the round, append-only, to 25b08ff5…, the live pin, §19.9.)*
   - **Three owners' checks now fail on the lead's rules**, as expected, until the owners adopt them (§19.5):
     - roadmap-realism-check (R2): 332 passed, 8 failed. The failures are BODY with no constraints now asking, CARE placing its safe kinds, and FINE answers given per kind.
     - roadmap-server-check (R4): 5 failed, then it stops at its fixture's per-kind FINE answers, which are now refused (`ACTIVITY_NOTHING_TICKED`).
@@ -2448,7 +2448,7 @@ Intake.activities?: ActivityConfirm | null
 
 ### 19.5 Handoffs, by owner (each is a PENDING line in roadmap-contract-check unless marked)
 
-`roadmap-contract-check` (run alone): **489 passed, 0 failed, 4 PENDING.** The three earlier lines that still hold pass (R4's intakeOf/intakeData and gate lines, R2, R6, R5's card). R4's answer line is rewritten. R3's enum line and two new lines wait.
+`roadmap-contract-check` (run alone): **489 passed, 0 failed, 4 PENDING.** The three earlier lines that still hold pass (R4's intakeOf/intakeData and gate lines, R2, R6, R5's card). R4's answer line is rewritten. R3's enum line and two new lines wait. *(All four landed in the safety-gaps round: 493 passed, 0 PENDING. The follow-up round brought it to 505, §19.9.)*
 
 - **R4, roadmap-server.ts and the actions:**
   - **PENDING:** `setActivityVerdictsCore` answers through `answerActivityCard`, never `answerActivities`. The action `setActivityVerdicts(roadmapId, answer: ActivityCardAnswer)` passes the key, and the action cleans the shape (a string key, an array of strings, a boolean). A stale key returns `ACTIVITY_ANSWER_STALE` as the refusal, so the page re-reads and the card asks again (decision 3; the verifier's S12).
@@ -2459,7 +2459,7 @@ Intake.activities?: ActivityConfirm | null
     - the session-picks confirm's EASY reads `BODY_SAFE_KINDS` (unchanged).
   - The fixture's per-kind FINE answers in roadmap-server-check must become card answers.
   - **Decisions 4 and 5 (no PENDING line; their own items):**
-    - An AVOID given after Start pauses the started practice's Today template through the existing archive or pause path, with a quiet notice and an undo. `setActivityVerdictsCore` knows the kinds that moved (before.gate against after).
+    - An AVOID given after Start pauses the started practice's Today template through the existing archive or pause path, with a quiet notice and an undo. `setActivityVerdictsCore` knows the kinds that moved (before.gate against after). *(Since ruling (2) the path is the safety pause, `pauseForSafetyCore` through RoadmapIo `pauseTemplate`, §19.12.)*
     - A kept Gemini pick or the user's own row of a kind the gate now blocks is held. `gatePlanRows` keeps YOURS rows of a PENDING kind, and `acceptBlockersOf` checks plan-placed rows only; both should read `isPlaceableKind` for every live row, so a stale answer re-gates a kept pick.
 - **R3, roadmap-evidence.ts and roadmap-validate.ts:**
   - **PENDING (unchanged):** the run's enums take `excluded = activityGateOf(intake, exclusions).blocked`. That is PENDING and AVOID only; a suggestion stays in the enum (decision 7).
@@ -2489,7 +2489,7 @@ Intake.activities?: ActivityConfirm | null
 ### 19.6 Deviations and open points for the lead
 
 1. **The release is the card's, not per kind.** *(Ruled by the lead in the follow-up round, §19.11: the release is per card, as built; "Nothing to avoid" stays hidden while any box is ticked.)* "Unticked rows are never implicitly FINE" is kept literally: no FINE is ever written. A ticked Save or "Nothing to avoid" answers the card, and the kinds it listed and the user left unticked are placed (state FINE, `cls` YOURS, the answer's day). A gated kind the card didn't list waits. If you want each row answered on its own, `answered.asked` becomes the rows given an explicit "fine"; the gate already reads it per kind.
-2. **"Nothing to avoid" clears the card's earlier ticks.** It is an explicit all-clear over the rows shown. An AVOID on a kind the card hid (practices off, no exam) stands. R5 may want "Nothing to avoid" offered only while nothing is ticked.
+2. **"Nothing to avoid" clears the card's earlier ticks.** It is an explicit all-clear over the rows shown. An AVOID on a kind the card hid (practices off, no exam) stands. R5 may want "Nothing to avoid" offered only while nothing is ticked. *(Ruled with #1 in the follow-up round: "Nothing to avoid" stays hidden while any box is ticked, as R5 built it.)*
 3. **CRAFT's gated kinds are every non-safe CRAFT practice** (slow drills, run-throughs, practice with a teacher or partner) plus the activity itself. The technique session stays safe on CRAFT, as on BODY. Practice with a teacher could be read as safe; it is gated here on the safe side.
 4. **CRAFT asks on any cue, and the avoidance words are many** ("no", "don't", "only" in the constraints). Most CRAFT plans whose constraints hold a limit will ask once. An outline line of three foreign words also counts ("Clair de Lune" as a syllabus line, not "Play Clair de Lune" as the aim). Each costs one tap.
 5. **The short-text rule reads "English" from a list.** A one-word English aim the lists lack and that isn't a long "-ing" word reads as unparseable. On BODY and CARE that only adds the "couldn't be read" line; on CRAFT it asks once. The lists cover the common body and craft aims; the bar's control set (R7) should measure the rest.
@@ -2499,7 +2499,7 @@ Intake.activities?: ActivityConfirm | null
 
 ### 19.7 What §19 leaves open, and where the spec records it (docs lane)
 
-**Where roadmap-rev4.md records §19:** decisions 55 and 56 and F-R4-25, "As shipped", F-R4-17, F-R4-18 (`safe`), F-R4-22 (the pin), Constants, Names ("Activities to avoid" and "Nothing to avoid"), Migration (the "$activities" key), Lanes, Acceptance, and questions 11 and 18. The docs lane brought each up to the safety-gaps round after lane 0:
+**Where roadmap-rev4.md records §19:** decisions 55, 56 and 57 (57.1 to 57.4, the lead's rulings since; §19.11 to §19.13) and F-R4-25, "As shipped", F-R4-17, F-R4-18 (`safe`), F-R4-22 (the pin), Constants, Names ("Activities to avoid" and "Nothing to avoid"), Migration (the "$activities" key), Lanes, Acceptance, and questions 11 and 18. The docs lane brought each up to the safety-gaps round after lane 0:
 - **Decision 56** records the lead's eight decisions as 56.1 to 56.8 (this section's decisions 1 to 8), with the verifier's findings as its reason; decision 55 keeps its text, marked where 56 revises it.
 - **The rule:** every BODY or CARE plan asks once, CRAFT asks on a cue, and Field and DUTY never ask.
 - **The answer:** ticks and Save, or "Nothing to avoid", carrying the words' key; no "Fine" is written.
@@ -2513,7 +2513,7 @@ PROGRESS.md is the lead's, and the docs lane didn't edit it.
 **Open points §19.5 doesn't name:**
 1. **The production monitor** (unchanged): no rm: practice task created after the deploy on a BODY or CARE roadmap has a gated catalog kind unless that roadmap's `coverage->'$activities'->'answered'` is present with its key, and the kind is listed in `asked` and not under `kinds`. Expected 0.
 2. **Copy words** (unchanged): no "safe", "cleared", "approved" or "risk" in user copy. A golden checks the contract's own strings.
-3. **The docs' stale pin** (the third verifier's minor): closed. rev4.md (Constants, F-R4-22, Acceptance) and §18.2–§18.5 now cite the live pin, 6a7ed5cd…, with K 2,909 and X 2,010 (§19.9), and mark df51f44f… as the hardening round's. Lane 0's §19 work didn't move the pin.
+3. **The docs' stale pin** (the third verifier's minor): closed. rev4.md (Constants, F-R4-22, Acceptance) and §18.2–§18.5 now cite the live pin, 6a7ed5cd…, with K 2,909 and X 2,010 (§19.9), and mark df51f44f… as the hardening round's. Lane 0's §19 work didn't move the pin. *(Superseded the same day: R3's suggest item re-blessed it to 25b08ff5…, with K 3,007 and X 2,103. The docs cite that pin since the follow-up round, and §19.9 since the minors round.)*
 
 ### 19.8 The safety-gaps round: what changed, and the verifier's open items
 
@@ -2527,7 +2527,7 @@ PROGRESS.md is the lead's, and the docs lane didn't edit it.
 - New exports: `ActivityCardAnswer`, `ActivityCardAnswered`, `cueSafeKindsOf`, the two track lists, `activityAsksOn`, `answerActivityCard`, `ACTIVITY_NOTHING_TICKED`, `ACTIVITY_ANSWER_STALE`, `ACTIVITY_NOTHING_TO_AVOID`, `ACTIVITY_CARD_NAME`, `ACTIVITY_PENDING_POINTER`, `withActivityPointer`, and the detector lists `CUE_BODY_PARTS_MEDICAL`, `CUE_JOINT_PROCEDURES`, `CUE_ACRONYMS`, `CUE_MEDICAL_SUFFIXES`, `CUE_SUFFIX_GUARD`, `CUE_LOAN_WORDS` and `CUE_ENGLISH_ING_MIN`.
 - Changed meaning: `ActivityRowState` FINE and WORDS (§19.1), `ActivityGate.blocked` (no WORDS), `ActivityPrefill` (a suggestion), `CUE_GATED_TRACKS` (CRAFT joins), `cueGatedKindsOf("CARE")` (PLAN_AHEAD and KEEP_A_LOG leave it), and `ACTIVITY_ANSWER_REFUSAL`'s words.
 
-**The third verifier's `ver.still_open`, item by item** (it ran every gate on §19's first version, then probed 195 cases through the pure gate, 121 through the real server plan paths with a hostile Gemini reply, and lifecycle scenarios S1 to S12; not one avoided kind appeared on any path). Lane 0 wrote the column when it handed off; §19.9 gives the check chain's state since:
+**The third verifier's `ver.still_open`, item by item** (it ran every gate on §19's first version, then probed 195 cases through the pure gate, 121 through the real server plan paths with a hostile Gemini reply, and lifecycle scenarios S1 to S12; not one avoided kind appeared on any path). Lane 0 wrote the column when it handed off. Every row has been closed or done since, as roadmap-rev4.md's "Still open after confirm to unlock" table records; §19.9 gives the check chain's state:
 
 | # | Item | Where it stands |
 |---|---|---|
@@ -2541,60 +2541,71 @@ PROGRESS.md is the lead's, and the docs lane didn't edit it.
 | 8 | Pre-fill over-exclusions blocked kinds | Closed by rule: a suggestion never blocks. The pre-ticks are R3's to sharpen. |
 | 9 | Short foreign aims raised no cue | Closed: the word test (§19.2). |
 | 10 | One tap unlocked everything | Contract done: no tick is refused, and "Nothing to avoid" is the explicit all-clear; the deprecated wrapper refuses FINEs alone. R5 PENDING for the button. |
-| 11 | The docs cite a stale pin | Closed by the docs lane: rev4.md and §18 cite 6a7ed5cd… with its history (§19.7, §19.9). |
+| 11 | The docs cite a stale pin | Closed by the docs lane: rev4.md and §18 cite 6a7ed5cd… with its history (§19.7, §19.9). *(Overtaken by the re-bless to 25b08ff5…; closed again since, §19.9.)* |
 | 12 | CRAFT was never gated | Closed: CRAFT asks on a cue, with its non-safe practices and the activity itself gated. |
 
 ### 19.9 The hallucination bar and the check chain now (docs lane)
 
-Read from roadmap-hostile-check and roadmap-hostile-ablate run alone at 14:46 on 5 Oct (DATABASE_URL pointed at a closed port, no model key), and from scripts/fixtures/roadmap-hostile/pin.json. The third verifier's run gave the same pin, counts and K figures (its budget read 20.8 s, and 40.0 s for the whole check).
+*(Refreshed in the minors round, after the follow-up round.)* The bar's figures are from roadmap-hostile-check, run alone by the fifth verifier at 16:21 on 5 Oct after the follow-up round (DATABASE_URL pointed at a closed port, no model key; 54 passed, 0 failed), and from scripts/fixtures/roadmap-hostile/pin.json. The ablation is the fourth verifier's run at 15:35 on the same pin; the follow-up round changed no parser rule.
 
-- **The pin** is sha256 **6a7ed5cd92ad9585ac44033dc27361a03b7f56a3c72946c3a55162b0b92f5da2**, since R3's vocabulary item in §19's first round. The lead has not reviewed it yet. Its history, every step append-only after every older case:
+- **The pin** is sha256 **25b08ff54d41059da9ec4ed6747a5811a32e6cc2afbe6151a06e17462cb5f81a**, since R3's suggest item in the safety-gaps round. The lead has not reviewed it yet. Its history, every step append-only after every older case:
   - fix round 2 blessed 0dd9a8be08e4d70b…;
   - the finishing round re-blessed it to 9d542fd58ec62bce…, adding K's release sub-class and 256 over-exclusion lines;
   - the hardening round re-blessed it to df51f44f066e4e7a…, adding K's postfix sub-class (K1821 on) and 379 over-exclusion lines (X1031 to X1409);
-  - R3's vocabulary item re-blessed it to 6a7ed5cd…, adding K's vocab sub-class (K2292 to K2908, 617 cases) and 600 over-exclusion lines (X1410 to X2009). R3's digest proof, which the third verifier re-ran, recomputes df51f44f… exactly over the corpus without them. The pack hashes are unchanged.
+  - R3's vocabulary item in §19's first round re-blessed it to 6a7ed5cd92ad9585…, adding K's vocab sub-class (K2292 to K2908, 617 cases) and 600 over-exclusion lines (X1410 to X2009). The corpus without them hashes to df51f44f… exactly;
+  - R3's suggest item in the safety-gaps round re-blessed it to 25b08ff5…, adding K's suggest sub-class (K2909 to K3006, 98 cases) and 93 over-exclusion lines (X2010 to X2102). The fifth verifier re-ran the digest proof: the corpus without them hashes to 6a7ed5cd… exactly, and the whole corpus to 25b08ff5…, which matches pin.json. The pack hashes are unchanged.
 
-  Lane 0's two §19 rounds left it unchanged, because the corpus carries catalog keys, not the gate.
+  Lane 0's §19 rounds, the follow-up round and the probe run itself left it unchanged, because the corpus carries catalog keys, not the gate.
+
+  **Blessing the probe's replies moves it.** Family F reads every blessed probe reply, and 42072fa (committed after the follow-up round) blessed 7 (§19.14). The generator now gives 169 runs and F 707, and hashes to 4c4417efb77ed4719d08eff091fc60f702bbe071e73dd898e1a80ff382751c78. The docs lane recomputed both digests in the minors round: without the blessed replies the corpus still hashes to 25b08ff5… exactly, so the older corpus is unchanged and the change is family F's alone. Until the lead reviews it and re-blesses pin.json with `--bless`, the bar's PIN item fails (53 passed, 1 failed), and with it life:check. Every other item of the bar passes with F at 707.
 - **Counts:**
   - 162 runs;
   - A 5,000, B 1,000, C 2,000, D 2,000;
   - E 1,700 replies and 22,231 strings (21,946 claim-bearing, 252 control, 303 clash, 246 one-source);
   - E-G 2,304;
-  - **K 2,909** (K_release 274, K_postfix 471, K_vocab 617), with **2,010** over-exclusion lines. The hardening round had K 2,292 and 1,410 lines;
+  - **K 3,007** (K_release 274, K_postfix 471, K_vocab 617, K_suggest 98), with **2,103** over-exclusion lines. The confirm-to-unlock round had K 2,909 and 2,010 lines, and the hardening round K 2,292 and 1,410;
   - M 2,200;
-  - F 0 (no blessed probe reply yet).
+  - F 0 on this pin. With the 7 replies blessed in 42072fa it is 707, over 169 runs, which moves the pin (above).
 - **The vocab sub-class** (`sub: "vocab"`, seed HOSTILE_SEEDS.K_VOCAB): grammar.ts VOCAB_TEMPLATES, 105 BODY and 8 CARE phrasings written from how people talk, not copied from the lexicon. Each must exclude every kind its terms name and keep every kind only its cleared activities name. FILL_OVER_KEEP lines keep every kind their aim fills, and FILL_OVER_FIELD lines over the Field run's Domain names and aim words join the over-exclusion lines, after every new English BODY phrasing. So two of §18.2's "What K can't see" are answered: recall now measures vocabulary, and the fill is tested both ways. The third remains: K's confirm item reads the session-picks confirm, not §19's gate (§19.5, R7).
-- **H1–H5:** 0 structural exceptions, 0 taint hits and 0 quarantine leaks. H4 has 0 mismatches over 11,700 replies. H3 shows 0 of 21,946 claim-bearing gap strings, with control 252 of 252 shown.
-- **The E-G residual is unchanged:** several-sources claims 0 of 1,958 shown, one-source claims **25 of 41 shown (60.98%)**. ROADMAP_GAPS_LIVE stays false (decision 51).
+- **The suggest sub-class** (`sub: "suggest"`, seed HOSTILE_SEEDS.K_SUGGEST; the safety-gaps round, R3): grammar.ts SUGGEST_TEMPLATES, BODY and CARE phrasings that still exclude one activity and hold another to a limit or name kinds the user never said to avoid. Each must exclude every kind its excluded activity names and keep every kind only the limit ("more than twice a week", "two days in a row"), advice to go gently or a word too general to name a type names ("no running more than twice a week, no jumping": LONGER_SESSION kept). Its English BODY phrasings and FIELD_SUGGEST_LINES (a body sentence, a too-general word or a limit on a Field plan: "No writing by hand, I have RSI in my wrist.") are the 93 new over-exclusion lines.
+- **V:** 1,538 words from 15 modules, read without their word lists.
+- **H1–H5:** 0 structural exceptions, 0 taint hits and 0 quarantine leaks. H4 has 0 mismatches over 11,700 replies (CLEAN 6,121, SALVAGED 809, REJECTED 4,770). H3 shows 0 of 21,946 claim-bearing gap strings, with control 252 of 252 shown.
+- **The E-G residual is unchanged:** several-sources claims 0 of 1,958 shown, one-source claims **25 of 41 shown (60.98%)**. ROADMAP_GAPS_LIVE stays false (decision 51), and the probe returned no real gap string (§19.14).
 - **K:**
-  - 0 of 2,511 parsed English cases missed (cases: en 2,550, vi 197, ja 162);
-  - 0 of 2,909 without the session-picks confirm, 0 of them vacuous;
-  - 0 of 2,010 body phrasings excluded a Field kind;
-  - 0 of 320 keep cases excluded a kind the user cleared (274 release cases in the recall).
+  - 0 of 2,609 parsed English cases missed (cases: en 2,648, vi 197, ja 162);
+  - 0 of 3,007 without the session-picks confirm, 0 of them vacuous;
+  - 0 of 2,103 body phrasings excluded a Field kind;
+  - 0 of 417 keep cases excluded a kind the user's words keep (274 release and 98 suggest cases in the recall).
 
-  The hardening round's figures were 1,894, 2,292, 1,410 and 244.
-- **H6:** **164 rules fire** over 29,644 cases, and all 120 negation cues fire. R3 names 86 (the new cues, `constraint.body` and `constraint.fill` among them); the bar adds 78. The hardening round had 91.
+  The confirm-to-unlock round's figures were 2,511, 2,909, 2,010 and 320.
+- **H6:** **168 rules fire** over 31,845 cases, and all 120 negation cues fire. R3 names 86 of its 189 named rules as required; the bar adds 82. The confirm-to-unlock round had 164.
 - **M1–M7:** 0 broken.
-- **The budget:** H1–H5 and K take 20.4 s (K 1.3 s), and the whole check 39.6 s. H5's p99 is 26 ms per reply, and 34 ms for the views.
-- **roadmap-hostile-ablate** (a report; 219.2 s):
-  - every rule off gives 33,251 new failures, including 2,448 K misses, so the bar is not vacuous. The hardening round had 32,644;
+- **The budget:** H1–H5 and K take 21.5 s (K 2.3 s), and the whole check 42.6 s. H5's p99 is 26 ms per reply (max 572 ms over 11,700), and 34 ms for the views (2,742 builds).
+- **roadmap-hostile-ablate** (a report; 217.6 s, the fourth verifier's run on this pin):
+  - every rule off gives 33,285 new failures, including 2,482 K misses, so the bar is not vacuous. The confirm-to-unlock round had 33,251;
   - one rule off at a time:
 
     | Rule off | Effect |
     |---|---|
-    | `constraint.after` | K misses +666 |
+    | `constraint.after` | K misses +672 |
     | `constraint.carry` | +65 |
     | `constraint.compound` | +20 |
     | `constraint.body` | +17 |
     | `constraint.release` | K misses +7, cleared kinds excluded +240 |
+    | `constraint.limit` | cleared kinds excluded +73 |
+    | `constraint.generic` | cleared kinds excluded +7 |
+    | `constraint.gentle` | cleared kinds excluded +6 |
     | `constraint.fill` | cleared kinds excluded +4 |
     | `cue.doctor said`, `cue.bad idea`, `cue.never`, `cue.surgery` | +16, +15, +11, +6 |
 
-**The check chain** (roadmap-contract-check run alone):
-- at 14:44, **489 passed, 0 failed, 4 PENDING**: the four lines of §19.5 (R4 two, R3, R5);
-- at 15:00, **492 passed, 0 failed, 1 PENDING**: R3's run enums in roadmap-evidence.ts. R4's two lines and R5's pass in the working tree.
-
-`roadmap-contract:strict`, and with it `npm run life:check`, fails until the last one lands. The owners were still adopting the safety-gaps round and hadn't reported, so their reports give the final state, including decisions 4 to 6, which have no PENDING line.
+**The check chain:**
+- roadmap-contract-check, run alone: 489 passed and 4 PENDING at 14:44, 492 and 1 PENDING at 15:00, then **493 passed, 0 failed, 0 PENDING** at the end of the safety-gaps round, and **505 passed, 0 failed** after the follow-up round (lane 0's 12 new lines, §19.11).
+- **`roadmap-contract:strict` and `npm run life:check` are green.** The fifth verifier's run (16:19 to 16:22 on 5 Oct, the database port closed, no model key, the tree unchanged from start to end by md5) gave:
+  - `npx tsc --noEmit -p .` rc 0 (and rc 0 again with `--incremental false`), and `npx eslint src scripts` rc 0;
+  - life:check rc 0, with 3,830 PASS lines and 0 FAIL: capture-parse 823, today-ui `--strict` 740, idea-capture 128, rituals 140, duty-actions and duty-check all passed, roadmap-contract `--strict` 505, roadmap-measures 366, throughput 62, roadmap-realism 344, roadmap-model 1,005, roadmap-server 664, roadmap-quests 343, roadmap-invite 57 and roadmap-hostile 54 of 54;
+  - ui:check rc 0: shell 229, contrast 204, review 97, celebration 234, you 721, study-side 129, shortcut 182, train 169, tour 171 and roadmap-ui 868, each with 0 failed;
+  - balance:horizon ("LIFE: all assertions hold"), skills:stats ("All checks passed") and novelty:check ("all pass").
+- **After 42072fa**, life:check is red on one item: roadmap-hostile-check's PIN, for the reason above. In the docs lane's run at 16:51 on 5 Oct, on the minors round's working tree with the other lanes' edits under way, every other life:check script had 0 failed, roadmap-model-check among them at 1,026 with the 7 blessed replies re-validated against their snapshots, and ui:check passed. The fix is the lead's re-bless of pin.json after reviewing the new F cases; nothing in the docs or the code is wrong.
 
 ### 19.10 What the owners shipped in §19's first round (read from their reports and the code)
 
@@ -2647,4 +2658,104 @@ After the safety-gaps round, the verifier's `ver.still_open` left two items in l
 - The legacy read: BODY holds; CRAFT, practices off and CARE ask again with no stale day; under other words it is stale with its day; a "k1-" answer is refused, and answering over one stores "k2-".
 - The property gains a fifth answer, a legacy one, and its oracle reads the same rule: 6 cases × 64 suggestion sets × 5 answers.
 
-**Checks** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key): `npx tsc --noEmit -p .` is clean, and eslint is clean on roadmap-types.ts, roadmap-catalog.ts and the three check files. `npm run life:check` and `npm run ui:check` end green, with 0 failed in each script: roadmap-contract-check `--strict` 505 (493 before), roadmap-realism-check 344, roadmap-server-check 653, roadmap-ui-check 856.
+**Checks** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key): `npx tsc --noEmit -p .` is clean, and eslint is clean on roadmap-types.ts, roadmap-catalog.ts and the three check files. `npm run life:check` and `npm run ui:check` end green, with 0 failed in each script: roadmap-contract-check `--strict` 505 (493 before), roadmap-realism-check 344, roadmap-server-check 653, roadmap-ui-check 856. *(Those were the counts when lane 0 ran them, while R4 and R5 were still adding cases. At the end of the follow-up round the fifth verifier's run had roadmap-server-check at 664 and roadmap-ui-check at 868, with roadmap-contract-check still 505 and every gate green, §19.9.)*
+
+### 19.12 The follow-up round: rulings (2) and (3), and the other server and page items (R4, R5; read from the code)
+
+The lead's rulings (2) and (3) are roadmap-rev4.md 57.2 and 57.3. With them, the follow-up round took the fourth verifier's rows 3, 5 and 7 and the STARTING window of row 8 (rev4's "Still open after the safety-gaps round"). The names below were checked in the code as committed in 9b8d233; private helpers are marked. A fifth verifier confirmed each item at file and line, ran every gate (all green, §19.9) and probed about 690 cases with all three bars at 0.
+
+**Ruling (2): safety overrides the akrasia horizon** (57.2; row 1).
+- **tasks.ts:**
+  - `planSafetyPause(row, at): RuleEditPlan` archives the task at `at` whatever its rule, a must included. Nothing in the must's rule changes. A pending archive the user asked for earlier is folded in, any other pending change (an un-flag) is kept, and a task already archived writes nothing.
+  - `pauseForSafetyCore(userId, templateId, now?)` goes through `applyRuleEdit` with the edit `{kind: "safety-pause"}`: the same compare-and-set write as every rule edit, without `classifyChange`'s deferral. archiveCore's doc and duty-rule.ts, beside `classifyChange`, state the exception.
+  - In duty terms the days before the pause keep the rule and its debts (yesterday is still owed), nothing is owed from the pause day, and Undo is the normal unarchive.
+- **roadmap-server.ts:** `RoadmapIo.pauseTemplate(userId, templateId, now)` calls `pauseForSafetyCore`, and `pauseAvoidedTasks` (private) uses it, never `archiveTemplate`'s deferring archive. `PausedTask.deferredTo` stays in the shape and is always null.
+- **The checks:** duty-actions-check pins a must paused at once where an archive would be deferred, its rule unrewritten, the folded archive and the kept un-flag, an already archived task, a non-must, and Undo. roadmap-server-check pins a must off Today at once with `deferredTo` null, and a refused pause still listed in `notPaused`.
+
+**Ruling (3): a paused practice stops counting** (57.3; row 8). As built, and kept by the lead: the paused practice's whole practice-kept measure switches to context from the pause.
+- **`offTargetOpsOf(b, confirm, goals, only?)`** (private), in the answer's own write: on every STARTED row still worked (not superseded, its goal neither closed nor archived), each paying PRACTICE_KEPT measure whose practices are all live, started (they have a task) and avoided turns CONTEXT, each row guarded on its status. A measure that also holds a practice the user didn't avoid stays as it is.
+- **The readers:** R1 reads paying measures only (roadmap-readings `payingKeyed`, `practiceKeepOf`). So no reading is written for the measure any more, and g, the aim reach, the aim's practice and production shares (F-R4-12) and the pay read the milestone's other measures and steps. Its readings so far stay as history.
+- **What that means:** the sessions kept or missed before the pause stop counting too, for and against the milestone. The ruling as first written trimmed only the sessions from the pause day. R1 recomputes each practice's target every day from its task and ignores archiving, so the server can't cut the target at a day; the exact trim would be an R1 change in roadmap-readings and roadmap-measures. Because g is the minimum over the paying measures, the approximation can only help the user.
+- **The page:** a CONTEXT measure gets no pace. `practiceSoFarOf` (private) plans the practice only up to the day before `offTargetDayOf` (private): the card's AVOID day, else the day its task was archived, else the day after the measure's last reading.
+- **The lines (R5):** roadmap-ui-model `pausedItemsOf(current, confirm)` finds started practices and open steps with a Today task whose kind has an AVOID dated on or after the milestone's `startedDay`, and marks a practice `offTarget` when its own measure is CONTEXT; `pausedOfMeasure(row, paused)` matches a CONTEXT practice-kept row to its paused practices. roadmap-copy `pausedItemLine(day, offTarget, today?)` ("Paused on 5 Jan because you said to avoid it. From that day it no longer counts toward this milestone.") replaces the practice's "On Today" link, and `practiceKeptPausedLine(rows, today?)` is the measure row's new `note` ("Strength for knees and hips is paused because you said to avoid it, so from 5 Jan this no longer counts toward the milestone.").
+- **One way.** A measure already CONTEXT is left alone: neither the Undo of a pause nor a later answer that lifts the AVOID makes it pay again, since its paused days would then count against the user. Start again or a re-plan gives the practice a measure afresh.
+- **Open for the lead:** a started milestone whose practices are all paused and that has no steps reads NOT_MEASURABLE (g null), and PROFICIENCY gets no kept count from a CONTEXT practice measure (R1's to decide). The switch also happens when the pause itself was refused (the task still on Today, in `notPaused`); that is the fifth verifier's item below.
+
+**Start's race** (row 8). `finishStartCore` re-reads the stored answer after its write-back (`pauseAvoidedAfterFinish`, private): every task it created of a kind now avoided is paused, and its measure is switched off the target. The write-back also moves the roadmap's `updatedAt` strictly past the read, so an answer that read the row while it was STARTING and is saved after the finish fails its `updatedAt` guard, re-reads, sees the row STARTED, and pauses the task itself. Tasks the re-check pauses are logged, not returned; the card's AVOID row and the CONTEXT measure show them.
+
+**Every refusal points at the card** (56.2 as written; row 7). `pointedRefusal(deps, userId, ref, res)` (private) re-reads the roadmap only when a core refused, and adds the pointer through `withActivityPointer` while kinds wait on the card. It never adds it twice, and leaves the message alone with writes off, on another user's roadmap, or when no card waits. It wraps 18 cores, each exported name now a thin wrapper over a private `*Unpointed` body:
+- the re-plan: `replanCore`;
+- the builds: `claimDraftCore`, `buildStarterCore`, `startManualCore`;
+- accept and Start: `acceptCore`, `startMilestoneCore`;
+- the review's edits: `editItemCore`, `decideItemCore`, `addItemCore`, `keepUnflaggedCore`, `resolveDomainCore`, `moveLineCore`, `setLineDomainCore`, `applyRemedyCore`, `confirmSessionPicksCore`, `confirmDomainAdditionsCore`, `lowerDepthCore`, `keepCalibratedDatesCore`.
+
+`finishStartCore` is not wrapped: its refusals are Start's own, and `startMilestoneCore` is.
+
+**The re-gate after the words change** (row 3). `draftGateOps(e, userId, prev, next, tree, now)` (private) now takes the stored row. When new words move the gate on the same track, it calls `regatedDrafts` with the kinds `prev` blocked: picks that wait again leave, and the track's safe kinds take the place the starter gives them, as in a fresh build. When the gate didn't move, or the track changed, it only drops the blocked kinds, as before.
+
+**The session-picks copy** (row 5, R5). roadmap-ui-model `sessionSwapKindsOf(track, confirm)` is the server's EASY swap: `cueSafeKindsOf(track)`'s practices less any kind the user avoided. roadmap-copy `sessionPicksSwapWord(kinds)` and `sessionPicksSwapLine(kinds)` word it: "Use easy, mobility and technique instead" on BODY (`SESSION_PICKS_EASY`, unchanged), "Use Plan the week ahead and Keep a log instead" on CARE, and "Leave them out" when every swap kind is avoided. The "Without Gemini…" line is per track, and `ACTIVITY_REPLAN_LINE` ends "…started ones keep their history.".
+
+**The checks** (the fifth verifier's run, §19.9): roadmap-server-check 664 (653 before), duty-actions-check all passed, and roadmap-ui-check 868 (856 before), each with 0 failed. R4 turned each server change off once and saw its new cases fail: the re-gate, the re-check after the finish and the `updatedAt` move.
+
+**The fifth verifier's still-open list** (the minors round's input; all minor). Nothing in it lets a kind the user hadn't released reach Today.
+
+| # | Item | Owner in the minors round |
+|---|---|---|
+| 1 | A track switch on an answered draft keeps the old track's rows: `draftGateOps` only drops the new track's blocked kinds when the track changes. A BODY draft re-saved as CARE kept Easy and Longer sessions; accept passed, then Start and the re-plan tripped the model-text tripwire with the card's pointer, which answering the CARE card doesn't clear | R4 |
+| 2 | Ruling (3)'s disclosure is wrong in three states: a refused pause (the measure turns CONTEXT and the row says "Paused" while the task is still on Today), after Undo (the row still says "Paused"), and once the AVOID is lifted (the measure stays CONTEXT with no line saying why) | R4, R5 |
+| 3 | Decision 57.3's wording said the days before the pause count as they were | docs: reworded in roadmap-rev4.md (57.3, F-R4-25, Acceptance, question 18) |
+| 4 | §19 behind the code: §19.9's pin, counts and red life:check, §19.11's counts, no record of rulings (2) and (3), and rev4's "through archiveCore" | docs: §19.9, §19.11, this section, and rev4's rows. grading.md's akrasia-horizon paragraph still lacks 57.2's exception (the lead's) |
+| 5 | The server's CONFIRM_PICKS (accept's blocker) and the invalid-choice refusal still name easy, mobility and technique on every track, so on CARE accept contradicts the card; the doc comment in src/app/actions/roadmap.ts too | R4 |
+| 6 | Carried over: the CRAFT cue detector misses "Acid reflux affects my singing." (37 of 38), and the aim-conflict questions | lane 0 ("reflux", "GERD"), the lead (§19.13), R3 (the exam clash) |
+
+PROGRESS.md also lists a layout bug for the minors round: the "How this is worked out" row wraps its title one word per line at 375 px (R5).
+
+### 19.13 The aim-conflict ruling (the lead's, the minors round; roadmap-rev4.md 57.4)
+
+The fourth verifier's row 9 asked whether a limit should raise the aim-conflict line. **The lead's ruling: a limit is not an exclusion.**
+- **A frequency limit** ("Shin splints flare up if I run more than twice a week.", 56.6's own example) names nothing to avoid: the user can still run. The activity card quotes the sentence, nothing is pre-ticked, and no conflict line shows.
+- **A timing limit** ("No mock exams until the last month." on a Field exam plan) is the same: the card shows it as the user's quote, it never blocks a kind, and it doesn't clash with the exam aim.
+
+What the code did at 8b7d4a3, read by calling the functions:
+- **The frequency limit already behaves as ruled.** R3's `constraint.limit` reads the activity held to a limit as naming no kind, and `aimConflictOf("Shin splints flare up if I run more than twice a week.", "Run a sub-50 10K")` is null. On BODY the card asks anyway and quotes the sentence among its cue clauses. roadmap-model-check pins "a limit is no conflict", and K's suggest sub-class keeps the limited kinds (LONGER_SESSION in "no running more than twice a week, no jumping").
+- **The timing limit doesn't yet.** `aimConflictOf("No mock exams until the last month.", "Pass SOA Exam P")` gives the word "exams" with the user's sentence, so the line shows a clash with the exam aim, and the reader names the exam's kinds as a pre-ticked suggestion. Under 56.7 that suggestion never blocks by itself, but a Save with it still ticked avoids them. Reading a timing word ("until the last month") as a limit, so that it names nothing and meets no aim, is R3's change (`constraint.limit`, `aimConflictOf`), with a K suggest case or a roadmap-model-check golden for it.
+- **Under way in the minors round** (the parser item's working tree when the docs lane wrote this; its report gives the final state): roadmap-lexicon gains CONSTRAINT_REHEARSAL_WORDS ("mock", "practice", "trial", "sample") and CONSTRAINT_EXAM_WORDS under `constraint.fill`, so an exam word right after a rehearsal word meets a type only by the type's own words, never through the fill (the aim, the exam's name). On that tree `aimConflictOf("No mock exams until the last month.", "Pass SOA Exam P")` gives null, so no clash shows. The reader still pre-ticks Mock test there, a suggestion that never blocks by itself; which kinds it pre-ticks in the end is the parser item's to report.
+- **No gate rule changes.** A BODY or CARE plan asks whatever the words say (56.1), and a CRAFT plan asks on a cue.
+
+### 19.14 The probe run (the lead's approved calls, 5 Oct)
+
+This is the run F-R4-23 specifies, made once: `npx tsx --env-file=.env scripts/roadmap-probe.ts --i-approved`, the user's approved 10 free-tier calls, on the synthetic corpus packs only, with no database. The replies were saved unedited as scripts/fixtures/roadmap-corpus/probe-*.json (`blessed: false`, `expected` null; 42072fa later labelled and blessed the 7 CLEAN ones, below), and PROGRESS.md holds the lead's lines. Every call went to gemini-3.5-flash-lite.
+
+**The production configuration** (keys only, suggestions off, thinking off): **7 of 7 replies CLEAN.**
+
+| Pack | Integrity | Latency |
+|---|---|---|
+| ielts | CLEAN | 2.4 s |
+| guitar | CLEAN | 1.8 s |
+| run-10k | CLEAN | 1.8 s |
+| lose-8kg | CLEAN | 1.7 s |
+| care-routine | CLEAN | 1.5 s |
+| python-cert | CLEAN | 2.9 s |
+| vietnamese-japanese | CLEAN | 2.2 s |
+
+- 0 violation codes, 0 model characters, and 0 outline lines left out. Each reply finished with STOP.
+- 1 duplicate was dropped (vietnamese-japanese: "the same type twice in one stage").
+- lose-8kg ("knee injury, no running"): the constraint filter left Harder and Longer sessions out of the run by "running", and the session-picks confirm was raised (PENDING) over Gemini's picks, which were mobility, easy and technique sessions.
+- The median latency was 1.8 s, and the max 2.9 s.
+
+**Rejected by the API** (400 INVALID_ARGUMENT, so no reply):
+- **The gap schema:** both calls with suggestions on, actuarial-probability and new-subject. The API rejects the gap slot's schema with its string bounds, so the gap slot can't be probed until R3's `buildResponseSchema` sends one the API accepts.
+- **Thinking LOW** on actuarial-probability: gemini-3.5-flash-lite doesn't support it, so `ROADMAP_THINKING_LOW` stays false.
+
+**The verdict at the run: no-go for now.**
+- `ROADMAP_GEMINI_LIVE` stayed false until (a) the 7 replies were labelled (`needs` precision ≥ 0.8, practice fit ≥ 80% of stages), given their verdicts and blessed, and (b) actuarial-probability got a call in the production configuration, which needs the user's approval for about 2 more calls. With thinking LOW refused, F-R4-23's ninth keys-only reply can't exist; the lead's verdict reads the gate over the 7 and actuarial-probability's.
+- `ROADMAP_GAPS_LIVE` stays false: there are 0 real gap strings (GAPS_LIVE_MIN_LABELLED is 30), and the gap schema was rejected.
+
+**The labels (42072fa; PROGRESS.md has the lead's line).** Two independent judges labelled each reply, and a reconcile settled them. All 7 are blessed, and roadmap-model-check re-validates them (1,026 passed, 0 failed).
+- `needs` precision 0.75 (3 of 4 keys; the lead calls it fragile), against the bar's 0.8.
+- Practice fit 29.4% (10 of 34 stages), against 80%. The lead reads it as systemic: the keys-only schema makes practices optional on FIELD runs, and nothing flags a plan with no practice.
+- The arrangement keeps earlier stages for what later ones build on in 1 of 7. No lastStageOnly kind was placed early.
+- **Verdict: no-go.** `ROADMAP_GEMINI_LIVE` stays false. The user approved 2 more free-tier calls (actuarial-probability and new-subject, in the production configuration).
+- **The lead's next step** (after the minors round): code owns the practice progression on every plan path (retrieval early, production later, a full attempt or performance check only in the last stage, practice in every stage when practices are allowed, and the starter on the same rules). Gemini keeps only `needs` (confirmed by the user), the outline's order, and at most a pick among code's candidates per stage (prompt v4). Then the 2 approved calls, their labels and the gate.
+
+**What it changes elsewhere:** the run left the hostile pin, family F and every gate as they were. Blessing the 7 replies seeds family F (707) and moves the pin, so roadmap-hostile-check's PIN item fails until the lead re-blesses pin.json (§19.9).

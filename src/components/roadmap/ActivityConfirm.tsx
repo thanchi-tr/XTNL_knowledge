@@ -70,6 +70,7 @@ import {
 } from "./roadmap-copy";
 import { activityAsksOf, activityAvoidOf, activityCardAnswerOf, activityCardOf, activityNothingToAvoidOf, activityOpenOf, notPausedOfReply, pausedOfReply, rowsAnsweredBy } from "./roadmap-ui-model";
 import { useRoadmapAction, type RoadmapRuntime } from "./roadmap-runtime";
+import { notePauseSeen } from "./roadmap-pauses";
 import "./roadmap.css";
 
 /** The card's DOM id ("Next item to decide" and the Start sheet's pointer land here). */
@@ -189,15 +190,19 @@ function summaryOf(view: Pick<ActivityConfirmView, "rows" | "answered" | "none">
  * After a save: the toast (with Re-plan when an ACTIVE plan's unstarted
  * milestones change), and, when the answer took started practices off Today
  * (decision 4), a quiet toast naming them with Undo (the existing
- * unarchiveTask, history kept).
+ * unarchiveTask, history kept). What happened to each task is noted for the
+ * roadmap's rows (roadmap-pauses; the lead's ruling 3): taken off Today,
+ * still on Today (R4's `notPaused`), and, once its Undo lands, back on Today.
  */
 export function announceActivitySaved(reply: unknown, roadmapId: string, runtime: Pick<RoadmapRuntime, "actions" | "refresh">, onReplan?: () => void) {
   const replan = Boolean(reply && typeof reply === "object" && (reply as { replan?: unknown }).replan === true);
   if (replan && onReplan) pushToast({ title: "Answers saved", body: ACTIVITY_REPLAN_LINE, action: { label: "Re-plan", onAction: onReplan } });
   else pushToast({ title: "Answers saved", body: ACTIVITY_SAVED_LINE });
-  const stuck = activityNotPausedLine(notPausedOfReply(reply).map((p) => p.title));
-  if (stuck) pushToast({ key: `rm-not-paused:${roadmapId}`, title: ACTIVITY_NOT_PAUSED_TITLE, body: stuck, holdMs: 10000 });
+  const notPaused = notPausedOfReply(reply);
   const paused = pausedOfReply(reply);
+  notePauseSeen(roadmapId, [...notPaused.map((p) => ({ templateId: p.templateId, seen: "NOT_PAUSED" as const })), ...paused.map((p) => ({ templateId: p.templateId, seen: "PAUSED" as const }))]);
+  const stuck = activityNotPausedLine(notPaused.map((p) => p.title));
+  if (stuck) pushToast({ key: `rm-not-paused:${roadmapId}`, title: ACTIVITY_NOT_PAUSED_TITLE, body: stuck, holdMs: 10000 });
   const body = activityPausedLine(paused.map((p) => p.title));
   if (paused.length === 0 || !body) return;
   pushToast({
@@ -210,6 +215,8 @@ export function announceActivitySaved(reply: unknown, roadmapId: string, runtime
       onAction: () =>
         void Promise.all(paused.map((p) => runtime.actions.unarchiveTask(p.templateId).catch(() => ({ ok: false as const, error: "That didn't go through." }))))
           .then((all) => {
+            // Only a task whose unarchive landed is back on Today; the others stay paused (their rows keep saying so).
+            notePauseSeen(roadmapId, paused.filter((_, i) => all[i]?.ok).map((p) => ({ templateId: p.templateId, seen: "UNDONE" as const })));
             const failed = all.find((r) => !r.ok);
             if (failed && !failed.ok) pushToast({ title: "Not back on Today", body: failed.error });
           })

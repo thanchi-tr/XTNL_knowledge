@@ -5200,6 +5200,121 @@ async function main() {
     return [holds(care, CARE_GATED, ["PLAN_AHEAD", "KEEP_A_LOG"]) && holds(craft, CRAFT_GATED, ["TECHNIQUE_SESSION"]), json({ care, craft })];
   });
 
+  await integration("§19 a track switch on an answered draft (the fifth verifier's srvprobe6): a BODY draft answered (avoid Full attempt) and built, then saved as CARE under the same words, is rebuilt for CARE in that write — no BODY row is left, whatever its decision, and each stage holds what a fresh CARE build places (its safe kinds while its card asks) — so it is accepted, started and re-planned with no tripwire; saved back as BODY its BODY answer holds again and the rows are the BODY build's (real R2, R3)", async () => {
+    const body: Intake = { ...INTAKE, aim: "Run a half marathon in under 2 hours", fieldId: null, track: "BODY", domainIds: [], constraints: "Knee pain on long runs.", dateMode: "CHOSEN", targetDay: addDays(TODAY, 300) };
+    const care: Intake = { ...body, track: "CARE" };
+    const w = world();
+    const id = await newDraft(w, body);
+    const said = await answerCard(id, realDeps(w), ["FULL_ATTEMPT"], { now: at(1_000) });
+    const build = await S.buildStarterCore(USER, id, at(1_500), realDeps(w));
+    const bodyRows = kindsIn(w, id);
+    // Every item of the draft (REMOVED ones too) of a kind the track doesn't use.
+    const offTrack = (track: string) =>
+      rowsOf(w, id, 1)
+        .flatMap((m) => itemsOf(w, m.id))
+        .filter((i) => i.catalogKey && !(catalogEntryOf(i.catalogKey)?.tracks as readonly string[] | undefined)?.includes(track))
+        .map((i) => `${i.catalogKey}:${i.decision}`);
+    const toCare = await S.saveIntakeCore(USER, care, at(2_000), realDeps(w));
+    const careRows = kindsIn(w, id);
+    const careOff = offTrack("CARE");
+    const careView = await S.loadRoadmapView(USER, at(2_500), realDeps(w));
+    const fresh = await built(care);
+    const toBody = await S.saveIntakeCore(USER, body, at(3_000), realDeps(w));
+    const bodyAgain = kindsIn(w, id);
+    const bodyOff = offTrack("BODY");
+    const bodyView = await S.loadRoadmapView(USER, at(3_500), realDeps(w));
+    const toCare2 = await S.saveIntakeCore(USER, care, at(4_000), realDeps(w));
+    for (const m of rowsOf(w, id, 1).filter((x) => x.status === "DRAFT")) await decideAll(w, id, m.id);
+    const acc = await S.acceptCore(USER, id, { overAccepted: true }, at(5_000), realDeps(w));
+    const m1 = rowsOf(w, id, 1).find((m) => m.status === "PLANNED");
+    const st = m1 ? await S.startMilestoneCore(USER, m1.id, { ...START_ALL, overAccepted: true }, at(6_000), realDeps(w)) : null;
+    const onToday = m1 ? itemsOf(w, m1.id).filter((i) => i.templateId).map((i) => i.catalogKey) : [];
+    const rp = await S.replanCore(USER, id, "REFIT", at(7_000), realDeps(w));
+    const sorted = (rows: string[][]) => json(rows.map((r) => [...r].sort()));
+    return [
+      said.ok &&
+        build.ok &&
+        bodyRows.flat().some((k) => ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION"].includes(k)) &&
+        toCare.ok &&
+        careOff.length === 0 &&
+        careRows.length > 0 &&
+        careRows.every((r) => r.length > 0 && r.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG")) &&
+        sorted(careRows) === sorted(fresh.rows) &&
+        careView.draft?.acceptable === true &&
+        (careView.draft.activityConfirm?.pending ?? 0) > 0 &&
+        toBody.ok &&
+        bodyOff.length === 0 &&
+        sorted(bodyAgain) === sorted(bodyRows) &&
+        bodyView.draft?.activityConfirm?.pending === 0 &&
+        toCare2.ok &&
+        acc.ok &&
+        !!st &&
+        st.ok &&
+        onToday.length > 0 &&
+        onToday.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG") &&
+        rp.ok,
+      json({ said, build, bodyRows, toCare, careRows, careOff, fresh: fresh.rows, careCard: careView.draft?.activityConfirm?.pending, acceptable: careView.draft?.acceptable, toBody, bodyAgain, bodyOff, bodyCard: bodyView.draft?.activityConfirm?.pending, acc, st, onToday, rp }),
+    ];
+  });
+
+  {
+    // The fifth verifier's row 5 (R4's half): the session-picks words name what the swap places on the plan's own track
+    // (cueSafeKindsOf, less a safe kind the user said to avoid), as R5's button does.
+    const words = (track: "BODY" | "CARE" | "CRAFT" | null, blocked: CatalogKey[] = []) => {
+      const gate = track ? { track, blocked } : { blocked };
+      return [S.confirmPicksOf(gate), S.picksChoiceRefusalOf(gate)];
+    };
+    eq(
+      "CONFIRM_PICKS and the invalid-choice refusal name the track's own safe practices: BODY's sessions (CONFIRM_PICKS as it was; a gate with no track reads as BODY's), CARE's Plan the week ahead and Keep a log, CRAFT's technique session; one the user avoided is left out, and with every one avoided they say “leave them out”",
+      [words("BODY"), words(null), words("CARE"), words("CARE", ["KEEP_A_LOG"]), words("CARE", ["PLAN_AHEAD", "KEEP_A_LOG"]), words("BODY", ["MOBILITY_SESSION", "FULL_ATTEMPT"]), words("CRAFT")],
+      [
+        [S.CONFIRM_PICKS, "Keep the picks, or use easy, mobility and technique sessions."],
+        [S.CONFIRM_PICKS, "Keep the picks, or use easy, mobility and technique sessions."],
+        ["Confirm Gemini's session picks first: keep them, or use Plan the week ahead and Keep a log.", "Keep the picks, or use Plan the week ahead and Keep a log."],
+        ["Confirm Gemini's session picks first: keep them, or use Plan the week ahead.", "Keep the picks, or use Plan the week ahead."],
+        ["Confirm Gemini's session picks first: keep them, or leave them out.", "Keep the picks, or leave them out."],
+        ["Confirm Gemini's session picks first: keep them, or use easy and technique sessions.", "Keep the picks, or use easy and technique sessions."],
+        ["Confirm Gemini's session picks first: keep them, or use technique sessions.", "Keep the picks, or use technique sessions."],
+      ]
+    );
+  }
+
+  await integration("§19 a CARE draft's session picks (the fifth verifier's row 5): accept's blocker and the invalid-choice refusal name Plan the week ahead and Keep a log, never BODY's sessions, and the swap places exactly those (real R2)", async () => {
+    // The CARE card answered ("Nothing to avoid") and the plan built; its care sessions then stand as Gemini's picks
+    // waiting on the one confirm (GEMINI_PICK, PENDING), as a keys-only draft leaves them.
+    const w = world();
+    const id = await newDraft(w, careIntake);
+    const said = await answerCard(id, realDeps(w), [], { none: true, now: at(1_000) });
+    const build = await S.buildStarterCore(USER, id, at(1_500), realDeps(w));
+    const marked = rowsOf(w, id, 1)
+      .flatMap((m) => itemsOf(w, m.id))
+      .filter((i) => i.kind === "PRACTICE" && ["SET_TIME", "CHECK_IN", "ADMIN_SESSION"].includes(i.catalogKey ?? ""));
+    for (const i of marked) Object.assign(i, { decision: "PENDING", notes: ["GEMINI_PICK"] });
+    const view = await S.loadRoadmapView(USER, at(2_000), realDeps(w));
+    const accept = errOf(await S.acceptCore(USER, id, { overAccepted: true }, at(3_000), realDeps(w)));
+    const bogus = errOf(await S.confirmSessionPicksCore(USER, id, "BOGUS" as never, at(3_000), realDeps(w)));
+    const swapped = await S.confirmSessionPicksCore(USER, id, "EASY", at(4_000), realDeps(w));
+    const live = rowsOf(w, id, 1)
+      .flatMap((m) => itemsOf(w, m.id))
+      .filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED")
+      .map((i) => i.catalogKey);
+    const after = errOf(await S.acceptCore(USER, id, { overAccepted: true }, at(5_000), realDeps(w)));
+    const careWords = "Confirm Gemini's session picks first: keep them, or use Plan the week ahead and Keep a log.";
+    return [
+      said.ok &&
+        build.ok &&
+        marked.length > 0 &&
+        view.draft?.sessionPicks?.decision === "PENDING" &&
+        accept === careWords &&
+        bogus === "Keep the picks, or use Plan the week ahead and Keep a log." &&
+        swapped.ok &&
+        live.length > 0 &&
+        live.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG") &&
+        !after.startsWith("Confirm Gemini's session picks"),
+      json({ said, build, marked: marked.map((i) => i.catalogKey), picks: view.draft?.sessionPicks, accept, bogus, swapped, live, after }),
+    ];
+  });
+
   {
     // Decision 4's race (the verifier's R4 follow-up): an AVOID landing while Start's finish is under way — after its gate
     // read, before its template ids are written — still pauses the task it created, and that practice stops counting.
