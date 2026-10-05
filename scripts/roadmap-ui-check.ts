@@ -80,6 +80,7 @@ import {
   type ActivityGate,
   type ActivityRow,
   type AimCardView,
+  type DraftView,
   type Intake,
   type AimLineView,
   type ItemDraft,
@@ -372,22 +373,30 @@ async function main() {
     const pickRow = rowOf({ kind: "PRACTICE", label: "Explain it in your own words: Probability", origin: ORIGINS[1], catalogKey: "EXPLAIN_IT", notes: ["GEMINI_PICK"] } as Partial<ItemDraft>);
     const off = model.itemActionsOf(pickRow, "draft", { choice: { isDefault: false } });
     const same = model.itemActionsOf(pickRow, "draft", { choice: { isDefault: true } });
+    const kept = model.itemActionsOf({ ...pickRow, decision: "CHECKED" }, "draft", { choice: { isDefault: false } });
     check(
-      "editor: Gemini's choice that isn't the app's default offers “Use the app's default” first (one tap; ⋯ keeps Change the type and Edit); the default itself, no choice, or a started stage don't",
-      off.wide.join() === "DEFAULT,TYPE,EDIT" &&
-        off.narrow.shown.join() === "DEFAULT" &&
+      "editor: Gemini's choice that isn't the app's default, still waiting, offers “Use the app's default” and “Keep Gemini's choice” first, both at any width (⋯ keeps Change the type and Edit); once kept, only the default's one tap; the default itself, no choice, or a started stage don't",
+      off.wide.join() === "DEFAULT,KEEP_PICK,TYPE,EDIT" &&
+        off.narrow.shown.join() === "DEFAULT,KEEP_PICK" &&
         off.narrow.more.join() === "TYPE,EDIT" &&
+        kept.wide.join() === "DEFAULT,TYPE,EDIT" &&
+        kept.narrow.shown.join() === "DEFAULT" &&
         same.wide.join() === "TYPE,EDIT" &&
         model.itemActionsOf(pickRow, "draft").wide.join() === "TYPE,EDIT" &&
         model.itemActionsOf(pickRow, "start", { choice: { isDefault: false } }).wide.length === 0 &&
         model.itemActionsOf(pickRow, "outline", { choice: { isDefault: false } }).wide.length === 0 &&
-        model.ITEM_ACTION_WORD.DEFAULT === "Use the app's default",
-      `${off.wide.join()} | ${same.wide.join()}`
+        model.ITEM_ACTION_WORD.DEFAULT === "Use the app's default" &&
+        model.ITEM_ACTION_WORD.KEEP_PICK === "Keep Gemini's choice",
+      `${off.wide.join()} | ${kept.wide.join()} | ${same.wide.join()}`
     );
     const editorSrc = code(read("src/components/roadmap/ItemEditor.tsx"));
     check(
       "editor: “Use the app's default” changes the type to the stage's first option under the plan's gate (geminiChoiceOf over the scope: editItem with that catalogKey), never to a held kind; when the stage already holds the default, it removes the pick instead of doubling it",
       /case "DEFAULT":[\s\S]*?geminiChoiceOf\(target\.item, target\.milestone, \{ \.\.\.stageRunOf\(scope\)[\s\S]*?choice\.options\[0\][\s\S]*?it\.catalogKey === fallback\)\) \{\s*run\(\(a\) => a\.decideItem\(id, "REMOVED"\)\);[\s\S]*?a\.editItem\(id, edit\)/.test(editorSrc)
+    );
+    check(
+      "editor: “Keep Gemini's choice” keeps the waiting pick through R4's decideItem CHECKED (the server keeps a waiting pick so, and refuses a kind the gate holds)",
+      /case "KEEP_PICK":\s*(?:\/\/[^\n]*\n\s*)*run\(\(a\) => a\.decideItem\(id, "CHECKED"\)\);/.test(editorSrc)
     );
   }
   const bulk = model.bulkKeepRowsOf(m1);
@@ -3073,18 +3082,22 @@ async function main() {
       "Put it to use · builds on Problem sets from milestone 3",
       "Put it together · builds on Explain it in your own words from milestone 4 · full attempt at the end",
     ]);
-    eq("§20 golden: an exam with no day — the last stage puts it to use and holds the mock test", linesOf({ track: "FIELD", stages: FIELD5, practicesAllowed: true, exam: true }).slice(-1), ["Put it to use · mock test at the end"]);
+    eq(
+      "§20 golden: an exam with no day — the last stage puts it to use (problem sets, which make the mistakes to go over: §20.12), builds on Fluent's explaining and holds the mock test",
+      linesOf({ track: "FIELD", stages: FIELD5, practicesAllowed: true, exam: true }).slice(-1),
+      ["Put it to use · builds on Explain it in your own words from milestone 4 · mock test at the end"]
+    );
     const packInput: PInput = { track: "FIELD", stages: PACK, practicesAllowed: true, exam: true, examStage: 3, picks: { FAMILIAR: "RECALL_DRILLS", RETAINED: "EXPLAIN_IT", FLUENT: "MISTAKE_REVIEW", MASTERED: "RUN_THROUGHS" } };
     const PACK_LINES = [
       "Recall first",
       "Recall first · goes on from milestone 1",
       "Put it to use · mock test at the end",
       "Put it to use · builds on Problem sets from milestone 3 · your exam in this stage",
-      "Put it to use · goes on from milestone 4",
-      "Put it to use · goes on from milestone 5",
+      "Put it to use · builds on Explain it in your own words from milestone 4",
+      "Put it to use · goes on from milestone 5 · full attempt at the end",
     ];
     eq(
-      "§20 golden: the pack (a PART first, BETWEEN at 11, the exam's day in Fluent, Gemini's picks beside code's defaults) — the mock test closes the stage before the exam, the exam its own stage, and the stages after it go on from it with no new checkpoint",
+      "§20 golden: the pack (a PART first, BETWEEN at 11, the exam's day in Fluent, Gemini's picks beside code's defaults) — the mock test closes the stage before the exam, the exam its own stage, and the stages after it keep climbing toward the depth (the lead's ruling 3), building on the exam's stage, the full attempt at the end",
       linesOf(packInput),
       PACK_LINES
     );
@@ -3195,7 +3208,9 @@ async function main() {
                       if (w.end === "FULL_ATTEMPT" && i !== p.last) bad.push(`${tag}: a full attempt before the last stage`);
                       if (w.end === "EXAM_DAY" && !(i === p.examStage && p.examDated)) bad.push(`${tag}: the exam off its day's stage`);
                       if (w.end === "MOCK_TEST" && i !== (p.examDated ? p.mockStage : p.examStage)) bad.push(`${tag}: a mock test off the stage before a dated exam's (undated: the exam's stage)`);
-                      if (s.afterExam && (w.end != null || s.steps.length > 0)) bad.push(`${tag}: a step or an end after a dated exam's stage`);
+                      // The lead's ruling 3: a stage after a dated exam keeps climbing toward the depth with its own checkpoint
+                      // (self-test, then the performance check), so its line never names the exam or a mock test as its end.
+                      if (s.afterExam && (w.end === "EXAM_DAY" || w.end === "MOCK_TEST")) bad.push(`${tag}: the exam or a mock test closes a stage after a dated exam's`);
                       if (w.end && !ends.has(w.end)) bad.push(`${tag}: an end the stage doesn't hold (${w.end})`);
                       if (!w.end && ["EXAM_DAY", "MOCK_TEST", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].some((e) => ends.has(e))) bad.push(`${tag}: an end left unsaid`);
                       if (line && /\b(rung|gemini)\b/i.test(line)) bad.push(`${tag}: '${line}'`);
@@ -3290,13 +3305,18 @@ async function main() {
         v4.draft!.milestones.filter((m) => m.stage === "PART" || m.stage === "BETWEEN").every((m) => !m.items.some((it) => it.notes.includes("GEMINI_PICK"))),
       String((v4Html.match(/>Gemini&#x27;s choice among the app&#x27;s options</g) ?? []).length)
     );
+    // The plan-level card for Gemini's waiting choices (rm-picks) is cut out where a check reads the rows alone.
+    const withoutPicksCard = (html: string) => {
+      const at = html.indexOf('id="rm-picks"');
+      return at < 0 ? html : html.slice(0, html.lastIndexOf("<section", at)) + html.slice(html.indexOf("</section>", at) + "</section>".length);
+    };
     {
       const ms = v4.draft!.milestones;
       const fam = ms.find((m) => m.stage === "FAMILIAR")!;
-      const familiarNext = flat(R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: fam.lineageId } } })));
+      const familiarNext = flat(withoutPicksCard(R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: fam.lineageId } } }))));
       const famOptions = model.stageOptionsOf(fam, { track: "FIELD", exam: true }).length;
       check(
-        "§20 render: Familiar's pick, the app's default itself, says how many options its stage offered and that it is the app's default too (no “Use the app's default”)",
+        "§20 render: Familiar's pick, the app's default itself, says how many options its stage offered and that it is the app's default too (no “Use the app's default” on its row)",
         familiarNext.includes(`Gemini's choice among the app's options ${famOptions} options for this stage; this is the app's default too.`) && !familiarNext.includes("Use the app's default"),
         String(famOptions)
       );
@@ -3311,7 +3331,7 @@ async function main() {
       );
       check(
         "§20 render: that pick offers “Use the app's default” (one tap); the next card's pick, the app's default itself, doesn't",
-        retainedNext.includes(">Use the app&#x27;s default<") && !v4Html.includes(">Use the app&#x27;s default<")
+        retainedNext.includes(">Use the app&#x27;s default<") && !withoutPicksCard(v4Html).includes(">Use the app&#x27;s default<")
       );
     }
     const v3Page = pageOf("draft-v3");
@@ -3337,6 +3357,247 @@ async function main() {
         `${JSON.stringify(whyLinesOf(v4Now))} ${JSON.stringify(whyLinesOf(v3Now))}`
       );
     }
+    // ── The lead's rulings 6 and 7 (the progression's follow-up): Gemini's waiting choices can be kept; a Gemini reorder gets
+    // one tap back to the user's order; a plan the user writes stays theirs, each stage offering "Add the app's practice".
+    {
+      const DR = await import("../src/components/roadmap/DraftReview");
+      const RT2 = await import("../src/components/roadmap/roadmap-runtime");
+      const ms = v4.draft!.milestones;
+      const ret = ms.find((m) => m.stage === "RETAINED")!;
+      const knowRun = { track: "FIELD" as const, exam: true, family: "KNOW" as const, choices: true };
+      const waiting = model.pendingChoicesOf(ms, knowRun);
+      const explain = ret.items.find((it) => it.catalogKey === "EXPLAIN_IT" && it.notes.includes("GEMINI_PICK"))!;
+      const keptMs = ms.map((m) => ({ ...m, items: m.items.map((it) => (it.id === explain.id ? { ...it, decision: "CHECKED" as const } : it)) }));
+      const laterMs = ms.map((m) => (m.lineageId === ret.lineageId ? { ...m, status: "LATER" as const } : m));
+      eq(
+        "§20 ruling 7 model: pendingChoicesOf — accept waits on Gemini's choice that isn't its stage's default, still PENDING (draft-v4: Retained's Explain it); not once kept, not on a Later milestone, never the default itself, none on a v3 plan",
+        [waiting.map((r) => r.id), model.pendingChoicesOf(keptMs, knowRun).length, model.pendingChoicesOf(laterMs, knowRun).length, model.pendingChoicesOf(ms, { ...knowRun, choices: false }).length],
+        [[explain.id], 0, 0, 0]
+      );
+      const scopeOf = (view: RoadmapView) => DR.editorScopeOf(view, view.draft!.milestones)!;
+      {
+        // The family in force rides on the header (the lead's ruling 7; R4's headerOf): an answer that differs from the aim's
+        // prefill is the one the page reads, so a stage's options, its default and the Gemini-choice line follow the user's answer.
+        const answered = { ...v4, header: { ...v4.header!, practiceFamily: "PERFORM" } } as RoadmapView;
+        const s0 = scopeOf(v4);
+        const s1 = scopeOf(answered);
+        const fl = ms.find((m) => m.stage === "FLUENT")!;
+        check(
+          "§20 ruling 7: the header's practice family (the user's answer) wins over the aim's prefill — the scope, the stage's options and its default read it; without it, the prefill",
+          s0.practiceFamily === null &&
+            model.stageRunOf(s0).family === "KNOW" &&
+            s1.practiceFamily === "PERFORM" &&
+            model.stageRunOf(s1).family === "PERFORM" &&
+            JSON.stringify(model.stageOptionsOf(fl, model.stageRunOf(s1))) === JSON.stringify(CAT.progressionCandidatesOf("FIELD", { stage: "FLUENT", level: 10 }, { exam: true, practicesAllowed: true, family: "PERFORM", gate: { blocked: [] } })) &&
+            JSON.stringify(model.stageOptionsOf(fl, model.stageRunOf(s1))) !== JSON.stringify(model.stageOptionsOf(fl, model.stageRunOf(s0))),
+          `${s1.practiceFamily} ${model.stageOptionsOf(fl, model.stageRunOf(s1)).join(",")}`
+        );
+      }
+      const cw = DR.choicesWaitingOf(v4.draft!, scopeOf(v4), ms[0]);
+      const cwRet = DR.choicesWaitingOf(v4.draft!, scopeOf(v4), ret);
+      const cwBody = DR.choicesWaitingOf({ ...v4.draft!, sessionPicks: { kinds: ["EXPLAIN_IT"], constraints: "x", decision: "PENDING" } } as DraftView, scopeOf(v4), ms[0]);
+      check(
+        "§20 ruling 7: choicesWaitingOf — the choices card decides the waiting choices on outline cards (draft-v4: 1); none when that choice sits on the expanded card (its row has the buttons); a plan with the session confirm decides them there instead",
+        cw.all.length === 1 && cw.outside.length === 1 && cwRet.all.length === 1 && cwRet.outside.length === 0 && cwBody.all.length === 0,
+        `${cw.all.length}/${cw.outside.length} ${cwRet.outside.length} ${cwBody.all.length}`
+      );
+      check(
+        "§20 ruling 7: nextTargetOf — R4's next item to decide, a waiting choice on an outline card, goes to the choices card; on the expanded card, to its row",
+        DR.nextTargetOf(v4.draft!, null, [explain.id!]) === DR.PICKS_DOM_ID && DR.nextTargetOf(v4.draft!, null, []) === model.rowDomId(explain.id!) && v4.draft!.nextToDecide === explain.id
+      );
+      check(
+        "§20 ruling 7 copy: the choices card's line and its two short answers",
+        copy.choicesWaitingLine(1) === "Gemini chose 1 practice beside the app's default." &&
+          copy.choicesWaitingLine(3) === "Gemini chose 3 practices beside the app's defaults." &&
+          copy.keepChoicesWord(1) === "Keep it" &&
+          copy.keepChoicesWord(2) === "Keep them" &&
+          copy.appDefaultsWord(1) === "Use the app's default" &&
+          copy.appDefaultsWord(2) === "Use the app's defaults" &&
+          copy.CHOICES_PLAN_LEVEL === "Gemini's practice choices"
+      );
+      const card = (() => {
+        const at = v4Html.indexOf('id="rm-picks"');
+        return at < 0 ? "" : flat(v4Html.slice(v4Html.lastIndexOf("<section", at), v4Html.indexOf("</section>", at)));
+      })();
+      const drSrc = code(read("src/components/roadmap/DraftReview.tsx"));
+      check(
+        "§20 ruling 7 render: draft-v4 — the choices card names the waiting choice and answers it in one tap (Keep it · Use the app's default, through R4's confirmSessionPicks KEEP and DEFAULT), and the footer's next item goes there",
+        card === "Gemini chose 1 practice beside the app's default. Keep it Use the app's default" &&
+          /a\.confirmSessionPicks\(id, "KEEP"\)[\s\S]{0,200}a\.confirmSessionPicks\(id, "DEFAULT"\)/.test(drSrc) &&
+          /<button[^>]*class="btn btn-primary lg"[^>]*>Next item to decide</.test(v4Html) &&
+          flat(v4Html).includes("1 left: Gemini's practice choices. Then Accept."),
+        card
+      );
+      const retNext = R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: ret.lineageId } } }));
+      const retLeft = model.undecidedOf(ret).length + 1;
+      check(
+        "§20 ruling 7 render: with that choice on the expanded card, no choices card — its row offers “Use the app's default” and “Keep Gemini's choice”, and the footer counts it among the milestone's items",
+        !retNext.includes('id="rm-picks"') &&
+          retNext.includes(">Use the app&#x27;s default<") &&
+          retNext.includes(">Keep Gemini&#x27;s choice<") &&
+          flat(retNext).includes(`${copy.plural(retLeft, "item")} left in milestone ${ret.ord}.`),
+        String(retLeft)
+      );
+      const keptHtml = R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, milestones: keptMs, nextToDecide: null, nextLineageId: ret.lineageId } } }));
+      check(
+        "§20 ruling 7 render: once kept, the choice keeps its label and its one tap back to the default, and asks nothing more (no keep button, no card)",
+        flat(keptHtml).includes("Gemini's choice among the app's options") && keptHtml.includes(">Use the app&#x27;s default<") && !keptHtml.includes(">Keep Gemini&#x27;s choice<") && !keptHtml.includes('id="rm-picks"')
+      );
+      // Keep my order: Gemini moved the outline's lines (draft-v4: S4 before S3), so the arrangement line carries one tap back.
+      const arrOf = (html: string) => {
+        const at = html.indexOf('class="card rm-arr"');
+        return at < 0 ? "" : flat(html.slice(html.lastIndexOf("<section", at), html.indexOf("</section>", at)));
+      };
+      const keptOrder = R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, milestones: keptMs.map((m) => ({ ...m, items: m.items.map((it) => (it.kind === "TOPIC" ? { ...it, decision: "EDITED" as const } : it)) })) } } }));
+      check(
+        "§20 ruling 7 render: a Gemini reorder is labelled as its suggestion with one tap back to your order (Keep my order); with your order standing, no button",
+        arrOf(v4Html) === `${copy.ARRANGEMENT_V4_LINE} ${copy.KEEP_MY_ORDER_WORD}` && !keptOrder.includes(`>${copy.KEEP_MY_ORDER_WORD}<`),
+        arrOf(v4Html)
+      );
+      const rtSrc2 = code(read("src/components/roadmap/roadmap-runtime.tsx"));
+      check(
+        "§20 ruling 7: Keep my order is offered only on a moved order and calls R4's keepMyOrder with the plan's id (live runtime wired; the fixture's refuses)",
+        /v4Parts\?\.order === "MOVED" && <KeepMyOrder roadmapId=\{header\.id\} \/>/.test(drSrc) &&
+          /run\(\(a\) => a\.keepMyOrder\(roadmapId\)\)/.test(drSrc) &&
+          /keepMyOrder: typeof keepMyOrder;/.test(rtSrc2) &&
+          /^\s+keepMyOrder,$/m.test(rtSrc2.slice(rtSrc2.indexOf("export const LIVE_ACTIONS"))) &&
+          (await RT2.FIXTURE_ACTIONS.keepMyOrder("rm4")).ok === false
+      );
+
+      // "Write it myself" (ruling 6): the plan stays the user's; each stage offers the app's practice in one tap.
+      const manual = roadmapFixture("draft-manual").view!;
+      const manualHtml = pageOf("draft-manual");
+      const mScope = scopeOf(manual);
+      const mRun = model.stageRunOf(mScope);
+      const appOf = (m: MilestoneDraft) => model.appPracticeOf(m, mRun);
+      const mMs = manual.draft!.milestones;
+      const byStage = Object.fromEntries(mMs.map((m) => [m.stage as string, appOf(m)]));
+      const fromCatalog = (m: MilestoneDraft) => CAT.progressionCandidatesOf("FIELD", { stage: m.stage!, level: model.stageLevelOf(m) }, { exam: true, practicesAllowed: true, family: "KNOW", gate: { blocked: [] } })[0];
+      check(
+        "§20 ruling 6 model: rowsAreManualOf — only rows a MANUAL run wrote; the editor's scope says so for a plan you wrote, never for code's or Gemini's",
+        model.rowsAreManualOf(manual.run) && !model.rowsAreManualOf(v4.run) && !model.rowsAreManualOf(roadmapFixture("count-gate").view!.run) && !model.rowsAreManualOf(null) && mScope.manual === true && scopeOf(v4).manual === false
+      );
+      check(
+        "§20 ruling 6 model: appPracticeOf — each stage's own default under the plan's gate and family (Part: its gate's, Recall drills; Retained: Problem sets; the rest as the catalog lists them first); none where the stage already holds it (Familiar, the user's own choice)",
+        byStage.PART === "RECALL_DRILLS" &&
+          byStage.FAMILIAR === null &&
+          byStage.RETAINED === "PROBLEM_SETS" &&
+          mMs.filter((m) => m.stage !== "FAMILIAR").every((m) => appOf(m) === fromCatalog(m)),
+        JSON.stringify(byStage)
+      );
+      {
+        const ret0 = mMs.find((m) => m.stage === "RETAINED")!;
+        const own = (k: string, n: number) => Array.from({ length: n }, (_, i) => ({ ...ret0.items.find((it) => it.kind === "PRACTICE")!, id: `own${k}${i}`, lineageId: `lown${k}${i}`, catalogKey: null }));
+        const full = { ...ret0, items: [...ret0.items, ...own("f", 2)] };
+        const removed = { ...ret0, items: [...ret0.items, { ...ret0.items.find((it) => it.kind === "PRACTICE")!, id: "rmv", lineageId: "lrmv", catalogKey: "PROBLEM_SETS" as CatalogKey, decision: "REMOVED" as const }] };
+        const gated = model.appPracticeOf(ret0, { ...mRun, blocked: ["PROBLEM_SETS"] });
+        check(
+          "§20 ruling 6 model: appPracticeOf never offers a kind the gate holds (the next option instead), nothing once the stage's practices are full, nothing where you removed the default (the app never puts it back there), nothing without a stage",
+          gated === CAT.progressionCandidatesOf("FIELD", { stage: "RETAINED", level: 8 }, { exam: true, practicesAllowed: true, family: "KNOW", gate: { blocked: ["PROBLEM_SETS"] } })[0] &&
+            gated !== "PROBLEM_SETS" &&
+            model.appPracticeOf(full, mRun) === null &&
+            model.appPracticeOf(removed, mRun) === null &&
+            model.appPracticeOf({ ...ret0, stage: null }, mRun) === null,
+          String(gated)
+        );
+      }
+      {
+        // The safety gate, over every track and stage: the app's practice is always one of the stage's placeable options, never a held kind.
+        const bad: string[] = [];
+        let n = 0;
+        for (const track of CAT.CATALOG_TRACKS) {
+          const practiceKinds = Object.keys(CAT.PROGRESSION[track].rung) as CatalogKey[];
+          for (const blocked of [[], CAT.cueGatedKindsOf(track), ...practiceKinds.map((k) => [k])] as CatalogKey[][]) {
+            for (const stage of CAT.progressionStageKeysOf(track)) {
+              for (const exam of [false, true]) {
+                n++;
+                const m = { stage, measures: [], items: [] } as unknown as MilestoneDraft;
+                const k = model.appPracticeOf(m, { track, exam, blocked });
+                const options = CAT.progressionCandidatesOf(track, { stage, level: null }, { exam, practicesAllowed: true, family: null, gate: { blocked } });
+                if (k != null && (blocked.includes(k) || k !== options[0])) bad.push(`${track} ${stage} exam=${exam} blocked=${blocked.join("+")}: ${k}`);
+                if (k == null && options.length > 0) bad.push(`${track} ${stage}: none offered though ${options[0]} is placeable`);
+              }
+            }
+          }
+        }
+        check(`§20 ruling 6 property: over ${n} stages (every track, gate and exam), “Add the app's practice” offers the stage's first placeable option, never a kind the gate holds`, n > 100 && bad.length === 0, bad.slice(0, 3).join(" | "));
+      }
+      const appChips = [...manualHtml.matchAll(/<button[^>]*aria-label="Add the app&#x27;s practice: ([^"]+)"[^>]*>Add the app&#x27;s practice<\/button>/g)].map((m) => m[1]);
+      check(
+        "§20 ruling 6 render: draft-manual — every stage but Familiar (which holds its default) offers “Add the app's practice”, naming the kind it adds; no practice, step or checkpoint of code's on the plan; code's and Gemini's plans never offer it",
+        appChips.length === mMs.length - 1 &&
+          appChips[0] === "Recall drills" &&
+          appChips.includes("Problem sets") &&
+          mMs.every((m) => m.items.every((it) => !it.catalogKey || it.origin === "USER")) &&
+          FIXTURE_STATES.filter((s) => s !== "draft-manual").every((s) => !renders.get(s)!.page.includes("Add the app&#x27;s practice")),
+        appChips.join(", ")
+      );
+      check(
+        "§20 ruling 6: the button calls R4's addAppPractice with the stage's id (the progression's practices for that stage, within its room, through the gate), only on a plan you wrote and only while a practice still fits; live runtime wired, the fixture's refuses",
+        /run\(\(a\) => a\.addAppPractice\(id\)\)/.test(code(read("src/components/roadmap/AddItemSheet.tsx"))) &&
+          /scope\.manual && kinds\.includes\("PRACTICE"\) \? appPracticeOf\(milestone, stageRunOf\(scope\)\) : null/.test(code(read("src/components/roadmap/AddItemSheet.tsx"))) &&
+          /^\s+addAppPractice,$/m.test(rtSrc2.slice(rtSrc2.indexOf("export const LIVE_ACTIONS"))) &&
+          (await RT2.FIXTURE_ACTIONS.addAppPractice("m1")).ok === false
+      );
+      check(
+        "§20 rulings 6 and 7 at 344 px: the new labels are short (≤ 24 characters each) and the choices card's line fits two lines (≤ 60)",
+        [model.ITEM_ACTION_WORD.KEEP_PICK, copy.APP_PRACTICE_WORD, copy.KEEP_MY_ORDER_WORD, copy.keepChoicesWord(2), copy.appDefaultsWord(2)].every((w) => w.length <= 24) && copy.choicesWaitingLine(12).length <= 60
+      );
+    }
+
+    // ── The lead's ruling 1: a stage whose room holds one practice where its role needs two kinds alternates them, week
+    // about (contracts §20.12: the label says so in code's words, roadmap-catalog progressionLabelOf); the row adds one short
+    // line saying why, and its How shows each week's kind.
+    {
+      const fill = { track: "FIELD" as const, domains: [RT.domainName({ id: "d-pr", name: "Probability" })] };
+      const turnLabel = CAT.progressionLabelOf({ kind: "PROBLEM_SETS", alternate: "TIMED_PRACTICE" }, fill) as string;
+      const row = (p: Partial<ItemDraft>) => ({ kind: "PRACTICE", catalogKey: "PROBLEM_SETS", label: turnLabel, decision: "PENDING", ...p }) as ItemDraft;
+      eq(
+        "§20 ruling 1 model: practiceTurnOf reads the kind a practice takes turns with from its own code words; none on its plain label, a removed row, a step, or a row with no type",
+        [model.practiceTurnOf(row({})), model.practiceTurnOf(row({ label: CAT.catalogLabelOf("PROBLEM_SETS", fill) as string })), model.practiceTurnOf(row({ decision: "REMOVED" })), model.practiceTurnOf(row({ kind: "STEP" })), model.practiceTurnOf(row({ catalogKey: null }))],
+        ["TIMED_PRACTICE", null, null, null, null]
+      );
+      {
+        // Every turn the catalog may set (PRACTICE_TURNS) reads back from its own label, so each one the plan holds gets its line.
+        const unread = CAT.PRACTICE_TURNS.filter((t) => model.practiceTurnOf(row({ catalogKey: t.kind, label: CAT.progressionLabelOf({ kind: t.kind, alternate: t.alternate }, fill) as string })) !== t.alternate);
+        check(`§20 ruling 1 model: every turn the catalog may set (${CAT.PRACTICE_TURNS.length}) reads back from its label`, CAT.PRACTICE_TURNS.length > 10 && unread.length === 0, unread.map((t) => `${t.kind}/${t.alternate}`).join(", "));
+      }
+      check(
+        "§20 ruling 1 copy: the line says only why (the label names both weeks): short, plain, no digit",
+        copy.PRACTICE_TURN_LINE === "Week about, so neither gets cut to one session a week." && copy.PRACTICE_TURN_LINE.length <= 60 && !/\p{Nd}/u.test(copy.PRACTICE_TURN_LINE) && turnLabel === "Problem sets one week, timed practice the next: Probability"
+      );
+      // The app's starter with Part's first practice taking turns (as the progression places one at low hours), rendered.
+      const cg = roadmapFixture("count-gate").view!;
+      const part = cg.draft!.milestones[0];
+      const first = part.items.filter((it) => it.kind === "PRACTICE").sort((a, b) => a.ord - b.ord)[0];
+      const partLabel = CAT.progressionLabelOf({ kind: first.catalogKey as CatalogKey, alternate: "TIMED_PRACTICE" }, { track: "FIELD", domains: [RT.domainName({ id: "d-pr", name: "Probability" }), RT.domainName({ id: "d-in", name: "Inference" })] }) as string;
+      const turned = { ...cg, draft: { ...cg.draft!, milestones: [{ ...part, items: part.items.map((it) => (it.id === first.id ? { ...it, label: partLabel } : it)) }, ...cg.draft!.milestones.slice(1)] } };
+      const tHtml = flat(R(createElement(RoadmapScreen, { view: turned })));
+      const plainHtml = flat(pageOf("count-gate"));
+      check(
+        "§20 ruling 1 render: the practice that takes turns reads its label (both weeks), the line saying why, and a How naming each week's kind over its steps; a practice that doesn't take turns has neither",
+        tHtml.includes(partLabel) &&
+          tHtml.includes(copy.PRACTICE_TURN_LINE) &&
+          tHtml.includes(`How ${copy.KIND_NAME[first.catalogKey as CatalogKey]} ${copy.KIND_HOW[first.catalogKey as CatalogKey][0]}`) &&
+          tHtml.includes(`${copy.KIND_NAME.TIMED_PRACTICE} ${copy.KIND_HOW.TIMED_PRACTICE[0]}`) &&
+          !plainHtml.includes(copy.PRACTICE_TURN_LINE) &&
+          (tHtml.match(new RegExp(copy.PRACTICE_TURN_LINE.replace(/[.]/g, "\\."), "g")) ?? []).length === 1,
+        partLabel
+      );
+      // draft-low-hours: the app's plan at 3 h a week, built with the real progressionOf at room 1 and labelled by
+      // progressionLabelOf: one practice a stage, and every one that takes turns carries the line.
+      const low = roadmapFixture("draft-low-hours").view!;
+      const lowHtml = flat(pageOf("draft-low-hours"));
+      const lowTurns = low.draft!.milestones.flatMap((m) => m.items).filter((it) => model.practiceTurnOf(it) != null);
+      check(
+        "§20 ruling 1 render: draft-low-hours — one practice per stage (its role-defining kind), never a second thinned one; each that takes turns says so and why",
+        low.draft!.milestones.every((m) => m.items.filter((it) => it.kind === "PRACTICE" && it.decision !== "REMOVED").length <= 1) &&
+          lowTurns.every((it) => lowHtml.includes(it.label)) &&
+          (lowHtml.match(new RegExp(copy.PRACTICE_TURN_LINE.replace(/[.]/g, "\\."), "g")) ?? []).length === lowTurns.filter((it) => low.draft!.milestones.some((m) => m.lineageId === low.draft!.nextLineageId && m.items.includes(it))).length,
+        `${lowTurns.length} taking turns: ${lowTurns.map((it) => it.label).join(" | ")}`
+      );
+    }
+
     // 344 px first: the why line sits in the header's text column (a 1fr column, under the title), wraps, never truncates.
     {
       const rmCss = read("src/components/roadmap/roadmap.css").replace(/\/\*[\s\S]*?\*\//g, "");

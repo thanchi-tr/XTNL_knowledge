@@ -22,7 +22,8 @@
  * the type" on a draft. The practice progression (contracts §20): on a plan
  * whose picks are choices, Gemini's pick of one of its stage's options reads
  * "Gemini's choice among the app's options" (useGeminiChoice), and one that
- * isn't the app's default offers "Use the app's default" first (one tap).
+ * isn't the app's default offers "Use the app's default" first (one tap),
+ * with "Keep Gemini's choice" beside it while accept waits on it.
  */
 import { useMemo, type ReactNode } from "react";
 import { ChipButton } from "@/components/ui/Chip";

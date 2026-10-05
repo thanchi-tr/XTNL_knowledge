@@ -16,6 +16,7 @@ import { createContext, useCallback, useContext, useMemo, useState, useTransitio
 import { useRouter } from "next/navigation";
 import {
   acceptPlan,
+  addAppPractice,
   addItem,
   applyRemedy,
   archiveRoadmap,
@@ -29,6 +30,7 @@ import {
   finishStarting,
   hideAimPrompt,
   keepCalibratedDates,
+  keepMyOrder,
   keepOnToday,
   keepUnflagged,
   loadStartPreview,
@@ -119,6 +121,15 @@ export interface RoadmapActions {
   /** Move an outline line to another milestone, or tie it to another Domain (F-R4-21). */
   moveLine: typeof moveLine;
   setLineDomain: typeof setLineDomain;
+  /** "Keep my order" (the lead's ruling 7): a Gemini reorder of the outline put back to the user's own order in one tap. */
+  keepMyOrder: typeof keepMyOrder;
+  /**
+   * "Add the app's practice" on a stage of a plan the user writes (the
+   * lead's ruling 6; R4's addAppPracticeCore over realism's
+   * addStagePracticesOf: the progression's practices for that one stage,
+   * within its room beside the user's own, through the gate).
+   */
+  addAppPractice: typeof addAppPractice;
   /** An accepted roadmap's "Add a figure" (R4's setAimFigureCore): the aim check's hours and their source, the user's. */
   setAimFigure: typeof setAimFigure;
   /**
@@ -172,6 +183,8 @@ export const LIVE_ACTIONS: RoadmapActions = {
   setActivityVerdicts,
   moveLine,
   setLineDomain,
+  keepMyOrder,
+  addAppPractice,
   setAimFigure,
   keepOnToday,
   archiveTask: (id) => archiveTask(id),
@@ -221,6 +234,8 @@ export const FIXTURE_ACTIONS: RoadmapActions = {
   setActivityVerdicts: refuse,
   moveLine: refuse,
   setLineDomain: refuse,
+  keepMyOrder: refuse,
+  addAppPractice: refuse,
   setAimFigure: refuse,
   keepOnToday: refuse,
   archiveTask: refuse,

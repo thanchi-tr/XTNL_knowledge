@@ -63,15 +63,34 @@
  * The review round (contracts §20.11, R2's half): the chain passes the plan's
  * practice family (practiceFamilyOf(intake)) and a dated exam's stage and
  * run-up (examStagesOf over the rows' windows); a short track plan's rows
- * stand at their stages by position (trackStagePlacesOf: the base is never
- * skipped, a working start at most one rung up), a pick made for a merged
- * key reaching the row that holds it; a stage is sized together by
- * practiceSizesOf (the focus weighed), within what keeps every week FITS,
- * with a body plan's harder and longer sessions at most twice a week; and a
- * type the user changed covers the kind it replaced (swapsOf), so no re-fit
- * adds that kind back or drops another code row for it.
+ * stand at consecutive stages from the base (trackStagePlacesOf: the base is
+ * never skipped, a working start at most one rung up, no rung jumped), a
+ * pick made for a merged key reaching the row that holds it; a stage is
+ * sized together by practiceSizesOf (the focus weighed), within what keeps
+ * every week FITS, with a body plan's harder and longer sessions at most
+ * twice a week; and a type the user changed covers the kind it replaced
+ * (swapsOf), so no re-fit adds that kind back or drops another code row for it.
  *
  *   trackStagePlacesOf
+ *
+ * The lead's rulings after the review round (realism's half):
+ *   - Ruling 4: a short track plan climbs consecutive stages (STAGE_1,
+ *     STAGE_2…), never STAGE_1 → STAGE_5 (trackStagePlacesOf).
+ *   - Ruling 6: a plan the user writes stays theirs. A re-fit with
+ *     PlaceOpts.manual sizes what its stages hold and places nothing; the
+ *     app's practices reach a stage only when the user asks
+ *     (addStagePracticesOf, "Add the app's practice").
+ *   - One figure for a stage's room and its sizes: the room is read off the
+ *     ceiling allocate sizes within (the budget held to what keeps every
+ *     judged week FITS, never under an equal split: roomOf, roomWithin), and
+ *     a focus whose method's band would leave it one session trains twice at
+ *     a shorter band (allocate), so a stage with two or more practices
+ *     trains its focus at least twice a week.
+ *   - A body plan's longer session stays a band above the easy one after the
+ *     leftover pass: the easy session never grows to its band, and what it
+ *     can't take lengthens the longer session by one band (allocate).
+ *
+ *   addStagePracticesOf · PlaceOpts.manual · slotProgressionOf
  *
  * The model, in one place (every rule is the spec's; the choices the spec
  * leaves open are marked "choice"):
@@ -167,6 +186,7 @@ import {
   MILESTONE_MAX_DAYS,
   MILESTONE_MIN_DAYS,
   PRACTICES_PER_MILESTONE,
+  PRACTICE_BANDS,
   PRACTICE_BUDGET_SHARE,
   RAMP_ALLOWANCE,
   RAMP_FLOOR_MIN,
@@ -297,14 +317,16 @@ import {
 import {
   activityGateOf,
   catalogEntryOf,
-  catalogLabelOf,
   examStagesOf,
+  languageExamSkillsOf,
   practiceFamilyOf,
   practiceRoleOf,
   practiceSizeOf,
   practiceSizesOf,
   practicesThatFitOf,
+  practiceTurnOfLabel,
   progressionCandidatesOf,
+  progressionLabelOf,
   progressionNotesOf,
   progressionOf,
   progressionShapeOf,
@@ -312,6 +334,7 @@ import {
   stageBandFloorOf,
   type CatalogKey,
   type CatalogTrack,
+  type PracticeKind,
   type PracticeSize,
   type Progression,
   type ProgressionInput,
@@ -1051,9 +1074,10 @@ const setSize = (p: ItemDraft, s: PracticeSize): void => {
  * easy one, the focus taking what the others' rounding leaves), within the most every judged week of the window
  * still FITS (fitsRoomOf; never under what an equal split would take, so a stage that was tight stays as it was);
  * then a body plan's harder and longer sessions are held to BODY_SESSIONS_MAX a week, and what that, or a focus at
- * its most sessions a week, leaves goes to the other practices (never below their size, within that budget). So a
- * third practice never thins the focus to the others' size, and the budget isn't left unused. Without a focus (a
- * rev 3 plan, a skeleton), an equal split as before.
+ * its most sessions a week, leaves goes to the other practices (never below their size, within that budget; the easy
+ * session never to the longer one's band, so the longer session stays a band above it, and what the easy session can't
+ * take lengthens the longer session by one band, LONGER_BAND_MAX at most). So a third practice never thins the focus to
+ * the others' size, and the budget isn't left unused. Without a focus (a rev 3 plan, a skeleton), an equal split as before.
  */
 function allocate(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: PracticeBand | null = null, focus: string | null = null): Allocation {
   const alloc = allocationOf(ms, sim, ctx, from, floor);
@@ -1075,20 +1099,62 @@ function allocate(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: P
     const most = p.catalogKey ? BODY_SESSIONS_MAX[p.catalogKey] : undefined;
     setSize(p, most != null && s.sessionsPerWeek > most ? { band: s.band, sessionsPerWeek: most, rule: `TARGET:${most}/W` } : s);
   });
-  // What a capped session or a focus at its most sessions a week leaves goes to the others, in order, within the budget.
+  // What a capped session or a focus at its most sessions a week leaves goes to the others, in order, within the budget. On
+  // a body plan the easy session never grows to the longer one's band (more easy sessions at the band under it instead), so
+  // practiceSizesOf's band rule (a longer session a band above the easy one) still holds after this pass; what the easy
+  // session can't take lengthens the longer session by one band (LONGER_BAND_MAX at most, its sessions as they are).
   const minutesOfRow = (p: ItemDraft) => (p.sessionsPerWeek ?? 0) * (p.durationBand ? practiceBandMinutes(p.durationBand) : 0);
+  const bandIx = (band: PracticeBand | null | undefined): number => (band ? PRACTICE_BANDS.indexOf(band) : -1);
+  // The room's promise (practicesThatFitOf: the focus at least twice a week at the stage's floor, every other practice
+  // once): a focus whose method's band leaves it one session (building at D60 on a D45 floor, its share 90 minutes) trains
+  // twice at a shorter band, never under the floor (D30 without one), within what the others leave it. A body plan's
+  // harder and longer sessions keep their length (one long or hard session is the point of them).
+  const head = ordered[0];
+  if ((head.sessionsPerWeek ?? 0) < 2 && head.durationBand && !(head.catalogKey && BODY_SESSIONS_MAX[head.catalogKey] != null)) {
+    const allotted = ceiling - ordered.slice(1).reduce((sum, p) => sum + minutesOfRow(p), 0);
+    for (let b = bandIx(head.durationBand) - 1; b >= bandIx(floor ?? "D30"); b--) {
+      const n = Math.floor(allotted / practiceBandMinutes(PRACTICE_BANDS[b]) + EPS);
+      if (n < 2) continue;
+      setSize(head, sizeAtBand(PRACTICE_BANDS[b], n));
+      break;
+    }
+  }
   let left = ceiling - ordered.reduce((sum, p) => sum + minutesOfRow(p), 0);
+  const longer = ordered.find((p) => p.catalogKey === "LONGER_SESSION" && !!p.durationBand) ?? null;
+  const easy = ordered.find((p) => p.catalogKey === "EASY_SESSION") ?? null;
   const open = ordered.filter((p) => !(p.catalogKey && BODY_SESSIONS_MAX[p.catalogKey] != null) && (p.sessionsPerWeek ?? 0) < SESSIONS_MAX);
   for (let k = 0; left > EPS && k < open.length; k++) {
     const p = open[k];
     const was = minutesOfRow(p);
-    const next = practiceSizeOf(sizedKindOf(p), was + left / (open.length - k), p.durationBand ?? floor);
+    const target = was + left / (open.length - k);
+    let next = practiceSizeOf(sizedKindOf(p), target, p.durationBand ?? floor);
+    const cap = longer ? bandIx(longer.durationBand) - 1 : -1;
+    if (p === easy && longer && bandIx(next.band) > cap) {
+      if (cap < Math.max(0, bandIx(p.durationBand))) continue;
+      const under = PRACTICE_BANDS[cap];
+      next = sizeAtBand(under, Math.max(p.sessionsPerWeek ?? 1, Math.floor(target / practiceBandMinutes(under) + EPS)));
+    }
     const now = minutesOfSize(next);
     if (now <= was || now - was > left + EPS) continue;
     setSize(p, next);
     left -= now - was;
   }
+  if (longer && easy && left > EPS) {
+    const up = bandIx(longer.durationBand) + 1;
+    const n = longer.sessionsPerWeek ?? 1;
+    const more = up < PRACTICE_BANDS.length && up <= bandIx(LONGER_BAND_MAX) ? n * (practiceBandMinutes(PRACTICE_BANDS[up]) - practiceBandMinutes(longer.durationBand as PracticeBand)) : Infinity;
+    if (more <= left + EPS) setSize(longer, sizeAtBand(PRACTICE_BANDS[up], n));
+  }
   return alloc;
+}
+
+/** The longest a body plan's longer session grows from what the stage's other practices leave (allocate's leftover pass). */
+const LONGER_BAND_MAX: PracticeBand = "D90";
+
+/** A size at a given band: `sessions` a week, clamped to SESSIONS_MIN..SESSIONS_MAX, with its rule (practiceSizesOf's form). */
+function sizeAtBand(band: PracticeBand, sessions: number): PracticeSize {
+  const n = Math.min(SESSIONS_MAX, Math.max(1, Math.floor(sessions)));
+  return { band, sessionsPerWeek: n, rule: n >= SESSIONS_MAX ? "DAILY" : `TARGET:${n}/W` };
 }
 
 /**
@@ -1127,6 +1193,22 @@ function fitsRoomOf(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey): numbe
  */
 function rowFocusOf(ms: MilestoneDraft): string | null {
   return [...livePractices(ms)].sort((a, b) => a.ord - b.ord).find((p) => !!p.catalogKey)?.catalogKey ?? null;
+}
+
+/**
+ * A plan the user writes, as the allocation weighs it (PlaceOpts.manual: no
+ * progression is put on it): each stage holding the app's practices
+ * (addStagePracticesOf placed them in the progression's priority, the focus
+ * first) → the first of them in item order; a stage holding none is split
+ * evenly, as rev 3 did.
+ */
+function placedFocusOf(plan: readonly MilestoneDraft[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const ms of plan) {
+    const first = [...livePractices(ms)].sort((a, b) => a.ord - b.ord).find((p) => isProgressionRow(p));
+    if (first?.catalogKey) out.set(ms.lineageId, first.catalogKey);
+  }
+  return out;
 }
 
 /**
@@ -1357,7 +1439,7 @@ function practiceItem(lineageId: string, ord: number, label: string, method: Pra
  * rev 3's allocation.
  */
 export function fitPlan(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
-  if (isDepthInput(input)) return fitDepth(plan, input, { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks });
+  if (isDepthInput(input)) return fitDepth(plan, input, depthPlaceOf(opts));
   return fitRows(plan, input, opts);
 }
 
@@ -1374,18 +1456,40 @@ export interface PlaceOpts {
   excluded?: Iterable<CatalogKey>;
   intake?: Intake | null;
   picks?: unknown;
+  /**
+   * A plan the user writes ("Write it myself", an "Edit by hand" re-plan: the
+   * lead's ruling 6; R4 passes it when a MANUAL run wrote the rows): a re-fit
+   * never fills it. No stage gains a practice, step or checkpoint of code's
+   * and none of code's leaves; the re-fit only sizes what the stages hold
+   * (the app's practices the user asked for on a stage, addStagePracticesOf,
+   * weighed by their focus as they were placed). Absent or false: the
+   * practice progression is put on every DRAFT stage, as before.
+   */
+  manual?: boolean;
 }
 
 /** The kinds a re-fit never places: `excluded`, and with the intake its own gate (activityGateOf) too. */
 const placeBlockedOf = (opts: PlaceOpts): Set<CatalogKey> => blockedKindsOf(opts.intake ?? null, { excluded: opts.excluded });
 
+/** fitDepth's options for a re-fit (PlaceOpts): the blocked kinds, the intake and the picks; a plan the user writes is never synced (`manual`). */
+const depthPlaceOf = (opts: PlaceOpts): { excluded: Set<CatalogKey>; intake: Intake | null | undefined; picks: unknown; sync: boolean } => ({
+  excluded: placeBlockedOf(opts),
+  intake: opts.intake,
+  picks: opts.picks,
+  sync: opts.manual !== true,
+});
+
 /** A revision-4 track plan with its intake: rows on the track stages (STAGE_1..STAGE_5). */
 const isTrackStagePlan = (plan: readonly MilestoneDraft[], input: RealismInput, intake: Intake | null | undefined): intake is Intake =>
   input.trackArea && intake != null && intake.fieldId == null && plan.some((ms) => ms.stage != null && (TRACK_STAGE_KEYS as readonly string[]).includes(ms.stage));
 
-/** rev 3's fit (fitWith), after the practice progression on a revision-4 track plan's DRAFT stages (contracts §20). */
+/**
+ * rev 3's fit (fitWith), after the practice progression on a revision-4 track plan's DRAFT stages (contracts §20); a plan
+ * the user writes (PlaceOpts.manual) is sized as it stands, the app's practices on it weighed by their focus.
+ */
 function fitRows(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts, fitOpts: { resetTyped?: boolean; makeId?: () => string } = {}): MilestoneDraft[] {
   if (!isTrackStagePlan(plan, input, opts.intake)) return fitWith(plan, input, fitOpts);
+  if (opts.manual === true) return fitWith(plan, input, { ...fitOpts, focus: placedFocusOf(plan) });
   const out = plan.map(cloneMilestone);
   const { state, ctx } = roomStateOf(out, input);
   const focus = syncRowsInPlace(out, rowProgressionCtxOf(opts.intake.track, input, opts.intake, out, placeBlockedOf(opts), roomOf(state, ctx), { picks: opts.picks, makeId: fitOpts.makeId }));
@@ -3471,16 +3575,20 @@ export function depthTermsOf(depth: AimDepth, coverage: readonly CoverageBreakdo
 
 // ─── Catalog items and stage practices (F-R4-13, F-R4-18) ────────────────────
 
-/** A code-written catalog item (origin CODE, decided: WORKED_OUT); null when the type isn't used on this track or its fill is missing. */
+/**
+ * A code-written catalog item (origin CODE, decided: WORKED_OUT); null when the type isn't used on this track or its fill is missing.
+ * `alternate`: a practice that takes turns with another, week about (contracts §20.12, ProgressionItem.alternate): its label
+ * says so in code's words (roadmap-catalog progressionLabelOf).
+ */
 function catalogItemOf(
   key: CatalogKey,
-  o: { lineageId: string; ord: number; track: CatalogTrack; domains: readonly DomainName[]; aim: YoursText | null; exam: YoursText | null; notes?: readonly ItemNote[] }
+  o: { lineageId: string; ord: number; track: CatalogTrack; domains: readonly DomainName[]; aim: YoursText | null; exam: YoursText | null; notes?: readonly ItemNote[]; alternate?: PracticeKind | null }
 ): ItemDraft | null {
   const entry = catalogEntryOf(key);
   if (!entry || !entry.tracks.includes(o.track)) return null;
   let label: string;
   try {
-    label = catalogLabelOf(key, { track: o.track, domains: o.domains.length ? o.domains : undefined, aim: o.aim ?? undefined, exam: o.exam ?? undefined });
+    label = progressionLabelOf({ kind: key, alternate: o.alternate ?? null }, { track: o.track, domains: o.domains.length ? o.domains : undefined, aim: o.aim ?? undefined, exam: o.exam ?? undefined });
   } catch {
     return null;
   }
@@ -3565,6 +3673,20 @@ interface RowProgressionCtx {
   /** The Domains' names, over the rows' DOMAIN labels. */
   names?: Readonly<Record<string, DomainName>>;
   makeId?: () => string;
+  /**
+   * One stage only (addStagePracticesOf: "Add the app's practice" on a plan
+   * the user writes): the lineage of the DRAFT row the progression is put on;
+   * every other row is read as it stands (carried: its kinds, never changed),
+   * so the stage builds on what the user's plan holds around it.
+   */
+  only?: string;
+  /**
+   * With `only`: one practice added, the first the progression places on the
+   * stage (in its priority: the focus, the exam's, the core, the carry or the
+   * partner, the spaced review) that the stage lacks; nothing of the stage
+   * leaves, and its steps and checkpoint stay the user's.
+   */
+  addOne?: boolean;
 }
 
 /** A row's stage key on the track: its own, else (a Field row without one) its gate level's; null when it has none. */
@@ -3602,11 +3724,13 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
   const rows = planOrder(plan)
     .map((i) => plan[i])
     .filter((ms) => SCHEDULED.has(ms.status) && rowStageKeyOf(ms, c.track) != null);
+  // One stage only (c.only): every other row is read as it stands, like an accepted one.
+  const placedHere = (ms: MilestoneDraft): boolean => ms.status === "DRAFT" && (c.only == null || ms.lineageId === c.only);
   const stages: ProgressionStageInput[] = rows.map((ms) => {
     const stage = rowStageKeyOf(ms, c.track) as StageKey;
     const level = c.track === "FIELD" ? rowLevelOf(ms) : null;
     if (isHeldRow(ms)) return { stage, level, held: true };
-    if (ms.status !== "DRAFT")
+    if (!placedHere(ms))
       return {
         stage,
         level,
@@ -3622,7 +3746,7 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
   const picks: Record<string, string> = Object.create(null) as Record<string, string>;
   rows.forEach((ms, k) => {
     const st = stages[k];
-    if (ms.status !== "DRAFT" || st.held || !keys.includes(st.stage) || Object.prototype.hasOwnProperty.call(picks, st.stage)) return;
+    if (!placedHere(ms) || st.held || !keys.includes(st.stage) || Object.prototype.hasOwnProperty.call(picks, st.stage)) return;
     const pick = [...ms.items].sort((a, b) => a.ord - b.ord).find((i) => i.kind === "PRACTICE" && liveItem(i) && i.notes.includes("GEMINI_PICK") && !!i.catalogKey);
     if (pick?.catalogKey) picks[st.stage] = pick.catalogKey;
   });
@@ -3646,10 +3770,12 @@ function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (
       exam: c.exam,
       examStage: placed.examStage,
       examPrepStage: placed.examPrepStage,
+      // The skills the exam tests (contracts §20.12: a LANGUAGE plan's exam trains each), code's reading of its name.
+      ...(c.exam ? { examSkills: languageExamSkillsOf(c.fill.exam ?? "") } : {}),
       family: c.family,
       excluded: [...c.blocked] as CatalogKey[],
       picks,
-      maxPractices: rows.map((ms, k) => (ms.status === "DRAFT" && !stages[k].held ? maxOf(ms, k) : null)),
+      maxPractices: rows.map((ms, k) => (placedHere(ms) && !stages[k].held ? maxOf(ms, k) : null)),
     },
   };
 }
@@ -3705,7 +3831,8 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
     const sp = progression.stages[k];
     if (sp.focus) focus.set(ms.lineageId, sp.focus);
     if (ms.status !== "DRAFT" || sp.held || sp.carried) return;
-    const wanted: ProgressionItem[] = [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])];
+    // With `addOne` (one stage of a plan the user writes) only a practice is added; the stage's own rows all stay.
+    const wanted: ProgressionItem[] = c.addOne ? [...sp.practices] : [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])];
     const want = new Map<string, ProgressionItem>(wanted.map((x) => [x.kind, x]));
     const domains = stageNamesOf(ms, c.names);
     const fill = { track: c.track, domains: domains.length ? domains : undefined, aim: c.fill.aim ?? undefined, exam: c.fill.exam ?? undefined };
@@ -3713,7 +3840,7 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
     const gone = new Set<string>();
     const seen = new Set<string>();
     ms.items = ms.items.filter((i) => {
-      if (!liveItem(i) || !isProgressionRow(i)) return true;
+      if (!liveItem(i) || !isProgressionRow(i) || c.addOne) return true;
       const key = i.catalogKey as string;
       if (want.has(key) && !seen.has(key)) {
         seen.add(key);
@@ -3733,7 +3860,8 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
       if (x.picked && !it.notes.includes("GEMINI_PICK") && it.decision === CODE_DECISION) it.decision = "PENDING";
       it.notes = [...it.notes.filter((n) => n !== "STUDY_ADDED" && n !== "PRODUCTION_ADDED" && n !== "GEMINI_PICK"), ...notes];
       try {
-        it.label = catalogLabelOf(it.catalogKey as CatalogKey, fill);
+        // A practice that takes turns with another (contracts §20.12) says so in its words; one that no longer does, its own.
+        it.label = progressionLabelOf({ kind: it.catalogKey as CatalogKey, alternate: x.alternate ?? null }, fill);
       } catch {
         // a label that can't be filled keeps its words
       }
@@ -3762,10 +3890,13 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
         aim: c.fill.aim,
         exam: c.fill.exam,
         notes: progressionNotesOf(x),
+        alternate: x.alternate ?? null,
       });
       if (!it) continue;
       if (x.picked) it.decision = "PENDING";
       ms.items.push(it);
+      // "Add the app's practice" adds one at a tap: the next tap adds the next the progression places there.
+      if (c.addOne) break;
     }
     // F-R4-13's notes: the stage's role has no slot left (the user's own practices fill them).
     const shape = progressionShapeOf(c.track, { stage: sp.stage, level: sp.level });
@@ -3777,9 +3908,38 @@ function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<stri
   return focus;
 }
 
-/** A DRAFT row's room for practices: what its weekly practice budget holds at its band floor (practicesThatFitOf); null without dates. */
+/**
+ * A DRAFT row's room for practices, read off the one figure allocate sizes the
+ * stage within: its weekly practice budget, held to what keeps every judged
+ * week of the window FITS (fitsRoomOf) but never under an equal split's
+ * (allocate's ceiling). The room is the most practices n whose ceiling still
+ * gives the focus two sessions a week and every other practice one at the
+ * stage's band floor (practicesThatFitOf over that ceiling ≥ n), so a stage
+ * whose weeks bind is never given a practice its sizing then thins the focus
+ * for (two practices at one session each), and a stage that was tight keeps
+ * its kinds rather than one practice taking the same minutes. null without dates.
+ */
 function roomOf(state: PlanState, ctx: Ctx): (ms: MilestoneDraft) => number | null {
-  return (ms) => (ms.windowStart && ms.dueDay ? practicesThatFitOf(practiceBudgetOf(ms, state.sim, ctx, maxDay(ms.windowStart, ctx.today)), rowBandFloorOf(ms)) : null);
+  return (ms) => {
+    if (!ms.windowStart || !ms.dueDay) return null;
+    const from = maxDay(ms.windowStart, ctx.today);
+    return roomWithin(practiceBudgetOf(ms, state.sim, ctx, from), fitsRoomOf(ms, state.sim, ctx, from), rowBandFloorOf(ms));
+  };
+}
+
+/**
+ * roomOf's count: the most practices n (1..PRACTICES_PER_MILESTONE) for which allocate's ceiling — min(budget,
+ * max(fits, an equal split of the budget over n at the floor unit)) — holds n at practicesThatFitOf (the focus twice and
+ * every other practice once at the floor, D30 without one); 1 at the least (the time verdict says OVER).
+ */
+function roomWithin(budget: number, fits: number, floor: PracticeBand | null): number {
+  const unit = practiceBandMinutes(floor ?? "D30");
+  const b = Number.isFinite(budget) ? Math.max(0, budget) : 0;
+  for (let n = PRACTICES_PER_MILESTONE; n >= 2; n--) {
+    const even = n * unit * Math.floor(b / (n * unit) + EPS);
+    if (practicesThatFitOf(Math.min(b, Math.max(fits, even)), floor) >= n) return n;
+  }
+  return 1;
 }
 
 /** The plan's load as the allocation reads it (a depth plan's at its writing rate), for the room. */
@@ -3867,6 +4027,57 @@ export function planProgressionOf(
 }
 
 /**
+ * What a v4 reply's validation reads of the dated plan it drafts on (R3's
+ * KeysOnlyContext.progression; contracts §20.7: R4's runDraftCore over the
+ * stage ladder), per issued slot (FOUNDATION … the depth's key, or
+ * STAGE_1..STAGE_5), so the validator's own progression over the slots, and
+ * with it which of Gemini's picks it keeps and what it logs
+ * (keys.pick-code, keys.pick-reshaped), agrees with the plan R2 builds:
+ *   - maxPractices: the room of the row holding the slot (planProgressionOf
+ *     over the ladder: the row of that stage key, else the next kept row,
+ *     else the last); null where that row has none (held, not a draft);
+ *   - examStage and examPrepStage: a dated exam's stage and its run-up
+ *     (examStagesOf over the rows' windows), each as the slot of its row, or
+ *     for a BETWEEN or PART row the slot of the last gate or track row before
+ *     it (so the slots after it read as after the exam, as the rows after it
+ *     do), else the next one; null without a dated exam.
+ * Pure; the ladder is not changed.
+ */
+export function slotProgressionOf(
+  ladder: readonly MilestoneDraft[],
+  intake: Intake,
+  input: RealismInput,
+  slots: readonly string[],
+  opts: Pick<PlanProgressionOpts, "gate" | "excluded"> = {}
+): { examStage: number | null; examPrepStage: number | null; maxPractices: (number | null)[] } {
+  const pp = planProgressionOf(ladder, intake, input, opts);
+  const rows = pp.rows;
+  const rooms = Array.isArray(pp.input.maxPractices) ? (pp.input.maxPractices as readonly (number | null | undefined)[]) : [];
+  const slotOfRow = (k: number): number => (pp.progression.stages[k]?.held ? -1 : slots.indexOf(rows[k]?.stage ?? ""));
+  const placeOf = (stage: string): number => {
+    const gate = (STAGE_KEYS as readonly string[]).indexOf(stage);
+    return gate >= 0 ? gate : (TRACK_STAGE_KEYS as readonly string[]).indexOf(stage);
+  };
+  const maxPractices = slots.map((slot) => {
+    const own = rows.findIndex((_, k) => slotOfRow(k) >= 0 && slots[slotOfRow(k)] === slot);
+    const later = own >= 0 ? own : rows.findIndex((m, k) => slotOfRow(k) >= 0 && placeOf(m.stage ?? "") > placeOf(slot));
+    const at = later >= 0 ? later : rows.length - 1;
+    const room = at >= 0 ? rooms[at] : null;
+    return typeof room === "number" && Number.isFinite(room) ? room : null;
+  });
+  const slotOf = (row: number | null | undefined): number | null => {
+    if (row == null || row < 0 || row >= rows.length) return null;
+    if (slotOfRow(row) >= 0) return slotOfRow(row);
+    for (let k = row - 1; k >= 0; k--) if (slotOfRow(k) >= 0) return slotOfRow(k);
+    for (let k = row + 1; k < rows.length; k++) if (slotOfRow(k) >= 0) return slotOfRow(k);
+    return null;
+  };
+  const examStage = slotOf(pp.input.examStage);
+  const prep = slotOf(pp.input.examPrepStage);
+  return { examStage, examPrepStage: examStage == null ? null : prep == null ? null : Math.min(prep, examStage), maxPractices };
+}
+
+/**
  * The practice progression put on a plan's DRAFT rows (contracts §20; see
  * the section's head), pure: R4's re-sync after the gate or the plan changed,
  * and every plan path through fitPlan. Held rows stay empty; accepted and
@@ -3914,6 +4125,43 @@ export function syncStagePractices(
   const track: CatalogTrack = opts.intake ? planTrackOf(opts.intake, input) : "FIELD";
   syncRowsInPlace(out, rowProgressionCtxOf(track, input, opts.intake ?? null, out, new Set<string>(excluded), roomOf(state, ctx), { names, makeId }));
   return out.find((x) => x.lineageId === m.lineageId) ?? cloneMilestone(m);
+}
+
+/**
+ * "Add the app's practice" on one stage of a plan the user writes ("Write it
+ * myself", an "Edit by hand" re-plan: the lead's ruling 6; R4's
+ * addAppPracticeCore), pure: one practice on the DRAFT stage `lineageId`,
+ * the first the practice progression places there (contracts §20, in its
+ * priority: the focus, the exam's timed practice and core, the carry or the
+ * opening partner, the spaced review, F-R4-13's shape) that the stage lacks,
+ * within the room its weekly practice budget holds beside the user's own
+ * practices, through the gate (its `blocked` kinds and `excluded` are never
+ * placed). So the first tap gives the stage its role-defining kind (code's
+ * default focus), and each tap after it the next the app would place, until
+ * the stage holds them all (the plan comes back unchanged). Every other row
+ * is read as it stands, never changed: the stage builds on what the user's
+ * plan holds before it (its first catalog practice is what this stage
+ * carries). Nothing of the stage leaves; its steps and checkpoint stay the
+ * user's; a kind the user removed there never comes back. Sizes are left to
+ * the re-fit (fitPlan with PlaceOpts.manual). `names` maps the Domains to
+ * their names. The input is not mutated.
+ */
+export function addStagePracticesOf(
+  plan: readonly MilestoneDraft[],
+  lineageId: string,
+  intake: Intake,
+  input: RealismInput,
+  names: Readonly<Record<string, DomainName>>,
+  makeId: () => string,
+  opts: Pick<PlanProgressionOpts, "gate" | "excluded"> = {}
+): MilestoneDraft[] {
+  const out = plan.map(cloneMilestone);
+  if (!out.some((ms) => ms.lineageId === lineageId && ms.status === "DRAFT")) return out;
+  const facts: RealismInput = intake.fieldId == null ? { ...input, trackArea: true } : input;
+  const { state, ctx } = roomStateOf(out, facts);
+  const c = rowProgressionCtxOf(planTrackOf(intake, facts), facts, intake, out, blockedKindsOf(intake, opts), roomOf(state, ctx), { names, makeId });
+  syncRowsInPlace(out, { ...c, only: lineageId, addOne: true });
+  return out;
 }
 
 /** Practices a plan plans from Fluent on (topRankIndexOfDepth's productionPlannedFromFluent): every unheld stage at level ≥ 10 holds a live production practice. */
@@ -3966,7 +4214,8 @@ function depthWritingPlanOf(plan: readonly MilestoneDraft[], input: RealismInput
 
 /**
  * fitPlan's depth branch (see fitPlan). `sync` false leaves the practices,
- * steps and checkpoints alone (a skeleton: "Write it myself"); otherwise the
+ * steps and checkpoints alone (a skeleton, and every re-fit of a plan the
+ * user writes: "Write it myself", PlaceOpts.manual); otherwise the
  * practice progression is put on every DRAFT stage (syncRowsInPlace, within
  * each stage's room at the plan's load) before the allocation. `intake` gives
  * the exam and the aim's words (without it the exam is read off the plan, and
@@ -4016,7 +4265,8 @@ function fitDepth(
       const entry = catalogEntryOf(it.catalogKey);
       if (!entry || !entry.template.includes("{domains}")) continue;
       try {
-        it.label = catalogLabelOf(it.catalogKey, { track: "FIELD", domains });
+        // A practice that takes turns (contracts §20.12) keeps its turn, read off its own words.
+        it.label = progressionLabelOf({ kind: it.catalogKey, alternate: practiceTurnOfLabel(it.catalogKey, it.label) }, { track: "FIELD", domains });
       } catch {
         // a label that can't be filled keeps its words
       }
@@ -4026,8 +4276,9 @@ function fitDepth(
   const dating = datingOf(input);
   const rate = model ? dateCoreOf(out, model, ctx, dating.mode, dating.userDate, dating.examDay).rate : 0;
   const state = model ? depthStateOf(out, model, ctx, rate) : planStateOf(out, ctx);
-  // The practice progression (contracts §20): the load above reads no practice, so each stage's room is its budget's.
-  const focus = opts.sync !== false ? syncRowsInPlace(out, rowProgressionCtxOf("FIELD", input, opts.intake, out, excluded, roomOf(state, ctx), { picks: opts.picks, makeId: opts.makeId })) : null;
+  // The practice progression (contracts §20): the load above reads no practice, so each stage's room is its budget's. A
+  // skeleton or a plan the user writes (sync false) is sized as it stands, the app's practices on it weighed by their focus.
+  const focus = opts.sync !== false ? syncRowsInPlace(out, rowProgressionCtxOf("FIELD", input, opts.intake, out, excluded, roomOf(state, ctx), { picks: opts.picks, makeId: opts.makeId })) : placedFocusOf(out);
   for (const i of order) {
     const ms = out[i];
     if (!fit(ms)) continue;
@@ -4230,7 +4481,7 @@ function realisticDayOf(plan: readonly MilestoneDraft[], input: RealismInput & {
 function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, mode: "PLAN" | "REALISTIC", opts: PlaceOpts = {}): MilestoneDraft[] {
   const out = plan.map(cloneMilestone);
   const model = depthModelOfPlan(out, input);
-  const place = { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks };
+  const place = depthPlaceOf(opts);
   if (!model) return fitDepth(out, input, place);
   const ctx = contextOf(input);
   const dating = mode === "REALISTIC" ? { mode: "REALISTIC" as DateMode, userDate: null, examDay: input.examDay ?? null } : datingOf(input);
@@ -4957,9 +5208,10 @@ export function trackStarterKindsOf(track: Track, place: number, blocked: Readon
  * accrues on open days, so a stage is due once its share of the open days
  * has passed; choice: typicalHours, where given, is the date check's, not
  * the stages'), each due on the Sunday on or after (the last on the date),
- * with the same merge rule; the kept rows then stand at their stages by
- * position (trackStagePlacesOf: a short plan keeps its base and its top,
- * never the later key a merge kept). Titles "{aim} · stage {k} of {n}" (k
+ * with the same merge rule; the kept rows then stand at consecutive stages
+ * from the base (trackStagePlacesOf, the lead's ruling 4: a short plan
+ * climbs STAGE_1 → STAGE_2…, never the later key a merge kept, never a
+ * jump to STAGE_5). Titles "{aim} · stage {k} of {n}" (k
  * the place among the kept stages). The starter's practices, steps and checkpoint are
  * the practice progression's (contracts §20: progressionOf over the kept
  * stages, each within the room its weekly practice budget holds, through the
@@ -4986,8 +5238,9 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
   type TrackRow = { k: number; due: DayKey };
   let kept: TrackRow[] = TRACK_STAGE_SHARES.map((s, i) => ({ k: i + 1, due: i === TRACK_STAGE_SHARES.length - 1 ? target : minDay(sundayOnOrAfter(shareDay(s)), target) }));
   kept = mergeShortWindows(kept, today, (r) => r.due, (r) => r.k === TRACK_STAGE_SHARES.length);
-  // The kept rows' stages by position (a short plan never skips the base): the first is STAGE_1 (STAGE_2 from a working or
-  // strong start), the last STAGE_5, the ones between spread evenly; a full plan keeps STAGE_1..STAGE_5.
+  // The kept rows' stages, consecutive from the base (the lead's ruling 4: a short plan never skips the base, nor jumps a
+  // rung): the first is STAGE_1 (STAGE_2 from a working or strong start), each next row the next stage; a full plan keeps
+  // STAGE_1..STAGE_5.
   const places = trackStagePlacesOf(kept.length, intake.startPoint ?? input.startPoint);
   kept = kept.map((row, i) => ({ ...row, k: places[i] }));
   const starter = (opts.items ?? "STARTER") === "STARTER";
@@ -5030,20 +5283,23 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
 }
 
 /**
- * The track stages (1..5) a track plan's n kept rows stand at, by position
- * (a short plan merged to fewer rows keeps its base and its top): the first
- * row is STAGE_1, or STAGE_2 from a WORKING or STRONG start point (one rung
- * of base at most is skipped); the last is STAGE_5; the rows between spread
- * evenly. A full plan (five rows) is STAGE_1..STAGE_5 whatever the start
+ * The track stages (1..5) a track plan's n kept rows stand at (the lead's
+ * ruling 4): consecutive stages from the base, never a jump. The first row
+ * is STAGE_1, or STAGE_2 from a WORKING or STRONG start point (one rung of
+ * base at most is skipped), and each row after it is the next stage, so a
+ * short plan merged to two rows climbs STAGE_1 → STAGE_2 (a 4-month 10K
+ * builds its base, then its technique, and closes on the full attempt
+ * there), never STAGE_1 → STAGE_5 (from easy running straight to the hardest
+ * sessions). A full plan (five rows) is STAGE_1..STAGE_5 whatever the start
  * point; one row is the first stage (the base, which then also closes).
  */
 export function trackStagePlacesOf(n: number, startPoint: StartPoint | null | undefined): number[] {
   const top = TRACK_STAGE_KEYS.length;
   if (!Number.isInteger(n) || n <= 0) return [];
+  const rows = Math.min(n, top);
   const ahead = startPoint === "WORKING" || startPoint === "STRONG" ? 1 : 0;
-  const from = 1 + Math.max(0, Math.min(ahead, top - n));
-  if (n === 1) return [from];
-  return Array.from({ length: n }, (_, i) => Math.min(top, Math.round(from + (i * (top - from)) / (n - 1))));
+  const from = 1 + Math.max(0, Math.min(ahead, top - rows));
+  return Array.from({ length: rows }, (_, i) => from + i);
 }
 
 /**
@@ -5290,7 +5546,7 @@ export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: Realism
     setNote(ms, "DEPTH_LOWERED", true);
     dropped.push(ms.lineageId);
   }
-  return { ok: true, plan: fitDepth(out, lowered, { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks }), dropped };
+  return { ok: true, plan: fitDepth(out, lowered, depthPlaceOf(opts)), dropped };
 }
 
 /**

@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { catalogEntryOf, catalogLabelOf } from "../../../src/lib/roadmap-catalog";
+import { catalogEntryOf, practiceLabelsOf } from "../../../src/lib/roadmap-catalog";
 import { CODE_TEMPLATES, STAGE_KEYS, STAGE_NAMES, domainName, type DomainName, type ItemDraft, type ValidatedDraft, type YoursText } from "../../../src/lib/roadmap-types";
 import type { CorpusPack, HostileCorpus, HostileRun, ProbeFixture } from "./generate";
 import type { BarSeam } from "./seam";
@@ -38,7 +38,7 @@ export function readPacks(dir: string): { packs: CorpusPack[]; probes: ProbeFixt
     if (f.startsWith("probe-")) {
       const expected = typeof j.expected === "string" ? j.expected : typeof j.verdict === "string" ? j.verdict : null;
       const labels = j.labels && typeof j.labels === "object" ? (j.labels as ProbeFixture["labels"]) : null;
-      probes.push({ file, aim: String(j.aim ?? file.slice("probe-".length)), pack: typeof j.pack === "string" ? j.pack : undefined, gapsLive: j.gapsLive === true, parsed: j.parsed, blessed: j.blessed === true, expected, labels });
+      probes.push({ file, aim: String(j.aim ?? file.slice("probe-".length)), pack: typeof j.pack === "string" ? j.pack : undefined, gapsLive: j.gapsLive === true, parsed: j.parsed, blessed: j.blessed === true, expected, labels, promptVersion: typeof j.promptVersion === "number" ? j.promptVersion : undefined });
       continue;
     }
     if (!j.input || typeof j.input !== "object") continue;
@@ -170,11 +170,9 @@ function catalogRendersOf(it: ItemDraft, run: HostileRun, planDomains?: readonly
   }
   const out: string[] = [];
   for (const domains of fills) {
-    try {
-      out.push(String(catalogLabelOf(key, { track: run.track, domains, aim: run.intake.aim as YoursText, exam: (run.intake.examLabel ?? undefined) as YoursText | undefined })));
-    } catch {
-      // The type needs a fill this run lacks: no render.
-    }
+    // The type's own render and, on a Field Area, each turn it may take with another (roadmap-catalog practiceLabelsOf,
+    // contracts §20.12: "Problem sets one week, timed practice the next: …"); a fill this run lacks renders none.
+    for (const label of practiceLabelsOf(key, { track: run.track, domains, aim: run.intake.aim as YoursText, exam: (run.intake.examLabel ?? undefined) as YoursText | undefined })) out.push(String(label));
   }
   return out;
 }

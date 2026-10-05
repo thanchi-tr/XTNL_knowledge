@@ -3100,7 +3100,11 @@ console.log("— confirm to unlock (§19): the gate —");
 // Code owns the practice progression on every plan path; Gemini picks at most one kind per stage among code's
 // candidates. The tables, the goldens, the rule checker (each breach it names, injected), a property over every corpus
 // pack × catalog track × gate state, the sizing (R2's allocation, one definition), the v4 reply's shapes, and the
-// round's handoffs (HANDOFF lines: --strict passes them while the round runs; --handoffs fails them).
+// round's handoffs (HANDOFF lines: --strict passes them while the round runs; --handoffs fails them). The lead's
+// rulings (§20.12) are read here as goldens and, independently, in the property: with room for one a stage holds its
+// role's kind and a role that needs two takes turns week about (ruling 1); timed practice in every exam's run-up at any
+// hours (ruling 2); after a dated exam the stages climb on, measured (ruling 3); a language exam trains each skill it
+// tests (ruling 5).
 
 console.log("— the practice progression (§20) —");
 {
@@ -3111,7 +3115,8 @@ console.log("— the practice progression (§20) —");
   const fmt = (p: CAT.Progression): string[] =>
     p.stages.map((s) => {
       const name = `${s.stage}${s.copy && s.level != null ? s.level : ""}${s.held ? " held" : ""}${s.afterExam ? " after" : ""}`;
-      const pr = s.practices.map((x) => `${x.kind}${x.why === "FOCUS" ? "" : `/${x.why}`}${x.standsIn ? `<${x.standsIn}` : ""}${x.picked ? "*" : ""}`).join(" + ") || "—";
+      // A practice that takes turns, week about (§20.12): KIND~THE_OTHER.
+      const pr = s.practices.map((x) => `${x.kind}${x.alternate ? `~${x.alternate}` : ""}${x.why === "FOCUS" ? "" : `/${x.why}`}${x.standsIn ? `<${x.standsIn}` : ""}${x.picked ? "*" : ""}`).join(" + ") || "—";
       const st = s.steps.map((x) => x.kind).join(" + ") || "—";
       const cp = s.checkpoint ? `${s.checkpoint.kind}${s.checkpoint.standsIn ? `<${s.checkpoint.standsIn}` : ""}` : "—";
       return `${name}: ${pr} | ${st} | ${cp}`;
@@ -3174,7 +3179,7 @@ console.log("— the practice progression (§20) —");
     );
     eq("the stage keys per track", [CAT.progressionStageKeysOf("FIELD"), CAT.progressionStageKeysOf("BODY")], [RT.STAGE_KEYS, RT.TRACK_STAGE_KEYS]);
     eq(
-      "code's defaults (each stage's first candidate): KNOW study → recall drills → problem sets → explain it → build something (with an exam, Mastered goes over mistakes); LANGUAGE listen and repeat → recall → say it aloud → a partner → a partner; PERFORM study → slow drills → run-throughs → run-throughs → a partner; BUILD study → recall → problem sets → building → building; BODY easy → technique → longer → harder → harder; CRAFT slow drills → slow drills → run-throughs → a teacher → run-throughs",
+      "code's defaults (each stage's first candidate): KNOW study → recall drills → problem sets → explain it → build something (with an exam, Mastered's problem sets: they make the mistakes to go over, §20.12); LANGUAGE listen and repeat → recall → say it aloud → a partner → a partner; PERFORM study → slow drills → run-throughs → run-throughs → a partner; BUILD study → recall → problem sets → building → building; BODY easy → technique → longer → harder → harder; CRAFT slow drills → slow drills → run-throughs → a teacher → run-throughs",
       [
         ...RT.PRACTICE_FAMILIES.map((family) => CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { family }).stages[k]?.focus[0])),
         CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { exam: true }).stages[k]?.focus[0]),
@@ -3185,7 +3190,7 @@ console.log("— the practice progression (§20) —");
         ["LISTEN_AND_REPEAT", "RECALL_DRILLS", "SAY_IT_ALOUD", "WITH_A_PARTNER", "WITH_A_PARTNER"],
         ["READ_AND_CARD", "SLOW_DRILLS", "RUN_THROUGHS", "RUN_THROUGHS", "WITH_A_PARTNER"],
         ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "BUILD_SOMETHING", "BUILD_SOMETHING"],
-        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "MISTAKE_REVIEW"],
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "PROBLEM_SETS"],
         ["EASY_SESSION", "TECHNIQUE_SESSION", "LONGER_SESSION", "HARDER_SESSION", "HARDER_SESSION"],
         ["SLOW_DRILLS", "SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "RUN_THROUGHS"],
         ["SET_TIME", "CHECK_IN", "SET_TIME", "ADMIN_SESSION", "SET_TIME"],
@@ -3216,7 +3221,112 @@ console.log("— the practice progression (§20) —");
         CAT.progressionFamilyOf("FIELD", "nope"),
         CAT.progressionFamilyOf("CARE", "LANGUAGE"),
       ],
-      [true, true, true, true, "MISTAKE_REVIEW", "KNOW", null]
+      [true, true, true, true, "PROBLEM_SETS", "KNOW", null]
+    );
+    // §20.12, ruling 5: the LANGUAGE family's exam stages and the skills a language exam tests.
+    const langExam = CAT.progressionRuleFor("FIELD", { family: "LANGUAGE", exam: true });
+    const skillProblems: string[] = [];
+    for (const r of [...RT.PRACTICE_FAMILIES.map((f) => CAT.FIELD_FAMILY_PROGRESSION[f]), ...CAT.CATALOG_TRACKS.map((t) => CAT.PROGRESSION[t])])
+      for (const [skill, kinds] of Object.entries(r.examSkills ?? {})) {
+        if (!(CAT.LANGUAGE_SKILLS as readonly string[]).includes(skill) || kinds.length === 0) skillProblems.push(`${skill}: not a skill, or no kind`);
+        if (!kinds.some((k) => !CAT.catalogEntryOf(k)?.examOnly)) skillProblems.push(`${skill}: no kind code can place off the run-up`);
+        for (const k of kinds) if (CAT.catalogEntryOf(k)?.slot !== "PRACTICE" || !CAT.catalogEntryOf(k)?.tracks.includes("FIELD")) skillProblems.push(`${skill}: ${k} is not a Field practice`);
+      }
+    check(
+      "LANGUAGE with an exam (§20.12, ruling 5): its exam stages offer writing next to the partner at Fluent and list the gaps; its examSkills train speaking (saying it aloud, a partner), writing, listening (listen and repeat) and reading (study; the exam's timed practice on its run-up); only LANGUAGE has examSkills, and each skill has a kind code can place",
+      json(langExam.stages.FLUENT?.focus) === json(["WITH_A_PARTNER", "WRITING_PRACTICE", "SAY_IT_ALOUD", "MISTAKE_REVIEW"]) &&
+        langExam.stages.FLUENT?.step === "LIST_GAPS" &&
+        langExam.stages.MASTERED?.step === "LIST_GAPS" &&
+        json(CAT.FIELD_FAMILY_PROGRESSION.LANGUAGE.examSkills) ===
+          json({ SPEAKING: ["SAY_IT_ALOUD", "WITH_A_PARTNER"], WRITING: ["WRITING_PRACTICE"], LISTENING: ["LISTEN_AND_REPEAT"], READING: ["READ_AND_CARD", "TIMED_PRACTICE"] }) &&
+        RT.PRACTICE_FAMILIES.filter((f) => CAT.FIELD_FAMILY_PROGRESSION[f].examSkills).join() === "LANGUAGE" &&
+        CAT.CATALOG_TRACKS.every((t) => !CAT.PROGRESSION[t].examSkills) &&
+        skillProblems.length === 0,
+      skillProblems.join("; ")
+    );
+    eq(
+      "languageExamSkillsOf (code's reading of the user's exam label, §20.12): the skills the label names; else JLPT and TOEIC listening and reading, HSK and TOPIK II those and writing, TOPIK I listening and reading, HSKK speaking; else all four (IELTS, TOEFL, DELF, an exam code doesn't know, no label)",
+      [
+        "IELTS Academic",
+        "TOEFL iBT",
+        "DELF B2",
+        "JLPT N2",
+        "日本語能力試験 N3",
+        "TOEIC",
+        "TOEIC Listening and Reading",
+        "HSK 4",
+        "HSKK",
+        "TOPIK II",
+        "TOPIK I",
+        "an oral exam",
+        "Writing test",
+        null,
+        42,
+      ].map((l) => CAT.languageExamSkillsOf(l).join("+")),
+      [
+        "SPEAKING+WRITING+LISTENING+READING",
+        "SPEAKING+WRITING+LISTENING+READING",
+        "SPEAKING+WRITING+LISTENING+READING",
+        "LISTENING+READING",
+        "LISTENING+READING",
+        "LISTENING+READING",
+        "LISTENING+READING",
+        "WRITING+LISTENING+READING",
+        "SPEAKING",
+        "WRITING+LISTENING+READING",
+        "LISTENING+READING",
+        "SPEAKING",
+        "WRITING",
+        "SPEAKING+WRITING+LISTENING+READING",
+        "SPEAKING+WRITING+LISTENING+READING",
+      ]
+    );
+    // §20.12, ruling 1: a practice that takes turns, week about, says so in code's words.
+    const turnProblems: string[] = [];
+    const dnP = RT.domainName({ id: "d1", name: "Grammar" });
+    for (const t of CAT.PRACTICE_TURNS) {
+      const a = CAT.catalogEntryOf(t.kind);
+      const b = CAT.catalogEntryOf(t.alternate);
+      if (!a || !b || a.slot !== "PRACTICE" || b.slot !== "PRACTICE" || !a.tracks.includes("FIELD") || !b.tracks.includes("FIELD") || t.kind === t.alternate) turnProblems.push(`${t.kind}~${t.alternate}: not two Field practices`);
+      if (!(RT.CODE_TEMPLATES as readonly string[]).includes(t.template)) turnProblems.push(`${t.kind}~${t.alternate}: not a CODE_TEMPLATE`);
+      if (CAT.PRACTICE_TURNS.filter((u) => u.kind === t.kind && u.alternate === t.alternate).length !== 1) turnProblems.push(`${t.kind}~${t.alternate}: twice`);
+      try {
+        const label = String(CAT.progressionLabelOf({ kind: t.kind, alternate: t.alternate }, { track: "FIELD", domains: [dnP] }));
+        if (!label.endsWith(": Grammar") || !label.includes(" one week, ") || !label.includes(" the next")) turnProblems.push(`${t.kind}~${t.alternate}: renders ${label}`);
+        if (CAT.practiceTurnOfLabel(t.kind, label) !== t.alternate) turnProblems.push(`${t.kind}~${t.alternate}: its label doesn't read back`);
+        if (!CAT.practiceLabelsOf(t.kind, { track: "FIELD", domains: [dnP] }).map(String).includes(label)) turnProblems.push(`${t.kind}~${t.alternate}: not among the type's labels`);
+      } catch (err) {
+        turnProblems.push(`${t.kind}~${t.alternate}: ${String(err)}`);
+      }
+    }
+    const fieldPractices = CAT.PRACTICE_KINDS.filter((k) => CAT.catalogEntryOf(k)?.tracks.includes("FIELD") && k !== "TIMED_PRACTICE");
+    check(
+      `PRACTICE_TURNS (§20.12; ${CAT.PRACTICE_TURNS.length} pairs): each pairs two Field practices, once, in code's words (a CODE_TEMPLATE: "<kind> one week, <the other> the next: {domains}") that render, read back (practiceTurnOfLabel) and are among the type's labels (practiceLabelsOf); every Field practice can take turns with the exam's timed practice, so a run-up always holds it, however few the hours`,
+      turnProblems.length === 0 && fieldPractices.every((k) => CAT.practiceTurnTemplateOf(k, "TIMED_PRACTICE") != null),
+      [...turnProblems, ...fieldPractices.filter((k) => !CAT.practiceTurnTemplateOf(k, "TIMED_PRACTICE")).map((k) => `${k}: no timed turn`)].join("; ")
+    );
+    eq(
+      "progressionLabelOf: a practice that takes turns says so; any other is its type's label; a pair with no words, or off a Field Area, is its type's label; practiceTurnOfLabel reads a plain label as no turn; practiceTurnTemplateOf is null for a pair with no words",
+      [
+        CAT.progressionLabelOf({ kind: "PROBLEM_SETS", alternate: "TIMED_PRACTICE" }, { track: "FIELD", domains: [dnP] }),
+        CAT.progressionLabelOf({ kind: "PROBLEM_SETS" }, { track: "FIELD", domains: [dnP] }),
+        CAT.progressionLabelOf({ kind: "PROBLEM_SETS", alternate: "BUILD_SOMETHING" }, { track: "FIELD", domains: [dnP] }),
+        CAT.progressionLabelOf({ kind: "RUN_THROUGHS", alternate: "WITH_A_PARTNER" }, { track: "CRAFT", aim: RT.yoursText("USER", "PENDING", "Play Clair de Lune")! }),
+        CAT.practiceTurnOfLabel("PROBLEM_SETS", "Problem sets: Grammar"),
+        CAT.practiceTurnOfLabel("RECALL_DRILLS", "Problem sets one week, timed practice the next: Grammar"),
+        CAT.practiceTurnTemplateOf("PROBLEM_SETS", "BUILD_SOMETHING"),
+        CAT.practiceLabelsOf("PROBLEM_SETS", { track: "FIELD", domains: [dnP] }).length,
+      ],
+      [
+        "Problem sets one week, timed practice the next: Grammar",
+        "Problem sets: Grammar",
+        "Problem sets: Grammar",
+        "Full run-throughs: Play Clair de Lune",
+        null,
+        null,
+        null,
+        1 + CAT.PRACTICE_TURNS.filter((t) => t.kind === "PROBLEM_SETS").length,
+      ]
     );
     eq("CHECKPOINT_RUNG: a self-test 1 → a mock test 2 → the exam or the performance check 3; BUILD_UP_RULE is 'carry and climb'", [CAT.CHECKPOINT_RUNG, CAT.BUILD_UP_RULE], [{ SELF_TEST: 1, MOCK_TEST: 2, EXAM_DAY: 3, PERFORMANCE_CHECK: 3 }, "carry and climb"]);
     check("every checkpoint kind has a rung", RT.STORED_CHECKPOINT_KINDS.every((k) => typeof CAT.CHECKPOINT_RUNG[k] === "number"));
@@ -3332,39 +3442,39 @@ console.log("— the practice progression (§20) —");
     check("…and each family's plan keeps every rule", [lang, perform, build].every((r) => r.broke.length === 0), [lang, perform, build].flatMap((r) => r.broke).join("; "));
     const undated = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true });
     eq(
-      "an exam with no day: booked on the first stage; the problem sets built at Retained stay to the exam (CORE); the last stage holds it: going over mistakes, timed practice and the problem sets, the gaps listed, the mock test (no full attempt)",
+      "an exam with no day: booked on the first stage; the problem sets built at Retained stay to the exam (CORE); the last stage holds it: the problem sets (its default, §20.12), timed practice and the explaining Fluent trained (the carry), the gaps listed, the mock test (no full attempt)",
       undated.lines,
       [
         "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | —",
         "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY | OUTLINE | SELF_TEST",
         "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | SELF_TEST",
         "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE + RECALL_DRILLS/CARRY | EXPLAIN_ONCE | SELF_TEST",
-        "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE | LIST_GAPS | MOCK_TEST",
+        "MASTERED: PROBLEM_SETS + TIMED_PRACTICE/EXAM + EXPLAIN_IT/CARRY | LIST_GAPS | MOCK_TEST",
       ]
     );
     check("…and it keeps every rule", undated.broke.length === 0, undated.broke.join("; "));
     const early = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 1 });
     eq(
-      "an exam with its day in Familiar (no run-up given: the stage before is it): timed practice from Foundation, the mock test there, timed practice and the exam in Familiar; after the exam nothing climbs and nothing is checked: each stage keeps what the exam's stage trained (no full attempt, no performance check)",
+      "an exam with its day in Familiar (no run-up given: the stage before is it): timed practice from Foundation, the mock test there, timed practice and the exam in Familiar; after the exam the stages keep climbing toward the depth (the lead's ruling, §20.12): their own focus, the carry and the base, their role steps, a self-test each, and the full attempt and the performance check on the last",
       early.lines,
       [
         "FOUNDATION: READ_AND_CARD + TIMED_PRACTICE/EXAM + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | MOCK_TEST",
         "FAMILIAR: RECALL_DRILLS + TIMED_PRACTICE/EXAM + READ_AND_CARD/CARRY | OUTLINE | EXAM_DAY",
-        "RETAINED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
-        "FLUENT after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
-        "MASTERED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "RETAINED after: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | SELF_TEST",
+        "FLUENT after: EXPLAIN_IT + PROBLEM_SETS/CARRY + RECALL_DRILLS/BASE | EXPLAIN_ONCE | SELF_TEST",
+        "MASTERED after: PROBLEM_SETS + EXPLAIN_IT/CARRY + RECALL_DRILLS/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK",
       ]
     );
-    check("…and it keeps every rule (the exam's run-up, nothing after it)", early.broke.length === 0 && early.p.examPrepStage === 0 && early.p.mockStage === 0, early.broke.join("; "));
+    check("…and it keeps every rule (the exam's run-up; after it, a new climb measured again from the self-test)", early.broke.length === 0 && early.p.examPrepStage === 0 && early.p.mockStage === 0, early.broke.join("; "));
     eq(
-      "an exam with its day in Fluent, well into its window (examPrepStage = the exam's stage): the mock test on Retained, timed practice and the exam in Fluent with the problem sets kept, Mastered after it",
+      "an exam with its day in Fluent, well into its window (examPrepStage = the exam's stage): the mock test on Retained, timed practice and the exam in Fluent with the problem sets kept; Mastered, after it, climbs on (its own focus, the carry, the gaps, the full attempt and the performance check)",
       run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 3 }).lines,
       [
         "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | —",
         "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY | OUTLINE | SELF_TEST",
         "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | MOCK_TEST",
         "FLUENT: EXPLAIN_IT + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE | EXPLAIN_ONCE | EXAM_DAY",
-        "MASTERED after: EXPLAIN_IT/COPY + PROBLEM_SETS/COPY + RECALL_DRILLS/BASE | — | —",
+        "MASTERED after: PROBLEM_SETS + EXPLAIN_IT/CARRY + RECALL_DRILLS/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK",
       ]
     );
     eq(
@@ -3376,23 +3486,99 @@ console.log("— the practice progression (§20) —");
         "RETAINED: PROBLEM_SETS + TIMED_PRACTICE/EXAM + RECALL_DRILLS/CARRY | LIST_GAPS | EXAM_DAY",
       ]
     );
-    const ielts = run({ track: "FIELD", family: "LANGUAGE", stages: [...G(["FAMILIAR", "RETAINED", "FLUENT"]), { stage: "BETWEEN", level: 11 }, { stage: "MASTERED" }], practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 2 });
+    const ieltsIn = (extra: Partial<CAT.ProgressionInput> = {}): CAT.ProgressionInput => ({
+      track: "FIELD",
+      family: "LANGUAGE",
+      stages: [...G(["FAMILIAR", "RETAINED", "FLUENT"]), { stage: "BETWEEN", level: 11 }, { stage: "MASTERED" }],
+      practicesAllowed: true,
+      exam: true,
+      examStage: 3,
+      examPrepStage: 2,
+      ...extra,
+    });
+    const ielts = run(ieltsIn());
     eq(
-      "IELTS (the review's case): a LANGUAGE plan whose exam falls six days into Toward Mastered (BETWEEN 11; the run-up is Fluent): Fluent trains with a partner, timed practice and saying it aloud (kept from Retained) and closes on the mock test; BETWEEN copies Fluent (the gate after it comes after the exam) and holds timed practice and the exam; Mastered, after it, keeps what was trained",
+      "IELTS (the review's case; §20.12, ruling 5): a LANGUAGE plan whose exam falls six days into Toward Mastered (BETWEEN 11; the run-up is Fluent). The exam tests the four skills, so every production stage up to it trains each: Retained says it aloud, writes, and listens and studies (reading) week about; Fluent works with a partner, under time, and writes and listens week about, and closes on the mock test; BETWEEN copies Fluent and holds timed practice and the exam; Mastered, after it, climbs on (a partner, saying it aloud kept, listening as the spaced review) to the full attempt and the performance check",
       ielts.lines,
       [
         "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/PARTNER + LISTEN_AND_REPEAT/BASE | CHOOSE_MATERIAL + BOOK_EXAM + LIST_GAPS | —",
-        "RETAINED: SAY_IT_ALOUD + RECALL_DRILLS/CARRY + LISTEN_AND_REPEAT/BASE | EXPLAIN_ONCE | SELF_TEST",
-        "FLUENT: WITH_A_PARTNER + TIMED_PRACTICE/EXAM + SAY_IT_ALOUD/CORE | SMALL_PROJECT | MOCK_TEST",
-        "BETWEEN11: WITH_A_PARTNER/COPY + SAY_IT_ALOUD/COPY + TIMED_PRACTICE/EXAM | — | EXAM_DAY",
-        "MASTERED after: WITH_A_PARTNER/COPY + SAY_IT_ALOUD/COPY + LISTEN_AND_REPEAT/BASE | — | —",
+        "RETAINED: SAY_IT_ALOUD + WRITING_PRACTICE/SKILL + LISTEN_AND_REPEAT~READ_AND_CARD/SKILL | EXPLAIN_ONCE | SELF_TEST",
+        "FLUENT: WITH_A_PARTNER + TIMED_PRACTICE/EXAM + WRITING_PRACTICE~LISTEN_AND_REPEAT/SKILL | LIST_GAPS | MOCK_TEST",
+        "BETWEEN11: WITH_A_PARTNER/COPY + WRITING_PRACTICE~LISTEN_AND_REPEAT/COPY + TIMED_PRACTICE/EXAM | — | EXAM_DAY",
+        "MASTERED after: WITH_A_PARTNER + SAY_IT_ALOUD/CARRY + LISTEN_AND_REPEAT/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK",
       ]
     );
     check("…and it keeps every rule", ielts.broke.length === 0, ielts.broke.join("; "));
+    const ielts2 = run(ieltsIn({ maxPractices: 2 }));
+    const ielts1 = run(ieltsIn({ maxPractices: 1 }));
+    const jlpt = run(ieltsIn({ examSkills: CAT.languageExamSkillsOf("JLPT N2") }));
+    eq(
+      "…at lower hours the skills take turns, never one session each (ruling 1): with room for two, Retained writes and listens week about and the run-up's partner takes turns with writing beside timed practice; with room for one, Retained says it aloud and writes week about, and the run-up writes and sits timed practice week about (ruling 2). An exam testing listening and reading only (JLPT) trains those, not writing",
+      [ielts2.lines.slice(1, 4), ielts1.lines.slice(1, 4), jlpt.lines.slice(1, 3)].map((ls) => ls.map((l) => l.split(" | ")[0])),
+      [
+        ["RETAINED: SAY_IT_ALOUD + WRITING_PRACTICE~LISTEN_AND_REPEAT/SKILL", "FLUENT: WITH_A_PARTNER~WRITING_PRACTICE + TIMED_PRACTICE/EXAM", "BETWEEN11: WITH_A_PARTNER~WRITING_PRACTICE/COPY + TIMED_PRACTICE/EXAM"],
+        ["RETAINED: SAY_IT_ALOUD~WRITING_PRACTICE", "FLUENT: WRITING_PRACTICE~TIMED_PRACTICE", "BETWEEN11: WRITING_PRACTICE~TIMED_PRACTICE/COPY"],
+        ["RETAINED: SAY_IT_ALOUD + LISTEN_AND_REPEAT/SKILL + READ_AND_CARD/SKILL", "FLUENT: WITH_A_PARTNER + TIMED_PRACTICE/EXAM + LISTEN_AND_REPEAT/SKILL"],
+      ]
+    );
+    check("…and each keeps every rule", [ielts2, ielts1, jlpt].every((r) => r.broke.length === 0), [ielts2, ielts1, jlpt].flatMap((r) => r.broke).join("; "));
+    eq(
+      "a LANGUAGE plan with an exam and no day (Mastered holds it): every production stage trains the four skills, writing included, and the last one under time",
+      run({ track: "FIELD", family: "LANGUAGE", stages: GATES12, practicesAllowed: true, exam: true }).lines.slice(2).map((l) => l.split(" | ")[0]),
+      [
+        "RETAINED: SAY_IT_ALOUD + WRITING_PRACTICE/SKILL + LISTEN_AND_REPEAT~READ_AND_CARD/SKILL",
+        "FLUENT: WITH_A_PARTNER + WRITING_PRACTICE/SKILL + LISTEN_AND_REPEAT~READ_AND_CARD/SKILL",
+        "MASTERED: WITH_A_PARTNER + TIMED_PRACTICE/EXAM + WRITING_PRACTICE~LISTEN_AND_REPEAT/SKILL",
+      ]
+    );
+    // §20.12, ruling 1: with room for one, a stage holds its role's kind, never a filler; where the role needs two kinds,
+    // they take turns week about.
+    const room1 = RT.PRACTICE_FAMILIES.map((family) => run({ track: "FIELD", family, stages: GATES12, practicesAllowed: true, exam: false, maxPractices: 1 }));
+    eq(
+      "room for one (ruling 1): each stage holds its role's kind (retrieval early, production later), never a filler; a role-less default (a teacher or partner, slow drills) takes turns, week about, with the role's kind that took its place: KNOW and BUILD their defaults; LANGUAGE says it aloud then takes turns with a partner; PERFORM recalls and drills slowly week about, and runs it through with a teacher week about at Mastered",
+      room1.map((r) => r.lines.map((l) => l.split(" | ")[0].split(": ")[1])),
+      [
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "BUILD_SOMETHING"],
+        ["LISTEN_AND_REPEAT", "RECALL_DRILLS", "SAY_IT_ALOUD", "SAY_IT_ALOUD~WITH_A_PARTNER", "RUN_THROUGHS~WITH_A_PARTNER"],
+        ["READ_AND_CARD", "RECALL_DRILLS~SLOW_DRILLS", "RUN_THROUGHS", "RUN_THROUGHS", "RUN_THROUGHS~WITH_A_PARTNER"],
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "BUILD_SOMETHING", "BUILD_SOMETHING"],
+      ]
+    );
+    check("…and each keeps every rule", room1.every((r) => r.broke.length === 0), room1.flatMap((r) => r.broke).join("; "));
+    const room1Exam = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, maxPractices: 1 });
+    const room1Dated = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 1, maxPractices: 1 });
+    const room2Perform = run({ track: "FIELD", family: "PERFORM", stages: GATES12, practicesAllowed: true, exam: true, examStage: 1, examPrepStage: 1, maxPractices: 2 });
+    eq(
+      "an exam's run-up gets timed practice at any hours (ruling 2): with room for one, the stage's role kind and timed practice take turns week about (problem sets on the undated exam's stage; study, then recall drills, before an exam dated in Familiar); with room for two, a role-less focus takes turns with the role's kind rather than timed practice giving way (PERFORM: recall and slow drills week about, beside timed practice)",
+      [room1Exam.lines[4], ...room1Dated.lines.slice(0, 2), room2Perform.lines[1]].map((l) => l.split(" | ")[0]),
+      ["MASTERED: PROBLEM_SETS~TIMED_PRACTICE", "FOUNDATION: READ_AND_CARD~TIMED_PRACTICE", "FAMILIAR: RECALL_DRILLS~TIMED_PRACTICE", "FAMILIAR: RECALL_DRILLS~SLOW_DRILLS + TIMED_PRACTICE/EXAM"]
+    );
+    check("…and each keeps every rule", [room1Exam, room1Dated, room2Perform].every((r) => r.broke.length === 0), [room1Exam, room1Dated, room2Perform].flatMap((r) => r.broke).join("; "));
+    eq(
+      "…a BETWEEN or PART stage holding the exam takes the turn too: BETWEEN 11 (the dated exam's stage) explains and sits timed practice week about; a count gate holding the exam copies its gate (Familiar, after the exam) and takes the turn",
+      [
+        run({ track: "FIELD", stages: [...G(["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT"]), { stage: "BETWEEN", level: 11 }, { stage: "MASTERED" }], practicesAllowed: true, exam: true, examStage: 4, examPrepStage: 4, maxPractices: 1 }).lines[4],
+        run({ track: "FIELD", stages: [{ stage: "PART", level: 6 }, ...G(["FAMILIAR", "RETAINED"])], practicesAllowed: true, exam: true, examStage: 0, maxPractices: 1 }).lines[0],
+      ],
+      ["BETWEEN11: EXPLAIN_IT~TIMED_PRACTICE/COPY | — | EXAM_DAY", "PART6: RECALL_DRILLS~TIMED_PRACTICE/COPY | CHOOSE_MATERIAL + BOOK_EXAM | EXAM_DAY"]
+    );
+    eq(
+      "…the label says so in code's words (progressionLabelOf; R2 writes it)",
+      room1Dated.p.stages[1].practices.map((x) => String(CAT.progressionLabelOf(x, { track: "FIELD", domains: [RT.domainName({ id: "d1", name: "Probability" })] }))),
+      ["Recall drills one week, timed practice the next: Probability"]
+    );
+    eq(
+      "tracks have no F-R4-13 role: with room for one, each track stage holds its focus (BODY easy → technique → longer → harder; CRAFT slow drills → run-throughs → a teacher → run-throughs)",
+      (["BODY", "CRAFT"] as const).map((track) => run({ track, stages: TRACK5, practicesAllowed: true, exam: false, maxPractices: 1 }).lines.map((l) => l.split(" | ")[0].split(": ")[1])),
+      [
+        ["EASY_SESSION", "TECHNIQUE_SESSION", "LONGER_SESSION", "HARDER_SESSION", "HARDER_SESSION"],
+        ["SLOW_DRILLS", "SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "RUN_THROUGHS"],
+      ]
+    );
     eq(
       "room for two practices (practicesThatFitOf): the focus first, then the exam's timed practice and the core before the carry; the spaced review waits for room",
       run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, maxPractices: 2 }).lines.map((l) => l.split(" | ")[0]),
-      ["FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER", "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY", "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY", "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE", "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM"]
+      ["FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER", "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY", "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY", "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE", "MASTERED: PROBLEM_SETS + TIMED_PRACTICE/EXAM"]
     );
     const one = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false, maxPractices: 1, picks: { FOUNDATION: "RECALL_DRILLS", FAMILIAR: "SLOW_DRILLS", RETAINED: "WRITING_PRACTICE", FLUENT: "WITH_A_PARTNER", MASTERED: "WITH_A_PARTNER" } });
     eq("room for one: code's default stays, Gemini's picks wait for room", one.lines.map((l) => l.split(" | ")[0]), ["FOUNDATION: READ_AND_CARD", "FAMILIAR: RECALL_DRILLS", "RETAINED: PROBLEM_SETS", "FLUENT: EXPLAIN_IT", "MASTERED: BUILD_SOMETHING"]);
@@ -3412,14 +3598,14 @@ console.log("— the practice progression (§20) —");
     check("…and it keeps every rule", picked.broke.length === 0, picked.broke.join("; "));
     const examPicks = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, picks: { RETAINED: "WRITING_PRACTICE", FLUENT: "WRITING_PRACTICE", MASTERED: "WITH_A_PARTNER" } });
     eq(
-      "on an exam plan a pick never displaces the problem sets (CORE) or timed practice: on the exam's stage it waits for room",
+      "on an exam plan a pick never displaces the problem sets (CORE) or timed practice: at Fluent it sits after the core; on the exam's stage, where the problem sets are the focus, it sits beside them and timed practice",
       examPicks.lines.map((l) => l.split(" | ")[0]),
       [
         "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER",
         "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY",
         "RETAINED: PROBLEM_SETS + WRITING_PRACTICE/PICK* + RECALL_DRILLS/CARRY",
         "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE + WRITING_PRACTICE/PICK*",
-        "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE",
+        "MASTERED: PROBLEM_SETS + TIMED_PRACTICE/EXAM + WITH_A_PARTNER/PICK*",
       ]
     );
     const defaults = field.lines;
@@ -3436,7 +3622,7 @@ console.log("— the practice progression (§20) —");
       junk.every((picks) => json(run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false, picks }).lines) === json(defaults))
     );
     eq(
-      "a held Foundation, a count gate first, the gates between, the exam's day in BETWEEN 7: the held stage gets nothing; PART copies Familiar; Familiar (the run-up) takes timed practice and the mock test; BETWEEN 7 copies Familiar and holds timed practice and the exam; every stage after it keeps what was trained, unchecked",
+      "a held Foundation, a count gate first, the gates between, the exam's day in BETWEEN 7: the held stage gets nothing; PART copies Familiar; Familiar (the run-up) takes timed practice and the mock test; BETWEEN 7 copies Familiar and holds timed practice and the exam; after it the plan climbs on to Fluent (BETWEEN 9 copying Fluent), each stage measured, the last closing on the full attempt and the performance check",
       run({
         track: "FIELD",
         stages: [{ stage: "FOUNDATION", held: true }, { stage: "PART", level: 6 }, { stage: "FAMILIAR" }, { stage: "BETWEEN", level: 7 }, { stage: "RETAINED" }, { stage: "BETWEEN", level: 9 }, { stage: "FLUENT" }],
@@ -3449,9 +3635,9 @@ console.log("— the practice progression (§20) —");
         "PART6: RECALL_DRILLS/COPY + READ_AND_CARD/COPY | CHOOSE_MATERIAL + BOOK_EXAM | —",
         "FAMILIAR: RECALL_DRILLS + TIMED_PRACTICE/EXAM + READ_AND_CARD/PARTNER | OUTLINE | MOCK_TEST",
         "BETWEEN7: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + TIMED_PRACTICE/EXAM | — | EXAM_DAY",
-        "RETAINED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
-        "BETWEEN9 after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
-        "FLUENT after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "RETAINED after: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | SELF_TEST",
+        "BETWEEN9 after: EXPLAIN_IT/COPY + PROBLEM_SETS/COPY + RECALL_DRILLS/COPY | — | SELF_TEST",
+        "FLUENT after: EXPLAIN_IT + PROBLEM_SETS/CARRY + RECALL_DRILLS/BASE | EXPLAIN_ONCE + FULL_ATTEMPT | PERFORMANCE_CHECK",
       ]
     );
     eq(
@@ -3561,14 +3747,14 @@ console.log("— the practice progression (§20) —");
       ["STAGE_1: SLOW_DRILLS + TECHNIQUE_SESSION/PARTNER", "STAGE_2: SLOW_DRILLS + TECHNIQUE_SESSION/CARRY", "STAGE_3: RUN_THROUGHS + SLOW_DRILLS/CARRY + TECHNIQUE_SESSION/BASE", "STAGE_4: WITH_A_PARTNER + RUN_THROUGHS/CARRY + SLOW_DRILLS/BASE", "STAGE_5: RUN_THROUGHS + WITH_A_PARTNER/CARRY + SLOW_DRILLS/BASE"]
     );
     eq(
-      "CRAFT with a graded exam on Stage 4 (the review's ABRSM case): the mock test on Stage 3, the run-throughs kept to the exam, Stage 5 after it (no full attempt, no performance check)",
+      "CRAFT with a graded exam on Stage 4 (the review's ABRSM case): the mock test on Stage 3, the run-throughs kept to the exam; Stage 5, after it, climbs on (run-throughs, the teacher kept) to the full attempt and the performance check",
       run({ track: "CRAFT", stages: TRACK5, practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 3 }).lines,
       [
         "STAGE_1: SLOW_DRILLS + TECHNIQUE_SESSION/PARTNER | SET_UP + BOOK_EXAM | —",
         "STAGE_2: SLOW_DRILLS + TECHNIQUE_SESSION/CARRY | — | —",
         "STAGE_3: RUN_THROUGHS + SLOW_DRILLS/CARRY + TECHNIQUE_SESSION/BASE | — | MOCK_TEST",
         "STAGE_4: WITH_A_PARTNER + RUN_THROUGHS/CORE + SLOW_DRILLS/CARRY | — | EXAM_DAY",
-        "STAGE_5 after: WITH_A_PARTNER/COPY + RUN_THROUGHS/COPY + SLOW_DRILLS/COPY | — | —",
+        "STAGE_5 after: RUN_THROUGHS + WITH_A_PARTNER/CARRY + SLOW_DRILLS/BASE | FULL_ATTEMPT | PERFORMANCE_CHECK",
       ]
     );
     eq(
@@ -3588,8 +3774,8 @@ console.log("— the practice progression (§20) —");
       ]
     );
     check(
-      "a single stage is first and last: it opens, books the exam and holds it (going over mistakes, timed practice)",
-      json(run({ track: "FIELD", stages: G(["MASTERED"]), practicesAllowed: true, exam: true }).lines) === json(["MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM + LIST_GAPS | MOCK_TEST"])
+      "a single stage is first and last: it opens, books the exam and holds it (problem sets, timed practice)",
+      json(run({ track: "FIELD", stages: G(["MASTERED"]), practicesAllowed: true, exam: true }).lines) === json(["MASTERED: PROBLEM_SETS + TIMED_PRACTICE/EXAM + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM + LIST_GAPS | MOCK_TEST"])
     );
     const frozen = Object.freeze({ track: "FIELD" as const, family: "LANGUAGE" as const, stages: Object.freeze(GATES12.map((s) => Object.freeze({ ...s }))), practicesAllowed: true, exam: true, picks: Object.freeze({ RETAINED: "WRITING_PRACTICE" }) });
     check("pure and deterministic: a frozen input is read, never written, and the same input gives the same plan", json(CAT.progressionOf(frozen)) === json(CAT.progressionOf(frozen)));
@@ -3645,7 +3831,7 @@ console.log("— the practice progression (§20) —");
         FAMILIAR: ["RECALL_DRILLS", "SLOW_DRILLS"],
         RETAINED: ["PROBLEM_SETS", "EXPLAIN_IT", "WRITING_PRACTICE"],
         FLUENT: ["EXPLAIN_IT", "PROBLEM_SETS", "MISTAKE_REVIEW", "WRITING_PRACTICE"],
-        MASTERED: ["MISTAKE_REVIEW", "PROBLEM_SETS", "EXPLAIN_IT", "WITH_A_PARTNER"],
+        MASTERED: ["PROBLEM_SETS", "MISTAKE_REVIEW", "EXPLAIN_IT", "WITH_A_PARTNER"],
       }
     );
     eq(
@@ -3743,8 +3929,11 @@ console.log("— the practice progression (§20) —");
       breach("the run-up without timed practice", "EXAM_PREP", (p) => drop(p, 2, "TIMED_PRACTICE")),
       breach("the exam's stage without timed practice", "EXAM_PREP", (p) => drop(p, 3, "TIMED_PRACTICE")),
       breach("no mock test before a dated exam", "EXAM_PREP", (p) => (p.stages[2].checkpoint = item("SELF_TEST", "CHECK"))),
-      breach("a step after the exam", "AFTER_EXAM", (p) => p.stages[4].steps.push(item("SMALL_PROJECT", "ROLE"))),
-      breach("a checkpoint after the exam", "AFTER_EXAM", (p) => (p.stages[4].checkpoint = item("EXAM_DAY", "CHECK"))),
+      breach("a stage after the exam copying the exam's stage", "AFTER_EXAM", (p) => (p.stages[4].practices = p.stages[3].practices.filter((x) => x.kind !== "TIMED_PRACTICE").map((x) => ({ ...x, why: "COPY" as const })))),
+      breach("a stage after the exam with no checkpoint", "AFTER_EXAM", (p) => (p.stages[4].checkpoint = null)),
+      breach("a turn with no words", "TURNS", (p) => (p.stages[2].practices[0] = { ...p.stages[2].practices[0], alternate: "BUILD_SOMETHING" })),
+      breach("a turn on a blocked kind", "BLOCKED", (p) => (p.stages[2].practices[0] = { ...p.stages[2].practices[0], alternate: "WITH_A_PARTNER" }), { ...input, gate: { blocked: ["WITH_A_PARTNER"] } }),
+      breach("timed practice's turn off the run-up", "EXAM", (p) => (p.stages[1].practices[0] = { ...p.stages[1].practices[0], alternate: "TIMED_PRACTICE" })),
       breach("code's default removed by a pick", "DEFAULT", (p) => (p.stages[2].practices[0] = { ...item("WRITING_PRACTICE"), picked: true })),
       breach("the core dropped before the exam", "CORE", (p) => drop(p, 3, "PROBLEM_SETS")),
       breach("a held stage holding a kind", "HELD", (p) => (p.stages[0].held = true), { ...input, stages: [{ stage: "FOUNDATION", held: true }, ...GATES12.slice(1)] }),
@@ -3754,8 +3943,37 @@ console.log("— the practice progression (§20) —");
       breach("a valid pick left out while a slot was free", "PICK", () => undefined, { ...input, picks: { FAMILIAR: "SLOW_DRILLS" } }),
       breach("a stand-in for a kind nothing held", "STANDIN", (p) => (p.stages[2].practices[0] = { ...p.stages[2].practices[0], standsIn: "EXPLAIN_IT" })),
     ].filter((x): x is string => x != null);
+    // Breaches on the other rulings' plans (§20.12): room for one, a role-less default, a language exam's skills.
+    const breachOn = (inp: CAT.ProgressionInput, name: string, code: string, mutate: (p: CAT.Progression) => void) => {
+      const base = CAT.progressionOf(inp);
+      const before = CAT.progressionViolationsOf(inp, base);
+      const p = JSON.parse(JSON.stringify(base)) as CAT.Progression;
+      mutate(p);
+      const v = CAT.progressionViolationsOf(inp, p);
+      return before.length === 0 && v.some((l) => l.startsWith(`${code} `)) ? null : `${name}: ${json(before)} → ${json(v)}`;
+    };
+    const room1Undated: CAT.ProgressionInput = { track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, maxPractices: 1 };
+    const room1Perform: CAT.ProgressionInput = { track: "FIELD", family: "PERFORM", stages: GATES12, practicesAllowed: true, exam: false, maxPractices: 1 };
+    const ieltsLike: CAT.ProgressionInput = { track: "FIELD", family: "LANGUAGE", stages: G(["FAMILIAR", "RETAINED", "FLUENT"]), practicesAllowed: true, exam: true, examStage: 2 };
+    const unturned = (i: number) => (p: CAT.Progression) => {
+      const x = { ...p.stages[i].practices[0] };
+      delete x.alternate;
+      p.stages[i].practices[0] = x;
+    };
+    missed.push(
+      ...[
+        breachOn(room1Undated, "the run-up with room for one, without timed practice's turn", "EXAM_PREP", unturned(4)),
+        breachOn(room1Perform, "a role-less default moved without its turn (PERFORM Familiar, room for one)", "TURNS", unturned(1)),
+        breachOn(ieltsLike, "a language exam's skill left out while a lower slot was used", "SKILL", (p) => (p.stages[1].practices[2] = item("RECALL_DRILLS", "BASE"))),
+        breachOn(room1Perform, "a filler at room for one: the role kind replaced by one without it", "SHAPE", (p) => (p.stages[1].practices = [item("SLOW_DRILLS")])),
+        breachOn({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 1 }, "after the exam the new climb escalates too: a self-test after a rung-2 checkpoint", "ESCALATE", (p) => {
+          p.stages[2].checkpoint = item("MOCK_TEST", "CHECK");
+          p.stages[3].checkpoint = item("SELF_TEST", "CHECK");
+        }),
+      ].filter((x): x is string => x != null)
+    );
     check(
-      "progressionViolationsOf names each injected breach (LAST ×2, BLOCKED, ESCALATE, PRACTICE, CARRY, CLIMB, SHAPE, EXAM ×5, EXAM_PREP ×3, AFTER_EXAM ×2, DEFAULT, CORE, HELD, CAP ×2, TRACK, PICK, STANDIN), and the clean plan breaks nothing",
+      "progressionViolationsOf names each injected breach (LAST ×2, BLOCKED ×2, ESCALATE ×2, PRACTICE, CARRY, CLIMB, SHAPE ×2, EXAM ×6, EXAM_PREP ×4, AFTER_EXAM ×2, TURNS ×2, SKILL, DEFAULT, CORE, HELD, CAP ×2, TRACK, PICK, STANDIN), and the clean plans break nothing",
       missed.length === 0 && cleanBroke.length === 0,
       [...cleanBroke, ...missed].join(" | ")
     );
@@ -3766,7 +3984,12 @@ console.log("— the practice progression (§20) —");
     const LAST_ONLY = new Set<string>(CAT.CATALOG.filter((e) => e.lastStageOnly).map((e) => e.key));
     const RUNG: Record<string, number> = { SELF_TEST: 1, MOCK_TEST: 2, EXAM_DAY: 3, PERFORMANCE_CHECK: 3 };
     const broke: string[] = [];
-    const tally = { cases: 0, packs: 0, gates: 0, practice: 0, last: 0, escalate: 0, blocked: 0, after: 0, kept: 0, carried: 0, carriedSame: 0, rules: 0 };
+    const tally = { cases: 0, packs: 0, gates: 0, practice: 0, last: 0, escalate: 0, blocked: 0, after: 0, kept: 0, carried: 0, carriedSame: 0, rules: 0, room1: 0, timed: 0, skill: 0, words: 0 };
+    // What the rulings' assertions read (§20.12), so the property is seen to test them: stages with room for one, run-ups
+    // (those with room for one apart), IELTS-like plans, and practices taking turns.
+    const seen = { room1Stages: 0, runUps: 0, runUpsRoom1: 0, ieltsPlans: 0, jlptPlans: 0, turns: 0, afterExamStages: 0 };
+    const SKILL_KINDS: Record<string, readonly string[]> = { SPEAKING: ["SAY_IT_ALOUD", "WITH_A_PARTNER"], WRITING: ["WRITING_PRACTICE"], LISTENING: ["LISTEN_AND_REPEAT"], READING: ["READ_AND_CARD", "TIMED_PRACTICE"] };
+    const dnProp = RT.domainName({ id: "d1", name: "Grammar" });
     const listsOf = (track: CAT.CatalogTrack, depth: RT.AimDepth): [string, CAT.ProgressionStageInput[]][] => {
       if (track === "FIELD") {
         const gates = RT.gateStagesTo(depth);
@@ -3800,7 +4023,8 @@ console.log("— the practice progression (§20) —");
       return out;
     };
     const maxOf = (n: number, len: number): CAT.ProgressionInput["maxPractices"] => [undefined, 2, 1, Array.from({ length: len }, (_, i) => (i % 3) + 1)][Math.floor(n / 4) % 4];
-    const kindsAt = (s: CAT.StageProgression) => json([s.practices.map((x) => x.kind), s.steps.map((x) => x.kind), s.checkpoint?.kind ?? null]);
+    const kindsAt = (s: CAT.StageProgression) => json([s.practices.map((x) => `${x.kind}${x.alternate ? `~${x.alternate}` : ""}`), s.steps.map((x) => x.kind), s.checkpoint?.kind ?? null]);
+    const trains = (s: CAT.StageProgression, kinds: readonly string[]) => s.practices.some((x) => kinds.includes(x.kind) || (x.alternate != null && kinds.includes(x.alternate)));
     for (const entry of readCorpus()) {
       tally.packs++;
       const intake = entry.input.intake;
@@ -3843,7 +4067,9 @@ console.log("— the practice progression (§20) —");
                 const family = track === "FIELD" ? (n % 3 === 0 ? prefill : RT.PRACTICE_FAMILIES[n % RT.PRACTICE_FAMILIES.length]) : undefined;
                 const rule = CAT.progressionRuleFor(track, { family, exam });
                 const examPrepStage = examStage == null ? null : [null, examStage, Math.max(0, examStage - 1)][n % 3];
-                const input: CAT.ProgressionInput = { track, family, stages, practicesAllowed, exam, examStage, examPrepStage, gate, picks: picksOf(rule, stages, n), maxPractices: maxOf(n, stages.length) };
+                // A language exam testing listening and reading only (JLPT-like) every fifth LANGUAGE plan; else all four.
+                const examSkills = family === "LANGUAGE" && n % 5 === 4 ? CAT.languageExamSkillsOf("JLPT N2") : undefined;
+                const input: CAT.ProgressionInput = { track, family, stages, practicesAllowed, exam, examStage, examPrepStage, examSkills, gate, picks: picksOf(rule, stages, n), maxPractices: maxOf(n, stages.length) };
                 const p = CAT.progressionOf(input);
                 const where = `${entry.file} ${track}${family ? `/${family}` : ""} ${gname} ${lname} exam=${exam ? (examStage ?? "undated") : "no"} practices=${practicesAllowed}`;
                 const v = CAT.progressionViolationsOf(input, p);
@@ -3855,9 +4081,29 @@ console.log("— the practice progression (§20) —");
                 const liveIdx = stages.map((s, i) => (s.held ? -1 : i)).filter((i) => i >= 0);
                 const last = liveIdx.length ? liveIdx[liveIdx.length - 1] : -1;
                 const placeablePractice = CAT.CATALOG.some((e) => e.slot === "PRACTICE" && e.tracks.includes(track) && !e.codeOnly && (exam || !e.examOnly) && !blockedSet.has(e.key));
+                const placeable = (k: string) => {
+                  const e = CAT.catalogEntryOf(k);
+                  return !!e && e.tracks.includes(track) && !e.codeOnly && (exam || !e.examOnly) && !blockedSet.has(k);
+                };
+                const roomAt = (i: number) => {
+                  const m = input.maxPractices;
+                  const raw = Array.isArray(m) ? (m as readonly (number | null | undefined)[])[i] : (m as number | null | undefined);
+                  return typeof raw === "number" ? Math.min(3, Math.max(1, Math.floor(raw))) : 3;
+                };
+                const dated = exam && examStage != null && p.examStage != null;
                 let top = 0;
+                let restarted = false;
                 for (const s of p.stages) {
-                  if (s.held || s.carried) continue;
+                  if (s.held) continue;
+                  // After a dated exam a new climb starts: its checkpoints escalate again from the self-test (the lead's ruling).
+                  if (dated && s.index > (p.examStage as number) && !restarted) {
+                    top = 0;
+                    restarted = true;
+                  }
+                  if (s.carried) {
+                    if (s.checkpoint) top = Math.max(top, RUNG[s.checkpoint.kind] ?? 0);
+                    continue;
+                  }
                   if (practicesAllowed && placeablePractice && s.practices.length === 0) {
                     tally.practice++;
                     if (broke.length < 6) broke.push(`${where}: stage ${s.index} has no practice`);
@@ -3867,14 +4113,48 @@ console.log("— the practice progression (§20) —");
                       tally.last++;
                       if (broke.length < 6) broke.push(`${where}: ${x.kind} at stage ${s.index}, the last is ${last}`);
                     }
-                    if (blockedSet.has(x.kind)) {
+                    if (blockedSet.has(x.kind) || (x.alternate != null && blockedSet.has(x.alternate))) {
                       tally.blocked++;
-                      if (broke.length < 6) broke.push(`${where}: ${x.kind} placed though ${gate.pending.includes(x.kind) ? "pending" : "avoided"}`);
+                      if (broke.length < 6) broke.push(`${where}: ${x.kind}${x.alternate ? `~${x.alternate}` : ""} placed though ${gate.pending.includes(x.kind) ? "pending" : "avoided"}`);
                     }
                   }
-                  if (exam && examStage != null && p.examStage != null && s.index > p.examStage && (s.steps.length > 0 || s.checkpoint)) {
-                    tally.after++;
-                    if (broke.length < 6) broke.push(`${where}: stage ${s.index} holds a step or a checkpoint after the exam`);
+                  // Every turn has code's words for it, and they render (ruling 1: "say so in code text").
+                  for (const x of s.practices)
+                    if (x.alternate) {
+                      seen.turns++;
+                      let ok = CAT.practiceTurnTemplateOf(x.kind, x.alternate) != null;
+                      try {
+                        ok = ok && String(CAT.progressionLabelOf(x, { track, domains: [dnProp] })).includes(" one week, ");
+                      } catch {
+                        ok = false;
+                      }
+                      if (!ok) {
+                        tally.words++;
+                        if (broke.length < 6) broke.push(`${where}: ${x.kind}~${x.alternate} at stage ${s.index} has no words`);
+                      }
+                    }
+                  // Ruling 3: after a dated exam each stage climbs toward the depth: never a copy of the exam's stage, always measured.
+                  if (dated && s.index > (p.examStage as number)) {
+                    seen.afterExamStages++;
+                    const copied = !s.copy && s.practices.some((x) => x.why === "COPY");
+                    const unmeasured = !s.checkpoint && ((track === "FIELD" && placeable("SELF_TEST")) || (s.index === last && placeable("PERFORMANCE_CHECK")));
+                    if (copied || unmeasured) {
+                      tally.after++;
+                      if (broke.length < 6) broke.push(`${where}: stage ${s.index} after the exam ${copied ? "copies the exam's stage" : "holds no checkpoint"}`);
+                    }
+                  }
+                  // Ruling 1: with room for one, a stage holds its role's kind, never a filler.
+                  if (practicesAllowed && placeablePractice && roomAt(s.index) === 1 && !s.copy) {
+                    seen.room1Stages++;
+                    const shape = CAT.progressionShapeOf(track, s);
+                    const roleKinds = shape === "PRODUCTION" ? CAT.PRODUCTION_KINDS : shape === "RETRIEVAL" ? CAT.RETRIEVAL_KINDS : [];
+                    const one = s.practices[0];
+                    const filler = s.practices.length !== 1 || !["FOCUS", "EXAM"].includes(one.why);
+                    const roleless = !!shape && roleKinds.some(placeable) && CAT.practiceRoleOf({ catalogKey: one?.kind }) !== shape;
+                    if (filler || roleless) {
+                      tally.room1++;
+                      if (broke.length < 6) broke.push(`${where}: stage ${s.index} with room for one holds ${s.practices.map((x) => `${x.kind}/${x.why}`).join(" + ")}`);
+                    }
                   }
                   if (s.checkpoint) {
                     const r = RUNG[s.checkpoint.kind] ?? 0;
@@ -3885,12 +4165,46 @@ console.log("— the practice progression (§20) —");
                     top = Math.max(top, r);
                   }
                 }
+                // Ruling 2: every exam's run-up (its stage and the stage before it, or its own) gets timed practice at any hours: its own slot, or a turn.
+                if (practicesAllowed && exam && placeable("TIMED_PRACTICE"))
+                  for (const i of new Set([p.examPrepStage, p.examStage])) {
+                    if (i == null || p.stages[i].held || p.stages[i].carried) continue;
+                    seen.runUps++;
+                    if (roomAt(i) === 1) seen.runUpsRoom1++;
+                    if (!trains(p.stages[i], ["TIMED_PRACTICE"])) {
+                      tally.timed++;
+                      if (broke.length < 6) broke.push(`${where}: the run-up's stage ${i} has no timed practice (room ${roomAt(i)})`);
+                    }
+                  }
+                // Ruling 5: a language exam trains each skill it tests. IELTS-like (all four), with room for three and every skill's
+                // kind placeable: every production stage up to the exam speaks, writes, listens and reads (study, or the run-up's
+                // timed practice). JLPT-like (listening and reading): no writing is placed for the exam.
+                if (practicesAllowed && exam && family === "LANGUAGE" && p.examStage != null) {
+                  const upTo = p.stages.filter((t) => !t.held && !t.carried && t.index <= (p.examStage as number) && CAT.progressionShapeOf(track, t) === "PRODUCTION");
+                  if (!examSkills && input.maxPractices === undefined && Object.values(SKILL_KINDS).every((ks) => ks.filter((k) => k !== "TIMED_PRACTICE").every(placeable))) {
+                    if (upTo.length) seen.ieltsPlans++;
+                    for (const t of upTo)
+                      for (const [skill, ks] of Object.entries(SKILL_KINDS))
+                        if (!trains(t, ks)) {
+                          tally.skill++;
+                          if (broke.length < 6) broke.push(`${where}: stage ${t.index}, before the exam, doesn't train ${skill.toLowerCase()}`);
+                        }
+                  }
+                  if (examSkills && upTo.length) {
+                    seen.jlptPlans++;
+                    for (const t of upTo)
+                      if (t.practices.some((x) => (x.why === "SKILL" && x.kind === "WRITING_PRACTICE") || x.alternate === "WRITING_PRACTICE")) {
+                        tally.skill++;
+                        if (broke.length < 6) broke.push(`${where}: stage ${t.index} trains writing for an exam that doesn't test it`);
+                      }
+                  }
+                }
                 // Gemini can't make the plan worse than code's default: every pick vector keeps each stage's focus, the exam's timed practice and the core.
                 if (input.picks !== undefined) {
                   const base = CAT.progressionOf({ ...input, picks: undefined });
                   for (const s of base.stages)
                     for (const x of s.practices)
-                      if ((x.why === "FOCUS" || x.why === "EXAM" || x.why === "CORE") && !p.stages[s.index].practices.some((y) => y.kind === x.kind)) {
+                      if (((x.why === "FOCUS" || x.why === "EXAM" || x.why === "CORE") && !trains(p.stages[s.index], [x.kind])) || (x.alternate === "TIMED_PRACTICE" && !trains(p.stages[s.index], ["TIMED_PRACTICE"]))) {
                         tally.kept++;
                         if (broke.length < 6) broke.push(`${where}: a pick removed code's ${x.why} ${x.kind} at stage ${s.index}`);
                       }
@@ -3914,9 +4228,19 @@ console.log("— the practice progression (§20) —");
       }
     }
     check(
-      `property (${tally.packs} corpus packs × ${CAT.CATALOG_TRACKS.length} tracks (× the 4 families on FIELD) × ${tally.gates} gate states in all × stage lists × exam placements and run-ups × practices on/off, with picks and room varied: ${tally.cases} plans; ${tally.carried} stages re-planned as carried): every stage has practice when practices are allowed and the gate leaves one; no lastStageOnly kind before the last stage; checkpoint escalation never falls; no avoided or pending kind is placed; nothing after a dated exam; every pick vector keeps code's focus, the exam's timed practice and the core (a pick only ever adds); carrying a stage with its own kinds leaves every other stage as built; and progressionViolationsOf finds nothing`,
-      tally.packs >= 12 && tally.cases > 10_000 && tally.carried > 1_000 && broke.length === 0 && tally.rules + tally.practice + tally.last + tally.escalate + tally.blocked + tally.after + tally.kept + tally.carriedSame === 0,
-      `${json(tally)} ${broke.join(" | ")}`
+      `property (${tally.packs} corpus packs × ${CAT.CATALOG_TRACKS.length} tracks (× the 4 families on FIELD, a language exam's skills varied) × ${tally.gates} gate states in all × stage lists × exam placements and run-ups × practices on/off, with picks and room varied: ${tally.cases} plans; ${tally.carried} stages re-planned as carried; ${seen.room1Stages} stages with room for one, ${seen.runUps} run-up stages (${seen.runUpsRoom1} with room for one), ${seen.afterExamStages} stages after a dated exam, ${seen.ieltsPlans} IELTS-like and ${seen.jlptPlans} JLPT-like plans, ${seen.turns} practices taking turns): every stage has practice when practices are allowed and the gate leaves one; no lastStageOnly kind before the last stage; checkpoint escalation never falls within a climb (after a dated exam it starts again); no avoided or pending kind is placed, nor taken in turns; the lead's §20.12 rulings, read independently: every stage with room for one holds its role's kind, never a filler (ruling 1); every exam's run-up holds timed practice at any hours (ruling 2); after a dated exam every stage climbs, never a copy of the exam's stage, always measured (ruling 3); an IELTS-like exam trains its four skills on every production stage up to it, and a JLPT-like one no writing (ruling 5); every turn has code's words; every pick vector keeps code's focus, the exam's timed practice and the core (a pick only ever adds); carrying a stage with its own kinds leaves every other stage as built; and progressionViolationsOf finds nothing`,
+      tally.packs >= 12 &&
+        tally.cases > 10_000 &&
+        tally.carried > 1_000 &&
+        seen.room1Stages > 1_000 &&
+        seen.runUpsRoom1 > 100 &&
+        seen.afterExamStages > 1_000 &&
+        seen.ieltsPlans > 10 &&
+        seen.jlptPlans > 10 &&
+        seen.turns > 1_000 &&
+        broke.length === 0 &&
+        tally.rules + tally.practice + tally.last + tally.escalate + tally.blocked + tally.after + tally.kept + tally.carriedSame + tally.room1 + tally.timed + tally.skill + tally.words === 0,
+      `${json(tally)} ${json(seen)} ${broke.join(" | ")}`
     );
   }
 
@@ -4058,6 +4382,15 @@ console.log("— the practice progression (§20) —");
       "R4"
     );
     handoff("the form asks the practice family, prefilled by practiceFamilyPrefillOf (the user's answer wins)", has("src/components/roadmap/RoadmapForm.tsx", /\bpracticeFamilyPrefillOf\(/), "R5");
+    // The lead's rulings (contracts §20.12): the progression places them; the plan paths write and read them.
+    handoff(
+      "roadmap-realism.ts writes a practice that takes turns in code's words (progressionLabelOf, for a new row and a kept one; practiceTurnOfLabel keeps the turn when a label follows a renamed Domain)",
+      has(realism, /\bprogressionLabelOf\(/) && has(realism, /\bpracticeTurnOfLabel\(/),
+      "R2"
+    );
+    handoff("roadmap-realism.ts passes a language exam's tested skills (examSkills: languageExamSkillsOf(intake.examLabel)) to progressionOf", has(realism, /\blanguageExamSkillsOf\(/), "R2");
+    handoff("roadmap-validate.ts's keysOnlyProgressionInputOf passes the same examSkills, so the validated plan equals R2's", has("src/lib/roadmap-validate.ts", /\blanguageExamSkillsOf\(|\bexamSkills\b/), "R3");
+    handoff("roadmap-server.ts reads a turn's words as code's (practiceLabelsOf in codeLabelOk), so a practice that takes turns is never read as words that aren't code's", has("src/lib/roadmap-server.ts", /\bpracticeLabelsOf\(/), "R4");
     handoff(
       "stageOptionsOf reads the plan's family and gate (progressionCandidatesOf with family and gate), so Gemini's choice names the options it was offered",
       /progressionCandidatesOf\([\s\S]{0,400}\bfamily\b/.test(existsSync(join(ROOT, "src/components/roadmap/roadmap-ui-model.ts")) ? read("src/components/roadmap/roadmap-ui-model.ts") : "") &&

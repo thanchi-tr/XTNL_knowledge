@@ -2787,7 +2787,7 @@ This is the run F-R4-23 specifies, made once: `npx tsx --env-file=.env scripts/r
 
 ### 20.1 What a stage holds (`progressionOf`)
 
-> **Superseded in part by §20.11 (the review round).** The priority is now FOCUS (code's default, never Gemini's pick), EXAM, CORE, PICK, PARTNER or CARRY, BASE, SHAPE; a dated exam gets a run-up (timed practice and the mock test before it) and nothing after it; a Field plan reads its family's table; BETWEEN and PART stages take a self-test. The table and goldens below are the first round's; §20.11 gives the current ones.
+> **Superseded in part by §20.11 (the review round).** The priority is now FOCUS (code's default, never Gemini's pick), EXAM, CORE, PICK, PARTNER or CARRY, BASE, SHAPE; a dated exam gets a run-up (timed practice and the mock test before it) and nothing after it; a Field plan reads its family's table; BETWEEN and PART stages take a self-test. The table and goldens below are the first round's; §20.11 gives the current ones, and §20.12 the lead's rulings on them (room for one, timed practice at any hours, the climb after a dated exam, a language exam's skills).
 
 Per stage that is neither held nor carried, in order:
 
@@ -3062,7 +3062,7 @@ This item fixed the catalog's half. The other items adopted it in the same round
   - Fluent offers explaining, problem sets, mistakes and writing.
   - Mastered's default is going over mistakes (then problem sets, explaining, a partner), and its role step is listing the gaps. On the exam's stage that gives going over mistakes, timed practice and the problem sets (the core).
   - Building is never offered on a KNOW exam plan.
-- **After a dated exam** (`StageProgression.afterExam`), a stage keeps what the exam's stage trained: its practices, without timed practice or a pick, then the base and the shape. It holds no step and no checkpoint. So the full attempt and the performance check never land after the exam, and nothing climbs. R2 should end an exam aim's ladder at the exam's stage, or mark the later stages as optional (§20.11.9).
+- **After a dated exam** (`StageProgression.afterExam`), a stage keeps what the exam's stage trained: its practices, without timed practice or a pick, then the base and the shape. It holds no step and no checkpoint. So the full attempt and the performance check never land after the exam, and nothing climbs. R2 should end an exam aim's ladder at the exam's stage, or mark the later stages as optional (§20.11.9). *(Superseded by the lead's ruling 3, §20.12.3: the stages after a dated exam climb on toward the depth, with their own checkpoints.)*
 - **A BETWEEN or PART stage takes a self-test** (on a Field plan, not the first stage) while escalation allows, so a long copy stage is never unmeasured.
 - **Disputed:** the review asked for FULL_ATTEMPT on the run-up when a dated exam comes before the last stage. It is not placed:
   - the mock test on the stage before the exam is that paper: "Use a practice paper in the exam's format. Sit it timed and without notes, as on the day";
@@ -3221,9 +3221,123 @@ Some dated exams:
 
 1. **The family's fallback is the prefill, not KNOW** (§20.11.2). Say if an unanswered intake should read KNOW.
 2. **FULL_ATTEMPT is not placed on the run-up** (§20.11.1, disputed with evidence). The mock test before the exam is the full paper under exam conditions.
-3. **After a dated exam the stages keep practising, unchecked.** This keeps the lead's "every stage carries practice whenever practices are allowed". If R2 ends the ladder at the exam, there are no such stages.
-4. **The exam's stage at low hours.** With room for two it holds going over mistakes (Mastered's exam default) and timed practice; with room for one, going over mistakes alone. Problem sets as the exam default would serve a one-practice stage better (they generate the mistakes to go over); the other items had already pinned the mistakes default when this was weighed, so it is left to you (one line in `PROGRESSION.FIELD.examStages`).
-5. **With room for one, the exam's stage keeps the focus, not timed practice.** At very low hours (3 h a week at a D45 floor), the exam's stage may hold only one practice. EXAM_PREP requires timed practice only with room for two or more.
+3. **After a dated exam the stages keep practising, unchecked.** This keeps the lead's "every stage carries practice whenever practices are allowed". If R2 ends the ladder at the exam, there are no such stages. *(Settled by the lead's ruling 3, §20.12.3: they climb on toward the depth, measured again.)*
+4. **The exam's stage at low hours.** With room for two it holds going over mistakes (Mastered's exam default) and timed practice; with room for one, going over mistakes alone. Problem sets as the exam default would serve a one-practice stage better (they generate the mistakes to go over); the other items had already pinned the mistakes default when this was weighed, so it is left to you (one line in `PROGRESSION.FIELD.examStages`). *(Settled in §20.12.1: problem sets are the default.)*
+5. **With room for one, the exam's stage keeps the focus, not timed practice.** At very low hours (3 h a week at a D45 floor), the exam's stage may hold only one practice. EXAM_PREP requires timed practice only with room for two or more. *(Settled by the lead's ruling 2, §20.12.2: timed practice takes the focus's turn, week about.)*
 6. **The tables are still judgement**, now per family. The lead may tune any list. The table checks hold every candidate list to the climb, with and without the exam's stages.
 7. **R2's guard on BODY sizing.** R2's `allocate` holds a harder and a longer session to at most two a week each (`BODY_SESSIONS_MAX`, "for the lead to fold into" `practiceSizesOf`). `practiceSizesOf` itself doesn't cap them: its golden gives a harder focus three sessions at 240 min. Folding the cap in is one rule in `practiceSizesOf` and a golden.
-8. **F-R4-13's shape and a PERFORM plan at low hours.** Slow drills have no retrieval or production role (`practiceRoleOf`), so with room for one, a PERFORM Familiar stage holds recall drills, not slow drills (guitar at 3 h a week). Giving slow drills a role is a change to the one definition of retrieval and production, which pay honesty also reads, so it is left to you.
+8. **F-R4-13's shape and a PERFORM plan at low hours.** Slow drills have no retrieval or production role (`practiceRoleOf`), so with room for one, a PERFORM Familiar stage holds recall drills, not slow drills (guitar at 3 h a week). Giving slow drills a role is a change to the one definition of retrieval and production, which pay honesty also reads, so it is left to you. *(Settled by the lead's ruling 1, §20.12.1, without changing the roles: recall drills and slow drills take turns, week about.)*
+
+### 20.12 The lead's rulings on the progression: room for one, the run-up, after the exam, a language exam's skills (the catalog item)
+
+The user's requirement stands: the roadmap leads to high mastery realistically, as a strong teacher or coach would plan it; Gemini writes no words; the safety gate is always respected. After the second review the lead fixed seven rulings. This item puts rulings 1, 2, 3 and 5 into the pure progression (`progressionOf`) and its checks. Ruling 4 (short track plans spread over consecutive stages), ruling 6 ("Write it myself" stays the user's) and ruling 7 (the minors) are the other items'.
+
+#### 20.12.0 State of the tree after this item
+
+- **Files:**
+  - roadmap-catalog.ts: the tables (KNOW's exam Mastered, LANGUAGE's exam stages and skills), `progressionOf` (turns, skills, the run-up at any room, the climb after the exam), `ensureShape`, `progressionViolationsOf`, the turn table and its labels, `languageExamSkillsOf`, and the header index.
+  - roadmap-types.ts: 27 `CODE_TEMPLATES`, the words for the pairs that take turns (§20.12.1).
+  - scripts/roadmap-contract-check.ts: the §20 section (§20.12.6).
+  - The check cases that pinned the behaviour these rulings change, each moved to the ruling and nothing else: roadmap-realism-check ("an exam on day 180": the stages after it are measured again), roadmap-model-check (the v4 golden's exam stage, its picks, and "the exam's day in Familiar"), and the corpus fixture `ielts.json` (`ielts-v4-a`'s valid picks: writing at Retained is now code's own).
+  - This section, and notes on §20.11.10.
+- **No schema change and no migration.** A practice that takes turns is one row: its `catalogKey` is its own kind, and its label says what it alternates with (§20.12.1).
+- **Gates** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key; no database, dev server, build, commit or model call): `npx tsc --noEmit -p .` clean; eslint clean on the five files this item touched; roadmap-contract-check `--strict` 619 passed, 0 failed, 1 HANDOFF open (R3, §20.12.7); realism 376/0, measures 366/0, throughput 62/0, server 687/0, quests 343/0, invite 57/0; `npm run ui:check` exits 0 (roadmap-ui-check 966/0). `npm run life:check` passes every check up to roadmap-model-check, whose three pins of the probe script fail on the lead's commit ee37077 (the run-10k track call), not on this item; the checks after it pass when run alone, and the hostile check fails only on its PIN (§20.12.8).
+
+#### 20.12.1 Ruling 1: with room for one, the stage's role kind, never a filler; two kinds take turns
+
+- **The rule.** A stage whose room (`maxPractices`, R2's `practicesThatFitOf`) holds one practice holds the kind that defines its role: retrieval early, production later (F-R4-13's shape; on a track, its focus). Where the role needs two kinds and only one fits, the one practice **takes turns** with the second, week about, and its label says so. It is never two practices at one session each.
+- **`ProgressionItem.alternate`** (optional; absent on every other item) is the kind a practice takes turns with. The pairs that may take turns, with code's words for each, are **`PRACTICE_TURNS`** (27 pairs, each a `CODE_TEMPLATE` of the form "<its kind> one week, <the other> the next: {domains}"). A pair not listed never takes turns: the second kind waits for room.
+- **When a stage takes turns** (`settleTurns`, the last step of a stage's practices; the same for a fresh stage and a copy):
+  - the exam's timed practice in its run-up, when the room left it no slot (ruling 2): "Problem sets one week, timed practice the next: Probability";
+  - else a role-less default the shape moved: a teacher or partner (LANGUAGE Fluent and Mastered, PERFORM Mastered) or slow drills (PERFORM Familiar), whose place the role's kind took: "Say it aloud one week, a teacher or partner the next: Keigo", "Recall drills one week, slow, focused drills the next: Chords";
+  - then a language exam's skills beyond the room (ruling 5, §20.12.4).
+- **The shape never displaces the exam's timed practice.** `ensureShape` replaces the practice that holds its place least, never EXAM; when only the focus is left, the role's kind takes the focus's place and the focus it moved takes the turn. So with room for two, a run-up with a role-less focus holds "Recall drills one week, slow, focused drills the next" beside timed practice (PERFORM before an exam in Familiar), where it used to lose timed practice.
+- **A copy settles its own turns** (BETWEEN, PART): it copies its source's practices without their turns, then takes its own (the source's role-less default included). A copy of a carried source is therefore the copy of the fresh one: carried stages pass kinds only, and the property's "carried equals fresh" holds with turns compared.
+- **KNOW with an exam: Mastered's default is problem sets** (`examStages.MASTERED`: problem sets, going over mistakes, explaining, a partner). Going over mistakes alone, with room for one, was a filler: problem sets make the mistakes to go over. On the exam's own stage with room for three that gives problem sets, timed practice and the explaining Fluent trained (the carry); going over mistakes is the run-up's first base kind and waits (§20.12.9, point 2).
+- **The default plans with room for one** (contract-check goldens):
+
+| Stage | KNOW | LANGUAGE | PERFORM | BUILD |
+|---|---|---|---|---|
+| Foundation | study | listen and repeat | study | study |
+| Familiar | recall drills | recall drills | recall drills ⇄ slow drills | recall drills |
+| Retained | problem sets | say it aloud | run-throughs | problem sets |
+| Fluent | explain it | say it aloud ⇄ a partner | run-throughs | building |
+| Mastered | building | run-throughs ⇄ a partner | run-throughs ⇄ a partner | building |
+
+  (⇄: one week each, in turn.) Tracks have no F-R4-13 role: with room for one, each track stage holds its focus.
+
+#### 20.12.2 Ruling 2: timed practice in every exam's run-up, at any hours
+
+- The run-up (the exam's stage and `examPrepStage`, §20.11.1) holds timed practice at any room: its own slot from room two (ranked right after the focus, before the carry, which it may replace), the focus's turn with room for one. This holds for a dated exam and for one with no day (the last stage holds it).
+- Every Field practice has a timed turn in `PRACTICE_TURNS`, so a run-up never goes without it, whatever its role kind.
+- **Copies.** A BETWEEN or PART stage on the run-up takes its own timed practice: a free slot, else the last copy's place, else (room for one) its first practice's turn. A count gate holding the exam, with no gate before it, copies its own gate (the next one, after the exam) instead of nothing, so it never lacks the role's kind.
+- `EXAM_PREP` now flags a run-up without timed practice at any room (a turn counts); the old room-two exemption and the shape's exemption are gone.
+
+#### 20.12.3 Ruling 3: after a dated exam the stages keep climbing toward the depth, measured
+
+- A stage after a dated exam (`StageProgression.afterExam`) is built like any other: its own focus (the plan's table, the exam's stages included, so R3's per-slot enums and R5's options still name its candidates), the carry from the exam's stage, the base, its role step, and the closing full attempt on the last stage. No timed practice, core or skill after the exam: those belong to its run-up.
+- **Its own checkpoints, escalating again.** After the exam's stage a new climb starts: a self-test on each Field stage, the performance check on the last (`CHECKPOINT_RUNG` restarts from nothing; `ESCALATE` reads each climb on its own). A BETWEEN or PART stage after the exam copies the gate after it and takes its self-test.
+- **The rule checker.** `AFTER_EXAM` is redefined: a stage after the exam that copies the exam's stage (COPY on a gate or track stage), or holds no checkpoint while one is placeable. `CARRY` and `CLIMB` now read the stages after the exam too.
+- Example (KNOW, the exam's day in Familiar): Retained "problem sets + recall drills + going over mistakes · the gaps · self-test", Fluent "explain it + problem sets + recall drills · explain once · self-test", Mastered "problem sets + explaining + recall drills · the gaps, the full attempt · performance check".
+
+#### 20.12.4 Ruling 5: a language exam trains each skill it tests
+
+- **`FIELD_FAMILY_PROGRESSION.LANGUAGE.examStages`:** Fluent offers writing next to the partner (a partner, writing, saying it aloud, mistakes) and lists the gaps; Mastered lists the gaps.
+- **`ProgressionTrackRule.examSkills`** (LANGUAGE only): the kinds that train each skill a language exam may test: speaking (saying it aloud, a partner), writing (writing practice), listening (listen and repeat), reading (study; the exam's timed practice counts on its run-up, since a timed paper is read under exam conditions). The first kind that is not examOnly is the one placed.
+- **SKILL**, a new `ProgressionWhy`: on a LANGUAGE plan with an exam, every production stage up to the exam's trains each skill the exam tests that nothing above it trains, ranked after FOCUS and EXAM, before PICK, CARRY and BASE. Skills beyond the room take turns on the last practice that trains a tested skill. With the skills rule there is no CORE: the exam's skills are its core.
+- **Which skills an exam tests:** `ProgressionInput.examSkills` (absent: all four). `languageExamSkillsOf(examLabel)` is code's reading of the user's exam label: the skills it names ("TOEIC Listening and Reading", "an oral exam"); else JLPT and TOEIC listening and reading, HSK and TOPIK II those and writing, TOPIK I listening and reading, HSKK speaking; else all four (IELTS, TOEFL, Cambridge, DELF, DELE, Goethe, an exam code doesn't know).
+- **IELTS** (the review's case; contract-check golden):
+
+| Stage | Room for three | Room for two | Room for one |
+|---|---|---|---|
+| Retained | say it aloud + writing + listen ⇄ study | say it aloud + writing ⇄ listen | say it aloud ⇄ writing |
+| Fluent (the run-up) | a partner + timed practice + writing ⇄ listen · mock test | a partner ⇄ writing + timed practice · mock test | writing ⇄ timed practice · mock test |
+| Toward Mastered (the exam) | a partner + writing ⇄ listen + timed practice · the exam | a partner ⇄ writing + timed practice · the exam | writing ⇄ timed practice · the exam |
+| Mastered (after) | a partner + say it aloud + listen · the gaps, the full attempt · performance check | | |
+
+  A JLPT-like exam (listening and reading) trains those and no writing.
+
+#### 20.12.5 The corpus plans now (read with R2's own ladder, corpusLadderOf, at each stage's room)
+
+- 34 plans, 0 rule breaches. WRITING_PRACTICE now appears in the IELTS plans (it was in 0 of 34); every IELTS run-up trains speaking, writing, listening and timed practice at 7 h a week.
+- At 3 h a week: actuarial's and python's exam stage "problem sets one week, timed practice the next"; the dated python exam's run-up "recall drills ⇄ timed practice", then "problem sets ⇄ timed practice"; Japanese at work "say it aloud ⇄ a partner" at Fluent and "run-throughs ⇄ a partner" at Mastered (it was "Full run-throughs: Keigo" alone); the dinghy "recall drills ⇄ slow drills" at Familiar and "run-throughs ⇄ a partner" at Mastered.
+- After a dated exam 10 weeks out, actuarial's Retained → Mastered climb on with self-tests and close on the performance check (they were copies of Familiar with no step and no checkpoint).
+
+#### 20.12.6 What roadmap-contract-check pins now (the §20 section)
+
+- **The tables:** KNOW's exam Mastered default; LANGUAGE's exam stages and examSkills (only LANGUAGE has them, each skill with a kind code can place); `PRACTICE_TURNS` (each pair two Field practices, once, in a `CODE_TEMPLATE` that renders, reads back with `practiceTurnOfLabel`, and is among `practiceLabelsOf`; every Field practice has a timed turn); `progressionLabelOf`; `languageExamSkillsOf` over 15 labels.
+- **Goldens:** IELTS at room three, two and one; JLPT-like; a LANGUAGE exam with no day; room for one per family and per track; the run-up at room one (undated and dated) and room two (a role-less focus); a BETWEEN and a count gate holding the exam; a turn's label; and every golden with an exam after it, moved to the climb.
+- **34 injected breaches**, among them TURNS ×2, SKILL, EXAM_PREP at room one, AFTER_EXAM ×2 (a copy, no checkpoint), ESCALATE within the climb after the exam, a turn on a blocked kind, timed practice's turn off the run-up, and a filler at room one.
+- **The property** (the same 62,594 plans, now with a JLPT-like skill set on every fifth LANGUAGE plan) asserts, independently of the rule checker: every stage with room for one holds its role's kind as its FOCUS (never a filler); every exam's run-up holds timed practice at any room; after a dated exam no gate or track stage copies the exam's stage and each stage is measured when it can be; escalation never falls within a climb; an IELTS-like exam (room three, every skill placeable) trains its four skills on every production stage up to it, and a JLPT-like one places no writing; every turn has code's words and renders; nothing blocked is placed or taken in turns; every pick vector keeps code's focus, timed practice (a turn too) and the core; carrying a stage leaves every other stage as built, turns compared. It also asserts it saw more than a thousand stages with room for one, a hundred run-ups with room for one, a thousand stages after a dated exam, a thousand turns, and ten IELTS-like and ten JLPT-like plans.
+
+#### 20.12.7 Exports and handoffs
+
+| Module | Export |
+|---|---|
+| roadmap-catalog | `ProgressionItem.alternate`, `PracticeTurn`, `PRACTICE_TURNS`, `practiceTurnTemplateOf(kind, alternate)`, `progressionLabelOf(item, fill)` (a placed practice's words), `practiceLabelsOf(key, fill)` (every label a code row of that type may carry), `practiceTurnOfLabel(key, label)` |
+| | `LanguageSkill`, `LANGUAGE_SKILLS`, `languageExamSkillsOf(examLabel)`, `ProgressionTrackRule.examSkills`, `ProgressionInput.examSkills?`, `ProgressionWhy` `SKILL`; `progressionViolationsOf` codes `TURNS`, `SKILL` (and `AFTER_EXAM`, `EXAM_PREP`, `ESCALATE` redefined) |
+| roadmap-types | the 27 turn templates in `CODE_TEMPLATES` |
+
+HANDOFF lines (their state when this item finished, read from the tree; the other items were adopting while it ran):
+- **R2:** write a practice that takes turns with `progressionLabelOf` (a new row and a kept one), keep the turn through a Domain rename (`practiceTurnOfLabel`), and pass `examSkills: languageExamSkillsOf(examLabel)`. *(Landed: realism reads all three.)*
+- **R3:** `keysOnlyProgressionInputOf` passes the same `examSkills`, so the validated plan equals R2's for an exam testing fewer than four skills. *(Open.)* Its validator still labels with `catalogLabelOf`, so a v4 draft shows a turn's own kind only until it adopts `progressionLabelOf`.
+- **R4:** `codeLabelOk` accepts a turn's words through `practiceLabelsOf`. *(Landed.)*
+- **R7** (no line): the hostile bar's per-type render reads `practiceLabelsOf` (in the tree), so a turn's words are a code render there too.
+- **R5** (no line): the UI reads a turn from the row's label (`practiceTurnOfLabel`, in the tree).
+
+#### 20.12.8 Other checks
+
+- **The hostile PIN moved**, from 73d6579529134781 to 78d9088a00789042: the generator's pick enums read the KNOW and LANGUAGE exam tables, and `ielts.json`'s expectation changed. Every other hostile bar passes, H1 closure over R4's rows and BUDGET included. The lead reviews and re-blesses.
+- **roadmap-model-check:** 3 failures, all pins of `scripts/roadmap-probe.ts`'s source ("exactly 2 requests", the fix round's labelled plan, the offline part), broken by the lead's commit ee37077 (the approved run-10k track call: `PROBE_PLAN` became `FIELD_PLAN` or `TRACK_PLAN`). Not this item's files; R3 or the lead re-pins them.
+
+#### 20.12.9 Deviations and open points for the lead
+
+1. **Reading on the run-up is counted by the exam's timed practice.** With room for three, an IELTS run-up holds a partner, timed practice and writing ⇄ listening; reading is trained by study on the stage before and by the timed papers. A separate reading practice there would need a fourth slot or a turn on timed practice.
+2. **The exam's own stage at room three (KNOW):** problem sets, timed practice and explaining (the carry); going over mistakes is the run-up's first base kind and waits. Ranking it before the carry on the run-up is one rule; ruling 2 named only timed practice as replacing the carry, so it is not done.
+3. **Tracks have no timed practice.** `TIMED_PRACTICE` is a Field kind, so a CRAFT graded exam's run-up keeps its run-throughs as the core from room two, and with room for one holds its focus only. A track turn would need {aim} words.
+4. **A Gemini pick still ranks above the carry** with room for three (the second review's suggestion "rank PICK after CARRY" is not among the rulings). Drafting is off, so no plan holds a pick today.
+5. **After the exam the table is the plan's own, exam stages included,** so the pick enums and R5's options stay right. A KNOW plan therefore keeps problem sets, explaining and mistakes after the exam rather than building; using the table without the exam's stages after it would need the enums and the options to know the stage is after the exam.
+6. **The full attempt closes the last stage after a dated exam** (part of the climb toward the depth), with the performance check.
+7. **A turn is a label, not a row.** Pay honesty, quests and F-R4-13 read the row's own kind (the role kind), and a re-plan reads a carried stage's kinds only; a copy settles its own turn, so nothing downstream changes until a path writes the words (§20.12.7).
+8. **IELTS with room for one:** the run-up writes and sits timed practice week about, and speaking is trained on Retained (saying it aloud ⇄ writing). The partner waits for room.
+9. **`languageExamSkillsOf` is a keyword reading of the user's label.** An exam it doesn't know reads as all four skills, the safer side for mastery.

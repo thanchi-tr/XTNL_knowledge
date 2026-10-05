@@ -12,6 +12,10 @@
  * §20), Gemini's pick reads "Gemini's choice among the app's options", with
  * how many options its stage offered and the app's default under it. A body
  * session always carries HEALTH_LINE.
+ * A practice that takes turns with another, week about (contracts §20.12:
+ * a stage whose room holds one practice where its role needs two), says so
+ * in its own code words; a short line under it says why (PRACTICE_TURN_LINE),
+ * and its How shows each week's kind.
  * A started practice an answer touched says how it stands (the lead's
  * ruling 3, roadmap-copy pauseRowLine): paused, in place of its link; still
  * on Today because its pause was refused, or back by Undo, with its link;
@@ -23,9 +27,9 @@ import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { practiceBandMinutes } from "@/lib/roadmap-types";
 import type { CatalogKey } from "@/lib/roadmap-catalog";
-import { HEALTH_LINE, KIND_HOW, METHOD_HOW, METHOD_WORD, geminiChoiceLine, pauseRowLine, practicePlanLine } from "./roadmap-copy";
+import { HEALTH_LINE, KIND_HOW, KIND_NAME, METHOD_HOW, METHOD_WORD, PRACTICE_TURN_LINE, geminiChoiceLine, pauseRowLine, practicePlanLine } from "./roadmap-copy";
 import { todayTaskHref } from "./roadmap-links";
-import type { PausedItem } from "./roadmap-ui-model";
+import { practiceTurnOf, type PausedItem } from "./roadmap-ui-model";
 import { ItemRow, useGeminiChoice } from "./ItemRow";
 import type { ActTarget } from "./ItemEditor";
 
@@ -35,19 +39,34 @@ export function howLinesOf(it: { catalogKey?: CatalogKey | null; method: keyof t
   return it.method ? METHOD_HOW[it.method] : [];
 }
 
-export function HowLines({ lines }: { lines: readonly string[] }) {
+/**
+ * The "How" disclosure. A practice that takes turns with another (`turn`,
+ * contracts §20.12) names each week's kind over its own steps, this one's
+ * first.
+ */
+export function HowLines({ lines, turn }: { lines: readonly string[]; turn?: { first: string; second: string; lines: readonly string[] } | null }) {
   if (lines.length === 0) return null;
+  const list = (ls: readonly string[]) => (
+    <ol>
+      {ls.map((l) => (
+        <li key={l}>{l}</li>
+      ))}
+    </ol>
+  );
   return (
     <details className="rm-how">
       <summary>
         <Icon name="chev" />
         How
       </summary>
-      <ol>
-        {lines.map((l) => (
-          <li key={l}>{l}</li>
-        ))}
-      </ol>
+      {turn && <p className="rm-how-k">{turn.first}</p>}
+      {list(lines)}
+      {turn && turn.lines.length > 0 && (
+        <>
+          <p className="rm-how-k">{turn.second}</p>
+          {list(turn.lines)}
+        </>
+      )}
     </details>
   );
 }
@@ -100,6 +119,9 @@ export function PracticeRow({
   const how = it ? howLinesOf(it) : [];
   // The practice progression (contracts §20): Gemini's choice among its stage's options says how many there were and the app's default.
   const choice = useGeminiChoice(it, target.milestone);
+  // A practice that takes turns with another, week about (§20.12): its words name both weeks; the line says why, the How shows each.
+  const turn = it ? practiceTurnOf(it) : null;
+  const turnHow = turn && it?.catalogKey ? { first: KIND_NAME[it.catalogKey], second: KIND_NAME[turn], lines: KIND_HOW[turn] ?? [] } : null;
   return (
     <ItemRow
       target={target}
@@ -110,7 +132,8 @@ export function PracticeRow({
       chipsBefore={it?.method && stage !== "outline" ? <Chip>{METHOD_WORD[it.method]}</Chip> : null}
     >
       {stage === "active" && paused && <p className="t-meta rm-ink1">{pauseRowLine(paused, today)}</p>}
-      {stage !== "outline" && <HowLines lines={how} />}
+      {stage !== "outline" && turn && <p className="rm-it-why">{PRACTICE_TURN_LINE}</p>}
+      {stage !== "outline" && <HowLines lines={how} turn={turnHow} />}
       {stage !== "outline" && it?.method === "WORKOUT" && <p className="rm-it-why">{HEALTH_LINE}</p>}
     </ItemRow>
   );

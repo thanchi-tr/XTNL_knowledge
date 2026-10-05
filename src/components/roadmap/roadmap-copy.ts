@@ -22,7 +22,8 @@
  *   activityStaleLine · activitySaveLine · activitySuggestedLine · activityPausedLine · aimConflictLine
  *   (confirm to unlock, contracts §19)
  *   geminiV4LeadLine · GEMINI_V4_LEAD_LINE · arrangementV4Line · ARRANGEMENT_V4_LINE · geminiArrangesLine ·
- *   GEMINI_NOTHING_TO_ASK_LINE · GEMINI_CHOICE_WORDS · geminiChoiceLine · STAGE_WHY_WORD · StageEnd ·
+ *   GEMINI_NOTHING_TO_ASK_LINE · GEMINI_CHOICE_WORDS · choicesWaitingLine · keepChoicesWord · appDefaultsWord ·
+ *   CHOICES_PLAN_LEVEL · KEEP_MY_ORDER_WORD · APP_PRACTICE_WORD · PRACTICE_TURN_LINE · geminiChoiceLine · STAGE_WHY_WORD · StageEnd ·
  *   STAGE_END_WORD · stageWhyPartsOf · stageWhyLine (the practice progression, contracts §20)
  *   + the formatting, flag, rank, Proficiency, pace and pay lines below.
  */
@@ -1499,6 +1500,33 @@ export function catalogProvenanceWords(slot: "PRACTICE" | "STEP" | "CHECKPOINT",
 
 /** Gemini's pick on a v4 plan: its choice among the stage's options (the chip on the row). */
 export const GEMINI_CHOICE_WORDS = "Gemini's choice among the app's options";
+
+/**
+ * Gemini's practice choices accept waits on (R4's DECIDE_PRACTICE_PICKS), in
+ * the plan-level card that decides those on outline cards: one line and two
+ * short answers (R4's confirmSessionPicks KEEP, or the app's defaults).
+ */
+export function choicesWaitingLine(n: number): string {
+  return `Gemini chose ${plural(n, "practice")} beside the app's ${n === 1 ? "default" : "defaults"}.`;
+}
+export function keepChoicesWord(n: number): string {
+  return n === 1 ? "Keep it" : "Keep them";
+}
+export function appDefaultsWord(n: number): string {
+  return n === 1 ? "Use the app's default" : "Use the app's defaults";
+}
+/** The footer's name for that card ("1 left: Gemini's practice choices. Then Accept."). */
+export const CHOICES_PLAN_LEVEL = "Gemini's practice choices";
+/** A Gemini reorder of the outline, put back to yours in one tap (the arrangement line's button). */
+export const KEEP_MY_ORDER_WORD = "Keep my order";
+/** A stage of a plan you wrote yourself: code's own practice for it, in one tap (roadmap-ui-model appPracticeOf). */
+export const APP_PRACTICE_WORD = "Add the app's practice";
+/**
+ * Under a practice that takes turns with another, week about (roadmap-ui-model
+ * practiceTurnOf; contracts §20.12): its label already names both weeks, so
+ * this says only why, the lead's ruling 1 (alternate rather than dilute).
+ */
+export const PRACTICE_TURN_LINE = "Week about, so neither gets cut to one session a week.";
 
 /**
  * The line under Gemini's choice: how many options the stage offered and the

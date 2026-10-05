@@ -785,22 +785,22 @@
     },
     "stages": {
       "FOUNDATION": {
-        "practiceFit": false
+        "practiceFit": true
       },
       "FAMILIAR": {
         "practiceFit": false
       },
       "RETAINED": {
-        "practiceFit": false
+        "practiceFit": true
       },
       "FLUENT": {
-        "practiceFit": false
+        "practiceFit": true
       },
       "MASTERED": {
-        "practiceFit": false
+        "practiceFit": true
       }
     },
-    "arrangementKeepsOrder": false,
+    "arrangementKeepsOrder": true,
     "gaps": []
   }
 }

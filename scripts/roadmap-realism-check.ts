@@ -72,6 +72,7 @@ import {
 } from "../src/lib/roadmap-catalog";
 import type { Track } from "../src/lib/life-types";
 import {
+  addStagePracticesOf,
   applyRemedy,
   availableFor,
   blockedKindsOf,
@@ -92,6 +93,7 @@ import {
   refit,
   refitForStart,
   remedyTargetDay,
+  slotProgressionOf,
   splitWindows,
   stageLadderOf,
   startSnapshotOf,
@@ -1826,9 +1828,9 @@ console.log("— rev 4: keep the depth, move the date (F-R4-11) —");
   // The practice progression (contracts §20): checkpoints escalate (self-tests, then the exam itself on its stage; none between a
   // dated exam and the last stage but the last's performance check), BOOK_EXAM on the first stage.
   eq(
-    "an exam on day 180: the depth stays Mastered; EXAM_DAY sits in the stage holding it (Fluent, due 244), a self-test before, the mock test on the stage before the exam's (its run-up, contracts §20.11), nothing after the exam; BOOK_EXAM in the first; reachByExam level 8",
+    "an exam on day 180: the depth stays Mastered; EXAM_DAY sits in the stage holding it (Fluent, due 244), a self-test before, the mock test on the stage before the exam's (its run-up, contracts §20.11); after the exam the plan climbs on toward the depth, measured again (a self-test, then the performance check on the last: the lead's ruling 3, contracts §20.12); BOOK_EXAM in the first; reachByExam level 8",
     [cardMeasures(finalOf(exam.plan))[0].measureKey, checkpoints, exam.plan[0].items.some((i) => i.catalogKey === "BOOK_EXAM"), exam.dateCheck!.reachByExam, exam.dateCheck!.verdict],
-    ["CARDS_AT_LEVEL|d:a|L12|rc", ["", "SELF_TEST", "MOCK_TEST", "EXAM_DAY", "", ""], true, 8, "FITS"]
+    ["CARDS_AT_LEVEL|d:a|L12|rc", ["", "SELF_TEST", "MOCK_TEST", "EXAM_DAY", "SELF_TEST", "PERFORMANCE_CHECK"], true, 8, "FITS"]
   );
   check(
     "… timed practice on the exam's stage alone (its rehearsal, contracts §20.3), never another; the exam line stays on the plan",
@@ -2121,9 +2123,9 @@ console.log("— rev 4: track plans (F-R4-10) —");
   // A CARE plan asks whatever its words (contracts §19, decision 1): the user's "Nothing to avoid" lets the performance check in.
   const short = ladder4("125 days", stageLadderOf(answeredIntake(ik4({ aim: "Keep the house running", fieldId: null, track: "CARE", domainIds: [], targetDay: at4(125), dateMode: "CHOSEN" })), in4({ trackArea: true, depth: null, targetDay: at4(125) }, []), names4, mk4));
   eq(
-    "the merge rule on a 125-day track plan keeps two rows, which stand at the first and the last stage by position (the base is never skipped), the last with its performance check (the card answered)",
+    "the merge rule on a 125-day track plan keeps two rows, which climb consecutive stages from the base (the lead's ruling 4: STAGE_1 then STAGE_2, never a jump to STAGE_5), the last with its performance check (the card answered)",
     [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")],
-    [["STAGE_1@76", "STAGE_5@125"], true]
+    [["STAGE_1@76", "STAGE_2@125"], true]
   );
   const mt = motivationTimelineOf(short.plan, in4({ trackArea: true, depth: null, targetDay: at4(125) }, []));
   eq("… a track plan ranks its k-th kept stage k, and can't give Paragon in 125 days", [mt.rankDays, mt.paragonDay], [[76, 125], null]);
@@ -2617,22 +2619,30 @@ console.log("— the practice progression on every built plan (contracts §20; R
     json(samePick.items.map((i) => [i.catalogKey, i.decision, i.notes]))
   );
 
-  // A short track plan keeps its base (the stages by position, never the later merged key): the first row is STAGE_1
-  // (STAGE_2 from a working or strong start), the last STAGE_5, the ones between spread evenly; five rows are 1..5.
+  // A short track plan keeps its base and climbs consecutive stages (the lead's ruling 4: never the later merged key, never
+  // a jump): the first row is STAGE_1 (STAGE_2 from a working or strong start), each next row the next stage; five rows are 1..5.
   eq(
-    "trackStagePlacesOf: n rows → stages by position (a new start, then a working one)",
-    [[1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "NEW")), [1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "WORKING")), trackStagePlacesOf(2, "STRONG"), trackStagePlacesOf(0, "NEW")],
-    [[[1], [1, 5], [1, 3, 5], [1, 2, 4, 5], [1, 2, 3, 4, 5]], [[2], [2, 5], [2, 4, 5], [2, 3, 4, 5], [1, 2, 3, 4, 5]], [2, 5], []]
+    "trackStagePlacesOf: n rows → consecutive stages from the base (a new start, then a working one)",
+    [[1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "NEW")), [1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "WORKING")), trackStagePlacesOf(2, "STRONG"), trackStagePlacesOf(0, "NEW"), trackStagePlacesOf(7, "NEW")],
+    [[[1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5]], [[2], [2, 3], [2, 3, 4], [2, 3, 4, 5], [1, 2, 3, 4, 5]], [2, 3], [], [1, 2, 3, 4, 5]]
   );
   const runIk = (days: number, startPoint: RT.StartPoint) => answeredIntake(ik4({ aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], targetDay: at4(days), dateMode: "CHOSEN", depth: null, startPoint }));
   const runIn = (days: number, startPoint: RT.StartPoint) => in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(days), startPoint }, []);
   const run4 = ladder4("a 4-month 10K", stageLadderOf(runIk(120, "NEW"), runIn(120, "NEW"), {}, mk4));
   const run4w = ladder4("a 4-month 10K, working", stageLadderOf(runIk(120, "WORKING"), runIn(120, "WORKING"), {}, mk4));
   const kinds0 = (r: Ok) => livePractices(r.plan[0]).map((i) => i.catalogKey);
+  const kindsLast = (r: Ok) => live(r.plan[r.plan.length - 1]).map((i) => i.catalogKey);
   eq(
-    "a 4-month 10K for a new runner (“Nothing to avoid”) opens on the base (STAGE_1: easy and mobility), never longer sessions from week 1, and still closes on STAGE_5; from a working start it opens on technique",
-    [shape(run4.plan), kinds0(run4), shape(run4w.plan), kinds0(run4w)],
-    [["STAGE_1@76", "STAGE_5@120"], ["EASY_SESSION", "MOBILITY_SESSION"], ["STAGE_2@76", "STAGE_5@120"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION", "EASY_SESSION"]]
+    "a 4-month 10K for a new runner (“Nothing to avoid”) opens on the base (STAGE_1: easy and mobility), never longer sessions from week 1, and climbs to STAGE_2 (technique, the easy base carried, the full attempt and the check there), never jumping to STAGE_5's harder sessions; from a working start it opens on technique and climbs to STAGE_3 (the longer session)",
+    [shape(run4.plan), kinds0(run4), kindsLast(run4), shape(run4w.plan), kinds0(run4w), kindsLast(run4w)],
+    [
+      ["STAGE_1@76", "STAGE_2@120"],
+      ["EASY_SESSION", "MOBILITY_SESSION"],
+      ["TECHNIQUE_SESSION", "EASY_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"],
+      ["STAGE_2@76", "STAGE_3@120"],
+      ["TECHNIQUE_SESSION", "MOBILITY_SESSION", "EASY_SESSION"],
+      ["LONGER_SESSION", "TECHNIQUE_SESSION", "EASY_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"],
+    ]
   );
   check(
     "…every short track plan keeps every rule of the progression, and each stage key's slot goes to the row that holds it",
@@ -2643,12 +2653,177 @@ console.log("— the practice progression on every built plan (contracts §20; R
   // Gemini's pick for a stage key merged into a row reaches that row when it is one of the row's own candidates.
   const craftIk = ik4({ aim: "Play a piece", fieldId: null, track: "CRAFT", domainIds: [], targetDay: at4(120), dateMode: "CHOSEN", depth: null });
   const craftIn = in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(120) }, []);
-  const merged = ladder4("a merged CRAFT plan with picks", stageLadderOf(craftIk, craftIn, {}, mk4, { picks: { STAGE_3: "WITH_A_PARTNER", STAGE_2: "TECHNIQUE_SESSION" } }));
+  const merged = ladder4("a merged CRAFT plan with picks", stageLadderOf(craftIk, craftIn, {}, mk4, { picks: { STAGE_4: "WITH_A_PARTNER", STAGE_3: "SLOW_DRILLS" } }));
   eq(
-    "a pick made for a merged stage key (STAGE_3: a teacher or partner) reaches the row that holds it (STAGE_5, where it is a candidate), GEMINI_PICK; one that isn't a candidate there (technique) is left out",
+    "a pick made for a merged stage key (STAGE_3: slow drills) reaches the row that holds it (STAGE_2, where it is a candidate: its default, so the focus reads as Gemini's), GEMINI_PICK; one that isn't a candidate there (STAGE_4: a teacher or partner) is left out",
     [shape(merged.plan), merged.plan.map((m) => livePractices(m).filter((i) => i.notes.includes("GEMINI_PICK")).map((i) => i.catalogKey))],
-    [["STAGE_1@76", "STAGE_5@120"], [[], ["WITH_A_PARTNER"]]]
+    [["STAGE_1@76", "STAGE_2@120"], [[], ["SLOW_DRILLS"]]]
   );
+
+  // The lead's ruling 6: a plan the user writes stays theirs. A re-fit with PlaceOpts.manual sizes what its stages hold and
+  // places nothing; "Add the app's practice" (addStagePracticesOf) adds one practice at a tap to one stage only, the next
+  // the progression places there, read with every other stage as it stands (the stage before's own practice is what it carries).
+  {
+    const skeleton = ladder4("a skeleton", stageLadderOf(learnerIk, learnerIn(), names4, mk4, { items: "NONE" }));
+    const judge = judgeIn(learnerIn(), skeleton.plan);
+    const once = fitPlan(skeleton.plan, judge, { intake: learnerIk, manual: true });
+    const twice = fitPlan(once, judge, { intake: learnerIk, manual: true });
+    const runSkIk = runIk(300, "NEW");
+    const runSk = ladder4("a track skeleton", stageLadderOf(runSkIk, runIn(300, "NEW"), {}, mk4, { items: "NONE" }));
+    const runOnce = fitPlan(runSk.plan, runIn(300, "NEW"), { intake: runSkIk, manual: true });
+    check(
+      "“Write it myself” stays the user's (the lead's ruling 6): a re-fit with PlaceOpts.manual places nothing on a depth or a track skeleton, twice over, where a re-fit without it puts the progression on every stage",
+      [once, twice, runOnce].every((p) => p.every((m) => live(m).length === 0)) && fitPlan(skeleton.plan, judge, { intake: learnerIk }).every((m) => livePractices(m).length > 0),
+      json([once.map(kindsOfRow), runOnce.map(kindsOfRow)])
+    );
+    const famAt = once.findIndex((m) => m.stage === "FAMILIAR");
+    const retAt = once.findIndex((m) => m.stage === "RETAINED");
+    const recallRow = learner.plan.flatMap((m) => m.items).find((i) => i.catalogKey === "RECALL_DRILLS") as RT.ItemDraft;
+    const mine: RT.ItemDraft = { ...recallRow, lineageId: "u-recall", origin: "USER", decision: "EDITED", notes: [], planSource: "WORKED_OUT" };
+    const withOwn = once.map((m, k) => (k === famAt ? { ...m, items: [...m.items, { ...mine, ord: m.items.length }] } : m));
+    const tap = (p: readonly RT.MilestoneDraft[]) => addStagePracticesOf(p, p[retAt].lineageId, learnerIk, judge, names4, mk4);
+    const taps = [tap(withOwn)];
+    for (let k = 0; k < 4; k++) taps.push(tap(taps[taps.length - 1]));
+    const added = taps[taps.length - 1];
+    // What the progression places on Retained with every other stage read as it stands (planProgressionOf: an accepted row is carried).
+    const asRead = planProgressionOf(
+      withOwn.map((m, k) => (k === retAt ? m : { ...m, status: "PLANNED" as RT.MilestoneStatus })),
+      learnerIk,
+      judge
+    );
+    const wantInOrder = (asRead.progression.stages[asRead.rows.findIndex((m) => m.lineageId === withOwn[retAt].lineageId)]?.practices ?? []).map((x) => x.kind as string);
+    const wantRet = [...wantInOrder].sort();
+    const addedRows = added[retAt].items.filter((i) => i.decision !== "REMOVED" && i.kind === "PRACTICE");
+    // One practice a tap, in the progression's priority (the focus first), until the stage holds them all; then nothing changes.
+    const perTap = taps.map((p) => livePractices(p[retAt]).map((i) => i.catalogKey as string));
+    const oneAtATap = wantInOrder.every((_, k) => json(perTap[k]) === json(wantInOrder.slice(0, k + 1))) && json(taps[wantInOrder.length]) === json(taps[wantInOrder.length - 1]);
+    const again = tap(added);
+    const sized = fitPlan(added, judge, { intake: learnerIk, manual: true });
+    const minutesOfRow = (i: RT.ItemDraft) => (i.sessionsPerWeek ?? 0) * RT.practiceBandMinutes(i.durationBand!);
+    const sizedRet = livePractices(sized[retAt]);
+    const noFocus = withOwn.map((m, k) => (k === retAt ? { ...m, items: [...m.items, { ...recallRow, lineageId: "u-gone", catalogKey: "PROBLEM_SETS" as CatalogKey, decision: "REMOVED" as RT.Decision }] } : m));
+    const afterNo = [0, 1, 2, 3].reduce<readonly RT.MilestoneDraft[]>((p) => tap(p), noFocus);
+    const gatedTap = (p: readonly RT.MilestoneDraft[]) => addStagePracticesOf(p, p[retAt].lineageId, learnerIk, judge, names4, mk4, { excluded: ["MISTAKE_REVIEW"] });
+    const gated = [0, 1, 2, 3].reduce<readonly RT.MilestoneDraft[]>((p) => gatedTap(p), withOwn);
+    check(
+      "“Add the app's practice” on Retained (the lead's ruling 6): one practice a tap, the progression's for that stage alone in its priority (problem sets, its role's kind, first; then the carry of the user's own recall drills on Familiar; then the spaced review), code's words, no step or checkpoint; every other stage as it was; once all are in place a tap changes nothing",
+      oneAtATap &&
+        wantInOrder[0] === "PROBLEM_SETS" &&
+        json(addedRows.map((i) => i.catalogKey as string).sort()) === json(wantRet) &&
+        wantRet.includes("PROBLEM_SETS") &&
+        wantRet.includes("RECALL_DRILLS") &&
+        addedRows.every((i) => i.origin === "CODE" && i.decision === "KEPT") &&
+        !added[retAt].items.some((i) => i.kind === "STEP" || i.kind === "CHECKPOINT") &&
+        added.every((m, k) => k === retAt || json(m) === json(withOwn[k])) &&
+        json(again) === json(added),
+      json({ perTap, wantInOrder })
+    );
+    check(
+      "…sized by the manual re-fit (its focus weighed: problem sets train at least as long a week as each other practice), a kind the user removed there never comes back, and a kind the gate holds is never placed",
+      sizedRet.length === addedRows.length &&
+        sizedRet.every((i) => !!i.durationBand && (i.sessionsPerWeek ?? 0) >= 1) &&
+        sizedRet.every((i) => minutesOfRow(sizedRet.find((x) => x.catalogKey === "PROBLEM_SETS")!) >= minutesOfRow(i)) &&
+        !livePractices(afterNo[retAt]).some((i) => i.catalogKey === "PROBLEM_SETS") &&
+        !livePractices(gated[retAt]).some((i) => i.catalogKey === "MISTAKE_REVIEW") &&
+        livePractices(gated[retAt]).length >= 1,
+      json({ sized: sizedRet.map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`), afterNo: kindsOfRow(afterNo[retAt]), gated: kindsOfRow(gated[retAt]) })
+    );
+  }
+
+  // The lead's ruling 7: what the validator's progression reads of the dated plan (KeysOnlyContext.progression, R4's
+  // runDraftCore): each slot's room (the row holding it), and a dated exam's stage and run-up as slots, a BETWEEN row's as
+  // the gate before it (so the slots after it read as after the exam, as the rows after it do).
+  {
+    const SLOTS = ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"];
+    const slotsOf = (days: number | null, hours = 10) => {
+      const ik = ik4({ hoursPerWeek: hours, ...(days != null ? { examLabel: "JLPT N2", exam: true, examDay: at4(days) } : {}) });
+      const inp = learnerIn({ hoursPerWeek: hours, ...(days != null ? { examDay: at4(days) } : {}) });
+      const r = ladder4(`slots ${days}`, stageLadderOf(ik, inp, names4, mk4));
+      const judge = judgeIn(inp, r.plan);
+      const pp = planProgressionOf(r.plan, ik, judge);
+      return { r, pp, sp: slotProgressionOf(r.plan, ik, judge, SLOTS) };
+    };
+    const onFluent = slotsOf(180);
+    const inBetween = slotsOf(300);
+    const none = slotsOf(null);
+    const few = slotsOf(null, 1.5);
+    const roomsMatch = (x: ReturnType<typeof slotsOf>) =>
+      SLOTS.every((slot, j) => {
+        const k = x.pp.rows.findIndex((m, i) => m.stage === slot && !x.pp.progression.stages[i].held);
+        return k < 0 || x.sp.maxPractices[j] === (x.pp.input.maxPractices as (number | null)[])[k];
+      });
+    eq(
+      "slotProgressionOf: an exam in Fluent's window is the Fluent slot; one inside Toward Mastered reads as Fluent's slot (Mastered after it); no exam, none; each slot's room is its row's (at 1.5 h some under three)",
+      [
+        [onFluent.pp.rows[onFluent.pp.input.examStage as number]?.stage, onFluent.sp.examStage, (onFluent.sp.examPrepStage ?? 99) <= (onFluent.sp.examStage ?? -1)],
+        [inBetween.pp.rows[inBetween.pp.input.examStage as number]?.stage, inBetween.sp.examStage],
+        [none.sp.examStage, none.sp.examPrepStage],
+        [roomsMatch(onFluent) && roomsMatch(none) && roomsMatch(few), few.sp.maxPractices.some((r) => r != null && r < 3), few.sp.maxPractices.length],
+      ],
+      [["FLUENT", 3, true], ["BETWEEN", 3], [null, null], [true, true, 5]]
+    );
+  }
+
+  // One figure for a stage's room and its sizes (roomOf over allocate's ceiling): every stage holding two or more
+  // practices gives its focus at least two sessions a week (the room's promise), at every number of hours, with and
+  // without an exam, in every family; a focus whose method's band would leave it one session trains twice at a shorter band.
+  {
+    const thin: string[] = [];
+    let built = 0;
+    for (const hours of [1.5, 3, 4, 6])
+      for (const family of ["KNOW", "LANGUAGE", "PERFORM", "BUILD"] as const)
+        for (const day of [null, 180] as const) {
+          const ik = ik4({ hoursPerWeek: hours, practiceFamily: family, ...(day != null ? { examLabel: "IELTS", exam: true, examDay: at4(day) } : {}) });
+          const r = stageLadderOf(ik, learnerIn({ hoursPerWeek: hours, ...(day != null ? { examDay: at4(day) } : {}) }), names4, mk4);
+          if (!r.ok) continue;
+          built += 1;
+          for (const m of r.plan) {
+            const ps = livePractices(m);
+            if (ps.length >= 2 && (ps[0].sessionsPerWeek ?? 0) < 2) thin.push(`${hours}h ${family} ${day ?? "-"} ${m.stage}: ${ps.map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`).join(", ")}`);
+          }
+        }
+    check(
+      `the room and the sizes read one figure: in ${built} plans (1.5 to 6 h a week, four families, with and without an exam) every stage with two or more practices trains its focus at least twice a week`,
+      built >= 24 && thin.length === 0,
+      thin.slice(0, 4).join(" | ")
+    );
+  }
+
+  // A body plan's longer session stays a band above the easy one after allocate's leftover pass (it once raised the easy
+  // session to the longer one's band at 3 h a week): at 3, 4 and 5 h a week over 300 days, on every stage holding both;
+  // a longer session never past D90, a harder or longer one at most twice a week.
+  {
+    const bandAt = (i: RT.ItemDraft | undefined) => (i ? RT.PRACTICE_BANDS.indexOf(i.durationBand!) : -1);
+    const bodyAt = (hours: number) => {
+      const ik = answeredIntake(ik4({ aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], targetDay: at4(300), dateMode: "CHOSEN", depth: null, hoursPerWeek: hours }));
+      return ladder4(`10K at ${hours} h`, stageLadderOf(ik, in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(300), hoursPerWeek: hours }, []), {}, mk4)).plan;
+    };
+    const bad: string[] = [];
+    let both = 0;
+    const plans = [3, 4, 5].map((h) => ({ h, plan: bodyAt(h) }));
+    for (const { h, plan } of plans)
+      for (const m of plan) {
+        const ps = livePractices(m);
+        const easy = ps.find((i) => i.catalogKey === "EASY_SESSION");
+        const longer = ps.find((i) => i.catalogKey === "LONGER_SESSION");
+        if (easy && longer) {
+          both += 1;
+          if (!(bandAt(longer) > bandAt(easy))) bad.push(`${h}h ${m.stage}: longer ${longer.durationBand} vs easy ${easy.durationBand}`);
+        }
+        if (longer && bandAt(longer) > RT.PRACTICE_BANDS.indexOf("D90")) bad.push(`${h}h ${m.stage}: longer ${longer.durationBand}`);
+        for (const i of ps) if ((i.catalogKey === "HARDER_SESSION" || i.catalogKey === "LONGER_SESSION") && (i.sessionsPerWeek ?? 0) > 2) bad.push(`${h}h ${m.stage}: ${i.catalogKey} ${i.sessionsPerWeek}/wk`);
+      }
+    const at3 = plans[0].plan.find((m) => m.stage === "STAGE_3");
+    check(
+      "a body plan's longer session stays a band above the easy one after the leftover pass (300 days at 3, 4 and 5 h a week: every stage holding both), never past D90, a harder or longer session at most twice a week; at 3 h Stage 3's longer session is the long one (D60 beside an easy D30, not two D45s)",
+      both >= 6 &&
+        bad.length === 0 &&
+        !!at3 &&
+        livePractices(at3).find((i) => i.catalogKey === "LONGER_SESSION")?.durationBand === "D60" &&
+        bandAt(livePractices(at3).find((i) => i.catalogKey === "EASY_SESSION")) < RT.PRACTICE_BANDS.indexOf("D60"),
+      json([bad, plans.map(({ h, plan }) => [h, plan.map((m) => livePractices(m).map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`))])])
+    );
+  }
 
   // The allocation weighs the focus (contracts §20.6; the third practice never thins it to the others' size): on every
   // stage of the learner's plan at 10 h the focus trains at least as long a week as any other practice, every week of

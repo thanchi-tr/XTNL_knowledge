@@ -156,6 +156,7 @@
   .rm-how[open] > summary svg { transform: rotate(90deg); }
   .rm-how ol { margin: 0 0 6px 20px; padding: 0; list-style: decimal; font-size: 13px; line-height: 19px; color: var(--ink-1); }
   .rm-how ol li + li { margin-top: 2px; }
+  .rm-how-k { margin: 6px 0 2px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-0); }
 
   /* ---------- the Milestones list ---------- */
   .rm-ml + .rm-ml { border-top: 1px solid var(--line-1); }
@@ -454,6 +455,8 @@
   .rm-excl .t-meta + .t-meta { margin-top: 6px; }
   .rm-arr { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; font-size: 13px; line-height: 18px; color: var(--ink-1); }
   .rm-arr > svg { width: 18px; height: 18px; flex: none; color: var(--ink-1); }
+  .rm-arr-b { min-width: 0; overflow-wrap: anywhere; }
+  .rm-arr-b .rm-acts { margin-top: 8px; }
   .rm-lines-card .t-meta { margin: 6px 0 0; }
   .rm-pv-pick { border: 1px dashed var(--line-ctl); color: var(--ink-1); }
   .rm-pv-app { color: var(--ink-1); }

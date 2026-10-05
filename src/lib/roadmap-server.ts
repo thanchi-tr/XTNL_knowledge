@@ -197,6 +197,28 @@
  *     one, and a changed family re-syncs the draft (draftGateOps).
  *
  *   Picks     DECIDE_PRACTICE_PICKS · PRACTICE_PICKS_CHOICE · NOTHING_TO_ARRANGE
+ *
+ * The lead's rulings after the progression's review (R4's half):
+ *   - Ruling 6, a plan the user writes stays theirs: when a MANUAL run wrote
+ *     the rows ("Write it myself", an "Edit by hand" re-plan; manualPlanOf,
+ *     PlanContext.manual), every re-fit, re-date and re-sync passes R2's
+ *     PlaceOpts.manual and fills nothing (the gate still holds); a re-date
+ *     lands on the stage skeleton. "Add the app's practice"
+ *     (addAppPracticeCore) adds one practice a tap to one stage, the next the
+ *     progression places there (R2's addStagePracticesOf). "Write it myself"
+ *     on a Field depth plan names its stages over R (the skeleton needs the
+ *     Domains' names).
+ *   - Ruling 7: the views' header carries the practice family in force
+ *     (RoadmapHeaderView.practiceFamily); runDraftCore's validation reads the
+ *     dated plan's progression (KeysOnlyContext.progression, R2's
+ *     slotProgressionOf); "Keep my order" (keepMyOrderCore) puts Gemini's
+ *     reorder of the outline back to the user's; a pending Gemini pick on a
+ *     Field plan is kept with "I checked this" (decideItemCore CHECKED) or
+ *     the plan-wide confirmSessionPicksCore KEEP or DEFAULT.
+ *   - A practice that takes turns with another (contracts §20.12) is code's
+ *     in its pair's words too (codeLabelOk over practiceLabelsOf).
+ *
+ *   Rulings  addAppPracticeCore · APP_PRACTICE_IN_PLACE · keepMyOrderCore · keptOrderOf · ORDER_ALREADY_YOURS · RoadmapHeaderView
  */
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -520,6 +542,7 @@ import {
   isSessionPickKind,
   practiceFamilyOf,
   practiceFamilyOfCoverage,
+  practiceLabelsOf,
   practiceRoleOf,
   progressionCandidatesOf,
   withActivityPointer,
@@ -1924,7 +1947,11 @@ function codeFillCandidates(it: ItemDraft, m: MilestoneDraft, ctx: ModelTextCont
   return out.filter((x) => x.length > 0);
 }
 
-/** A CODE item's words are its catalog render (or rev 3's two code names), for some fill code writes; an EDITED row is the user's. */
+/**
+ * A CODE item's words are its catalog render (or rev 3's two code names), for some fill code writes; an EDITED row is the user's.
+ * A practice that takes turns with another, week about (contracts §20.12), is code's in its pair's words too (roadmap-catalog
+ * practiceLabelsOf: its own render and each turn PRACTICE_TURNS lists for it).
+ */
 function codeLabelOk(it: ItemDraft, m: MilestoneDraft, ctx: ModelTextContext): boolean {
   if (it.decision === "EDITED") return true;
   const aim = yoursText("USER", "EDITED", ctx.aim ?? "") ?? undefined;
@@ -1932,16 +1959,17 @@ function codeLabelOk(it: ItemDraft, m: MilestoneDraft, ctx: ModelTextContext): b
   const track: CatalogTrack = ctx.track ?? "FIELD";
   const lists = codeFillCandidates(it, m, ctx);
   if (it.catalogKey) {
-    const fills = lists.length ? lists : [[]];
-    for (const names of fills) {
+    const fills = (lists.length ? lists : [[]]).map((names) => ({ track, domains: names.map((n) => domainName({ id: "", name: n })), aim, exam }));
+    for (const fill of fills) {
       try {
-        const label = catalogLabelOf(it.catalogKey, { track, domains: names.map((n) => domainName({ id: "", name: n })), aim, exam });
-        if (String(label) === it.label) return true;
+        if (String(catalogLabelOf(it.catalogKey, fill)) === it.label) return true;
       } catch {
         // That fill doesn't render this type; the next one may.
       }
     }
-    return false;
+    // A practice's turn with another (only a Field practice takes one): its pair's words, for some fill code writes.
+    if (track !== "FIELD" || it.kind !== "PRACTICE") return false;
+    return fills.some((fill) => practiceLabelsOf(it.catalogKey as CatalogKey, fill).some((label) => String(label) === it.label));
   }
   // Rev 3's code names without a catalog key: "Study {domains}" and "Practice for {aim}".
   if (ctx.aim && it.label === `Practice for ${ctx.aim}`) return true;
@@ -2888,7 +2916,7 @@ async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: Road
   let afters = gatePlanRows(drafts, gate, trackArea, e.makeId);
   if (moved || switched) {
     try {
-      const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
+      const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group), b);
       afters = regatedDrafts(e, ctx, [], drafts, switched ? null : before.blocked);
     } catch (err) {
       console.error("roadmap: the draft wasn't re-synced to the new words (the blocked kinds left it):", err instanceof Error ? err.message : err);
@@ -3209,6 +3237,15 @@ interface PlanContext {
    * every Domain reads today's library (a DRAFT roadmap's own draft writes).
    */
   coveragePrior?: readonly CoverageBreakdown[] | null;
+  /**
+   * The lead's ruling 6: a plan the user writes ("Write it myself", an "Edit
+   * by hand" re-plan; manualPlanOf: a MANUAL run wrote the rows on screen).
+   * Every re-fit, re-date and re-sync passes it to R2 (PlaceOpts.manual), so
+   * code never fills it; the gate still holds (gatePlanRows), and the app's
+   * practices reach a stage only when the user asks (addAppPracticeCore).
+   * Absent: false (code's plan).
+   */
+  manual?: boolean;
 }
 
 /** All-calibrating throughput: what the engines read when the loader fails (logged), never invented figures. */
@@ -3269,8 +3306,12 @@ function areaNameOf(roadmap: Pick<RoadmapRec, "fieldId" | "track">, tree: readon
  * contracts §15.3): the coverage whose counts are frozen — coveragePriorOf(b)
  * on a roadmap already accepted (and, at the first acceptance or on its draft
  * view, the draft rows' own); null on a DRAFT roadmap's draft writes.
+ * `writer` (the lead's ruling 6): the roadmap's bundle when the caller re-fits
+ * its rows, so the context says whether the user writes the plan
+ * (PlanContext.manual, manualPlanOf); absent, it is code's.
  */
-async function planContext(e: Env, userId: string, roadmap: RoadmapRec, now: Date, coveragePrior: readonly CoverageBreakdown[] | null = null): Promise<PlanContext> {
+async function planContext(e: Env, userId: string, roadmap: RoadmapRec, now: Date, coveragePrior: readonly CoverageBreakdown[] | null = null, writer?: RoadmapBundle): Promise<PlanContext> {
+  const manual = writer ? await manualPlanOf(e, writer) : false;
   const today = todayKey(now);
   const intake = intakeOf(roadmap);
   const until = intake.targetDay > today ? intake.targetDay : addDays(today, SPAN_MIN_DAYS);
@@ -3308,7 +3349,28 @@ async function planContext(e: Env, userId: string, roadmap: RoadmapRec, now: Dat
     graceExtraDays,
     retryEntry: await retryEntriesOf(e, userId, roadmap, tree, today, mm, graceExtraDays),
     coveragePrior,
+    ...(manual ? { manual } : {}),
   };
+}
+
+/** R2's PlaceOpts.manual for a context (the lead's ruling 6): set only on a plan the user writes. */
+const manualOpt = (ctx: Pick<PlanContext, "manual">): { manual?: true } => (ctx.manual === true ? { manual: true } : {});
+
+/**
+ * The lead's ruling 6: a plan the user writes stays theirs. True when the
+ * rows on screen were written by a MANUAL run ("Write it myself" on a draft,
+ * an "Edit by hand" re-plan, a line's Domain changed on an accepted plan):
+ * rowsWriterFor, newest first, a FAILED Gemini run read in full for its
+ * starter marker. A "Build from my numbers", a "Re-fit to my numbers" or a
+ * Gemini draft after it is code's again. Unreadable: false (code's plan).
+ */
+async function manualPlanOf(e: Env, b: RoadmapBundle): Promise<boolean> {
+  try {
+    return (await rowsWriterFor(e, b, null)).wrote === "MANUAL";
+  } catch (err) {
+    console.error("roadmap: the rows' writer wasn't read (read as code's plan):", err instanceof Error ? err.message : err);
+    return false;
+  }
 }
 
 /**
@@ -3781,7 +3843,8 @@ export function transplantOnto(old: readonly MilestoneDraft[], ladder: readonly 
  * do) refuses the change in its words.
  */
 function redraftOf(e: Env, ctx: PlanContext, drafts: readonly MilestoneDraft[], carried: readonly MilestoneDraft[], required: readonly string[]): { ok: true; plan: MilestoneDraft[]; feasibility: Feasibility } | { ok: false; error: string } {
-  const ladder = ladderOf(e, { ...ctx, intake: withRequired(ctx.intake, required) }, required);
+  // A plan the user writes (the lead's ruling 6) is re-dated onto the stage skeleton: a stage new to it comes empty.
+  const ladder = ladderOf(e, { ...ctx, intake: withRequired(ctx.intake, required) }, required, ctx.manual === true ? "NONE" : "STARTER");
   if (!ladder.ok) return ladder;
   const carriedStages = new Set(carried.map((m) => `${m.stage ?? ""}:${gateLevelOf(m) ?? ""}`));
   const fresh = ladder.plan.filter((m) => !carriedStages.has(`${m.stage ?? ""}:${gateLevelOf(m) ?? ""}`));
@@ -3863,7 +3926,8 @@ function regatedDrafts(
   const trackArea = ctx.intake.fieldId == null;
   const pruned = gatePlanRows(drafts, gate, trackArea, e.makeId);
   let filled = pruned;
-  if (trackArea) {
+  // A plan the user writes (the lead's ruling 6) is never filled: the gate's blocked kinds leave it, and nothing takes their place.
+  if (trackArea && ctx.manual !== true) {
     try {
       const all = [...carried, ...pruned];
       filled = e.lanes.syncTrackStarter(all, ctx.intake, e.makeId, { gate, excluded: gate.blocked, input: realismInputOf(ctx, all), ...(since ? { since } : {}) }).filter((d) => !isCarried(d));
@@ -3890,7 +3954,7 @@ function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraf
   const gated = gatePlanRows(plan, gate, trackArea, e.makeId);
   try {
     const all = [...carried, ...gated];
-    const fitted = gatePlanRows(e.lanes.fitPlan(all, realismInputOf(ctx, all), { excluded: gate.blocked, intake: ctx.intake, picks: replyPicks }), gate, trackArea, e.makeId).filter((d) => !isCarried(d));
+    const fitted = gatePlanRows(e.lanes.fitPlan(all, realismInputOf(ctx, all), { excluded: gate.blocked, intake: ctx.intake, picks: replyPicks, ...manualOpt(ctx) }), gate, trackArea, e.makeId).filter((d) => !isCarried(d));
     if (fitted.length !== gated.length) return gated;
     return fitted.map((d, i) => {
       const row = { ...d, stage: d.stage ?? gated[i].stage };
@@ -3912,14 +3976,16 @@ function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraf
  * archiving cards the aim is never reached short of its end state, and after
  * writing more the plan never asks for more than the aim. With no prior (a
  * DRAFT roadmap's first draft) the counts are today's, as R2 reads them.
+ * `items` NONE (a plan the user writes, the lead's ruling 6): the stage
+ * skeleton with the outline's lines, no practice, step or checkpoint.
  */
-function ladderOf(e: Env, ctx: PlanContext, required: readonly string[]): { ok: true; plan: MilestoneDraft[] } | { ok: false; error: string } {
+function ladderOf(e: Env, ctx: PlanContext, required: readonly string[], items: "STARTER" | "NONE" = "STARTER"): { ok: true; plan: MilestoneDraft[] } | { ok: false; error: string } {
   const intake = withRequired(ctx.intake, required);
   const counts = frozenCountsOf(ctx, required, ctx.coveragePrior);
   // Confirm to unlock (contracts §19): the plan's one gate; R2 places no kind it blocks, and a fixture or older lane's
   // ladder is held to it here too (gatePlanRows).
   const gate = gateOf(e, ctx);
-  const res = e.lanes.stageLadderOf(intake, realismInputOf({ ...ctx, intake }, [], [required]), requiredNamesOf(ctx, required), e.makeId, { counts, gate, excluded: gate.blocked });
+  const res = e.lanes.stageLadderOf(intake, realismInputOf({ ...ctx, intake }, [], [required]), requiredNamesOf(ctx, required), e.makeId, { counts, gate, excluded: gate.blocked, ...(items === "NONE" ? { items, lines: true } : {}) });
   return res.ok ? { ok: true, plan: gatePlanRows(res.plan, gate, intake.fieldId == null, e.makeId) } : { ok: false, error: res.error };
 }
 
@@ -3949,6 +4015,15 @@ function planFromReply(
     domainNames[id] = d.name;
     listedNames[id] = domainName(d);
   }
+  // The dated ladder the reply is placed on, worked out first: the validator's own progression over the slots reads its
+  // rooms and the exam's stage and run-up (the lead's ruling 7: KeysOnlyContext.progression), so the picks it keeps and
+  // what it logs (keys.pick-code, keys.pick-reshaped) agree with R2's plan.
+  let ladder: readonly MilestoneDraft[] | null = extra.ladder ?? null;
+  if (!ladder) {
+    const res = ladderOf(e, ctx, required);
+    ladder = res.ok ? res.plan : null;
+  }
+  const progression = ladder && ladder.length > 0 ? slotProgressionFor(e, ctx, ladder, slots, required) : null;
   const checked = e.lanes.validateKeysOnly(parsed, {
     pack,
     intake: ctx.intake,
@@ -3966,16 +4041,12 @@ function planFromReply(
     areaName: ctx.areaName,
     gapSourceExclude: extra.gapSourceExclude,
     schema: extra.schema,
+    ...(progression ? { progression } : {}),
   });
   // Confirm to unlock (contracts §19): a pick of a kind the gate blocks never reaches the plan (dropped before the caps,
   // so it never crowds out an allowed one), whatever the run's enums offered; the report says so as R3's validator does.
   const gate = gateOf(e, ctx);
   const validated: ValidatedDraft = gateValidated({ ...checked, report: { ...checked.report, integrity } }, gate);
-  let ladder: readonly MilestoneDraft[] | null = extra.ladder ?? null;
-  if (!ladder) {
-    const res = ladderOf(e, ctx, required);
-    ladder = res.ok ? res.plan : null;
-  }
   if (!ladder || ladder.length === 0) return { plan: null, feasibility: null, validated };
   // Gemini's part (contracts §20): the outline's learning order and one pick per stage among code's candidates. The
   // practices, steps and checkpoints are the progression's (R2's), each valid pick added beside its stage's focus.
@@ -4001,6 +4072,40 @@ function planFromReply(
     extra.memo.set(key, { plan, feasibility });
   }
   return { plan, feasibility, validated };
+}
+
+/** slotProgressionFor's reading per ladder object (a WeakMap: a ladder gone is a reading gone). */
+const SLOT_PROGRESSION_MEMO = new WeakMap<object, { key: string; value: NonNullable<validate.KeysOnlyContext["progression"]> }>();
+
+/**
+ * What the validator's progression reads of the dated plan (the lead's ruling
+ * 7; R3's KeysOnlyContext.progression, contracts §20.7): R2's
+ * slotProgressionOf over the ladder the reply is placed on, through the
+ * plan's gate (each slot's room, a dated exam's stage and its run-up as
+ * slots). null when it can't be worked out (logged): the validator then
+ * reads its own defaults, as before.
+ */
+function slotProgressionFor(
+  e: Env,
+  ctx: PlanContext,
+  ladder: readonly MilestoneDraft[],
+  slots: readonly string[],
+  required: readonly string[]
+): NonNullable<validate.KeysOnlyContext["progression"]> | null {
+  try {
+    const intake = withRequired(ctx.intake, required);
+    const gate = gateOf(e, ctx);
+    // One reading per ladder (the bar places every reply of a run on one ladder object): keyed on what else it reads.
+    const key = JSON.stringify([slots, required, gate.blocked, ctx.today]);
+    const hit = SLOT_PROGRESSION_MEMO.get(ladder);
+    if (hit && hit.key === key) return hit.value;
+    const value = realism.slotProgressionOf(ladder, intake, realismInputOf({ ...ctx, intake }, ladder, [required]), slots, { gate, excluded: gate.blocked });
+    SLOT_PROGRESSION_MEMO.set(ladder, { key, value });
+    return value;
+  } catch (err) {
+    console.error("roadmap: the plan's progression wasn't read for the reply's validation (its defaults):", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /**
@@ -4621,11 +4726,15 @@ async function buildInHouse(userId: string, roadmapId: string, kind: "INHOUSE" |
     try {
       if (kind === "INHOUSE") built = starterPlan(e, ctx);
       else {
+        const required = requiredOfPlan(ctx);
         if (ctx.intake.fieldId != null && isAimDepth(ctx.intake.depth)) {
-          const ladder = ladderOf(e, ctx, requiredOfPlan(ctx));
+          const ladder = ladderOf(e, ctx, required);
           if (!ladder.ok) return fail(ladder.error);
         }
-        const plan = e.lanes.manualLadder(ctx.intake, realismInputOf(ctx, [], [ctx.intake.domainIds]), e.makeId);
+        // The stage skeleton names its stages over R, so it needs R's names (R2 builds none without them on a Field Area).
+        const intake = withRequired(ctx.intake, required);
+        const names = requiredNamesOf(ctx, required.length ? required : ctx.intake.domainIds);
+        const plan = e.lanes.manualLadder(intake, realismInputOf({ ...ctx, intake }, [], [required.length ? required : ctx.intake.domainIds]), e.makeId, names);
         built = { plan, feasibility: feasibilityFor(e, ctx, plan), report: null };
       }
     } catch (err) {
@@ -4815,15 +4924,15 @@ async function rewrite(
   let next = drafts;
   if (opts.structural && m.status !== "PLANNED") {
     try {
-      const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+      const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
       // An ACTIVE roadmap's re-plan draft is fitted beside the milestones already carried (their capacity and due
       // days, fix round 2); only the draft's rows come back to be written.
       const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
       const plan = [...carried, ...drafts];
       // R2's re-fit names the stages' code labels: a pending Gemini addition is hidden from it (withPendingHidden); it adds
-      // no stage practice of a kind the plan's gate blocks (contracts §19).
+      // no stage practice of a kind the plan's gate blocks (contracts §19), and none at all to a plan the user writes (ruling 6).
       const blocked = gateOf(e, ctx).blocked;
-      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake })).filter((d) => !isCarried(d));
+      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake, ...manualOpt(ctx) })).filter((d) => !isCarried(d));
     } catch (err) {
       console.error("roadmap: re-fit after an edit failed; saved without it:", err);
     }
@@ -5717,7 +5826,7 @@ async function createFromSuggestion(
   const d = created ?? (existing ? { id: existing.id, name: existing.name } : null);
   if (!d) return fail("Couldn't create the Domain.");
   const fresh = await e.io.fieldTree();
-  const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+  const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
   const drafts = rows.map(draftOf);
   const withDomain = drafts.map((x) => {
     const items = x.items.map((i) => (i.id === item.id ? { ...i, decision: "REMOVED" as Decision } : i));
@@ -5775,12 +5884,12 @@ async function applyRemedyUnpointed(userId: string, roadmapId: string, remedy: R
     // Keep the depth, move the date (F-R4-11): a depth plan is offered the realistic date and a lower depth, never a fitted-down plan.
     if (depthOf(b.roadmap) != null) return useRealisticDate(e, userId, b, remedy, now);
     if (remedy === "USE_REALISTIC_DATE" || remedy === "LOWER_DEPTH") return fail("That remedy is for a plan aimed at a depth.");
-    const ctx = await planContext(e, userId, b.roadmap, now);
+    const ctx = await planContext(e, userId, b.roadmap, now, null, b);
     // The milestones already carried, at their one due day and without a row their copy replaces (fix round 2).
     const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
     const drafts = group.map(draftOf);
     const input = realismInputOf(ctx, [...carried, ...drafts]);
-    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake }).filter((d) => !isCarried(d));
+    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake, ...manualOpt(ctx) }).filter((d) => !isCarried(d));
     const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["DRAFT", "ACTIVE"], version: b.roadmap.version } }];
     if (remedy === "MOVE_DATE") {
       // R2's remedyTargetDay (inside applyRemedy) picks the first Sunday that fits, at most today + SPAN_MAX_DAYS.
@@ -5823,7 +5932,7 @@ async function useRealisticDate(e: Env, userId: string, b: RoadmapBundle, remedy
   if (remedy === "LOWER_DEPTH") return fail("Choose the lower depth in its sheet.");
   if (remedy !== "USE_REALISTIC_DATE" && remedy !== "MOVE_DATE") return fail("A plan aimed at a depth keeps its depth: use the realistic date, or choose a lower depth.");
   const group = draftRowsOf(b);
-  const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+  const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
   const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
   const drafts = group.map(draftOf);
   const required = requiredDomainsOf(b, group);
@@ -7563,15 +7672,17 @@ async function replanUnpointed(userId: string, roadmapId: string, kind: ReplanKi
     });
     let plan: MilestoneDraft[] = unstarted.map(fresh);
     let feasibility: Feasibility | null = null;
-    const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+    // "Edit by hand" is the user's plan (the lead's ruling 6): its stages are copied as they were, never filled; "Re-fit to
+    // my numbers" is code's.
+    const ctx: PlanContext = { ...(await planContext(e, userId, b.roadmap, now, coveragePriorOf(b))), manual: kind === "MANUAL" };
     const gate = gateOf(e, ctx);
     if (kind === "REFIT") {
       const refitted = e.lanes.refit([...carried, ...plan], realismInputOf(ctx, [...carried, ...plan]), { excluded: gate.blocked, intake: ctx.intake });
       plan = refitted.filter((d) => !isCarried(d)).map((d) => ({ ...d, status: d.status === "LATER" ? "LATER" : "DRAFT", version: v }));
     }
-    // The practice progression (contracts §20): an "Edit by hand" re-plan's DRAFT stages are rebuilt with the started
-    // stages carried too (a Re-fit's re-date already placed it), so the stage after a started one carries what it trained
-    // and no opening or exam step is placed twice.
+    // An "Edit by hand" re-plan (the lead's ruling 6): its DRAFT stages are the unstarted ones as they were, sized beside the
+    // started stages (a Re-fit's re-date already placed the practice progression); nothing is added to them, so no opening or
+    // exam step is placed twice, and the app's practices reach a stage only when the user asks (addAppPracticeCore).
     if (kind === "MANUAL") plan = withStagePractices(e, ctx, plan, carried).map((d) => ({ ...d, version: v, status: (d.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus }));
     // Confirm to unlock (contracts §19): the re-plan keeps no kind the user's answers block, and a track plan's practices
     // follow them (a kind their answer released is placed where the progression places it).
@@ -7877,7 +7988,18 @@ function targetLoweredOf(b: RoadmapBundle, today: DayKey): TargetLowered | null 
   return null;
 }
 
-function headerOf(e: Env, v: ViewData): RoadmapHeader {
+/**
+ * The Aim header as the views carry it: RoadmapHeader and the practice family
+ * in force (the lead's ruling 7; contracts §20.11). On a Field Area that is
+ * roadmap-catalog practiceFamilyOf over the stored intake (the user's answer,
+ * else code's reading of the aim and the exam's name), the family every plan
+ * path, the server's pickIsDefaultOf and the accept blocker read, so the page
+ * (DraftReview: `"practiceFamily" in h`) never falls back to the aim's prefill
+ * when the user answered otherwise; null on a track Area (its track's table).
+ */
+export type RoadmapHeaderView = RoadmapHeader & { practiceFamily: PracticeFamily | null };
+
+function headerOf(e: Env, v: ViewData): RoadmapHeaderView {
   const r = v.b.roadmap;
   const acc = currentAcceptance(v.b);
   let nonEnglish = false;
@@ -7885,6 +8007,12 @@ function headerOf(e: Env, v: ViewData): RoadmapHeader {
     nonEnglish = e.lanes.isNonEnglish(r.aim);
   } catch {
     nonEnglish = false;
+  }
+  let practiceFamily: PracticeFamily | null = null;
+  try {
+    practiceFamily = r.fieldId != null ? practiceFamilyOf(intakeOf(r)) : null;
+  } catch {
+    practiceFamily = null;
   }
   return {
     id: r.id,
@@ -7920,6 +8048,8 @@ function headerOf(e: Env, v: ViewData): RoadmapHeader {
     legacy: legacyOf(v.b),
     // The plan's chosen Domains: "Start again at a depth" carries them into the new intake (F-R4-16; fix round).
     domainIds: [...r.domainIds],
+    // The practice family in force (the lead's ruling 7): the one the plan's progression and its pick decisions read.
+    practiceFamily,
   };
 }
 
@@ -9877,7 +10007,7 @@ async function lowerDepthUnpointed(userId: string, roadmapId: string, to: AimDep
     const goals = await carriedGoalsOf(e, userId, b);
     const above = live.find((m) => (gateLevelOf(draftOf(m)) ?? 0) > to && (!m.goalId || !goals.get(m.goalId) || (goals.get(m.goalId)?.archivedAt == null && goals.get(m.goalId)?.closedScore == null)));
     if (above) return fail(`Close or drop milestone ${above.ord} first: it is working toward a level above ${depthWordOf(to)}.`);
-    const ctx = await planContext(e, userId, { ...b.roadmap, depth: to }, now, coveragePriorOf(b));
+    const ctx = await planContext(e, userId, { ...b.roadmap, depth: to }, now, coveragePriorOf(b), b);
     if (b.roadmap.status === "DRAFT") {
       const group = draftRowsOf(b);
       const required = requiredDomainsOf(b, group);
@@ -9906,7 +10036,7 @@ async function lowerDepthUnpointed(userId: string, roadmapId: string, to: AimDep
     let dropped: string[];
     let lowered: MilestoneDraft[] = plan;
     try {
-      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake });
+      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake, ...manualOpt(ctx) });
       if (!pure.ok) return fail(pure.error);
       dropped = pure.dropped;
       lowered = pure.plan;
@@ -10010,7 +10140,7 @@ async function confirmDomainAdditionsUnpointed(userId: string, roadmapId: string
     });
     const required = requiredDomainsOf(b, decided);
     if (required.length > DEPTH_DOMAINS_MAX) return fail(TOO_MANY_DOMAINS);
-    const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+    const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
     const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
     const redated = redraftOf(e, ctx, decided, carried, required);
     if (!redated.ok) return fail(chosen.length ? `Adding ${chosen.map((id) => ctx.domains.get(id)?.name ?? "that Domain").join(" and ")} would take the plan past 3 years at this depth.` : redated.error);
@@ -10182,10 +10312,10 @@ async function decidePracticePicks(e: Env, userId: string, roadmapId: string, ch
     if (choice === "DEFAULT") {
       // The practice progression puts code's default in each removed pick's place (R2's re-fit, as every structural edit).
       try {
-        const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+        const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
         const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
         const blocked = gateOf(e, ctx).blocked;
-        next = withPendingHidden([...carried, ...next], (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake })).filter((d) => !isCarried(d));
+        next = withPendingHidden([...carried, ...next], (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake, ...manualOpt(ctx) })).filter((d) => !isCarried(d));
       } catch (err) {
         console.error("roadmap: re-fit after the practice picks failed; saved without it:", err);
       }
@@ -10327,7 +10457,7 @@ export async function setActivityVerdictsCore(userId: string, roadmapId: string,
     } else if (moved && !legacyOf(b)) {
       const group = draftRowsOf(b);
       if (group.length > 0) {
-        const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
+        const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group), b);
         const drafts = group.map(draftOf);
         let afters: MilestoneDraft[];
         try {
@@ -10525,6 +10655,192 @@ async function moveLineUnpointed(userId: string, itemId: string, toMilestoneId: 
   return res;
 }
 
+/** keepMyOrderCore's refusal when the outline already reads in the user's own order. */
+export const ORDER_ALREADY_YOURS = "Your outline is already in your own order.";
+
+/**
+ * "Keep my order" (the lead's ruling 7): Gemini's reorder of the outline (a
+ * v4 reply's `order`; KeysOnlyDraft.reordered, which the page reads off the
+ * rows: roadmap-ui-model geminiV4PartsOf MOVED) put back to the user's own
+ * order in one tap. Every outline line on the draft's kept stages that the
+ * user didn't move (a SYLLABUS topic, not EDITED) goes to the stage the
+ * user's own order gives it (roadmap-types outlineStagesOf over the lines in
+ * the user's order across the kept stages, as "Build from my numbers" splits
+ * them), each line once, listed in that order within its stage after the
+ * stage's other items; a line the user moved stays where they put it. A
+ * line's milestone sets no count, so coverage and the dates stand. Through
+ * the one writer, each changed row guarded on its status. Refused with
+ * writes off, on a roadmap with no draft, a legacy draft, and when the
+ * outline already reads in the user's order (ORDER_ALREADY_YOURS).
+ */
+export async function keepMyOrderCore(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await keepMyOrderUnpointed(userId, roadmapId, now, deps));
+}
+
+/** keepMyOrderCore's work; keepMyOrderCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function keepMyOrderUnpointed(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  if (typeof roadmapId !== "string" || !STEP_REF.test(roadmapId)) return fail(NO_ROADMAP);
+  const e = envOf(deps);
+  const res = await withRetry<null>(async () => {
+    const b = await e.store.bundle(userId, roadmapId);
+    if (!b) return fail(NO_ROADMAP);
+    if (!isOpen(b.roadmap)) return fail("This roadmap is closed.");
+    if (legacyOf(b)) return fail(b.roadmap.status === "DRAFT" ? DRAFT_IT_AGAIN : START_AGAIN_AT_DEPTH);
+    const group = draftRowsOf(b);
+    if (group.length === 0) return fail("There's no draft to change.");
+    const n = intakeOf(b.roadmap).syllabus?.lines.length ?? 0;
+    const afters = keptOrderOf(group.map(draftOf), n);
+    if (!afters) return fail(ORDER_ALREADY_YOURS);
+    const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: b.roadmap.version } }];
+    try {
+      const ctxText = modelTextContextOf(b, await e.io.fieldTree());
+      group.forEach((row, k) => {
+        const after = afters[k];
+        if (JSON.stringify(after) === JSON.stringify(draftOf(row))) return;
+        ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: row.id, statuses: [row.status as MilestoneStatus] } });
+        writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((_, j) => j !== k) }, ctxText);
+      });
+    } catch (err) {
+      if (!(err instanceof ModelTextError)) throw err;
+      logRefusedWrite("keep-order", err);
+      return fail(CHANGE_NOT_SAVED);
+    }
+    const out = await e.store.apply(userId, ops);
+    return out === "ok" ? ok(null) : "stale";
+  });
+  invalidate("roadmap");
+  return res;
+}
+
+/**
+ * The draft's rows with its outline back in the user's own order (keepMyOrderCore), pure; null when nothing moves (every
+ * line Gemini placed already sits on the stage the user's order gives it, in that order). `lines` is the outline's length.
+ */
+export function keptOrderOf(drafts: readonly MilestoneDraft[], lines: number): MilestoneDraft[] | null {
+  const kept = drafts.map((d, k) => ({ d, k })).filter(({ d }) => !heldRow(d) && d.status !== "LATER").sort((a, b) => a.d.ord - b.d.ord);
+  if (kept.length === 0 || lines <= 0) return null;
+  const isPlaced = (i: ItemDraft) => i.kind === "TOPIC" && i.origin === "SYLLABUS" && typeof i.syllabusRef === "number" && i.syllabusRef >= 0 && i.syllabusRef < lines && i.decision !== "EDITED";
+  const split = outlineStagesOf(Array.from({ length: lines }, (_, r) => r), kept.length);
+  const stageOf = new Map<number, number>();
+  split.forEach((refs, s) => refs.forEach((r) => stageOf.set(r, s)));
+  // Each placed line's row in the user's order: from its own row when it stays, a new row (same lineage) when it moves.
+  const moved: ItemDraft[][] = kept.map(() => []);
+  const out = drafts.map((d) => ({ ...d, items: [...d.items] }));
+  kept.forEach(({ d, k }, s) => {
+    for (const it of [...d.items].sort((a, b) => a.ord - b.ord)) {
+      if (!isPlaced(it)) continue;
+      const to = stageOf.get(it.syllabusRef as number) ?? s;
+      moved[to].push(to === s ? { ...it } : { ...it, id: null });
+    }
+    out[k].items = out[k].items.filter((it) => !isPlaced(it));
+  });
+  // A stage whose lines stay as they were (the same lines, in the same order) keeps its rows untouched; none moved: null.
+  let moves = false;
+  kept.forEach(({ d, k }, s) => {
+    const inOrder = moved[s].sort((a, b) => (a.syllabusRef as number) - (b.syllabusRef as number));
+    const was = [...d.items].sort((a, b) => a.ord - b.ord).filter(isPlaced).map((i) => i.lineageId);
+    if (JSON.stringify(was) === JSON.stringify(inOrder.map((i) => i.lineageId))) {
+      out[k].items = [...d.items];
+      return;
+    }
+    moves = true;
+    const rest = [...out[k].items].sort((a, b) => a.ord - b.ord);
+    out[k].items = [...rest, ...inOrder].map((it, j) => ({ ...it, ord: j + 1 }));
+  });
+  return moves ? out : null;
+}
+
+/**
+ * "Add the app's practice" on one stage of a plan the user writes (the lead's
+ * ruling 6: "Write it myself", an "Edit by hand" re-plan; code never fills
+ * one on a re-fit): R2's addStagePracticesOf adds one practice to that
+ * DRAFT stage, the first the practice progression places there that it
+ * lacks (the first tap its role-defining kind, code's default focus; each
+ * tap after it the next: the exam's, the core, the carry of what the stage
+ * before holds or the opening partner, the spaced review), within the room
+ * its weekly practice budget holds beside the user's own practices, through
+ * the plan's gate (a kind it blocks is never placed); every other stage is
+ * read, never changed, and the stage's steps and checkpoint stay the user's.
+ * Then the plan is sized as it stands (R2's fitPlan with PlaceOpts.manual)
+ * and the measures follow the rows. The added row is the app's (origin
+ * CODE, its words; "added by the app"). Through the one writer, guarded on
+ * the roadmap's version and the milestone's status. Refused with writes off,
+ * on a stage that isn't a draft stage of a revision-4 plan, a held one, with
+ * practices off, and when the stage already holds every practice the app
+ * would place there (APP_PRACTICE_IN_PLACE) or three of the user's own.
+ */
+export async function addAppPracticeCore(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ added: number }>> {
+  return pointedRefusal(deps, userId, { ref: milestoneId }, await addAppPracticeUnpointed(userId, milestoneId, now, deps));
+}
+
+/** addAppPracticeCore's refusal when the stage already holds what the app would place there. */
+export const APP_PRACTICE_IN_PLACE = "This stage already holds the app's practices.";
+
+/** addAppPracticeCore's work; addAppPracticeCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function addAppPracticeUnpointed(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ added: number }>> {
+  if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
+  const e = envOf(deps);
+  const res = await withRetry<{ added: number }>(async () => {
+    const loc = await locate(e, userId, milestoneId);
+    if (!loc || loc.item) return fail("That milestone no longer exists.");
+    const { b, m } = loc;
+    if (legacyOf(b)) return fail(b.roadmap.status === "DRAFT" ? DRAFT_IT_AGAIN : START_AGAIN_AT_DEPTH);
+    if (m.status === "LATER") return fail("A milestone in Later holds no practice yet: give it dates first.");
+    if (m.status !== "DRAFT") return fail("Only a draft stage takes the app's practice; re-plan to change an accepted one.");
+    if (heldRow(m)) return fail("That stage was held when you began: it needs no practice.");
+    if (m.stage == null) return fail("This plan has no stages for the app to place a practice on.");
+    if (!b.roadmap.practicesAllowed) return fail("Practices are off for this aim: turn them on in the intake first.");
+    const group = draftRowsOf(b);
+    if (!group.some((x) => x.id === m.id)) return fail("This milestone is no longer part of the plan.");
+    const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b), b);
+    const drafts = group.map(draftOf);
+    const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
+    const gate = gateOf(e, ctx);
+    const before = drafts.find((d) => d.lineageId === m.lineageId && d.id === m.id) as MilestoneDraft;
+    let next: MilestoneDraft[];
+    try {
+      const names = namesOfDomains(ctx, requiredDomainsOf(b, group));
+      const placed = withPendingHidden([...carried, ...drafts], (masked) =>
+        realism.addStagePracticesOf(masked, m.lineageId, ctx.intake, realismInputOf(ctx, masked), names, e.makeId, { gate, excluded: gate.blocked })
+      ).filter((d) => !isCarried(d));
+      const after = placed.find((d) => d.lineageId === m.lineageId && d.id === m.id);
+      if (!after || JSON.stringify(after.items) === JSON.stringify(before.items)) {
+        // The user's own practices (not the app's: code's words it worked out) filling every slot leave the app no room.
+        const own = before.items.filter((i) => i.kind === "PRACTICE" && liveItem(i) && !(i.origin === catalogOriginOf() && provenanceOf(i.origin, i.decision) === "WORKED_OUT")).length;
+        return fail(own >= PRACTICES_PER_MILESTONE ? `This stage holds ${PRACTICES_PER_MILESTONE} of your practices already: remove one to make room for the app's.` : APP_PRACTICE_IN_PLACE);
+      }
+      // Sized as it stands (a plan the user writes is never filled by the re-fit), the measures following the rows.
+      next = withStagePractices(e, ctx, placed, carried);
+    } catch (err) {
+      console.error("roadmap: the app's practice wasn't placed:", err instanceof Error ? err.message : err);
+      return fail("Couldn't add the app's practice. Try again.");
+    }
+    const target = next.find((d) => d.lineageId === m.lineageId && d.id === m.id);
+    const added = target ? target.items.filter((i) => i.kind === "PRACTICE" && liveItem(i) && !before.items.some((x) => x.lineageId === i.lineageId)).length : 0;
+    const ops: StoreOp[] = milestoneGuards(b, m);
+    const afterOf = (i: number) => next.find((x) => x.lineageId === group[i].lineageId && x.id === group[i].id) ?? next[i];
+    try {
+      const ctxText = modelTextContextOf(b, ctx.tree);
+      for (let i = 0; i < group.length; i++) {
+        const after = afterOf(i);
+        if (!after || JSON.stringify(draftOf(group[i])) === JSON.stringify(after)) continue;
+        if (group[i].id !== m.id) ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: group[i].id, statuses: [group[i].status as MilestoneStatus] } });
+        const others = group.map((_, k) => afterOf(k) ?? drafts[k]).filter((d, k) => k !== i && !!d);
+        writeRoadmapRows(ops, { kind: "REWRITE", before: group[i], after, now, makeId: e.makeId, decided: new Set(), others }, ctxText);
+      }
+    } catch (err) {
+      if (!(err instanceof ModelTextError)) throw err;
+      logRefusedWrite("app-practice", err);
+      return fail(CHANGE_NOT_SAVED);
+    }
+    const out = await e.store.apply(userId, ops);
+    return out === "ok" ? ok({ added }) : "stale";
+  });
+  invalidate("roadmap");
+  return res;
+}
+
 /**
  * Changes an outline line's Domain (F-R4-21; the user's, F-R4-9): the
  * roadmap's syllabus.lineDomains and every unstarted topic of that line. On a
@@ -10569,7 +10885,7 @@ async function setLineDomainUnpointed(userId: string, roadmapId: string, lineInd
         items: d.items.map((i) => (i.kind === "TOPIC" && i.origin === "SYLLABUS" && i.syllabusRef === lineIndex ? { ...i, domainId } : i)),
       };
     });
-    const ctx = await planContext(e, userId, { ...b.roadmap, syllabus }, now, coveragePriorOf(b));
+    const ctx = await planContext(e, userId, { ...b.roadmap, syllabus }, now, coveragePriorOf(b), b);
     const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
     const redated = redraftOf(e, ctx, drafts, carried, required);
     if (!redated.ok) return fail(redated.error);

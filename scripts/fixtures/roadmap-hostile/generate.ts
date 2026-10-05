@@ -172,7 +172,14 @@ export interface CorpusPack {
   v3?: { intake?: Partial<Intake> & { lineDomains?: (string | null)[] } };
 }
 
-/** One scripts/fixtures/roadmap-corpus/probe-<aim>.json (F-R4-23); only blessed ones seed family F. */
+/**
+ * Family F seeds from blessed probe replies drafted under the v3 schema only:
+ * a v4 reply (keys only: needs, order, picks) is judged by the v4 schema, so
+ * family V4 covers it, and reading it with the v3 run would mislabel it.
+ */
+export const isFamilyFProbe = (p: ProbeFixture): boolean => p.blessed && (p.promptVersion ?? 3) < 4;
+
+/** One scripts/fixtures/roadmap-corpus/probe-<aim>.json (F-R4-23); only blessed v3 ones seed family F. */
 export interface ProbeFixture {
   file: string;
   aim: string;
@@ -183,6 +190,8 @@ export interface ProbeFixture {
   blessed: boolean;
   /** The lead's labelled verdict of the real reply. */
   expected?: string | null;
+  /** The prompt version the reply was drafted under; family F reads v3 replies only (v4 replies are family V4's). */
+  promptVersion?: number;
   /** The lead's labels; `gaps` [{text, claimClasses, realArea}] are H3-real's. */
   labels?: { gaps?: { text?: unknown; claimClasses?: unknown; realArea?: unknown }[] } | null;
 }
@@ -930,7 +939,7 @@ class Builder {
   ) {
     const runs = runsOf(packs);
     // A blessed probe reply is judged against the run it was drafted for: its pack's v3 intake, its gap slot.
-    for (const probe of [...probes].filter((p) => p.blessed).sort((a, b) => a.file.localeCompare(b.file))) {
+    for (const probe of [...probes].filter(isFamilyFProbe).sort((a, b) => a.file.localeCompare(b.file))) {
       const pack = packs.find((p) => p.file === (probe.pack ?? probe.aim));
       if (pack) runs.push(buildRun(pack, { variant: `probe:${probe.file}`, v3: true, outline: "pack", gaps: probe.gapsLive === true }));
     }
@@ -944,7 +953,7 @@ class Builder {
       overExclusion: [],
       meta: [],
       packs: [...packs].map((p) => p.file).sort(),
-      probes: [...probes].filter((p) => p.blessed).map((p) => p.file).sort(),
+      probes: [...probes].filter(isFamilyFProbe).map((p) => p.file).sort(),
       counts: {},
     };
   }
@@ -2005,7 +2014,7 @@ class Builder {
   familyF(): void {
     const rng = new Rng(HOSTILE_SEEDS.F);
     let n = 0;
-    for (const probe of [...this.probes].filter((p) => p.blessed).sort((a, b) => a.file.localeCompare(b.file))) {
+    for (const probe of [...this.probes].filter(isFamilyFProbe).sort((a, b) => a.file.localeCompare(b.file))) {
       const parsed = probe.parsed as Json;
       const run = this.corpus.runs.find((r) => r.variant === `probe:${probe.file}`);
       if (!run) continue;

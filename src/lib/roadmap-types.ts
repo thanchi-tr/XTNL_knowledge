@@ -2285,6 +2285,36 @@ export const CODE_TEMPLATES = [
   "Performance check: {aim}",
   "Mock test: {exam}",
   "Exam: {exam}",
+  // Contracts §20.12: one practice that takes turns with another, week about (roadmap-catalog PRACTICE_TURNS), where a
+  // stage's room holds one practice and its role needs two (the exam's timed practice in its run-up, a teacher or
+  // partner, slow drills, a language exam's skills). The practice's own words first, then the one it alternates with.
+  "Recall drills one week, timed practice the next: {domains}",
+  "Study one week, timed practice the next: {domains}",
+  "Listen and repeat one week, timed practice the next: {domains}",
+  "Slow, focused drills one week, timed practice the next: {domains}",
+  "Problem sets one week, timed practice the next: {domains}",
+  "Explain it in your own words one week, timed practice the next: {domains}",
+  "Writing practice one week, timed practice the next: {domains}",
+  "Go over your mistakes one week, timed practice the next: {domains}",
+  "Say it aloud one week, timed practice the next: {domains}",
+  "Build something one week, timed practice the next: {domains}",
+  "Full run-throughs one week, timed practice the next: {domains}",
+  "Practise with a teacher or partner one week, timed practice the next: {domains}",
+  "Say it aloud one week, a teacher or partner the next: {domains}",
+  "Full run-throughs one week, a teacher or partner the next: {domains}",
+  "Explain it in your own words one week, a teacher or partner the next: {domains}",
+  "Writing practice one week, a teacher or partner the next: {domains}",
+  "Problem sets one week, a teacher or partner the next: {domains}",
+  "Build something one week, a teacher or partner the next: {domains}",
+  "Go over your mistakes one week, a teacher or partner the next: {domains}",
+  "Recall drills one week, slow, focused drills the next: {domains}",
+  "Study one week, slow, focused drills the next: {domains}",
+  "Listen and repeat one week, slow, focused drills the next: {domains}",
+  "Say it aloud one week, writing practice the next: {domains}",
+  "Practise with a teacher or partner one week, writing practice the next: {domains}",
+  "Writing practice one week, listen and repeat the next: {domains}",
+  "Writing practice one week, study the next: {domains}",
+  "Listen and repeat one week, study the next: {domains}",
 ] as const;
 export type CodeTemplate = (typeof CODE_TEMPLATES)[number];
 export interface CodeFill {

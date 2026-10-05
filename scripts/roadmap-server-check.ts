@@ -129,6 +129,8 @@ import {
   type MeasureSpec,
   type MilestoneDraft,
   type MilestoneFeasibility,
+  practiceFamilyPrefillOf,
+  outlineStagesOf,
   type Reading,
   type StartSnapshot,
   type Syllabus,
@@ -138,6 +140,7 @@ import {
 import type { ParsedCapture } from "../src/lib/life-types";
 import * as R1 from "../src/lib/roadmap-proficiency";
 import * as REALISM from "../src/lib/roadmap-realism";
+import * as VALIDATE from "../src/lib/roadmap-validate";
 import {
   ACTIVITY_ANSWER_REFUSAL,
   ACTIVITY_ANSWER_STALE,
@@ -915,9 +918,9 @@ function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
     isNonEnglish: () => false,
     bulkKeepAllowed: (i) => !/[A-Z]{2,6}/.test(i.aim) && !i.examLabel,
     // The fixture's sizing over R2's own practice progression (contracts §20: code owns it on every plan path, so the
-    // fixture places it as R2 does whenever R4 passes the plan's intake).
+    // fixture places it as R2 does whenever R4 passes the plan's intake; never on a plan the user writes: the lead's ruling 6).
     fitPlan: (plan0, input, opts) =>
-      (opts?.intake ? REALISM.syncProgression(plan0, opts.intake, input, {}, w.makeId, { excluded: opts.excluded, picks: opts.picks }) : plan0).map((m) => ({
+      (opts?.intake && opts.manual !== true ? REALISM.syncProgression(plan0, opts.intake, input, {}, w.makeId, { excluded: opts.excluded, picks: opts.picks }) : plan0).map((m) => ({
         ...m,
         measures: m.measures.map((x) => {
           if (x.kind !== "CARDS_AT_LEVEL" || x.targetSource === "YOURS" || x.targetSource === "DEPTH") return x;
@@ -5768,7 +5771,7 @@ async function main() {
       ];
     });
 
-    await integration("the claim asks a pick only for the stage keys the dated ladder holds (pickStagesOf): a 4-month track plan merged to two rows stands at STAGE_1 and STAGE_5, and only those are offered (R2, R3, R4)", async () => {
+    await integration("the claim asks a pick only for the stage keys the dated ladder holds (pickStagesOf): a 4-month track plan merged to two rows climbs consecutive stages, STAGE_1 then STAGE_2 (the lead's ruling 4), and only those are offered (R2, R3, R4)", async () => {
       const w = world();
       const intake: Intake = { ...runIntake, constraints: null, targetDay: addDays(TODAY, 120) };
       const id = await newDraft(w, intake);
@@ -5785,7 +5788,7 @@ async function main() {
       if (!c.ok) return [false, c.error];
       for (const t of tasks) await t();
       const stages = draftsOf(w, id).map((m) => m.stage);
-      return [json(slots) === json(["STAGE_1", "STAGE_5"]) && json(stages) === json(["STAGE_1", "STAGE_5"]), json({ slots, stages })];
+      return [json(slots) === json(["STAGE_1", "STAGE_2"]) && json(stages) === json(["STAGE_1", "STAGE_2"]), json({ slots, stages })];
     });
 
     await integration("a type the user changes in the Edit sheet stays theirs through every re-fit: the kind it replaced never comes back beside it, and the stage keeps as many practices (R2, R4)", async () => {
@@ -5812,6 +5815,178 @@ async function main() {
           practices0.slice(1).every((p) => live.some((i) => i.catalogKey === p.catalogKey)),
         json({ before: practices0.map((i) => i.catalogKey), after: live.map((i) => [i.catalogKey, i.decision]), from: from.catalogKey, to }),
       ];
+    });
+
+    // ── The lead's rulings after the progression's review (R4's half: rulings 4, 6 and 7) ──
+    await integration("the page's header carries the practice family in force (the lead's ruling 7): the user's answer, not the aim's prefill, on a Field plan (the family the plan and its pick decisions read); none on a track plan (R4)", async () => {
+      const w = world();
+      const id = await newDraft(w, { ...fieldIntake, practiceFamily: "PERFORM" });
+      const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+      if (!built.ok) return [false, built.error];
+      const family = ((await S.loadRoadmapView(USER, NOW, realDeps(w))).header as { practiceFamily?: unknown } | null)?.practiceFamily;
+      const w2 = world();
+      const id2 = await newDraft(w2, craftIntake);
+      const built2 = await S.buildStarterCore(USER, id2, NOW, realDeps(w2));
+      if (!built2.ok) return [false, built2.error];
+      const track = ((await S.loadRoadmapView(USER, NOW, realDeps(w2))).header as { practiceFamily?: unknown } | null)?.practiceFamily;
+      const prefill = practiceFamilyPrefillOf(fieldIntake.aim, fieldIntake.examLabel);
+      return [prefill !== "PERFORM" && family === "PERFORM" && track === null, json({ prefill, family, track })];
+    });
+
+    await integration("“Write it myself” stays the user's (the lead's ruling 6): the skeleton is built on a Field depth plan, a structural edit's re-fit fills no stage, and “Add the app's practice” adds one practice a tap to that one stage only (its role's kind first), code's words, sized, until the app's are all in place (then refused); a removal brings nothing back (R2, R4)", async () => {
+      const w = world();
+      const id = await newDraft(w, fieldIntake);
+      const made = await S.startManualCore(USER, id, NOW, realDeps(w));
+      if (!made.ok) return [false, `manual: ${made.error}`];
+      const plan0 = draftsOf(w, id);
+      const live0 = plan0.filter((m) => !m.notes.includes("HELD_AT_START") && m.status === "DRAFT");
+      if (live0.length < 2) return [false, `skeleton: ${json(plan0.map((m) => [m.stage, m.status, m.notes]))}`];
+      const empty0 = plan0.every((m) => liveKinds(m).length === 0);
+      // The user's own practice on the first stage (a type from the app's list): a structural edit, so the plan is re-fitted.
+      const first = rowsOf(w, id, 1).find((m) => m.lineageId === live0[0].lineageId) as MilestoneRec;
+      const own = await S.addItemCore(USER, first.id, { kind: "PRACTICE", catalogKey: "RECALL_DRILLS" }, NOW, realDeps(w));
+      if (!own.ok) return [false, `own practice: ${own.error}`];
+      const plan1 = draftsOf(w, id);
+      const othersEmpty1 = plan1.filter((m) => m.lineageId !== first.lineageId).every((m) => liveKinds(m).length === 0);
+      const firstOnly = json(sortedKinds(plan1.find((m) => m.lineageId === first.lineageId) as MilestoneDraft)) === json(["RECALL_DRILLS"]);
+      // "Add the app's practice" on the next gate stage.
+      const target = live0.find((m, k) => k > 0 && m.stage !== "PART" && m.stage !== "BETWEEN") as MilestoneDraft;
+      const targetRow = rowsOf(w, id, 1).find((m) => m.lineageId === target.lineageId) as MilestoneRec;
+      const off = await S.addAppPracticeCore(USER, targetRow.id, NOW, { ...realDeps(w), env: WRITES_OFF });
+      const added = await S.addAppPracticeCore(USER, targetRow.id, NOW, realDeps(w));
+      if (!added.ok) return [false, `add: ${added.error}`];
+      const firstTap = practicesIn(draftsOf(w, id).find((m) => m.lineageId === target.lineageId) as MilestoneDraft).map((i) => i.catalogKey);
+      // Tap again until the app has nothing more to add there (at most two more: three practices a stage).
+      const taps: string[] = [];
+      for (let k = 0; k < 3; k++) {
+        const more = await S.addAppPracticeCore(USER, targetRow.id, NOW, realDeps(w));
+        taps.push(more.ok ? `+${more.value.added}` : errOf(more));
+        if (!more.ok) break;
+      }
+      const plan2 = draftsOf(w, id);
+      const after = plan2.find((m) => m.lineageId === target.lineageId) as MilestoneDraft;
+      const appRows = after.items.filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+      const unchanged = plan2.filter((m) => m.lineageId !== target.lineageId).every((m) => json(sortedKinds(m)) === json(sortedKinds(plan1.find((x) => x.lineageId === m.lineageId) as MilestoneDraft)));
+      const appOk =
+        added.value.added === 1 &&
+        firstTap.length === 1 &&
+        taps[taps.length - 1] === S.APP_PRACTICE_IN_PLACE &&
+        taps.slice(0, -1).every((t) => t === "+1") &&
+        appRows.length === taps.length &&
+        appRows.length >= 1 &&
+        appRows.length <= 3 &&
+        appRows.every((i) => i.origin === CODE_ORIGIN && i.decision === "KEPT" && !!i.catalogKey && (i.sessionsPerWeek ?? 0) >= 1 && !!i.durationBand) &&
+        !after.items.some((i) => (i.kind === "STEP" || i.kind === "CHECKPOINT") && i.decision !== "REMOVED");
+      // Removing one of the app's practices there re-fits the plan: nothing comes back, no other stage is filled.
+      const gone = itemsOf(w, targetRow.id).find((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && i.origin === CODE_ORIGIN) as ItemRec;
+      const removed = await S.decideItemCore(USER, gone.id, "REMOVED", NOW, realDeps(w));
+      const plan3 = draftsOf(w, id);
+      const after3 = plan3.find((m) => m.lineageId === target.lineageId) as MilestoneDraft;
+      const noRefill =
+        removed.ok &&
+        !practicesIn(after3).some((i) => i.catalogKey === gone.catalogKey) &&
+        practicesIn(after3).length === appRows.length - 1 &&
+        plan3.filter((m) => m.lineageId !== target.lineageId && m.lineageId !== first.lineageId).every((m) => liveKinds(m).length === 0);
+      return [
+        empty0 && othersEmpty1 && firstOnly && errOf(off) === ROADMAP_WRITES_OFF && appOk && unchanged && noRefill,
+        json({ empty0, othersEmpty1, firstOnly, off: errOf(off), added, firstTap, taps, app: appRows.map((i) => [i.catalogKey, i.origin, i.decision, i.sessionsPerWeek, i.durationBand]), unchanged, noRefill, after3: sortedKinds(after3) }),
+      ];
+    });
+
+    await integration("“Write it myself” on a track plan stays the user's through the activity answer (the lead's ruling 6): the answer's re-sync fills no stage, where a plan from the user's numbers takes the released kinds (R2, R4)", async () => {
+      const w = world();
+      const id = await newDraft(w, runIntake);
+      const made = await S.startManualCore(USER, id, NOW, realDeps(w));
+      if (!made.ok) return [false, `manual: ${made.error}`];
+      const said = await answerCard(id, realDeps(w), [], { none: true, now: at(1_000) });
+      if (!said.ok) return [false, `answer: ${said.error}`];
+      const plan = draftsOf(w, id);
+      const starter = await starterOf(runIntake, { avoid: [], none: true });
+      return [
+        plan.length > 0 && plan.every((m) => liveKinds(m).length === 0) && starter.plan.some((m) => practicesIn(m).length > 0),
+        json({ manual: plan.map(sortedKinds), starter: starter.plan.map(sortedKinds) }),
+      ];
+    });
+
+    await integration("“Keep my order” (the lead's ruling 7): a Gemini draft that moved the outline goes back to the user's own order in one tap, split across the stages as the starter splits it; a second tap is refused, and writes off refuse (R3, R4)", async () => {
+      const outline: Syllabus = { lines: ["Counting", "Conditional probability", "Bayes", "Random variables", "Expectation", "Variance"], source: null };
+      const intake: Intake = { ...fieldIntake, syllabus: outline };
+      const w = world();
+      requireRealStages(w, intake);
+      const id = await newDraft(w, intake);
+      const tasks: (() => Promise<void> | void)[] = [];
+      const callModel = async (req: unknown) => {
+        const props = ((req as { responseSchema?: { properties?: Record<string, unknown> } }).responseSchema?.properties ?? {}) as Record<string, unknown>;
+        const order = [...((props.order as { items?: { enum?: string[] } } | undefined)?.items?.enum ?? [])].reverse();
+        return sdkReply(order.length ? { order } : {});
+      };
+      const c = await S.claimDraftCore(USER, id, { force: false }, NOW, realDeps(w, { defer: (t) => tasks.push(t), callModel, clock: () => NOW }));
+      if (!c.ok) return [false, c.error];
+      for (const t of tasks) await t();
+      const linesOf = () => {
+        const plan = draftsOf(w, id).filter((m) => m.status !== "LATER" && !m.notes.includes("HELD_AT_START")).sort((a, b) => a.ord - b.ord);
+        return plan.map((m) => [...m.items].sort((a, b) => a.ord - b.ord).filter((i) => i.kind === "TOPIC").map((i) => i.syllabusRef as number));
+      };
+      const moved = linesOf();
+      const off = await S.keepMyOrderCore(USER, id, at(1_000), { ...realDeps(w), env: WRITES_OFF });
+      const kept = await S.keepMyOrderCore(USER, id, at(1_000), realDeps(w));
+      const mine = linesOf();
+      const want = outlineStagesOf(outline.lines.map((_, i) => i), mine.length);
+      const again = await S.keepMyOrderCore(USER, id, at(2_000), realDeps(w));
+      const labels = draftsOf(w, id).flatMap((m) => m.items.filter((i) => i.kind === "TOPIC")).every((i) => i.label === outline.lines[i.syllabusRef as number] && i.origin === "SYLLABUS");
+      return [
+        json(moved.flat()) === json([5, 4, 3, 2, 1, 0]) && errOf(off) === ROADMAP_WRITES_OFF && kept.ok && json(mine) === json(want) && labels && errOf(again) === S.ORDER_ALREADY_YOURS,
+        json({ moved, off: errOf(off), kept, mine, want, labels, again: errOf(again) }),
+      ];
+    });
+
+    await integration("runDraftCore hands the validator the dated plan's progression (the lead's ruling 7: KeysOnlyContext.progression): every slot's room, and a dated exam's stage and run-up as the slots of the rows holding them, so the picks it keeps agree with R2's plan (R2, R3, R4)", async () => {
+      const intake: Intake = { ...fieldIntake, examLabel: "SOA Exam P", examDay: addDays(TODAY, 120) };
+      const w = world();
+      requireRealStages(w, intake);
+      const id = await newDraft(w, intake);
+      const tasks: (() => Promise<void> | void)[] = [];
+      const seen: (Parameters<typeof VALIDATE.validateKeysOnly>[1]["progression"] | null)[] = [];
+      const deps = realDeps(w, { defer: (t) => tasks.push(t), callModel: async () => sdkReply({}), clock: () => NOW });
+      deps.lanes = {
+        ...deps.lanes,
+        validateKeysOnly: (parsed, ctx) => {
+          seen.push(ctx.progression ?? null);
+          return VALIDATE.validateKeysOnly(parsed, ctx);
+        },
+      };
+      const c = await S.claimDraftCore(USER, id, { force: false }, NOW, deps);
+      if (!c.ok) return [false, c.error];
+      for (const t of tasks) await t();
+      const p = seen[0] ?? null;
+      const slots = ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"];
+      const plan = draftsOf(w, id).filter((m) => m.status !== "LATER").sort((a, b) => a.ord - b.ord);
+      const examAt = plan.findIndex((m) => m.items.some((i) => i.catalogKey === "EXAM_DAY" && i.decision !== "REMOVED"));
+      const examSlot = examAt < 0 ? null : [...plan.slice(0, examAt + 1)].reverse().map((m) => slots.indexOf(m.stage ?? "")).find((k) => k >= 0) ?? null;
+      const rooms = Array.isArray(p?.maxPractices) ? (p.maxPractices as (number | null)[]) : [];
+      return [
+        seen.length > 0 &&
+          !!p &&
+          rooms.length === slots.length &&
+          rooms.every((r) => r === null || (Number.isInteger(r) && r >= 1 && r <= 3)) &&
+          examSlot != null &&
+          p.examStage === examSlot &&
+          typeof p.examPrepStage === "number" &&
+          p.examPrepStage <= (p.examStage as number),
+        json({ p, examSlot, stages: plan.map((m) => m.stage) }),
+      ];
+    });
+
+    await integration("a practice that takes turns with another (contracts §20.12) is written in its pair's words and the one writer takes them as code's: an IELTS plan at 3 h a week is built, every stage the progression's, a turn on some stage (R2, R4)", async () => {
+      const intake: Intake = { ...fieldIntake, aim: "Reach IELTS 7", practiceFamily: "LANGUAGE", hoursPerWeek: 3, examLabel: "IELTS", examDay: addDays(TODAY, 150) };
+      const w = world();
+      const id = await newDraft(w, intake);
+      const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+      if (!built.ok) return [false, built.error];
+      const plan = draftsOf(w, id);
+      const turns = plan.flatMap((m) => practicesIn(m).filter((i) => / one week, .+ the next: /.test(i.label)).map((i) => `${m.stage}: ${i.label}`));
+      const bad = breachesOf(plan, intakeIn(w, id));
+      return [turns.length > 0 && bad.length === 0, json({ turns, bad: bad.slice(0, 4), plan: plan.map((m) => [m.stage, practicesIn(m).map((i) => i.label)]) })];
     });
 
     await integration("the practice family is the user's answer, stored with the intake (Roadmap.coverage) and kept by an activity answer; the plan's progression reads it (R2, R4)", async () => {

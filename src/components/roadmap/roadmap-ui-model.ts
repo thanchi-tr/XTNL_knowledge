@@ -17,8 +17,8 @@
  *   Start pay    startPayOf
  *   Aim figure   aimFigureOf
  *   Progression  PROGRESSION_PROMPT_VERSION · picksAreChoicesOf · rowsAreProgressionOf · stageRunOf (StageRun) · stageLevelOf · stageOptionsOf ·
- *                geminiChoiceOf (GeminiChoice) · stageWhysOf (StageWhy, StageEnd) · geminiV4PartsOf (GeminiV4Parts) ·
- *                geminiAsksOf (GeminiAsks) (contracts §20)
+ *                geminiChoiceOf (GeminiChoice) · pendingChoicesOf · practiceTurnOf · rowsAreManualOf · appPracticeOf · stageWhysOf (StageWhy, StageEnd) ·
+ *                geminiV4PartsOf (GeminiV4Parts) · geminiAsksOf (GeminiAsks) (contracts §20)
  *   Activities   activityCardOf · activityAsksOf · activitySuggestsOf · activityOpenOf · activityAvoidOf · activityCardAnswerOf ·
  *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
  *                practiceOnlyLineOf · sessionSwapKindsOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply ·
@@ -28,6 +28,7 @@ import {
   ACTIVITY_REASON_MAX,
   PACK_MAX_DOMAINS,
   PARAGON_MIN_MILESTONES,
+  PRACTICES_PER_MILESTONE,
   SOURCE_NOTE_MAX,
   TYPICAL_HOURS_MAX,
   TYPICAL_HOURS_MIN,
@@ -85,6 +86,7 @@ import {
   cueSafeKindsOf,
   isCatalogKey,
   practiceFamilyOf,
+  practiceTurnOfLabel,
   progressionCandidatesOf,
   type CatalogKey,
   type CatalogTrack,
@@ -247,7 +249,7 @@ export function needsRecheckOf(row: EditorRow): boolean {
   return (row.flags.includes("NUMBER") && row.struck === undefined) || row.reasons === undefined;
 }
 
-export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP" | "TYPE" | "DEFAULT";
+export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP" | "TYPE" | "DEFAULT" | "KEEP_PICK";
 
 /** What a row offers: all of them from 380 px; below it the first is a button and the rest sit in ⋯. */
 export interface ItemActions {
@@ -272,14 +274,15 @@ function withoutMap(a: ItemActions): ItemActions {
  *   KEPT_SUGGESTION: I checked this and Edit (Map to… for a Domain), kept in ⋯ on the living roadmap.
  *   A placeholder practice: Edit ("Name this practice").
  *   Gemini's choice that isn't the app's default (`choice`, geminiChoiceOf; contracts §20), on a draft: Use the app's
- *     default first (one tap), then Change the type and Edit.
+ *     default first (one tap) and, while it still waits on you (PENDING: accept waits on it), Keep Gemini's choice;
+ *     then Change the type and Edit.
  *   YOURS, WORKED_OUT and REMOVED rows: none.
  * An outline row (a later milestone) offers nothing: it is decided at its Start.
  * Without the user's Domains on the page (`canMap` false) no row offers Map to….
  */
 export function itemActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "start", opts: { canMap?: boolean; choice?: Pick<GeminiChoice, "isDefault"> | null } = {}): ItemActions {
   const base = baseActionsOf(row, stage);
-  const out = opts.choice && !opts.choice.isDefault && base.wide.includes("TYPE") ? withDefault(base) : base;
+  const out = opts.choice && !opts.choice.isDefault && base.wide.includes("TYPE") ? withDefault(base, row.decision === "PENDING") : base;
   return opts.canMap === false ? withoutMap(out) : out;
 }
 
@@ -287,10 +290,14 @@ export function itemActionsOf(row: EditorRow, stage: "draft" | "outline" | "acti
  * Gemini's choice that isn't the app's default (contracts §20): one tap puts
  * the app's default back ("Use the app's default"; the type change R4's
  * editItem makes, so it reads "you chose this"). It leads the row, before
- * Change the type.
+ * Change the type. While the choice still waits on you (`pending`: accept
+ * waits on it, R4's DECIDE_PRACTICE_PICKS) "Keep Gemini's choice" sits
+ * beside it (R4's decideItem CHECKED on a waiting pick), both shown at any
+ * width: the two answers to one question.
  */
-function withDefault(a: ItemActions): ItemActions {
-  return { wide: ["DEFAULT", ...a.wide], narrow: { shown: ["DEFAULT"], more: [...a.narrow.shown, ...a.narrow.more] } };
+function withDefault(a: ItemActions, pending: boolean): ItemActions {
+  const lead: ItemAction[] = pending ? ["DEFAULT", "KEEP_PICK"] : ["DEFAULT"];
+  return { wide: [...lead, ...a.wide], narrow: { shown: lead, more: [...a.narrow.shown, ...a.narrow.more] } };
 }
 
 function baseActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "start"): ItemActions {
@@ -333,6 +340,7 @@ export const ITEM_ACTION_WORD: Readonly<Record<ItemAction, string>> = {
   DROP: "Drop",
   TYPE: "Change the type",
   DEFAULT: "Use the app's default",
+  KEEP_PICK: "Keep Gemini's choice",
 };
 
 /** An action's words on a row: an empty title's Edit reads "Name this milestone". */
@@ -950,6 +958,68 @@ export function geminiChoiceOf(
   const options = stageOptionsOf(m, run);
   const kind = options.find((k) => k === it.catalogKey);
   return kind ? { kind, options, isDefault: options[0] === kind } : null;
+}
+
+/**
+ * Gemini's choices accept still waits on (R4's DECIDE_PRACTICE_PICKS, which
+ * blocks a pending pick that isn't code's default on every track): practice
+ * rows still Gemini's choice and still PENDING, not the stage's default, in a
+ * milestone that isn't Later, in plan order. A BODY or CARE plan whose picks
+ * need the one session confirm decides them in that card instead
+ * (DraftView.sessionPicks), so the caller leaves those out.
+ */
+export function pendingChoicesOf(milestones: readonly MilestoneDraft[], run: StageRun & { choices: boolean }): EditorRow[] {
+  return [...milestones]
+    .filter((m) => m.status !== "LATER")
+    .sort((a, b) => a.ord - b.ord)
+    .flatMap((m) =>
+      [...m.items]
+        .sort((a, b) => a.ord - b.ord)
+        .filter((it) => it.decision === "PENDING")
+        .filter((it) => {
+          const c = geminiChoiceOf(it, m, run);
+          return c != null && !c.isDefault;
+        })
+        .map(editorRowOf)
+    );
+}
+
+/**
+ * A practice that takes turns with another, week about (contracts §20.12;
+ * the lead's ruling 1: where a stage's room holds one practice and its role
+ * needs two kinds, they alternate rather than each thinning to one session a
+ * week): the kind it alternates with, read from the row's own code words
+ * (roadmap-catalog practiceTurnOfLabel: "Problem sets one week, timed
+ * practice the next: …"). null for any other row: a step, a removed row, a
+ * type with no turn, words that no longer say so.
+ */
+export function practiceTurnOf(it: Pick<ItemDraft, "kind" | "catalogKey" | "label" | "decision">): PracticeKind | null {
+  if (it.kind !== "PRACTICE" || it.decision === "REMOVED" || !it.catalogKey) return null;
+  return practiceTurnOfLabel(it.catalogKey, it.label);
+}
+
+/** The rows were written by you ("Write it myself", or a re-plan edited by hand): RunView.wrote MANUAL. */
+export function rowsAreManualOf(run: RunView | null): boolean {
+  return draftRunWriterOf(run) === "MANUAL";
+}
+
+/**
+ * "Add the app's practice" on a stage of a plan you wrote yourself (the
+ * lead's ruling 6: a re-fit never fills a manual plan's practices; the stage
+ * offers code's one tap instead, R4's addAppPractice: the progression's
+ * practices for that stage, its focus first). Offered while the stage lacks
+ * its own default under the plan's gate and family (stageOptionsOf's first:
+ * the kind code's progression trains there, the role-defining one), which
+ * names it. null when there is nothing to add: no stage, every option held by
+ * the gate, the stage already holding that kind or you having removed it
+ * there (the app never puts back a kind you took out of a stage), or its
+ * practices full.
+ */
+export function appPracticeOf(m: Pick<MilestoneDraft, "stage" | "measures" | "items">, run: StageRun): PracticeKind | null {
+  const practices = m.items.filter((it) => it.kind === "PRACTICE");
+  if (practices.filter((it) => it.decision !== "REMOVED").length >= PRACTICES_PER_MILESTONE) return null;
+  const kind = stageOptionsOf(m, run)[0] ?? null;
+  return kind && !practices.some((it) => it.catalogKey === kind) ? kind : null;
 }
 
 /** What closes a stage (roadmap-copy StageEnd), in this order when a stage holds more than one. */

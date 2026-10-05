@@ -648,10 +648,10 @@
     "needs": {},
     "stages": {
       "STAGE_1": {
-        "practiceFit": false
+        "practiceFit": true
       },
       "STAGE_2": {
-        "practiceFit": true
+        "practiceFit": false
       },
       "STAGE_3": {
         "practiceFit": false
@@ -660,7 +660,7 @@
         "practiceFit": false
       },
       "STAGE_5": {
-        "practiceFit": true
+        "practiceFit": false
       }
     },
     "arrangementKeepsOrder": false,

@@ -7,6 +7,15 @@
  * or a checkpoint (the bar and scale are theirs). What they add is origin
  * USER: "You wrote this". Caps per milestone hold (4 Domains, 6 topics, 3
  * practices, 3 steps, 1 checkpoint); a kind at its cap is not offered.
+ *
+ * A plan you wrote yourself stays yours (the lead's ruling 6: a re-fit never
+ * fills its practices), so each of its stages leads with "Add the app's
+ * practice" while it lacks its own default (roadmap-ui-model appPracticeOf):
+ * one tap places the progression's practices for that stage, within its room
+ * beside the user's own, through the plan's gate (R4's addAppPractice), in
+ * code's words, sized from your hours. Never a kind the gate holds; not
+ * offered once the stage holds its default, you removed it there, or its
+ * practices are full.
  */
 import { useId, useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
@@ -31,9 +40,10 @@ import {
   type MilestoneDraft,
   type PracticeMethod,
 } from "@/lib/roadmap-types";
-import { CHECKPOINT_KIND_WORD, METHOD_WORD, plural } from "./roadmap-copy";
+import { APP_PRACTICE_WORD, CHECKPOINT_KIND_WORD, KIND_NAME, METHOD_WORD, plural } from "./roadmap-copy";
 import { useRoadmapAction, type RoadmapActions } from "./roadmap-runtime";
 import { milestoneLineOf } from "./EditItemSheet";
+import { appPracticeOf, stageRunOf } from "./roadmap-ui-model";
 import type { ItemEditorScope } from "./ItemEditor";
 
 type NewItemInput = Parameters<RoadmapActions["addItem"]>[1];
@@ -68,8 +78,12 @@ export function addableKinds(m: MilestoneDraft, trackArea: boolean, library?: re
 
 export function AddItemBar({ milestone, scope }: { milestone: MilestoneDraft; scope: ItemEditorScope }) {
   const [kind, setKind] = useState<ItemKind | null>(null);
+  const { run, pending, error } = useRoadmapAction();
   const kinds = addableKinds(milestone, scope.areaFieldId == null, scope.library);
+  // A plan you wrote yourself (the lead's ruling 6): code never fills its practices; the stage offers its own in one tap.
+  const app = scope.manual && kinds.includes("PRACTICE") ? appPracticeOf(milestone, stageRunOf(scope)) : null;
   if (!milestone.id || kinds.length === 0) return null;
+  const id = milestone.id;
   return (
     <div className="rm-ms-sec" id={`rm-add-${milestone.id}`}>
       <div className="rm-ms-sh">
@@ -77,12 +91,18 @@ export function AddItemBar({ milestone, scope }: { milestone: MilestoneDraft; sc
         <span className="rm-cap">it reads “You wrote this”</span>
       </div>
       <div className="rm-acts" style={{ marginTop: 0 }}>
+        {app && (
+          <ChipButton disabled={pending} aria-label={`${APP_PRACTICE_WORD}: ${KIND_NAME[app]}`} onClick={() => run((a) => a.addAppPractice(id))}>
+            {APP_PRACTICE_WORD}
+          </ChipButton>
+        )}
         {kinds.map((k) => (
           <ChipButton key={k} onClick={() => setKind(k)}>
             Add {KIND_WORD[k]}
           </ChipButton>
         ))}
       </div>
+      {error && <ActionError>{error}</ActionError>}
       <Sheet open={kind != null} onClose={() => setKind(null)} title={kind ? `Add ${KIND_WORD[kind]}` : ""} description={milestoneLineOf(milestone)}>
         {kind && <AddBody key={kind} kind={kind} milestone={milestone} scope={scope} onClose={() => setKind(null)} />}
       </Sheet>

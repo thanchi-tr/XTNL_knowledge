@@ -1178,12 +1178,12 @@
             "templateId": null,
             "flags": [],
             "notes": [
-              "PRODUCTION_ADDED"
+              "GEMINI_PICK"
             ],
             "kind": "PRACTICE",
-            "label": "Go over your mistakes: Probability, Inference",
+            "label": "Problem sets: Probability, Inference",
             "origin": "CODE",
-            "catalogKey": "MISTAKE_REVIEW"
+            "catalogKey": "PROBLEM_SETS"
           },
           {
             "id": null,
@@ -1222,7 +1222,7 @@
             "domainId": null,
             "proposedName": null,
             "syllabusRef": null,
-            "method": "DELIBERATE_PRACTICE",
+            "method": "WRITING",
             "sessionsPerWeek": null,
             "durationBand": null,
             "rule": null,
@@ -1237,9 +1237,9 @@
               "PRODUCTION_ADDED"
             ],
             "kind": "PRACTICE",
-            "label": "Problem sets: Probability, Inference",
+            "label": "Explain it in your own words: Probability, Inference",
             "origin": "CODE",
-            "catalogKey": "PROBLEM_SETS"
+            "catalogKey": "EXPLAIN_IT"
           },
           {
             "id": null,
@@ -1430,7 +1430,8 @@
     "picks": {
       "FAMILIAR": "SLOW_DRILLS",
       "RETAINED": "PROBLEM_SETS",
-      "FLUENT": "MISTAKE_REVIEW"
+      "FLUENT": "MISTAKE_REVIEW",
+      "MASTERED": "PROBLEM_SETS"
     },
     "order": {
       "order": [
@@ -1662,38 +1663,38 @@
     ],
     "examStage": 5
   },
-  "expected": null,
-  "blessed": false,
+  "expected": "CLEAN",
+  "blessed": true,
   "labels": {
     "needs": {
       "D3": {
-        "plausible": null
+        "plausible": true
       },
       "D4": {
-        "plausible": null
+        "plausible": false
       }
     },
     "stages": {
       "PART": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "FAMILIAR": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "RETAINED": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "FLUENT": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "BETWEEN": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "MASTERED": {
-        "practiceFit": null
+        "practiceFit": true
       }
     },
-    "arrangementKeepsOrder": null,
+    "arrangementKeepsOrder": false,
     "gaps": []
   }
 }

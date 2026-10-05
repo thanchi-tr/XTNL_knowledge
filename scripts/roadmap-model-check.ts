@@ -2254,19 +2254,19 @@ async function main() {
     const topics = items.filter((i) => i.kind === "TOPIC");
     check("each TOPIC is the user's line exactly, origin SYLLABUS, its Domain the user's lineDomains entry", topics.length === 3 && topics.every((t) => t.origin === "SYLLABUS" && t.syllabusRef != null && t.label === OUTLINE.lines[t.syllabusRef] && t.domainId === OUTLINE.lineDomains[t.syllabusRef]));
     eq(
-      "picks: the valid picks placed as Gemini's, slot → kind (what the plan path re-reads); Mastered's partner had no room beside the exam's own practices (contracts §20.11: never over them), so it is logged and left out",
+      "picks: the valid picks placed as Gemini's, slot → kind (what the plan path re-reads); Mastered's partner sits beside the exam's own practices, never over them (its problem sets are both its focus and the exam's core, contracts §20.12), so nothing is left out",
       [v.picks, v.report.dropped.filter((e) => e.code === "BAD_SHAPE").map((e) => [e.milestoneOrd, e.reason])],
-      [{ FOUNDATION: "READ_AND_CARD", RETAINED: "EXPLAIN_IT" }, [[5, KEYS_ONLY_REASONS.pickReshaped]]]
+      [{ FOUNDATION: "READ_AND_CARD", RETAINED: "EXPLAIN_IT", MASTERED: "WITH_A_PARTNER" }, []]
     );
     eq(
-      "the golden: the progression with the picks (an exam with no day: the last stage holds it, with going over mistakes, timed practice, the problem sets kept up to it and the mock test), a pick added beside code's default (GEMINI_PICK on it alone)",
+      "the golden: the progression with the picks (an exam with no day: the last stage holds it, with the problem sets (its default and the core, contracts §20.12), timed practice, Gemini's partner beside them, and the mock test), a pick added beside code's default (GEMINI_PICK on it alone)",
       kindsOf(v),
       [
         ["READ_AND_CARD:GEMINI_PICK", "RECALL_DRILLS:STUDY_ADDED", "CHOOSE_MATERIAL", "BOOK_EXAM"],
         ["RECALL_DRILLS:STUDY_ADDED", "READ_AND_CARD:STUDY_ADDED", "OUTLINE", "SELF_TEST"],
         ["PROBLEM_SETS:PRODUCTION_ADDED", "EXPLAIN_IT:GEMINI_PICK", "RECALL_DRILLS:STUDY_ADDED", "LIST_GAPS", "SELF_TEST"],
         ["EXPLAIN_IT:PRODUCTION_ADDED", "PROBLEM_SETS:PRODUCTION_ADDED", "RECALL_DRILLS:STUDY_ADDED", "EXPLAIN_ONCE", "SELF_TEST"],
-        ["MISTAKE_REVIEW:PRODUCTION_ADDED", "TIMED_PRACTICE:PRODUCTION_ADDED", "PROBLEM_SETS:PRODUCTION_ADDED", "LIST_GAPS", "MOCK_TEST"],
+        ["PROBLEM_SETS:PRODUCTION_ADDED", "TIMED_PRACTICE:PRODUCTION_ADDED", "WITH_A_PARTNER:GEMINI_PICK", "LIST_GAPS", "MOCK_TEST"],
       ]
     );
     {
@@ -2351,9 +2351,9 @@ async function main() {
     );
     const dated = validateKeysOnly({ order: ["S1"] }, { ...s4.ctx, progression: { examStage: 1 } });
     eq(
-      "the exam's day in Familiar (ctx.progression.examStage, R2's): the mock test on the stage before it, EXAM_DAY on its own; after the exam no step and no checkpoint (no full attempt or climb after the exam has been sat)",
+      "the exam's day in Familiar (ctx.progression.examStage, R2's): the mock test on the stage before it, EXAM_DAY on its own; after the exam the plan climbs on toward the depth, measured again (the lead's ruling 3, contracts §20.12): each stage's role step and a self-test, the full attempt and the performance check on the last",
       kindsOf(dated).map((st) => st.filter((k) => !k.includes("_ADDED"))),
-      [["CHOOSE_MATERIAL", "BOOK_EXAM", "MOCK_TEST"], ["OUTLINE", "EXAM_DAY"], [], [], []]
+      [["CHOOSE_MATERIAL", "BOOK_EXAM", "MOCK_TEST"], ["OUTLINE", "EXAM_DAY"], ["LIST_GAPS", "SELF_TEST"], ["EXPLAIN_ONCE", "SELF_TEST"], ["LIST_GAPS", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]]
     );
     {
       // R2's run-up stage (examStagesOf) reaches the progression through ctx.progression.examPrepStage.
@@ -3555,18 +3555,28 @@ async function main() {
   );
   {
     // v4 (contracts §20.8, the probe item): exactly 2 requests, both in the production configuration (the gap slot off, thinking
-    // off): actuarial-probability and new-subject; the 5 Oct v3 files are never overwritten (probe-v4-*.json).
+    // off): actuarial-probability and new-subject; the 5 Oct v3 files are never overwritten (probe-v4-*.json). The user's further
+    // approval (5 Oct, ee37077): --track-call swaps in exactly 1 request on run-10k, same configuration, same guards.
+    // The source is read as checked out: a CRLF working copy (core.autocrlf) must read as its LF one.
     const body = code(read("scripts/roadmap-probe.ts"));
-    const plan = /const PROBE_PLAN[^=]*=\s*\[([\s\S]*?)\];/.exec(body)?.[1] ?? "";
-    const rows = Array.from(plan.matchAll(/\{[^}]*\}/g), (x) => x[0]);
+    const rowsOf = (name: string) => Array.from((new RegExp(`const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`).exec(body)?.[1] ?? "").matchAll(/\{[^}]*\}/g), (x) => x[0]);
+    const rows = rowsOf("FIELD_PLAN");
+    const trackRows = rowsOf("TRACK_PLAN");
     const packOfRow = (r: string) => /pack:\s*"([^"]+)"/.exec(r)?.[1] ?? "";
+    const production = (r: string) => /gapsLive:\s*false/.test(r) && /thinkingLow:\s*false/.test(r) && /file:\s*"probe-v4-[a-z0-9-]+\.json"/.test(r);
     check(
-      "the v4 probe plan is exactly 2 requests in the production configuration (the gap slot off, thinking off): actuarial-probability and new-subject, saved as probe-v4-*.json; MAX_PROBE_CALLS 2",
+      "the v4 probe plan is exactly 2 requests in the production configuration (the gap slot off, thinking off): actuarial-probability and new-subject, saved as probe-v4-*.json; MAX_PROBE_CALLS 2; --track-call (the approved track call) swaps in exactly 1 request on run-10k in the same configuration, and PROBE_PLAN is one plan or the other",
       rows.length === 2 &&
         JSON.stringify(rows.map(packOfRow)) === JSON.stringify(["actuarial-probability", "new-subject"]) &&
-        rows.every((r) => /gapsLive:\s*false/.test(r) && /thinkingLow:\s*false/.test(r) && /file:\s*"probe-v4-[a-z-]+\.json"/.test(r)) &&
+        rows.every(production) &&
+        trackRows.length === 1 &&
+        packOfRow(trackRows[0]) === "run-10k" &&
+        trackRows.every(production) &&
+        /const TRACK_CALL_FLAG = "--track-call";/.test(body) &&
+        /const TRACK_ONLY = process\.argv\.includes\(TRACK_CALL_FLAG\);/.test(body) &&
+        /const PROBE_PLAN: readonly PlannedCall\[\] = TRACK_ONLY \? TRACK_PLAN : FIELD_PLAN;/.test(body) &&
         /const MAX_PROBE_CALLS = 2;/.test(body),
-      rows.join(" | ")
+      [...rows, ...trackRows].join(" | ")
     );
     check(
       "the probe saves the spec's facts (promptVersion, raw, parsed, finishReason, usage, latency, modelVersion, integrity, validated, code's plan, blessed: false) and prints both gates",
@@ -3579,9 +3589,9 @@ async function main() {
     );
     check(
       "the fix round (r3): the labelled plan is R2's (corpusLadderOf: the dated ladder with the reply's picks and order, at each stage's room), the fixture records the room and the pick stages, and the pack sent asks a pick only for the ladder's stages (pickStages)",
-      /codePlanOf\(e, pack, validated\)/.test(body) && /corpusLadderOf\(e, \{/.test(body) && /room: code\?\.room/.test(body) && /pickStages,\n/.test(body) && /packOf\(e, \{ gapsLive: call\.gapsLive, pickStages \}\)/.test(body)
+      /codePlanOf\(e, pack, validated\)/.test(body) && /corpusLadderOf\(e, \{/.test(body) && /room: code\?\.room/.test(body) && /pickStages,\r?\n/.test(body) && /packOf\(e, \{ gapsLive: call\.gapsLive, pickStages \}\)/.test(body)
     );
-    const offline = /function offlineRevalidation\([\s\S]*?\n\}\n/.exec(body)?.[0] ?? "";
+    const offline = /function offlineRevalidation\([\s\S]*?\r?\n\}\r?\n/.exec(body)?.[0] ?? "";
     check(
       "its offline part (--offline, also run after the calls) reads the blessed v3 replies under v4 (replyV4OfV3) and sends nothing: no draftSamples, no key, and --offline alone never reaches the calls",
       offline.length > 0 && /replyV4OfV3\(/.test(offline) && !/draftSamples|hasGeminiKey|callModel/.test(offline) && /--offline/.test(body) && /if \(offlineOnly\) \{[\s\S]*?offlineRevalidation\(\);\s*return;\s*\}/.test(body)

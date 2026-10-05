@@ -631,7 +631,7 @@
         "practiceFit": true
       },
       "STAGE_2": {
-        "practiceFit": true
+        "practiceFit": false
       },
       "STAGE_3": {
         "practiceFit": false

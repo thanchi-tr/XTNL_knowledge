@@ -19,6 +19,8 @@
  *                     default in one tap: editItem with that type, EDITED;
  *                     when the stage already holds the default, the pick is
  *                     removed instead (decideItem REMOVED), never doubled
+ *   Keep Gemini's choice → that choice, still waiting (accept waits on it):
+ *                     decideItem CHECKED (R4 keeps a waiting pick so)
  *
  * The milestone's title is decided through its milestone id (decideItem and
  * editItem take it in place of an item id; R4's cores read either).
@@ -65,6 +67,13 @@ export interface ItemEditorScope {
   choices?: boolean;
   /** A Field plan's practice family when the view carries the user's answer (contracts §20.11); null: the aim's prefill (stageRunOf). */
   practiceFamily?: PracticeFamily | null;
+  /**
+   * A plan you wrote yourself (the rows' writer is MANUAL: "Write it myself",
+   * or a re-plan edited by hand). It stays yours: code never fills its
+   * practices, and each stage offers "Add the app's practice" instead
+   * (roadmap-ui-model appPracticeOf; the lead's ruling 6).
+   */
+  manual?: boolean;
 }
 
 /** The row an action is about, with its item (null for the title) and its milestone. */
@@ -142,6 +151,10 @@ export function ItemEditor({ scope, children }: { scope: ItemEditorScope; childr
           run((a) => a.editItem(id, edit));
           return;
         }
+        case "KEEP_PICK":
+          // Gemini's choice, still waiting: R4's decideItem CHECKED keeps it (never a kind the gate holds; the server refuses one).
+          run((a) => a.decideItem(id, "CHECKED"));
+          return;
       }
     },
     [run, scope]

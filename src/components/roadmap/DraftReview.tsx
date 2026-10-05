@@ -32,7 +32,11 @@
  *   - the Depth line and the date check with its offers (Use the realistic
  *     date, Keep my date, Choose a lower depth…; nothing lowers by itself);
  *   - the arrangement line (Gemini runs only; on a v4 run, the outline's
- *     order and each practice marked as Gemini's choice);
+ *     order and each practice marked as Gemini's choice), with [Keep my
+ *     order] when Gemini moved the outline's lines (the lead's ruling 7);
+ *   - Gemini's practice choices that accept waits on, in one card while one
+ *     sits on an outline card ([Keep them] [Use the app's defaults]; one on
+ *     the expanded card has its own two buttons on its row);
  *   - the milestones: the next expanded and decided now, later ones as an
  *     outline; no Keep and no bulk keep; each with its "why this stage"
  *     line (contracts §20: code's progression, roadmap-ui-model stageWhysOf);
@@ -79,6 +83,7 @@ import { catalogTrackOf, type CatalogKey } from "@/lib/roadmap-catalog";
 import {
   ARRANGEMENT_LINE,
   BUILT_LEAD_LINE,
+  CHOICES_PLAN_LEVEL,
   CHOOSE_WORD,
   CONFIRM_WORD,
   CONSTRAINTS_LINE,
@@ -88,6 +93,7 @@ import {
   GEMINI_V4_LEAD_LINE,
   HEALTH_LINE,
   INTENSITY_WORD,
+  KEEP_MY_ORDER_WORD,
   KIND_NAME,
   LEAVE_OUT_WORD,
   OUTLINE_EMPTY_EXAM_LINE,
@@ -102,14 +108,17 @@ import {
   TRACK_WORD,
   addAllWord,
   addAsTopicWord,
+  appDefaultsWord,
   additionBlockedLine,
   additionEffectLine,
   additionsLine,
   arrangementV4Line,
   byLine,
+  choicesWaitingLine,
   depthName,
   exclusionsLine,
   geminiV4LeadLine,
+  keepChoicesWord,
   outlineEmptyLine,
   paragonDepthLine,
   plural,
@@ -136,18 +145,21 @@ import {
   geminiV4PartsOf,
   isHeldMilestone,
   isKeysOnlyDraft,
+  pendingChoicesOf,
   pickerExcludedOf,
   picksAreChoicesOf,
   practiceOnlyLineOf,
   rankPlanOf,
   referenceRunOf,
   rowDomId,
+  rowsAreManualOf,
   rowsAreProgressionOf,
   scheduledOf,
   sessionSwapKindsOf,
   stageRunOf,
   stageWhysOf,
   undecidedOf,
+  type EditorRow,
   type GeminiV4Parts,
 } from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
@@ -197,6 +209,8 @@ export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneD
     held: activityWaitingOf(confirm),
     // The practice progression (contracts §20): the run that wrote these rows (the draft's latest run, else the accepted plan's) says whether Gemini's picks are choices among each stage's options.
     choices: picksAreChoicesOf(rowsRunOf(view, milestones)),
+    // A plan you wrote yourself stays yours (the lead's ruling 6): each stage offers "Add the app's practice" instead.
+    manual: rowsAreManualOf(rowsRunOf(view, milestones)),
   };
 }
 
@@ -227,15 +241,33 @@ export const PICKS_DOM_ID = "rm-picks";
 /**
  * Where "Next item to decide" goes (F-R4-21): R4's nextToDecide is a pending
  * addition's or session pick's item id first; those are decided once, in
- * their plan-level card, so the footer scrolls there.
+ * their plan-level card, so the footer scrolls there. Gemini's practice
+ * choices the choices card decides (`cardChoices`: those on a card shown as
+ * an outline, which offers no button) go to that card too; one on the
+ * expanded card goes to its row.
  */
-export function nextTargetOf(draft: Pick<DraftView, "nextToDecide" | "additions" | "sessionPicks" | "milestones">, fallback: string | null): string | null {
+export function nextTargetOf(draft: Pick<DraftView, "nextToDecide" | "additions" | "sessionPicks" | "milestones">, fallback: string | null, cardChoices: readonly string[] = []): string | null {
   const id = draft.nextToDecide ?? fallback;
   const additionIds = new Set((draft.additions ?? []).map((a) => a.itemId).filter((x): x is string => Boolean(x)));
   const pendingAdd = draft.milestones.some((m) => m.items.some((it) => it.kind === "DOMAIN" && it.origin === "GEMINI" && it.decision === "PENDING" && it.notes.includes("NOT_CHOSEN")));
   if (pendingAdd && (draft.additions?.length ?? 0) > 0 && (!id || additionIds.has(id) || draft.milestones.some((m) => m.items.some((it) => it.id === id && it.notes.includes("NOT_CHOSEN"))))) return ADDITIONS_DOM_ID;
   if (draft.sessionPicks?.decision === "PENDING" && (!id || draft.milestones.some((m) => m.items.some((it) => it.id === id && it.notes.includes("GEMINI_PICK"))))) return PICKS_DOM_ID;
+  if (id && cardChoices.includes(id)) return PICKS_DOM_ID;
   return id ? rowDomId(id) : null;
+}
+
+/**
+ * Gemini's practice choices accept waits on (roadmap-ui-model
+ * pendingChoicesOf), on a plan whose picks need no session confirm (a Field
+ * plan's; a body or care plan's wait in SessionPicksCard): `all` in plan
+ * order, and `outside` those on a card other than the expanded one (an
+ * outline card offers no button, so the choices card decides them).
+ */
+export function choicesWaitingOf(draft: Pick<DraftView, "milestones" | "sessionPicks">, scope: ItemEditorScope, next: Pick<MilestoneDraft, "lineageId"> | null): { all: EditorRow[]; outside: EditorRow[] } {
+  if (draft.sessionPicks) return { all: [], outside: [] };
+  const all = pendingChoicesOf(draft.milestones, { ...stageRunOf(scope), choices: scope.choices === true });
+  const inNext = new Set((next ? (draft.milestones.find((m) => m.lineageId === next.lineageId)?.items ?? []) : []).map((it) => it.id ?? it.lineageId));
+  return { all, outside: all.filter((r) => !inNext.has(r.id)) };
 }
 
 /** RunFacts adds to the lead line only for a Gemini run or a report with entries ("built from your numbers" is the lead already). */
@@ -569,6 +601,55 @@ function SessionPicksCard({ view }: { view: RoadmapView }) {
 }
 
 /**
+ * Gemini's practice choices accept waits on, on a plan whose picks need no
+ * session confirm (a Field plan's; R4's DECIDE_PRACTICE_PICKS): one line and
+ * two answers for every waiting choice at once (R4's confirmSessionPicks:
+ * KEEP checks them; DEFAULT takes out each pick that isn't its stage's
+ * default, so code's default stands there). Shown while one
+ * sits on an outline card, which offers no button; one on the expanded card
+ * has its own on its row too.
+ */
+function ChoicesCard({ view, count }: { view: RoadmapView; count: number }) {
+  const { run, pending, error } = useRoadmapAction();
+  if (count === 0) return null;
+  const id = view.header!.id;
+  return (
+    <section className="card rm-adds" id={PICKS_DOM_ID} aria-label={CHOICES_PLAN_LEVEL}>
+      <p className="rm-adds-t">{choicesWaitingLine(count)}</p>
+      <div className="rm-acts">
+        <Button disabled={pending} onClick={() => run((a) => a.confirmSessionPicks(id, "KEEP"))}>
+          {keepChoicesWord(count)}
+        </Button>
+        <Button variant="primary" className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.confirmSessionPicks(id, "DEFAULT"))}>
+          {appDefaultsWord(count)}
+        </Button>
+      </div>
+      {error && <ActionError>{error}</ActionError>}
+    </section>
+  );
+}
+
+/**
+ * "Keep my order" under the arrangement line (the lead's ruling 7): Gemini's
+ * reorder of the outline, labelled as its suggestion, is put back to the
+ * user's own order in one tap (R4's keepMyOrder; lines the user moved stay
+ * where they put them).
+ */
+function KeepMyOrder({ roadmapId }: { roadmapId: string }) {
+  const { run, pending, error } = useRoadmapAction();
+  return (
+    <>
+      <div className="rm-acts">
+        <ChipButton disabled={pending} onClick={() => run((a) => a.keepMyOrder(roadmapId))}>
+          {KEEP_MY_ORDER_WORD}
+        </ChipButton>
+      </div>
+      {error && <ActionError>{error}</ActionError>}
+    </>
+  );
+}
+
+/**
  * What the session picks' swap places on this plan (sessionSwapKindsOf over
  * the plan's catalog track and its answers): the card's button and line, and
  * the words a picks refusal is shown in (sessionPicksRefusalOf).
@@ -628,6 +709,7 @@ function DraftFooter({
   mode,
   over,
   setOver,
+  choices,
 }: {
   view: RoadmapView;
   next: MilestoneDraft | null;
@@ -635,6 +717,8 @@ function DraftFooter({
   mode: "draft" | "replan";
   over: boolean;
   setOver: (v: boolean) => void;
+  /** Gemini's practice choices accept waits on (choicesWaitingOf). */
+  choices: { all: readonly EditorRow[]; outside: readonly EditorRow[] };
 }) {
   const draft = view.draft!;
   const header = view.header!;
@@ -644,10 +728,16 @@ function DraftFooter({
   const f = draft.feasibility;
   // Only a milestone of this draft can be fixed here: a started (carried) one listed first never names the footer (fix round 2's carry-over).
   const impossibleMs = f.milestones.find((x) => x.worst === "IMPOSSIBLE" && draft.milestones.some((m) => m.lineageId === x.lineageId));
-  const target = nextTargetOf(draft, undecided[0]?.id ?? null);
+  const target = nextTargetOf(
+    draft,
+    undecided[0]?.id ?? choices.all[0]?.id ?? null,
+    choices.outside.map((r) => r.id)
+  );
   const dateImpossible = draft.dateCheck?.verdict === "IMPOSSIBLE";
   const needsOver = f.over || draft.dateCheck?.verdict === "OVER";
-  const pendingPlanLevel = target === ADDITIONS_DOM_ID ? "Gemini's suggested Domains" : target === PICKS_DOM_ID ? "Gemini's session picks" : null;
+  const pendingPlanLevel = target === ADDITIONS_DOM_ID ? "Gemini's suggested Domains" : target === PICKS_DOM_ID ? (draft.sessionPicks ? "Gemini's session picks" : CHOICES_PLAN_LEVEL) : null;
+  // The next milestone's rows still to decide: draftNeedsOf's, and Gemini's choices on its card (each with its own two buttons).
+  const left = undecided.length + choices.all.length - choices.outside.length;
 
   if (dateImpossible) {
     return (
@@ -679,7 +769,7 @@ function DraftFooter({
           Next item to decide
         </Button>
         <p className="t-meta">
-          {pendingPlanLevel ? `1 left: ${pendingPlanLevel}. Then Accept. ` : next ? `${plural(undecided.length, "item")} left in milestone ${next.ord}. ` : ""}
+          {pendingPlanLevel ? `1 left: ${pendingPlanLevel}. Then Accept. ` : next ? `${plural(left, "item")} left in milestone ${next.ord}. ` : ""}
           {!pendingPlanLevel && outlineCount > 0 ? `${outlineCount === 1 ? "The other milestone stays" : "The other milestones stay"} an outline; you decide their items when you start each one.` : ""}
         </p>
       </div>
@@ -805,12 +895,12 @@ export function DraftReview({
   const outlineRange = outline.length > 0 ? (outline.length === 1 ? `Milestone ${outline[0].ord}` : `Milestones ${outline[0].ord}–${outline[outline.length - 1].ord}`) : null;
   const geminiArranged = draft.milestones.some((m) => m.arrangedBy === "GEMINI");
   // The arrangement line names only what Gemini arranged that still stands (contracts §20): on a v4 run, the outline's order when
-  // it moved your lines and the practices still marked as its choice (none: no line); a v3 run's line is unchanged.
-  const arrangement = !geminiArranged
-    ? null
-    : picksAreChoicesOf(view.run)
-      ? arrangementV4Line(geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" }))
-      : ARRANGEMENT_LINE;
+  // it moved your lines and the practices still marked as its choice (none: no line); a v3 run's line is unchanged. A reorder
+  // Gemini made gets one tap back to your own order (KeepMyOrder; the lead's ruling 7).
+  const v4Parts = geminiArranged && picksAreChoicesOf(view.run) ? geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" }) : null;
+  const arrangement = !geminiArranged ? null : v4Parts ? arrangementV4Line(v4Parts) : ARRANGEMENT_LINE;
+  // Gemini's practice choices accept waits on: the plan-level card decides those on outline cards (contracts §20; ruling 7).
+  const choices = choicesWaitingOf(draft, scope, next);
 
   return (
     <ItemEditor scope={scope}>
@@ -826,6 +916,7 @@ export function DraftReview({
         {(mode === "draft" || view.activityConfirm === undefined) && <ActivityConfirmCard view={draft.activityConfirm} roadmapId={header.id} today={view.today} place="draft" />}
         {keysOnly && <AdditionsCard view={view} />}
         {keysOnly && <SessionPicksCard view={view} />}
+        {keysOnly && choices.outside.length > 0 && <ChoicesCard view={view} count={choices.all.length} />}
         {keysOnly && <ExclusionsCard view={view} allowed={allowed} onAllow={(k) => setAllowed((a) => (a.includes(k) ? a : [...a, k]))} />}
         {draft.alarm && !keysOnly && (
           <section className="card rm-note">
@@ -873,7 +964,10 @@ export function DraftReview({
         {keysOnly && arrangement && (
           <section className="card rm-arr">
             <RoadmapGlyph name="info" />
-            <span>{arrangement}</span>
+            <div className="rm-arr-b">
+              <span>{arrangement}</span>
+              {v4Parts?.order === "MOVED" && <KeepMyOrder roadmapId={header.id} />}
+            </div>
           </section>
         )}
         <div className="rm-grid">
@@ -900,7 +994,7 @@ export function DraftReview({
         {keysOnly && mode === "draft" && <OutlineLines view={view} next={next} gemini={geminiNamedOf((gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey, view.run)} />}
         <GapPanel gaps={draft.gaps} hidden={draft.gapsHidden} scope={scope} gates={gates} />
         <div id="rm-accept">
-          <DraftFooter view={view} next={next} outlineCount={outline.filter((m) => !isHeldMilestone(m)).length} mode={mode} over={over} setOver={setOver} />
+          <DraftFooter view={view} next={next} outlineCount={outline.filter((m) => !isHeldMilestone(m)).length} mode={mode} over={over} setOver={setOver} choices={choices} />
         </div>
       </div>
     </ItemEditor>

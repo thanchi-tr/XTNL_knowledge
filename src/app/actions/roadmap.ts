@@ -25,7 +25,9 @@
  *
  * Revision 4 (lane R4): snoozeAimPrompt, setAimSuggestions, snoozeAimStep,
  * lowerDepth, confirmDomainAdditions, confirmSessionPicks, moveLine and
- * setLineDomain; the fix round's hideAimPrompt (the LATER line's ×, the
+ * setLineDomain; the progression's rulings: keepMyOrder (a Gemini reorder of
+ * the outline undone in one tap) and addAppPractice (the app's practice on a
+ * stage of a plan the user writes); the fix round's hideAimPrompt (the LATER line's ×, the
  * 'hide:<day>' cookie) and keepCalibratedDates ([Keep the dates], recorded on
  * the plan). The year-long 'off' cookie is never written any more;
  * dismissAimPrompt is now "Not now" until the Aim card moves off it.
@@ -51,6 +53,7 @@ import { refresh } from "next/cache";
 import { getCurrentUserId } from "@/lib/user";
 import {
   acceptCore,
+  addAppPracticeCore,
   addItemCore,
   applyRemedyCore,
   archiveRoadmapCore,
@@ -64,6 +67,7 @@ import {
   finishStartCore,
   hideAimPromptCore,
   keepCalibratedDatesCore,
+  keepMyOrderCore,
   keepOnTodayCore,
   keepUnflaggedCore,
   logCheckpointCore,
@@ -394,11 +398,34 @@ export async function confirmDomainAdditions(roadmapId: string, version: number,
 /**
  * A body or care plan's session picks (F-R4-17): [Keep them], or EASY, the swap to the track's own safe practices
  * ([Use easy, mobility and technique instead] on a body plan, [Use Plan the week ahead and Keep a log instead] on a
- * care plan, less any the user said to avoid).
+ * care plan, less any the user said to avoid). On a plan whose picks need no session confirm (a Field plan's, contracts
+ * §20.5): Gemini's practice picks, the one decision accept waits on — KEEP ([Keep Gemini's choices]) sets them CHECKED,
+ * DEFAULT ([Use the app's default]; EASY reads the same there) removes the ones that aren't the app's default and the
+ * re-fit keeps the default in their stage.
  */
-export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "EASY"): Promise<RoadmapActionResult<null>> {
-  if (!isRef(roadmapId) || (choice !== "KEEP" && choice !== "EASY")) return { ok: false, error: NO_REF };
+export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "EASY" | "DEFAULT"): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId) || (choice !== "KEEP" && choice !== "EASY" && choice !== "DEFAULT")) return { ok: false, error: NO_REF };
   return act("confirmSessionPicks", true, (userId, now) => confirmSessionPicksCore(userId, roadmapId, choice, now, depsOf()));
+}
+
+/**
+ * [Keep my order] (the lead's ruling 7): Gemini's reorder of the outline put back to the user's own order on the draft in
+ * one tap (lines the user moved stay where they put them). Refused when the outline already reads in the user's order.
+ */
+export async function keepMyOrder(roadmapId: string): Promise<RoadmapActionResult<null>> {
+  if (!isRef(roadmapId)) return { ok: false, error: NO_REF };
+  return act("keepMyOrder", true, (userId, now) => keepMyOrderCore(userId, roadmapId, now, depsOf()));
+}
+
+/**
+ * [Add the app's practice] on one stage of a plan the user writes (the lead's ruling 6: a re-fit never fills such a
+ * plan): one practice a tap, the next the practice progression places on that draft stage (its role-defining kind
+ * first), within its room beside the user's own, through the plan's gate; the rest of the plan stays as written.
+ * `added`: how many practices the stage gained (one).
+ */
+export async function addAppPractice(milestoneId: string): Promise<RoadmapActionResult<{ added: number }>> {
+  if (!isRef(milestoneId)) return { ok: false, error: NO_REF };
+  return act("addAppPractice", true, (userId, now) => addAppPracticeCore(userId, milestoneId, now, depsOf()));
 }
 
 /**

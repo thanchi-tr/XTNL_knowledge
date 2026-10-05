@@ -1279,7 +1279,7 @@
         "practiceFit": true
       },
       "FAMILIAR": {
-        "practiceFit": true
+        "practiceFit": false
       },
       "RETAINED": {
         "practiceFit": true
@@ -1288,7 +1288,7 @@
         "practiceFit": true
       },
       "MASTERED": {
-        "practiceFit": false
+        "practiceFit": true
       }
     },
     "arrangementKeepsOrder": true,

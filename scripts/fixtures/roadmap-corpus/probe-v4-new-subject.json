@@ -1521,31 +1521,31 @@
     ],
     "examStage": null
   },
-  "expected": null,
-  "blessed": false,
+  "expected": "CLEAN",
+  "blessed": true,
   "labels": {
     "needs": {},
     "stages": {
       "PART": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "FAMILIAR": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "RETAINED": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "FLUENT": {
-        "practiceFit": null
+        "practiceFit": false
       },
       "BETWEEN": {
-        "practiceFit": null
+        "practiceFit": true
       },
       "MASTERED": {
-        "practiceFit": null
+        "practiceFit": true
       }
     },
-    "arrangementKeepsOrder": null,
+    "arrangementKeepsOrder": false,
     "gaps": []
   }
 }

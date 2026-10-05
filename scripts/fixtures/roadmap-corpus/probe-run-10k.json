@@ -631,7 +631,7 @@
     "needs": {},
     "stages": {
       "STAGE_1": {
-        "practiceFit": false
+        "practiceFit": true
       },
       "STAGE_2": {
         "practiceFit": true
@@ -640,7 +640,7 @@
         "practiceFit": false
       },
       "STAGE_4": {
-        "practiceFit": true
+        "practiceFit": false
       },
       "STAGE_5": {
         "practiceFit": false

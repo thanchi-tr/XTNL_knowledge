@@ -206,7 +206,7 @@
     "replies": [
       {
         "id": "ielts-v4-a",
-        "about": "Listening needed; listen-and-repeat first, writing at Retained, saying it aloud at Fluent, a teacher at Mastered. Saying it aloud at Fluent is a kind code places there itself on this exam plan (its core, carried from Retained), so it stays code's: not shown as Gemini's pick (keys.pick-code).",
+        "about": "Listening needed; listen-and-repeat first, writing at Retained, saying it aloud at Fluent, a teacher at Mastered. Writing at Retained is a kind code places there itself on this exam plan (IELTS tests writing: the exam's skills, contracts §20.12), so it stays code's: not shown as Gemini's pick (keys.pick-code). Saying it aloud at Fluent has no room beside the partner and the exam's skills, so it waits.",
         "reply": {
           "needs": [
             "D4"
@@ -225,7 +225,6 @@
           ],
           "picks": {
             "FOUNDATION": "LISTEN_AND_REPEAT",
-            "RETAINED": "WRITING_PRACTICE",
             "MASTERED": "WITH_A_PARTNER"
           },
           "excluded": [],

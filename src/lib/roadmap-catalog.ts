@@ -46,6 +46,11 @@
  *              EXAM_PREP_MIN_DAYS · examStagesOf (a dated exam's stage and run-up, from the rows' windows) ·
  *              ProgressionInput.family/.examPrepStage · Progression.family/.examPrepStage/.mockStage ·
  *              StageProgression.afterExam · ProgressionWhy CORE, PICK
+ *   The rulings (contracts §20.12: room for one, the run-up, after the exam, a language exam's skills)
+ *              ProgressionItem.alternate (a practice that takes turns, week about) · PracticeTurn · PRACTICE_TURNS ·
+ *              practiceTurnTemplateOf · progressionLabelOf (a placed practice's words) · practiceLabelsOf ·
+ *              practiceTurnOfLabel · LanguageSkill · LANGUAGE_SKILLS · languageExamSkillsOf ·
+ *              ProgressionTrackRule.examSkills · ProgressionInput.examSkills · ProgressionWhy SKILL
  *   Sizing     PracticeSize · stageBandFloorOf · practiceSizeOf · practicesThatFitOf (the focus two sessions, the rest
  *              one) · PRACTICE_FOCUS_SHARES · practiceSizesOf (a stage's practices sized together: R2's allocation, one definition)
  */
@@ -1204,7 +1209,7 @@ export function coverageJsonOf(
   return Object.keys(out).length > 0 ? out : null;
 }
 
-// ═══ The practice progression (contracts §20, §20.11) ═══════════════════════
+// ═══ The practice progression (contracts §20, §20.11, §20.12) ═══════════════
 //
 // The lead's decision after the probe (contracts §19.14: practice fit 29% of
 // stages against the bar's 80%, arrangement 1 of 7): CODE OWNS THE PRACTICE
@@ -1229,9 +1234,13 @@ export function coverageJsonOf(
 //              production and integration later). A blocked default gives
 //              way to the next candidate, then to a stand-in.
 //     EXAM     timed practice on the exam's run-up stage and its own stage
-//              (a Field plan; examOnly).
+//              (a Field plan; examOnly), at any room (§20.12).
+//     SKILL    a language exam (the LANGUAGE table's examSkills): each skill
+//              the exam tests that nothing above trains, on every production
+//              stage up to the exam (§20.12).
 //     CORE     an exam plan: the plan's first production focus (problem sets,
-//              by default) stays in every stage up to the exam.
+//              by default) stays in every stage up to the exam (not with
+//              SKILL: a language exam's skills are its core).
 //     PICK     Gemini's valid pick, when it is not code's default: beside the
 //              default, never over the exam's practices.
 //     PARTNER  the chain's first stage: the family's or track's opening
@@ -1244,20 +1253,30 @@ export function coverageJsonOf(
 //              first one not already placed, when a slot is still free (a
 //              retrieval stage never takes a production kind as its base,
 //              outside the exam's run-up).
-//     SHAPE    F-R4-13's stage shape, when nothing above gave it.
+//     SHAPE    F-R4-13's stage shape, when nothing above gave it (never in
+//              place of the exam's timed practice).
+//     TURNS    (§20.12) where the room holds fewer practices than the stage's
+//              role needs, one practice takes turns with the next kind, week
+//              about (ProgressionItem.alternate; PRACTICE_TURNS; its label
+//              says so: progressionLabelOf), never two practices at one
+//              session each: with room for one, the stage's role kind takes
+//              turns with the exam's timed practice in its run-up, or with
+//              the role-less default (a teacher or partner, slow drills) it
+//              took the place of; a language exam's skills beyond the room
+//              take turns too.
 //   steps: OPENING on the first stage (choosing material, or setting up) and,
 //     with an exam, BOOK; a Field gate stage's ROLE step; CLOSING on the last
 //     stage (a full attempt on a Field, BODY or CRAFT plan, unless it holds
-//     the exam or comes after it; a CARE or DUTY routine closes on its
-//     performance check).
+//     the exam; a CARE or DUTY routine closes on its performance check).
 //   checkpoint: escalating (CHECKPOINT_RUNG): a self-test on a Field stage
 //     (a BETWEEN or PART one too) between the first and the exam or the
 //     last, the mock test on the stage before a dated exam's (an exam with
 //     no day: on the last stage, which holds it), the exam itself on its
-//     day's stage, the performance check on the last stage of a plan with no
-//     exam.
-//   after a dated exam: a stage keeps what the exam's stage trained (its
-//     practices, no climb) and holds no step and no checkpoint.
+//     day's stage, the performance check on the last stage unless it holds
+//     the exam.
+//   after a dated exam (§20.12, the lead's ruling): the stages keep climbing
+//     toward the depth, each with its own focus, carry, steps and checkpoint;
+//     the checkpoints escalate again, self-test → performance check.
 // The gate (allowedKindsFor) is respected throughout: a kind it blocks (the
 // user's AVOID, or PENDING while the activity card waits) is never placed;
 // a practice gives way to the track's safe kinds (on a Field plan, the next
@@ -1297,6 +1316,16 @@ export interface ProgressionTrackRule {
    * building.
    */
   examStages?: Readonly<Partial<Record<StageKey, ProgressionStageRule>>>;
+  /**
+   * With an exam (the LANGUAGE family's; contracts §20.12): the kinds that
+   * train each skill a language exam may test, in order (the first that is
+   * not examOnly is the one placed; the exam's timed practice counts for
+   * reading where its run-up holds it). Every production stage up to the
+   * exam's trains each skill the exam tests (ProgressionInput.examSkills)
+   * that its other practices don't (SKILL; beyond the room, as a turn), so
+   * an IELTS plan writes and listens as well as speaks.
+   */
+  examSkills?: Readonly<Record<LanguageSkill, readonly PracticeKind[]>>;
   /** The chain's first stage's second practice, in order of preference. */
   partner: readonly PracticeKind[];
   /** The spaced review: the first placeable one not already placed, when a slot is free. */
@@ -1338,9 +1367,11 @@ const FIELD_RUNG: Readonly<Partial<Record<PracticeKind, ProgressionRung>>> = {
  *          Fluent explains and starts putting it together, Mastered puts it
  *          together (building, a teacher or partner). With an exam, Fluent
  *          and Mastered train for it: explaining, problem sets and going
- *          over mistakes. Steps: outline at Familiar, list the gaps at
- *          Retained, explain it once at Fluent, a small project at Mastered
- *          (with an exam, the gaps again).
+ *          over mistakes (Mastered's default is problem sets, which make the
+ *          mistakes to go over: alone, with room for one, going over
+ *          mistakes would be a filler; contracts §20.12). Steps: outline at
+ *          Familiar, list the gaps at Retained, explain it once at Fluent, a
+ *          small project at Mastered (with an exam, the gaps again).
  *   BODY   easy and mobility → technique (or strength) → longer (or
  *          strength) → harder (or longer, strength) → harder; an easy
  *          session kept throughout.
@@ -1364,7 +1395,7 @@ export const PROGRESSION: Readonly<Record<CatalogTrack, ProgressionTrackRule>> =
     },
     examStages: {
       FLUENT: { focus: ["EXPLAIN_IT", "PROBLEM_SETS", "MISTAKE_REVIEW", "WRITING_PRACTICE"], step: "EXPLAIN_ONCE" },
-      MASTERED: { focus: ["MISTAKE_REVIEW", "PROBLEM_SETS", "EXPLAIN_IT", "WITH_A_PARTNER"], step: "LIST_GAPS" },
+      MASTERED: { focus: ["PROBLEM_SETS", "MISTAKE_REVIEW", "EXPLAIN_IT", "WITH_A_PARTNER"], step: "LIST_GAPS" },
     },
     partner: ["RECALL_DRILLS", "READ_AND_CARD"],
     base: ["RECALL_DRILLS", "MISTAKE_REVIEW"],
@@ -1441,7 +1472,11 @@ export const PROGRESSION: Readonly<Record<CatalogTrack, ProgressionTrackRule>> =
  *             (or writing) → a teacher or partner (or saying it, writing,
  *             mistakes) → a teacher or partner (or full run-throughs);
  *             listening kept as the spaced review. Steps: the gaps, explain
- *             it once (aloud, to someone), a small project.
+ *             it once (aloud, to someone), a small project. With an exam
+ *             (contracts §20.12): Fluent offers writing next to the partner
+ *             and both later gates list the gaps; every production stage up
+ *             to the exam trains each skill the exam tests (examSkills:
+ *             speaking, writing, listening, reading).
  *   PERFORM   study (or listening, slow drills) → slow drills → full
  *             run-throughs → run-throughs (or a teacher) → a teacher or
  *             partner (or run-throughs); slow drills kept throughout.
@@ -1460,6 +1495,17 @@ export const FIELD_FAMILY_PROGRESSION: Readonly<Record<PracticeFamily, Progressi
       RETAINED: { focus: ["SAY_IT_ALOUD", "WRITING_PRACTICE", "EXPLAIN_IT"], step: "EXPLAIN_ONCE" },
       FLUENT: { focus: ["WITH_A_PARTNER", "SAY_IT_ALOUD", "WRITING_PRACTICE", "MISTAKE_REVIEW"], step: "SMALL_PROJECT" },
       MASTERED: { focus: ["WITH_A_PARTNER", "RUN_THROUGHS"], step: null },
+    },
+    examStages: {
+      FLUENT: { focus: ["WITH_A_PARTNER", "WRITING_PRACTICE", "SAY_IT_ALOUD", "MISTAKE_REVIEW"], step: "LIST_GAPS" },
+      MASTERED: { focus: ["WITH_A_PARTNER", "RUN_THROUGHS"], step: "LIST_GAPS" },
+    },
+    examSkills: {
+      SPEAKING: ["SAY_IT_ALOUD", "WITH_A_PARTNER"],
+      WRITING: ["WRITING_PRACTICE"],
+      LISTENING: ["LISTEN_AND_REPEAT"],
+      // A timed paper is read under exam conditions: on the run-up the exam's timed practice trains reading too.
+      READING: ["READ_AND_CARD", "TIMED_PRACTICE"],
     },
     partner: ["RECALL_DRILLS", "READ_AND_CARD"],
     base: ["LISTEN_AND_REPEAT", "RECALL_DRILLS"],
@@ -1536,6 +1582,141 @@ export function practiceFamilyOfCoverage(coverageJson: unknown): PracticeFamily 
   return isPracticeFamily(v) ? v : null;
 }
 
+/** A skill a language exam tests (contracts §20.12; the LANGUAGE table's examSkills say which kinds train each). */
+export type LanguageSkill = "SPEAKING" | "WRITING" | "LISTENING" | "READING";
+/** Every skill, in the order a stage takes them up (speaking first: a LANGUAGE stage's focus usually trains it). */
+export const LANGUAGE_SKILLS: readonly LanguageSkill[] = ["SPEAKING", "WRITING", "LISTENING", "READING"];
+
+const SKILL_WORDS: Readonly<Record<LanguageSkill, RegExp>> = {
+  SPEAKING: /\b(?:speaking|oral|spoken)\b/,
+  WRITING: /\b(?:writing|written)\b/,
+  LISTENING: /\blistening\b/,
+  READING: /\breading\b/,
+};
+/** Language exams that test fewer than the four skills (the first match wins); any other exam tests all four. */
+const LANGUAGE_EXAMS_TESTING_FEWER: readonly [RegExp, readonly LanguageSkill[]][] = [
+  [/\bhskk\b/, ["SPEAKING"]],
+  [/\bjlpt\b|日本語能力試験/, ["LISTENING", "READING"]],
+  [/\btoeic\b/, ["LISTENING", "READING"]],
+  [/\btopik\s*(?:i|1)\b/, ["LISTENING", "READING"]],
+  [/\btopik\b|\bhsk\b|汉语水平考试|漢語水平考試/, ["LISTENING", "READING", "WRITING"]],
+];
+
+/**
+ * The skills a language exam tests, code's reading of the user's exam label
+ * (contracts §20.12; R2 and R3 pass it as ProgressionInput.examSkills on a
+ * LANGUAGE plan): the skills the label names ("TOEIC Listening and Reading",
+ * "an oral exam"); else a known exam that tests fewer than four (JLPT and
+ * TOEIC: listening and reading; HSK and TOPIK: those and writing; HSKK:
+ * speaking); else all four (IELTS, TOEFL, Cambridge, DELF, DELE, Goethe, an
+ * exam code doesn't know). In LANGUAGE_SKILLS order.
+ */
+export function languageExamSkillsOf(examLabel: unknown): LanguageSkill[] {
+  const text = typeof examLabel === "string" ? examLabel.normalize("NFKC").toLowerCase() : "";
+  const named = LANGUAGE_SKILLS.filter((s) => SKILL_WORDS[s].test(text));
+  if (named.length > 0) return named;
+  const known = LANGUAGE_EXAMS_TESTING_FEWER.find(([re]) => re.test(text));
+  return known ? LANGUAGE_SKILLS.filter((s) => known[1].includes(s)) : [...LANGUAGE_SKILLS];
+}
+
+/** One practice that takes turns with another, week about, and code's words for the pair (contracts §20.12). */
+export interface PracticeTurn {
+  /** The practice's own kind (the row's catalogKey: it holds the stage's role). */
+  kind: PracticeKind;
+  /** The kind it alternates with: the next week's. */
+  alternate: PracticeKind;
+  /** The pair's label (a CODE_TEMPLATE on a Field Area, filled with the Domains). */
+  template: CodeTemplate;
+}
+
+/**
+ * The pairs code may set to take turns (contracts §20.12; the lead's ruling:
+ * where a stage's room holds one practice and its role needs two kinds, they
+ * alternate week about, and the plan's own words say so, rather than two
+ * practices at one session each). A pair not listed never takes turns: the
+ * second kind waits for room. Field kinds only.
+ *   timed practice  the exam's run-up (any practice, so timed practice is
+ *                   never left out of a run-up, however few the hours);
+ *   a teacher or    a role-less default (practiceRoleOf: none) that the
+ *   partner, slow   stage's role kind took the place of (F-R4-13);
+ *   drills
+ *   the skills      a language exam's skills, beyond the room.
+ */
+export const PRACTICE_TURNS: readonly PracticeTurn[] = [
+  { kind: "RECALL_DRILLS", alternate: "TIMED_PRACTICE", template: "Recall drills one week, timed practice the next: {domains}" },
+  { kind: "READ_AND_CARD", alternate: "TIMED_PRACTICE", template: "Study one week, timed practice the next: {domains}" },
+  { kind: "LISTEN_AND_REPEAT", alternate: "TIMED_PRACTICE", template: "Listen and repeat one week, timed practice the next: {domains}" },
+  { kind: "SLOW_DRILLS", alternate: "TIMED_PRACTICE", template: "Slow, focused drills one week, timed practice the next: {domains}" },
+  { kind: "PROBLEM_SETS", alternate: "TIMED_PRACTICE", template: "Problem sets one week, timed practice the next: {domains}" },
+  { kind: "EXPLAIN_IT", alternate: "TIMED_PRACTICE", template: "Explain it in your own words one week, timed practice the next: {domains}" },
+  { kind: "WRITING_PRACTICE", alternate: "TIMED_PRACTICE", template: "Writing practice one week, timed practice the next: {domains}" },
+  { kind: "MISTAKE_REVIEW", alternate: "TIMED_PRACTICE", template: "Go over your mistakes one week, timed practice the next: {domains}" },
+  { kind: "SAY_IT_ALOUD", alternate: "TIMED_PRACTICE", template: "Say it aloud one week, timed practice the next: {domains}" },
+  { kind: "BUILD_SOMETHING", alternate: "TIMED_PRACTICE", template: "Build something one week, timed practice the next: {domains}" },
+  { kind: "RUN_THROUGHS", alternate: "TIMED_PRACTICE", template: "Full run-throughs one week, timed practice the next: {domains}" },
+  { kind: "WITH_A_PARTNER", alternate: "TIMED_PRACTICE", template: "Practise with a teacher or partner one week, timed practice the next: {domains}" },
+  { kind: "SAY_IT_ALOUD", alternate: "WITH_A_PARTNER", template: "Say it aloud one week, a teacher or partner the next: {domains}" },
+  { kind: "RUN_THROUGHS", alternate: "WITH_A_PARTNER", template: "Full run-throughs one week, a teacher or partner the next: {domains}" },
+  { kind: "EXPLAIN_IT", alternate: "WITH_A_PARTNER", template: "Explain it in your own words one week, a teacher or partner the next: {domains}" },
+  { kind: "WRITING_PRACTICE", alternate: "WITH_A_PARTNER", template: "Writing practice one week, a teacher or partner the next: {domains}" },
+  { kind: "PROBLEM_SETS", alternate: "WITH_A_PARTNER", template: "Problem sets one week, a teacher or partner the next: {domains}" },
+  { kind: "BUILD_SOMETHING", alternate: "WITH_A_PARTNER", template: "Build something one week, a teacher or partner the next: {domains}" },
+  { kind: "MISTAKE_REVIEW", alternate: "WITH_A_PARTNER", template: "Go over your mistakes one week, a teacher or partner the next: {domains}" },
+  { kind: "RECALL_DRILLS", alternate: "SLOW_DRILLS", template: "Recall drills one week, slow, focused drills the next: {domains}" },
+  { kind: "READ_AND_CARD", alternate: "SLOW_DRILLS", template: "Study one week, slow, focused drills the next: {domains}" },
+  { kind: "LISTEN_AND_REPEAT", alternate: "SLOW_DRILLS", template: "Listen and repeat one week, slow, focused drills the next: {domains}" },
+  { kind: "SAY_IT_ALOUD", alternate: "WRITING_PRACTICE", template: "Say it aloud one week, writing practice the next: {domains}" },
+  { kind: "WITH_A_PARTNER", alternate: "WRITING_PRACTICE", template: "Practise with a teacher or partner one week, writing practice the next: {domains}" },
+  { kind: "WRITING_PRACTICE", alternate: "LISTEN_AND_REPEAT", template: "Writing practice one week, listen and repeat the next: {domains}" },
+  { kind: "WRITING_PRACTICE", alternate: "READ_AND_CARD", template: "Writing practice one week, study the next: {domains}" },
+  { kind: "LISTEN_AND_REPEAT", alternate: "READ_AND_CARD", template: "Listen and repeat one week, study the next: {domains}" },
+];
+
+/** The words for a practice that takes turns with another (PRACTICE_TURNS); null when the pair has none (it never takes turns). */
+export function practiceTurnTemplateOf(kind: unknown, alternate: unknown): CodeTemplate | null {
+  return PRACTICE_TURNS.find((t) => t.kind === kind && t.alternate === alternate)?.template ?? null;
+}
+
+/**
+ * A placed practice's label (CodeText; R2 writes it, R4 accepts it): a
+ * practice that takes turns (ProgressionItem.alternate) says so in code's
+ * words, "Problem sets one week, timed practice the next: Probability";
+ * any other is its type's own (catalogLabelOf). A pair with no words, or off
+ * a Field Area, is its type's own label. Throws as catalogLabelOf does.
+ */
+export function progressionLabelOf(item: { kind: CatalogKey; alternate?: PracticeKind | null }, fill: CatalogFill): CodeText {
+  const turn = item.alternate && fill.track === "FIELD" ? practiceTurnTemplateOf(item.kind, item.alternate) : null;
+  if (!turn) return catalogLabelOf(item.kind, fill);
+  if (!catalogEntryOf(item.kind)?.tracks.includes(fill.track)) throw new Error(`progressionLabelOf: ${item.kind} is not used on a ${fill.track} Area`);
+  return codeText(turn, { domains: fill.domains, aim: fill.aim, exam: fill.exam });
+}
+
+/**
+ * Every label a code row of one type may carry (R4's check that a CODE
+ * item's words are code's): its own render and each turn it may take
+ * (PRACTICE_TURNS) on a Field Area. The fills that can't render are left out.
+ */
+export function practiceLabelsOf(key: CatalogKey, fill: CatalogFill): CodeText[] {
+  const out: CodeText[] = [];
+  const add = (f: () => CodeText) => {
+    try {
+      out.push(f());
+    } catch {
+      // that fill doesn't render this one
+    }
+  };
+  add(() => catalogLabelOf(key, fill));
+  if (fill.track === "FIELD") for (const t of PRACTICE_TURNS) if (t.kind === key) add(() => progressionLabelOf({ kind: key, alternate: t.alternate }, fill));
+  return out;
+}
+
+/** The kind a stored code label says its practice takes turns with (one of key's PRACTICE_TURNS, read from its words), else null: R2 keeps the turn when it re-renders a label for a renamed Domain. */
+export function practiceTurnOfLabel(key: unknown, label: unknown): PracticeKind | null {
+  if (typeof label !== "string") return null;
+  const turn = PRACTICE_TURNS.find((t) => t.kind === key && label.startsWith(t.template.slice(0, t.template.indexOf("{domains}"))));
+  return turn?.alternate ?? null;
+}
+
 /** The stage keys a track's progression runs over, in order: the gate stages on FIELD, STAGE_1..STAGE_5 on a track. */
 export function progressionStageKeysOf(track: CatalogTrack): readonly StageKey[] {
   return track === "FIELD" ? STAGE_KEYS : TRACK_STAGE_KEYS;
@@ -1559,12 +1740,14 @@ export const CHECKPOINT_RUNG: Readonly<Record<CheckpointKind, 1 | 2 | 3>> = { SE
  *          the stage's own focus, the stage carries what the stage before
  *          carried instead); a BETWEEN or PART stage copies its gate's; on
  *          an exam plan the first production focus is kept up to the exam
- *          (CORE);
+ *          (CORE; a language exam's skills, SKILL); with room for one the
+ *          carry waits, and the stage's role kind takes turns where the role
+ *          needs two kinds (§20.12);
  *   climb  a stage's focus is never less demanding than the stage before's
  *          (PROGRESSION rungs: every candidate of a stage sits at or above
  *          every candidate of the stage before, so no pick steps back); a
  *          kind standing in for one the gate holds is exempt. After a dated
- *          exam nothing climbs: a stage keeps what the exam's stage trained.
+ *          exam the climb goes on toward the depth (§20.12).
  */
 export const BUILD_UP_RULE = "carry and climb";
 
@@ -1641,6 +1824,13 @@ export interface ProgressionInput {
   examPrepStage?: number | null;
   /** A Field plan's practice family (practiceFamilyOf(intake)); absent or invalid: KNOW. Ignored on a track. */
   family?: PracticeFamily | null;
+  /**
+   * The skills the exam tests, on a plan whose table has examSkills (a
+   * LANGUAGE plan with an exam; languageExamSkillsOf(intake.examLabel)).
+   * Absent or null: all four (an IELTS-like exam). Anything not a skill is
+   * left out; an empty list trains none of them as SKILL.
+   */
+  examSkills?: readonly LanguageSkill[] | null;
   /** The plan's gate (allowedKindsFor; its `blocked` is PENDING and AVOID): never placed. Absent: nothing blocked by the gate. */
   gate?: Pick<ActivityGate, "blocked"> | null;
   /** More kinds never placed (a run's exclusions, a caller's own). */
@@ -1655,6 +1845,7 @@ export interface ProgressionInput {
 export type ProgressionWhy =
   | "FOCUS"
   | "EXAM"
+  | "SKILL"
   | "CORE"
   | "PICK"
   | "PARTNER"
@@ -1678,6 +1869,13 @@ export interface ProgressionItem {
   standsIn: CatalogKey | null;
   /** Gemini's valid pick: a PICK beside code's default, or the FOCUS when Gemini picked the default itself. Never a copy. */
   picked: boolean;
+  /**
+   * A practice that takes turns, week about, with this kind (contracts
+   * §20.12: the stage's room holds one practice where its role needs two;
+   * PRACTICE_TURNS, and progressionLabelOf says so in the label). Absent
+   * on every other item. Never a kind the stage places otherwise.
+   */
+  alternate?: PracticeKind;
 }
 
 /** One stage's part of the progression. */
@@ -1690,7 +1888,12 @@ export interface StageProgression {
   carried: boolean;
   /** A BETWEEN or PART stage: its practices are its gate's. */
   copy: boolean;
-  /** After a dated exam's stage: it keeps what the exam's stage trained and holds no step and no checkpoint. */
+  /**
+   * After a dated exam's stage (contracts §20.12): it climbs on toward the
+   * depth like any stage (its own focus, the carry, its steps), with no
+   * timed practice, core or skill, and its own checkpoint, escalating again
+   * from the self-test to the performance check on the last stage.
+   */
   afterExam: boolean;
   /** The kind the stage trains (code's default focus; a copy's gate's; a carried stage's first practice); null with none. */
   focus: PracticeKind | null;
@@ -1876,8 +2079,13 @@ function lastResortOf(rule: ProgressionTrackRule, role: "RETRIEVAL" | "PRODUCTIO
 
 const STEP_DISPLAY: readonly ProgressionWhy[] = ["OPENING", "BOOK", "ROLE", "CLOSING"];
 
-/** How firmly a placed practice holds its place (ensureShape replaces the lowest, the exam's copy-stage timed practice the last copy). */
-const HOLD: Readonly<Partial<Record<ProgressionWhy, number>>> = { BASE: 0, SHAPE: 0, COPY: 1, CARRY: 1, PARTNER: 1, PICK: 2, CORE: 3, EXAM: 4 };
+/**
+ * How firmly a placed practice holds its place: ensureShape replaces the
+ * lowest, but never the exam's timed practice (a role-less focus takes turns
+ * with the role kind instead); a copy stage's timed practice takes the last
+ * copy's place.
+ */
+const HOLD: Readonly<Partial<Record<ProgressionWhy, number>>> = { BASE: 0, SHAPE: 0, COPY: 1, CARRY: 1, PARTNER: 1, PICK: 2, CORE: 3, SKILL: 3, EXAM: 4 };
 
 /** Where a plan's exam sits (see ProgressionInput.examStage and .examPrepStage): its stage, whether it has a day, its run-up and the mock test's stage. */
 function examPlacementOf(input: Pick<ProgressionInput, "exam" | "examStage" | "examPrepStage" | "stages">, live: readonly number[]): { examStage: number | null; examDated: boolean; prep: number | null; mock: number | null } {
@@ -1894,39 +2102,82 @@ function examPlacementOf(input: Pick<ProgressionInput, "exam" | "examStage" | "e
   return { examStage, examDated: true, prep, mock: before };
 }
 
+/** The skills a plan's exam tests that its table trains as SKILL (contracts §20.12): none without an exam or a table with examSkills; else the given ones (all four when none are given). */
+function testedSkillsOf(rule: ProgressionTrackRule, exam: boolean, given: unknown): LanguageSkill[] {
+  if (!exam || !rule.examSkills) return [];
+  if (!Array.isArray(given)) return [...LANGUAGE_SKILLS];
+  return LANGUAGE_SKILLS.filter((s) => (given as readonly unknown[]).includes(s));
+}
+
+/** A placed list's kinds, each practice's turn (alternate) included. */
+const kindsIn = (items: readonly ProgressionItem[]): string[] => items.flatMap((x) => (x.alternate ? [x.kind, x.alternate] : [x.kind]));
+
 /**
- * THE PROGRESSION (contracts §20, §20.11), pure and deterministic: what
- * every stage of a plan holds, from the table (the track's, or a Field
+ * Sets out[at] to take turns, week about, with `alt` (contracts §20.12): only
+ * on a Field Area, for a pair with words (PRACTICE_TURNS), with a kind the
+ * gate places that the stage holds nowhere else. `force` replaces a turn the
+ * practice already takes (the exam's timed practice outranks it). In place;
+ * true when it took.
+ */
+function takeTurns(out: ProgressionItem[], taken: Set<string>, at: number, alt: PracticeKind, track: CatalogTrack, ok: (k: string) => boolean, force = false): boolean {
+  const it = out[at];
+  if (!it || track !== "FIELD" || it.kind === alt || taken.has(alt) || !ok(alt) || !practiceTurnTemplateOf(it.kind, alt)) return false;
+  if (it.alternate && !force) return false;
+  if (it.alternate) taken.delete(it.alternate);
+  out[at] = { ...it, alternate: alt };
+  taken.add(alt);
+  return true;
+}
+
+/**
+ * THE PROGRESSION (contracts §20, §20.11, §20.12), pure and deterministic:
+ * what every stage of a plan holds, from the table (the track's, or a Field
  * plan's family's, with the exam's stages when there is an exam), Gemini's
  * picks, the exam, the gate and the stage's room. See the section's head for
  * the parts. In short, per stage that is neither held nor carried:
  *   practices  FOCUS (code's default: the first placeable candidate, else a
  *              stand-in), then EXAM (timed practice on the exam's run-up and
- *              its stage), CORE (an exam plan's first production focus, up
- *              to the exam), PICK (Gemini's valid pick when it is not the
- *              default), PARTNER on the chain's first stage or CARRY after
- *              it, BASE (the spaced review not yet placed; going over
- *              mistakes first on the run-up and the exam's stage), each once,
- *              up to maxPractices; then SHAPE makes F-R4-13's role hold on a
- *              Field stage when a role kind is placeable. A BETWEEN or PART
- *              stage COPYs the next gate stage's practices (the one before
- *              when the next comes after a dated exam, or there is none),
- *              without its timed practice or Gemini's pick, then takes its
- *              own timed practice (in place of its last copy when full), the base
- *              and the shape. After a dated exam's stage, a stage COPYs the
- *              exam stage's practices the same way. Practices off: none.
+ *              its stage), SKILL (a language exam: each skill it tests that
+ *              nothing above trains, up to the exam), CORE (an exam plan's
+ *              first production focus, up to the exam; not with SKILL), PICK
+ *              (Gemini's valid pick when it is not the default), PARTNER on
+ *              the chain's first stage or CARRY after it, BASE (the spaced
+ *              review not yet placed; going over mistakes first on the
+ *              run-up and the exam's stage), each once, up to maxPractices;
+ *              then SHAPE makes F-R4-13's role hold on a Field stage when a
+ *              role kind is placeable (never in place of the exam's timed
+ *              practice: when only the focus can give way, the role kind takes
+ *              its place). Then TURNS (contracts §20.12): where the room holds
+ *              fewer practices than the stage's role needs, one practice takes
+ *              turns with the next kind, week about (alternate; its label says
+ *              so), never two at one session each: the exam's timed practice
+ *              in its run-up at any room (it takes the focus's turn: the
+ *              lead's ruling), else the role-less default the shape moved, and
+ *              a language exam's skills beyond the room. A BETWEEN or PART
+ *              stage COPYs its gate's practices (the next gate or track
+ *              stage; up to a dated exam, the one before when the next comes
+ *              after it), without its timed practice or Gemini's pick, then
+ *              takes its own timed practice (in place of its last copy when
+ *              full; the first practice's turn with room for one), the base,
+ *              the shape and its turn. Practices off: none.
  *   steps      OPENING and BOOK (an exam) on the first stage, ROLE on a
  *              Field gate stage, CLOSING (the track's: FULL_ATTEMPT on a
  *              Field, BODY or CRAFT plan) on the last stage unless the exam
  *              is held there; at most STEPS_PER_MILESTONE, kept in that
  *              priority (OPENING, BOOK, CLOSING, ROLE) and listed OPENING,
- *              BOOK, ROLE, CLOSING. None after a dated exam's stage.
+ *              BOOK, ROLE, CLOSING.
  *   checkpoint the exam stage: EXAM_DAY (dated) or MOCK_TEST (undated, the
  *              last stage); the stage before a dated exam's: MOCK_TEST; else
  *              the last stage: PERFORMANCE_CHECK; else, on a Field stage
  *              after the first: SELF_TEST. A blocked one gives way to a
  *              self-test on a Field plan while CHECKPOINT_RUNG still climbs;
- *              else none. None after a dated exam's stage.
+ *              else none.
+ *   after a dated exam (the lead's ruling, contracts §20.12) the stages keep
+ *              climbing toward the depth like any other: their own focus,
+ *              the carry, the base, their role steps and the closing, and
+ *              their own checkpoints, escalating again from the self-test to
+ *              the performance check on the last stage. No timed practice, no
+ *              core and no skill after the exam: those are its run-up's.
  * A held stage gets nothing; a carried stage keeps its kinds (KEPT) and gets
  * nothing new. Never a blocked, off-track, codeOnly (EXAM_DAY aside, on its
  * dated stage) or, without an exam, examOnly kind; never a lastStageOnly
@@ -1947,7 +2198,14 @@ export function progressionOf(input: ProgressionInput): Progression {
   const last = live.length > 0 ? live[live.length - 1] : -1;
   const ex = examPlacementOf(input, live);
   const examStage = ex.examStage;
+  const dated = ex.examDated && examStage != null;
   const runUp = (i: number) => exam && (i === ex.prep || i === examStage);
+  /** A stage up to the exam (its own stage included): where CORE and SKILL hold. */
+  const toExam = (i: number) => exam && examStage != null && i <= examStage;
+  const tested = testedSkillsOf(rule, exam, input.examSkills);
+  const skillKinds = rule.examSkills ?? null;
+  const skillsOn = skillKinds != null && tested.length > 0;
+  const trainsTested = (k: string) => skillsOn && tested.some((s) => (skillKinds?.[s] ?? []).includes(k as PracticeKind));
   // The spaced review: the first base kind placeable and not yet placed; going over mistakes first on the exam's run-up
   // and its stage. Elsewhere a retrieval stage never takes a production kind as its base (going over mistakes needs
   // work to go over).
@@ -1963,7 +2221,7 @@ export function progressionOf(input: ProgressionInput): Progression {
     held: s.held === true,
     carried: s.held !== true && Array.isArray(s.carried),
     copy: isCopyStageKey(s.stage),
-    afterExam: s.held !== true && ex.examDated && examStage != null && index > examStage,
+    afterExam: s.held !== true && dated && index > (examStage as number),
     focus: null,
     practices: [],
     steps: [],
@@ -1975,11 +2233,40 @@ export function progressionOf(input: ProgressionInput): Progression {
   };
   const isProduction = (k: string | null): boolean => k != null && practiceRoleOf({ catalogKey: k }) === "PRODUCTION";
 
-  // Practices, along the chain of gate and track stages up to the exam (carried ones set what the next carries).
+  // Practices, along the chain of gate and track stages (carried ones set what the next carries).
   let prevFocus: PracticeKind | null = null;
   let prevCarry: PracticeKind | null = null;
   let prevCands: readonly PracticeKind[] = [];
   let core: PracticeKind | null = null;
+  /** Where SKILL holds: a language exam's production stages up to the exam (its own stage included). */
+  const skillsAt = (i: number) => skillsOn && toExam(i) && progressionShapeOf(track, input.stages[i]) === "PRODUCTION";
+  /**
+   * TURNS (contracts §20.12), the last step of a stage's practices, the same
+   * for a fresh stage and a copy (a copy settles its own, so a carried source
+   * gives the same copy): the exam's timed practice takes the first
+   * practice's turn when the room left it none; else the kind the shape
+   * moved (a role-less default); else, on a copy, its source's role-less
+   * default when the copy doesn't hold it; then each tested skill nothing
+   * trains takes a turn on the last practice that trains a tested skill and
+   * takes none yet. A pair without words (PRACTICE_TURNS) takes no turn.
+   */
+  const settleTurns = (i: number, out: ProgressionItem[], taken: Set<string>, t: { timed: boolean; moved: PracticeKind | null; def: PracticeKind | null }) => {
+    const shape = progressionShapeOf(track, input.stages[i]);
+    if (t.timed) takeTurns(out, taken, 0, "TIMED_PRACTICE", track, ok, true);
+    else if (t.moved) takeTurns(out, taken, 0, t.moved, track, ok);
+    else if (t.def && practiceRoleOf({ catalogKey: t.def }) == null && !taken.has(t.def) && shape && out[0] && practiceRoleOf({ catalogKey: out[0].kind }) === shape) takeTurns(out, taken, 0, t.def, track, ok);
+    if (!skillsAt(i)) return;
+    for (const skill of tested) {
+      const kinds = skillKinds?.[skill] ?? [];
+      if (out.some((x) => kinds.includes(x.kind as PracticeKind) || (x.alternate != null && kinds.includes(x.alternate)))) continue;
+      const k = kinds.find((x) => ok(x) && !taken.has(x) && !BY_KEY[x].examOnly);
+      if (!k) continue;
+      const at = [...out.keys()].reverse().find((j) => out[j].why !== "EXAM" && !out[j].alternate && trainsTested(out[j].kind));
+      if (at != null) takeTurns(out, taken, at, k, track, ok);
+    }
+  };
+  /** The core a stage up to the exam keeps (none with the skills rule: the exam's skills are its core). */
+  const coreAt = (i: number): PracticeKind | null => (!skillsOn && toExam(i) && core && ok(core) ? core : null);
   for (const i of live) {
     const sp = stages[i];
     const src = input.stages[i];
@@ -1991,11 +2278,11 @@ export function progressionOf(input: ProgressionInput): Progression {
       sp.checkpoint = cp ? itemOf(cp, "KEPT") : null;
       const f = kinds.find(isPracticeOnTrack) ?? null;
       sp.focus = f;
-      // A copy (or a stage after the exam) built fresh sets nothing the next stage builds on, so a carried one doesn't either.
-      if (!f || sp.copy || sp.afterExam) continue;
+      // A copy built fresh sets nothing the next stage builds on, so a carried one doesn't either.
+      if (!f || sp.copy) continue;
       // What it carried, read as a fresh stage chose it: the partner on the chain's first stage, else the carry (never the
-      // exam's practice, nor the core a fresh stage places before its carry).
-      const coreHere = exam && examStage != null && i <= examStage && core && ok(core) ? core : null;
+      // exam's practice, a skill, nor the core a fresh stage places before its carry).
+      const coreHere = coreAt(i);
       const others = kinds.filter((k): k is PracticeKind => k !== f && k !== coreHere && isPracticeOnTrack(k) && !BY_KEY[k].examOnly);
       const chosenFrom: readonly (PracticeKind | null)[] = prevFocus == null ? rule.partner : [prevFocus, prevCarry];
       const second: PracticeKind | null = chosenFrom.find((k): k is PracticeKind => k != null && others.includes(k)) ?? null;
@@ -2005,7 +2292,7 @@ export function progressionOf(input: ProgressionInput): Progression {
       if (core == null && isProduction(f)) core = f;
       continue;
     }
-    if (sp.copy || sp.afterExam || !practicesAllowed) continue;
+    if (sp.copy || !practicesAllowed) continue;
     const max = maxPracticesAt(input.maxPractices, i);
     const out: ProgressionItem[] = [];
     const taken = new Set<string>();
@@ -2028,10 +2315,21 @@ export function progressionOf(input: ProgressionInput): Progression {
     }
     const picked = pick.picked ? pick.kind : null;
     if (focus) push(itemOf(focus, "FOCUS", standsIn, picked === focus));
-    // EXAM: timed practice on the exam's run-up and its own stage.
+    // EXAM: timed practice on the exam's run-up and its own stage; with no room beside the focus, the focus's turn.
+    const timedTurn = runUp(i) && ok("TIMED_PRACTICE") && out.length >= max;
     if (runUp(i) && ok("TIMED_PRACTICE")) push(itemOf("TIMED_PRACTICE", "EXAM"));
+    // SKILL: a language exam's tested skills nothing above trains (production stages up to the exam); those beyond the
+    // room take turns (settleTurns).
+    if (skillsAt(i))
+      for (const skill of tested) {
+        const kinds = skillKinds?.[skill] ?? [];
+        if (out.some((x) => kinds.includes(x.kind as PracticeKind))) continue;
+        const k = kinds.find((x) => ok(x) && !taken.has(x) && !BY_KEY[x].examOnly);
+        if (k && out.length < max) push(itemOf(k, "SKILL"));
+      }
     // CORE: an exam plan keeps its first production focus up to the exam.
-    if (exam && examStage != null && i <= examStage && core && ok(core)) push(itemOf(core, "CORE"));
+    const coreHere = coreAt(i);
+    if (coreHere) push(itemOf(coreHere, "CORE"));
     // PICK: Gemini's valid pick beside code's default, never in its place and never over the exam's practices.
     if (picked && picked !== focus) push(itemOf(picked, "PICK", null, true));
     // PARTNER on the chain's first stage; CARRY after it (the build-up rule).
@@ -2050,13 +2348,14 @@ export function progressionOf(input: ProgressionInput): Progression {
     // BASE: the spaced review not yet placed (going over mistakes first on the exam's run-up and its stage).
     const base = baseOf(i, taken);
     if (base) push(itemOf(base, "BASE"));
-    ensureShape(out, taken, max, shape, own?.focus ?? [], ok);
+    const moved = ensureShape(out, taken, max, shape, own?.focus ?? [], ok);
     // Never empty while practices are allowed and the track has one to place (the user released only kinds this stage
     // doesn't list): the least demanding placeable practice on the track, the stage's role first on a Field plan.
     if (out.length === 0) {
       const any = lastResortOf(rule, shape, ok);
       if (any) push(itemOf(any, "FOCUS", wanted && !ok(wanted) ? wanted : null));
     }
+    settleTurns(i, out, taken, { timed: timedTurn, moved, def: null });
     sp.practices = out;
     const placed = (out.find((x) => x.why === "FOCUS")?.kind ?? null) as PracticeKind | null;
     sp.focus = placed;
@@ -2070,20 +2369,28 @@ export function progressionOf(input: ProgressionInput): Progression {
   }
 
   // A stage that copies another's practices: without its timed practice and Gemini's pick (code's plan; going over
-  // mistakes is copied like any of code's practices), then its own timed practice (in place of its last copy when full),
-  // the base when a slot is free, and the shape.
+  // mistakes is copied like any of code's practices) and without their turns, then its own timed practice (in place of
+  // its last copy when full; the first practice's turn with room for one), the base when a slot is free, the shape, and
+  // its own turns (settleTurns: so a copy of a carried stage is the copy of the fresh one).
   const copyInto = (i: number, srcIdx: number | null) => {
     const max = maxPracticesAt(input.maxPractices, i);
     const from = srcIdx == null ? [] : stages[srcIdx].practices.filter((x) => ok(x.kind) && x.why !== "PICK" && x.kind !== "TIMED_PRACTICE");
-    const out: ProgressionItem[] = from.slice(0, max).map((x) => ({ ...x, why: "COPY" as const, picked: false }));
-    const taken = new Set<string>(out.map((x) => x.kind));
+    const out: ProgressionItem[] = from.slice(0, max).map((x) => {
+      const c: ProgressionItem = { ...x, why: "COPY", picked: false };
+      delete c.alternate;
+      return c;
+    });
+    const taken = new Set<string>(kindsIn(out));
+    let timedTurn = false;
     if (runUp(i) && ok("TIMED_PRACTICE")) {
       const timed = itemOf("TIMED_PRACTICE", "EXAM");
       if (out.length < max) out.push(timed);
       else if (max >= 2) {
-        taken.delete(out[out.length - 1].kind);
+        const gone = out[out.length - 1];
+        taken.delete(gone.kind);
+        if (gone.alternate) taken.delete(gone.alternate);
         out[out.length - 1] = timed;
-      }
+      } else timedTurn = true;
       if (out.includes(timed)) taken.add("TIMED_PRACTICE");
     }
     const base = baseOf(i, taken);
@@ -2092,36 +2399,46 @@ export function progressionOf(input: ProgressionInput): Progression {
       taken.add(base);
     }
     const shape = progressionShapeOf(track, input.stages[i]);
-    ensureShape(out, taken, max, shape, stageRuleOf(rule, input.stages[i])?.focus ?? [], ok, 1);
+    const moved = ensureShape(out, taken, max, shape, stageRuleOf(rule, input.stages[i])?.focus ?? [], ok, 1);
     // Nothing to copy (a carried source holding only kinds the gate now holds): the least demanding placeable practice.
     if (out.length === 0) {
       const any = lastResortOf(rule, shape, ok);
-      if (any) out.push(itemOf(any, "BASE"));
+      if (any) {
+        out.push(itemOf(any, "BASE"));
+        taken.add(any);
+      }
     }
+    const def = ((srcIdx == null ? stageRuleOf(rule, input.stages[i]) : stageRuleOf(rule, input.stages[srcIdx]))?.focus ?? []).filter(ok)[0] ?? null;
+    settleTurns(i, out, taken, { timed: timedTurn, moved, def });
     stages[i].practices = out;
-    stages[i].focus = srcIdx == null ? ((out[0]?.kind ?? null) as PracticeKind | null) : stages[srcIdx].focus;
+    const srcFocus = srcIdx == null ? null : stages[srcIdx].focus;
+    stages[i].focus = srcFocus && out.some((x) => x.kind === srcFocus) ? srcFocus : ((out[0]?.kind ?? null) as PracticeKind | null);
   };
-  if (practicesAllowed) {
-    // BETWEEN and PART up to the exam copy their gate's practices (the next gate or track stage, else the one before).
+  if (practicesAllowed)
+    // BETWEEN and PART copy their gate's practices: the next gate or track stage (up to a dated exam, one up to it), else
+    // the one before, else the next one after the exam (a count gate holding the exam is part of its gate).
     for (const i of live) {
       const sp = stages[i];
-      if (!sp.copy || sp.carried || sp.afterExam) continue;
-      copyInto(i, live.find((j) => j > i && !stages[j].copy && !stages[j].afterExam) ?? [...live].reverse().find((j) => j < i && !stages[j].copy) ?? null);
+      if (!sp.copy || sp.carried) continue;
+      const upTo = dated && i <= (examStage as number) ? (examStage as number) : Number.POSITIVE_INFINITY;
+      const next = live.find((j) => j > i && j <= upTo && !stages[j].copy) ?? null;
+      const before = [...live].reverse().find((j) => j < i && !stages[j].copy) ?? null;
+      copyInto(i, next ?? before ?? live.find((j) => j > i && !stages[j].copy) ?? null);
     }
-    // After a dated exam: a stage keeps what the exam's stage trained.
-    if (ex.examDated && examStage != null) for (const i of live) if (stages[i].afterExam && !stages[i].carried) copyInto(i, examStage);
-  }
 
-  // Steps and the checkpoint.
+  // Steps and the checkpoint; after a dated exam the checkpoints escalate again (a new climb toward the depth).
   let topRung = 0;
+  let restarted = false;
   for (const i of live) {
     const sp = stages[i];
+    if (sp.afterExam && !restarted) {
+      topRung = 0;
+      restarted = true;
+    }
     if (sp.carried) {
       if (sp.checkpoint) topRung = Math.max(topRung, CHECKPOINT_RUNG[sp.checkpoint.kind as CheckpointKind] ?? 0);
       continue;
     }
-    // Nothing after a dated exam: no climb, no step, no checkpoint.
-    if (sp.afterExam) continue;
     const steps: ProgressionItem[] = [];
     const addStep = (k: StepKind | null, why: ProgressionWhy) => {
       if (!k || !ok(k) || steps.some((x) => x.kind === k) || steps.length >= STEPS_PER_MILESTONE) return;
@@ -2161,12 +2478,15 @@ export function progressionOf(input: ProgressionInput): Progression {
  * stage's role and a kind of it is placeable (the stage's own candidates
  * first, then the role's order), it is added (SHAPE) when a slot is free,
  * else it takes the place of the practice that holds its place least (HOLD:
- * the base, then a copy, carry or partner, then Gemini's pick, the core, the
- * exam's; the last of equals; on a copy, never the copied focus, its first
- * practice: `fixed`). With room for one practice only, the focus
- * becomes the stage's first candidate of that role; when the gate holds
- * every one of those, the role's kind stands in for the first of them (so
- * the climb's exemption names what was held).
+ * the base, then a copy, carry or partner, then Gemini's pick, the core, a
+ * skill; the last of equals; never the exam's timed practice; on a copy,
+ * never the copied focus, its first practice: `fixed`). When only the focus
+ * (and the exam's timed practice) is left, the focus becomes the stage's
+ * first candidate of that role; when the gate holds every one of those, the
+ * role's kind stands in for the first of them (so the climb's exemption
+ * names what was held). Returns the practice kind that focus moved (the
+ * caller sets the new focus to take turns with it: contracts §20.12), else
+ * null.
  */
 function ensureShape(
   out: ProgressionItem[],
@@ -2176,33 +2496,38 @@ function ensureShape(
   cands: readonly PracticeKind[],
   ok: (k: string) => boolean,
   fixed = 0
-): void {
-  if (!role || out.some((x) => practiceRoleOf({ catalogKey: x.kind }) === role)) return;
+): PracticeKind | null {
+  if (!role || out.some((x) => practiceRoleOf({ catalogKey: x.kind }) === role)) return null;
   const order = role === "PRODUCTION" ? FIELD_PRODUCTION_ORDER : FIELD_RETRIEVAL_ORDER;
   const fits = (k: PracticeKind) => practiceRoleOf({ catalogKey: k }) === role && ok(k) && !taken.has(k);
   const pick = [...cands, ...order].find(fits) ?? null;
-  if (!pick) return;
+  if (!pick) return null;
   if (out.length < max) {
     out.push(itemOf(pick, "SHAPE"));
     taken.add(pick);
-    return;
+    return null;
   }
   let at = -1;
   for (let j = 0; j < out.length; j++) {
-    if (out[j].why === "FOCUS" || j < fixed) continue;
+    if (out[j].why === "FOCUS" || out[j].why === "EXAM" || j < fixed) continue;
     if (at < 0 || (HOLD[out[j].why] ?? 1) <= (HOLD[out[at].why] ?? 1)) at = j;
   }
   if (at >= 0) {
     taken.delete(out[at].kind);
+    if (out[at].alternate) taken.delete(out[at].alternate as string);
     out[at] = itemOf(pick, "SHAPE");
     taken.add(pick);
-    return;
+    return null;
   }
+  const idx = Math.max(0, out.findIndex((x) => x.why !== "EXAM"));
+  const was = out[idx];
   const inStage = cands.find(fits) ?? null;
   const held = cands.find((k) => practiceRoleOf({ catalogKey: k }) === role) ?? null;
-  taken.delete(out[0].kind);
-  out[0] = inStage ? itemOf(inStage, "FOCUS") : itemOf(pick, "FOCUS", held);
-  taken.add(out[0].kind);
+  taken.delete(was.kind);
+  if (was.alternate) taken.delete(was.alternate);
+  out[idx] = inStage ? itemOf(inStage, "FOCUS") : itemOf(pick, "FOCUS", held);
+  taken.add(out[idx].kind);
+  return BY_KEY[was.kind]?.slot === "PRACTICE" ? (was.kind as PracticeKind) : null;
 }
 
 /**
@@ -2211,6 +2536,7 @@ function ensureShape(
  * app's list"); any other practice the app placed STUDY_ADDED (retrieval)
  * or PRODUCTION_ADDED (production), "added by the app", so pay honesty reads
  * it; a step, a checkpoint, a practice of neither role, or a carried one: none.
+ * A practice that takes turns is read by its own kind (the row's catalogKey).
  */
 export function progressionNotesOf(item: Pick<ProgressionItem, "kind" | "slot" | "why" | "picked">): ItemNote[] {
   if (item.why === "KEPT") return [];
@@ -2226,24 +2552,32 @@ export function progressionNotesOf(item: Pick<ProgressionItem, "kind" | "slot" |
  * gate state; R2's, R4's and R7's checks can run it over theirs). [] when it
  * holds; else one line per breach, "<CODE> stage <i>: …". The codes:
  *   HELD       a held stage holds anything
- *   CAP        over maxPractices, STEPS_PER_MILESTONE or one checkpoint; a kind twice in a list
- *   TRACK      a kind off the track, or in the wrong list
- *   BLOCKED    a kind the gate or `excluded` holds (a carried stage's own kinds aside)
- *   EXAM       an examOnly kind without an exam; timed practice off the exam's run-up and its stage; a mock test off
- *              the stage before a dated exam's (undated: off the exam's stage); EXAM_DAY off a dated exam's stage;
- *              BOOK_EXAM off the first stage
- *   EXAM_PREP  the exam's run-up or its stage without timed practice (room for two or more, placeable); the stage
- *              before a dated exam's without the mock test (placeable, escalation allowing)
- *   AFTER_EXAM a stage after a dated exam's holding a step or a checkpoint
+ *   CAP        over maxPractices, STEPS_PER_MILESTONE or one checkpoint; a kind twice (a turn counts)
+ *   TRACK      a kind off the track, or in the wrong list (a turn: a practice on the track)
+ *   BLOCKED    a kind the gate or `excluded` holds (a turn too; a carried stage's own kinds aside)
+ *   EXAM       an examOnly kind without an exam; timed practice (or its turn) off the exam's run-up and its stage; a mock
+ *              test off the stage before a dated exam's (undated: off the exam's stage); EXAM_DAY off a dated exam's
+ *              stage; BOOK_EXAM off the first stage
+ *   EXAM_PREP  the exam's run-up or its stage without timed practice, at any room (its own slot, or the focus's turn:
+ *              the lead's ruling), while it is placeable; the stage before a dated exam's without the mock test
+ *              (placeable, escalation allowing)
+ *   AFTER_EXAM a stage after a dated exam that copies the exam's stage (COPY on a gate or track stage), or holds no
+ *              checkpoint while one is placeable (a self-test on a Field stage, the performance check on the last):
+ *              the stages after the exam keep climbing, measured
+ *   TURNS      a practice taking turns with a kind the pair has no words for (PRACTICE_TURNS), off a Field Area; or
+ *              code's role-less default the shape moved, left out while the pair has words and the focus takes no turn
+ *   SKILL      a language exam's tested skill (a placeable kind of it) not trained on a production stage up to the exam
+ *              while a slot below it was free or used
  *   LAST       a lastStageOnly kind before the last stage
- *   ESCALATE   a checkpoint less demanding than one before it
+ *   ESCALATE   a checkpoint less demanding than one before it (after a dated exam the climb starts again)
  *   PRACTICE   a stage with no practice while practices are allowed and the track has a placeable one; any practice while they are off
- *   DEFAULT    code's default (the stage's first placeable candidate) missing with room for two or more: a pick never removes it
+ *   DEFAULT    code's default (the stage's first placeable candidate) missing with room for two or more (a turn counts): a pick never removes it
  *   CORE       an exam plan's first production focus missing before the exam while a slot below it was free or used
+ *              (not with SKILL: a language exam's skills are its core)
  *   CARRY      a later gate or track stage without the kind the stage before trained while a slot below it was free or
  *              used by the spaced review (and no SHAPE took its place)
  *   CLIMB      a focus less demanding than the stage before's (neither a stand-in)
- *   SHAPE      a Field stage without its F-R4-13 role while a kind of it is placeable
+ *   SHAPE      a Field stage without its F-R4-13 role while a kind of it is placeable (a practice's own kind: its turn doesn't count)
  *   STANDIN    a kind standing in for one nothing held (a stand-in replaces only a kind the gate, `excluded` or the exam filter holds)
  *   PICK       Gemini's valid pick (not the default) left out while a slot below it was free or used
  */
@@ -2260,23 +2594,32 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
   const ex = examPlacementOf(input, live);
   const first = live.length ? live[0] : -1;
   const last = live.length ? live[live.length - 1] : -1;
+  const dated = ex.examDated && ex.examStage != null;
+  const tested = testedSkillsOf(rule, exam, input.examSkills);
+  const skillsOn = !!rule.examSkills && tested.length > 0;
   const below = (s: StageProgression, rank: number, max: number) => s.practices.length < max || s.practices.some((x) => (HOLD[x.why] ?? 9) < rank);
   let topRung = 0;
+  let restarted = false;
   let prev: StageProgression | null = null;
   let core: PracticeKind | null = null;
   const isProduction = (k: string | null): k is PracticeKind => k != null && practiceRoleOf({ catalogKey: k }) === "PRODUCTION";
   for (const s of p.stages) {
     const at = `stage ${s.index}`;
     const all = [...s.practices, ...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])];
+    const turns = s.practices.filter((x) => x.alternate);
     if (s.held) {
       if (all.length > 0) out.push(`HELD ${at}: holds ${all.map((x) => x.kind).join(", ")}`);
       continue;
     }
     const max = maxPracticesAt(input.maxPractices, s.index);
-    const afterExam = ex.examDated && ex.examStage != null && s.index > ex.examStage;
+    const afterExam = dated && s.index > (ex.examStage as number);
+    if (afterExam && !restarted) {
+      topRung = 0;
+      restarted = true;
+    }
     if (s.practices.length > max && !s.carried) out.push(`CAP ${at}: ${s.practices.length} practices`);
     if (s.steps.length > STEPS_PER_MILESTONE && !s.carried) out.push(`CAP ${at}: ${s.steps.length} steps`);
-    for (const list of [s.practices, s.steps]) if (new Set(list.map((x) => x.kind)).size !== list.length) out.push(`CAP ${at}: a kind twice`);
+    for (const list of [kindsIn(s.practices), s.steps.map((x) => x.kind)]) if (new Set(list).size !== list.length) out.push(`CAP ${at}: a kind twice`);
     for (const [list, slot] of [
       [s.practices, "PRACTICE"],
       [s.steps, "STEP"],
@@ -2286,15 +2629,21 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
         const e = catalogEntryOf(x.kind);
         if (!e || e.slot !== slot || !e.tracks.includes(track)) out.push(`TRACK ${at}: ${x.kind}`);
       }
+    for (const x of turns) {
+      const e = catalogEntryOf(x.alternate);
+      if (!e || e.slot !== "PRACTICE" || !e.tracks.includes(track)) out.push(`TRACK ${at}: ${x.kind} takes turns with ${x.alternate}`);
+    }
     if (s.carried) {
       if (s.checkpoint) topRung = Math.max(topRung, CHECKPOINT_RUNG[s.checkpoint.kind as CheckpointKind] ?? 0);
-      if (!s.copy && !afterExam && s.focus) {
+      if (!s.copy && s.focus) {
         prev = s;
         if (core == null && isProduction(s.focus)) core = s.focus;
       }
       continue;
     }
     const runUp = exam && (s.index === ex.prep || s.index === ex.examStage);
+    const toExam = exam && ex.examStage != null && s.index <= ex.examStage;
+    const has = (k: string) => s.practices.some((x) => x.kind === k || x.alternate === k);
     for (const x of all) {
       const e = catalogEntryOf(x.kind);
       if (!e) continue;
@@ -2307,10 +2656,18 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
       if (x.kind === "BOOK_EXAM" && s.index !== first) out.push(`EXAM ${at}: BOOK_EXAM off the first stage`);
       if (e.codeOnly && x.kind !== "EXAM_DAY") out.push(`TRACK ${at}: codeOnly ${x.kind}`);
     }
+    for (const x of turns) {
+      const alt = x.alternate as PracticeKind;
+      if (blocked.has(alt)) out.push(`BLOCKED ${at}: ${alt} (a turn)`);
+      if (catalogEntryOf(alt)?.examOnly && !exam) out.push(`EXAM ${at}: ${alt} without an exam (a turn)`);
+      if (alt === "TIMED_PRACTICE" && !runUp) out.push(`EXAM ${at}: TIMED_PRACTICE off the exam's run-up and its stage (a turn)`);
+      if (track !== "FIELD" || !practiceTurnTemplateOf(x.kind, alt)) out.push(`TURNS ${at}: ${x.kind} takes turns with ${alt}, a pair with no words`);
+    }
     const hasShape = s.practices.some((x) => x.why === "SHAPE");
-    if (afterExam && (s.steps.length > 0 || s.checkpoint)) out.push(`AFTER_EXAM ${at}: ${[...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])].map((x) => x.kind).join(", ")} after the exam`);
-    // (With room for two, F-R4-13's shape outranks the exam's practice: a retrieval stage whose focus has no role.)
-    if (practicesOn && runUp && max >= 2 && ok("TIMED_PRACTICE") && !hasShape && !s.practices.some((x) => x.kind === "TIMED_PRACTICE")) out.push(`EXAM_PREP ${at}: no timed practice in the exam's run-up`);
+    if (afterExam && !s.copy && s.practices.some((x) => x.why === "COPY")) out.push(`AFTER_EXAM ${at}: copies the exam's stage instead of climbing`);
+    if (afterExam && !s.checkpoint && ((track === "FIELD" && ok("SELF_TEST") && CHECKPOINT_RUNG.SELF_TEST >= topRung) || (s.index === last && ok("PERFORMANCE_CHECK"))))
+      out.push(`AFTER_EXAM ${at}: no checkpoint after the exam`);
+    if (practicesOn && runUp && ok("TIMED_PRACTICE") && !has("TIMED_PRACTICE")) out.push(`EXAM_PREP ${at}: no timed practice in the exam's run-up`);
     if (ex.examDated && s.index === ex.mock && ok("MOCK_TEST") && CHECKPOINT_RUNG.MOCK_TEST >= topRung && s.checkpoint?.kind !== "MOCK_TEST") out.push(`EXAM_PREP ${at}: no mock test before the exam`);
     if (s.checkpoint) {
       const r = CHECKPOINT_RUNG[s.checkpoint.kind as CheckpointKind] ?? 0;
@@ -2326,14 +2683,31 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
     }
     // A stand-in replaces only a kind something held (the gate's safety itself is BLOCKED: while the card waits, only safe kinds are placeable).
     for (const x of all) if (x.standsIn && ok(x.standsIn)) out.push(`STANDIN ${at}: ${x.kind} stands in for ${x.standsIn}, which nothing held`);
-    if (!s.copy && !afterExam && practicesOn) {
+    if (!s.copy && practicesOn) {
       const cands = (stageRuleOf(rule, s)?.focus ?? []).filter(ok);
-      const has = (k: string) => s.practices.some((x) => x.kind === k);
       const def = cands[0] ?? null;
       if (def && max >= 2 && !has(def)) out.push(`DEFAULT ${at}: code's default ${def} missing`);
+      const focusItem = s.practices.find((x) => x.why === "FOCUS") ?? null;
+      if (
+        track === "FIELD" &&
+        shape &&
+        def &&
+        practiceRoleOf({ catalogKey: def }) == null &&
+        !has(def) &&
+        focusItem &&
+        !focusItem.alternate &&
+        practiceRoleOf({ catalogKey: focusItem.kind }) === shape &&
+        practiceTurnTemplateOf(focusItem.kind, def)
+      )
+        out.push(`TURNS ${at}: code's default ${def} gave way to ${focusItem.kind} without taking turns with it`);
       const pick = pickFor(input.picks, s.stage);
       if (pick && pick !== def && (cands as readonly string[]).includes(pick) && max >= 2 && !has(pick) && below(s, HOLD.PICK ?? 2, max) && !hasShape) out.push(`PICK ${at}: Gemini's pick ${pick} left out`);
-      if (exam && ex.examStage != null && s.index <= ex.examStage && core && ok(core) && core !== s.focus && !has(core) && below(s, HOLD.CORE ?? 3, max) && !hasShape) out.push(`CORE ${at}: without ${core}, the plan's first production focus, before the exam`);
+      if (!skillsOn && toExam && core && ok(core) && core !== s.focus && !has(core) && below(s, HOLD.CORE ?? 3, max) && !hasShape) out.push(`CORE ${at}: without ${core}, the plan's first production focus, before the exam`);
+      if (skillsOn && shape === "PRODUCTION" && toExam)
+        for (const skill of tested) {
+          const kinds = rule.examSkills?.[skill] ?? [];
+          if (kinds.some((k) => ok(k) && !catalogEntryOf(k)?.examOnly) && !kinds.some(has) && below(s, HOLD.SKILL ?? 3, max) && !hasShape) out.push(`SKILL ${at}: ${skill.toLowerCase()}, which the exam tests, not trained`);
+        }
       if (prev && prev.focus) {
         const f = prev.focus;
         if (f !== s.focus && ok(f) && !has(f) && !hasShape && (s.practices.length < max || s.practices.some((x) => x.why === "BASE"))) out.push(`CARRY ${at}: without ${f}, which the stage before trained`);
@@ -2345,7 +2719,7 @@ export function progressionViolationsOf(input: ProgressionInput, p: Progression)
         if (a && b && !a.standsIn && !b.standsIn && ra != null && rb != null && ra < rb) out.push(`CLIMB ${at}: ${a.kind} (${ra}) after ${b.kind} (${rb})`);
       }
     }
-    if (!s.copy && !afterExam) {
+    if (!s.copy) {
       prev = s;
       if (core == null && isProduction(s.focus)) core = s.focus;
     }

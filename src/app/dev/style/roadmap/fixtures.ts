@@ -18,7 +18,11 @@
  *   legacy-draft · done-depth · archived · draft-v3 (the keys-only
  *   "draft-mixed-3") · draft-exam · draft-v4 (contracts §20: code's practice
  *   progression, built with the real progressionOf, and Gemini's choices
- *   among each stage's options) · draft-body · draft-rejected ·
+ *   among each stage's options) · draft-manual ("Write it myself": the plan
+ *   stays the user's, each stage offering "Add the app's practice") ·
+ *   draft-low-hours (the app's plan at 3 h a week: one practice per stage,
+ *   two kinds taking turns week about where a stage's role needs both) ·
+ *   draft-body · draft-rejected ·
  *   draft-impossible · draft-gaps · intake-depth · intake-empty-library ·
  *   intake-gemini. draft-gaps and intake-gemini are lead-only: drawn with a
  *   switch on (RoadmapFixture.gates) that is off in this build.
@@ -86,9 +90,9 @@ import {
   activityConfirmViewOf,
   allowedKindsFor,
   catalogEntryOf,
-  catalogLabelOf,
   constraintsStateOf,
   practiceSizeOf,
+  progressionLabelOf,
   progressionNotesOf,
   progressionOf,
   stageBandFloorOf,
@@ -135,6 +139,8 @@ export const FIXTURE_STATES = [
   "draft-v3",
   "draft-exam",
   "draft-v4",
+  "draft-manual",
+  "draft-low-hours",
   "draft-body",
   "draft-rejected",
   "draft-impossible",
@@ -169,6 +175,8 @@ export const REV4_STATES = [
   "draft-v3",
   "draft-exam",
   "draft-v4",
+  "draft-manual",
+  "draft-low-hours",
   "draft-body",
   "draft-rejected",
   "draft-impossible",
@@ -1717,14 +1725,15 @@ const PACK_LINE_DOMAIN: readonly (string | null)[] = ["d-pr", "d-pr", "d-pr", "d
  * The pack's draft as code's progression, built with the real pure
  * progression (roadmap-catalog progressionOf over the pack's stages, the exam
  * on the stage whose window holds its day): every practice, step and
- * checkpoint is the progression's, labelled by the catalog (catalogLabelOf),
+ * checkpoint is the progression's, labelled by the catalog (progressionLabelOf:
+ * a practice that takes turns with another says so),
  * sized by code's allocation (practiceSizeOf at the stage's floor) and noted
  * by progressionNotesOf. `gemini`: a v4 reply's draft, with its picks
  * (GEMINI_PICK on a pick only) and its outline order (outlineOrderOf);
  * otherwise the app's own starter, in the user's order. The lines are split
  * across the stages (outlineStagesOf); none is ever lost.
  */
-export function packProgressionMilestones(opts: { exam: boolean; gemini: boolean }): MilestoneDraft[] {
+export function packProgressionMilestones(opts: { exam: boolean; gemini: boolean; room?: number }): MilestoneDraft[] {
   const { exam, gemini } = opts;
   const input: ProgressionInput = {
     track: "FIELD",
@@ -1733,6 +1742,7 @@ export function packProgressionMilestones(opts: { exam: boolean; gemini: boolean
     exam,
     examStage: exam ? STAGES.findIndex((s) => s.ws <= EXAM_DAY && EXAM_DAY <= s.due) : null,
     picks: gemini ? PACK_V4_PICKS : null,
+    ...(opts.room != null ? { maxPractices: opts.room } : {}),
   };
   const p = progressionOf(input);
   const fill = { track: "FIELD" as const, domains: [domainName({ id: "d-pr", name: "Probability" }), domainName({ id: "d-in", name: "Inference" })], aim: (exam ? PACK_AIM : PACK_V4_AIM_NO_EXAM) as YoursText, exam: "Exam P" as YoursText };
@@ -1742,7 +1752,8 @@ export function packProgressionMilestones(opts: { exam: boolean; gemini: boolean
     const st = p.stages[i];
     const floor = stageBandFloorOf(st.stage, st.level);
     const placed = [...st.practices, ...st.steps, ...(st.checkpoint ? [st.checkpoint] : [])].map((x) => {
-      const label = catalogLabelOf(x.kind, fill);
+      // A practice that takes turns with another says so in code's words (contracts §20.12).
+      const label = progressionLabelOf(x, fill);
       const notes = progressionNotesOf(x);
       if (x.slot === "PRACTICE") {
         const size = practiceSizeOf(x.kind, 60, floor);
@@ -1763,8 +1774,8 @@ export function packProgressionMilestones(opts: { exam: boolean; gemini: boolean
  * with its picks), else the app's starter (code's progression, contracts
  * §20); its additions and their mode.
  */
-function packDraftView(opts: { gemini: boolean; v4?: boolean; exam: boolean; additions: string[]; mode?: "BULK" | "TOGGLES"; blockedLinear?: boolean; run?: RunView | null; dateCheck?: DateCheck; aim?: string; p?: Partial<DraftView> }): RoadmapView {
-  const ms = opts.gemini && !opts.v4 ? packDraftMilestones({ additions: opts.additions, exam: opts.exam }) : packProgressionMilestones({ exam: opts.exam, gemini: opts.gemini });
+function packDraftView(opts: { gemini: boolean; v4?: boolean; exam: boolean; additions: string[]; mode?: "BULK" | "TOGGLES"; blockedLinear?: boolean; run?: RunView | null; dateCheck?: DateCheck; aim?: string; room?: number; p?: Partial<DraftView> }): RoadmapView {
+  const ms = opts.gemini && !opts.v4 ? packDraftMilestones({ additions: opts.additions, exam: opts.exam }) : packProgressionMilestones({ exam: opts.exam, gemini: opts.gemini, room: opts.room });
   const adds = opts.additions.length ? packAdditions(opts.blockedLinear) : [];
   // Without an exam the date check has no exam waypoint.
   const dateCheck = opts.dateCheck ?? (opts.exam ? packDateCheck() : packDateCheck({ reachByExam: null, basis: [REALISTIC_BASIS[0], REALISTIC_BASIS[2]] }));
@@ -1821,6 +1832,29 @@ function packDraftView(opts: { gemini: boolean; v4?: boolean; exam: boolean; add
     paragonMissing: [],
     legacy: null,
   };
+}
+
+/**
+ * "Write it myself" on the pack (the lead's ruling 6; a MANUAL run wrote the
+ * rows): the stages as the manual skeleton leaves them, with the Domains and
+ * the outline's lines and no practice, step or checkpoint of code's; the
+ * user chose the stage's own default on Familiar (Recall drills, "you chose
+ * this") and wrote a practice of their own on Retained. Every other stage,
+ * Retained included, offers "Add the app's practice".
+ */
+function manualDraftView(): RoadmapView {
+  const run = v3Run({ id: "r7", kind: "MANUAL", model: null, modelVersion: null, promptVersion: null, drafts: 0, wrote: "MANUAL", report: null });
+  const v = packDraftView({ gemini: false, exam: true, additions: [], run });
+  const ms = v.draft!.milestones.map((m) => {
+    const own: ItemDraft[] =
+      m.stage === "FAMILIAR"
+        ? [catalogItem("PRACTICE", "RECALL_DRILLS", "Recall drills: Probability, Inference", { origin: "USER", decision: "EDITED", method: "DELIBERATE_PRACTICE", sessionsPerWeek: 3, durationBand: "D30", rule: "TARGET:3/W", planSource: "WORKED_OUT" })]
+        : m.stage === "RETAINED"
+          ? [item({ kind: "PRACTICE", label: "Past papers with my study group", origin: "USER", decision: "EDITED", method: "DELIBERATE_PRACTICE", sessionsPerWeek: 2, durationBand: "D45", rule: "TARGET:2/W", planSource: "WORKED_OUT" })]
+          : [];
+    return { ...m, items: [...m.items.filter((it) => !it.catalogKey), ...own] };
+  });
+  return { ...v, draft: { ...v.draft!, milestones: ms, nextToDecide: null } };
 }
 
 /** A body plan with constraints (F-R4-17): the kinds left out with their words, the aim conflict, the one session-picks confirm. */
@@ -2136,7 +2170,11 @@ function rev4FixtureOf(state: Rev4State): RoadmapFixture {
       return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "An exam aim: one toggle per Domain and [Confirm], no add-all; an addition past 3 years is disabled with its reason." };
     }
     case "draft-v4": {
-      const v = packDraftView({ gemini: true, v4: true, exam: true, additions: [], mode: "TOGGLES", run: v3Run({ id: "r6", promptVersion: 4 }) });
+      const base = packDraftView({ gemini: true, v4: true, exam: true, additions: [], mode: "TOGGLES", run: v3Run({ id: "r6", promptVersion: 4 }) });
+      // R4's next item to decide: a pending addition, then Gemini's waiting choice that isn't its stage's default (Retained's
+      // Explain it, beside Problem sets: accept waits on it), then the next milestone's own rows.
+      const waiting = base.draft!.milestones.flatMap((m) => m.items).find((it) => it.kind === "PRACTICE" && it.decision === "PENDING" && it.notes.includes("GEMINI_PICK") && it.catalogKey === "EXPLAIN_IT");
+      const v: RoadmapView = { ...base, draft: { ...base.draft!, nextToDecide: waiting?.id ?? base.draft!.nextToDecide } };
       return {
         view: v,
         intake: null,
@@ -2149,6 +2187,29 @@ function rev4FixtureOf(state: Rev4State): RoadmapFixture {
     case "draft-body": {
       const v = bodyDraftView();
       return { view: v, intake: null, aim: null, today: null, startPreview: null, note: "A body plan with constraints: the kinds left out with their words, the aim conflict, and the one confirm that quotes the constraints." };
+    }
+    case "draft-low-hours": {
+      const base = packDraftView({ gemini: false, exam: true, additions: [], room: 1 });
+      const v: RoadmapView = { ...base, header: { ...base.header!, hoursPerWeek: 3 } };
+      return {
+        view: v,
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: null,
+        note: "The app's plan at 3 h a week (the lead's ruling 1): each stage's room holds one practice, its role-defining kind; where the role needs two (the exam's run-up: timed practice), they take turns week about, the label saying so, a short line saying why and the How showing each week's kind.",
+      };
+    }
+    case "draft-manual": {
+      const v = manualDraftView();
+      return {
+        view: v,
+        intake: null,
+        aim: null,
+        today: null,
+        startPreview: null,
+        note: "Write it myself (the lead's ruling 6): the plan stays the user's, so no practice of code's is placed on it; each stage offers “Add the app's practice” (its own default under the gate) in one tap, and a stage already holding that kind (Familiar) doesn't.",
+      };
     }
     case "draft-rejected": {
       const v = packDraftView({
