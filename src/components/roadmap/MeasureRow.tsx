@@ -10,6 +10,8 @@
  * a measured slot; with no reading the row says "not measured yet". A figure
  * worked out over Domains Gemini picked carries the propagation note ("worked
  * out on Gemini's suggested Domains (not checked)") from its basisClass.
+ * A Practice kept that no longer pays because its practice was paused says
+ * so under it (`note`; the lead's ruling 3).
  */
 import { Meter } from "@/components/ui/Meter";
 import { goalPercent } from "@/lib/goals";
@@ -35,6 +37,7 @@ export function MeasureRow({
   slowest,
   since,
   writesOff,
+  note: pausedNote,
 }: {
   row: MeasureRowView;
   /** "Cards at level 6+ in Risk Management, Position Sizing" or the end state's label. */
@@ -45,6 +48,8 @@ export function MeasureRow({
   /** "since start" (a milestone) or "since you began" (the aim). */
   since: "since start" | "since you began";
   writesOff: boolean;
+  /** A line under the row ("Strength session is paused because you said to avoid it, so from 5 Oct this no longer counts toward the milestone."). */
+  note?: string | null;
 }) {
   const parsed = parseMeasureKey(row.measureKey);
   const level = parsed?.kind === "CARDS_AT_LEVEL" ? parsed.level : null;
@@ -103,6 +108,7 @@ export function MeasureRow({
         </p>
       )}
       {pace && <p className="t-meta">{pace}</p>}
+      {pausedNote && <p className="t-meta rm-ink1">{pausedNote}</p>}
     </div>
   );
 }

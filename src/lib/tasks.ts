@@ -53,7 +53,7 @@ import { occursOn } from "./recurrence";
 import { statedGoalMp } from "./life-economy";
 import { MAKEUP_RESTORE_EVERY_DAYS, dutyLaunchDay, freezeUseKey, isDutyLaunched, newLifeSettingsData } from "./duty-economy";
 import { HELD_SOURCES } from "./streak-curve";
-import { heldDaysOf, parsePendingChange, type DutyTemplate, type RestRow } from "./duty-rule";
+import { heldDaysOf, parsePendingChange, withNext, withoutNext, type DutyTemplate, type PendingNext, type RestRow } from "./duty-rule";
 import {
   MAKE_UP_UNDO_ELSEWHERE,
   dutyBoardOf,
@@ -68,6 +68,7 @@ import {
   type DutyBoardFacts,
   type OwedRow,
   type RuleEdit,
+  type RuleEditPlan,
   type RuleRow,
   type RuleWrite,
 } from "./duty-plan";
@@ -2116,17 +2117,52 @@ export interface RuleChangeOutcome {
 const RULE_EDIT_ATTEMPTS = 3;
 
 /**
+ * A safety pause's write (roadmap contracts §19, the lead's ruling 2), pure:
+ * the template archived at `at` whatever its rule — a must included, once
+ * Duty is live and past its typo grace. It is the one exception to the
+ * akrasia horizon (duty-rule.ts classifyChange): the user said the activity
+ * itself is one to avoid (the roadmap's "Activities to avoid"), so its task
+ * leaves Today now rather than in AKRASIA_DAYS. It is a pause, not a
+ * weakening of the commitment, so nothing of the must's rule is rewritten:
+ * `compulsory` and every prior segment stand, every day before the pause
+ * keeps its rule and its debts (settlement reads them as before), and from
+ * the pause day on nothing is expected (the archive day, as for any
+ * archive). A pending archive the user asked for earlier is folded in (the
+ * template is archived now, so `next` loses its `archive`); any other
+ * pending change stays. The Undo is unarchive's, as for any archive (never
+ * retroactive). Already archived: nothing to write.
+ */
+export function planSafetyPause(row: RuleRow, at: Date): RuleEditPlan {
+  if (row.archivedAt) return { effect: "immediate", effectiveDay: null, write: null };
+  const write: RuleWrite = { archivedAt: at };
+  const change = parsePendingChange(row.pendingChange);
+  const next = change?.next;
+  if (change && next?.archive) {
+    const rest: PendingNext = { effectiveDay: next.effectiveDay };
+    if (next.compulsory === false) rest.compulsory = false;
+    if (next.compulsoryOnRest === false) rest.compulsoryOnRest = false;
+    const left = rest.compulsory === false || rest.compulsoryOnRest === false ? withNext(change, rest) : withoutNext(change);
+    write.pendingChange = left;
+    if (!left?.next) write.pendingChangeAt = null;
+  }
+  return { effect: "immediate", effectiveDay: null, write };
+}
+
+/** The edits applyRuleEdit writes: duty-plan's RuleEdit, and the roadmap's safety pause (planSafetyPause). */
+type AppliedRuleEdit = RuleEdit | { kind: "safety-pause" };
+
+/**
  * Reads the template, plans the edit (duty-plan.ts planRuleEdit: the
  * classifier, one pending change per template, prior segments for a
- * strengthening) and writes it compare-and-set; a row that moved under it
- * is read and planned again, a few times at most. `refusalOf` (optional)
- * reads more about the row it read and may refuse the edit before any write
- * (unarchiveCore's roadmap check).
+ * strengthening; a safety pause: planSafetyPause) and writes it
+ * compare-and-set; a row that moved under it is read and planned again, a
+ * few times at most. `refusalOf` (optional) reads more about the row it read
+ * and may refuse the edit before any write (unarchiveCore's roadmap check).
  */
 async function applyRuleEdit(
   userId: string,
   templateId: string,
-  edit: RuleEdit,
+  edit: AppliedRuleEdit,
   now: Date,
   refusalOf?: (row: RuleReadRow) => Promise<string | null>
 ): Promise<LifeResult<RuleChangeOutcome>> {
@@ -2138,7 +2174,7 @@ async function applyRuleEdit(
     if (row.archivedAt && (edit.kind === "unflag" || edit.kind === "rest" || edit.kind === "cancel")) return fail("That task is archived.");
     const refusal = refusalOf ? await refusalOf(row) : null;
     if (refusal) return fail(refusal);
-    const plan = planRuleEdit(ruleRowOf(row), edit, { today, now, launched });
+    const plan = edit.kind === "safety-pause" ? ok(planSafetyPause(ruleRowOf(row), now)) : planRuleEdit(ruleRowOf(row), edit, { today, now, launched });
     if (!plan.ok) return fail(plan.error);
     const out: RuleChangeOutcome = { templateId, effect: plan.value.effect, effectiveDay: plan.value.effectiveDay };
     if (!plan.value.write) return ok(out);
@@ -2157,7 +2193,8 @@ async function applyRuleEdit(
  * once Duty is live, past its 60-minute typo grace, is a weakening — it is
  * deferred to today + 7 as a pending archive (archivedAt is NOT set early;
  * settlement writes it), and the answer says so. Anything else archives at
- * once, at `now` (or at `opts.archivedAt`, the link an edit leaves).
+ * once, at `now` (or at `opts.archivedAt`, the link an edit leaves). The one
+ * exception to the deferral is a safety pause (pauseForSafetyCore).
  */
 export async function archiveCore(
   userId: string,
@@ -2166,6 +2203,19 @@ export async function archiveCore(
   opts: { archivedAt?: Date } = {}
 ): Promise<LifeResult<RuleChangeOutcome>> {
   return applyRuleEdit(userId, templateId, { kind: "archive", at: opts.archivedAt ?? now }, now);
+}
+
+/**
+ * Pauses a template at once for safety (roadmap contracts §19, the lead's
+ * ruling 2: safety overrides the akrasia horizon): planSafetyPause through
+ * the same compare-and-set write as every rule edit, so a must leaves Today
+ * now too, its earlier days' rule and debts untouched. Its one caller is the
+ * roadmap (roadmap-server RoadmapIo.pauseTemplate): a started practice's or
+ * step's Today task of a kind the user said to avoid. Never a delete; the
+ * Today task's own unarchive is its Undo. Always `effect: "immediate"`.
+ */
+export async function pauseForSafetyCore(userId: string, templateId: string, now: Date = new Date()): Promise<LifeResult<RuleChangeOutcome>> {
+  return applyRuleEdit(userId, templateId, { kind: "safety-pause" }, now);
 }
 
 /**

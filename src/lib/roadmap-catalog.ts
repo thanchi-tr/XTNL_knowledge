@@ -41,6 +41,7 @@ import {
   codeText,
   constraintCuesOf,
   cueKeyOf,
+  cueLegacyKeyOf,
   cueReadingOf,
   cueTextsOf,
   userClauseOf,
@@ -796,7 +797,8 @@ export interface ConstraintsStateInput {
 const catalogIndex = (k: string): number => CATALOG.findIndex((e) => e.key === k);
 
 /**
- * The gate's input, pure: the cue reading over every text, its key, whether
+ * The gate's input, pure: the cue reading over every text, the key (the
+ * track's and the words': cueKeyOf), whether
  * the Constraints box holds anything, and the parser's exclusions as
  * suggestions (one per kind, on this track, in CATALOG order, each with the
  * user's sentence: userClauseOf over the constraints, or the word).
@@ -819,7 +821,7 @@ export function constraintsStateOf(input: ConstraintsStateInput): ConstraintsSta
     texts,
     stated: typeof texts.constraints === "string" && texts.constraints.trim().length > 0,
     reading: cueReadingOf(texts),
-    key: cueKeyOf(texts),
+    key: cueKeyOf(texts, track),
     prefill,
   };
 }
@@ -853,6 +855,22 @@ function cardAnsweredOf(c: unknown): ActivityCardAnswered | null {
   return { day, asked: CATALOG.filter((e) => set.has(e.key)).map((e) => e.key), none: none === true };
 }
 
+/** Every kind a card's answer listed is on this track (an empty list fits every track). */
+const askedFits = (asked: readonly CatalogKey[], track: CatalogTrack): boolean => asked.every((k) => BY_KEY[k].tracks.includes(track));
+
+/**
+ * The one catalog track whose card could have listed every kind an answer
+ * listed, else null (an empty list, or kinds two tracks share: Full attempt
+ * and Performance check alone fit every track; CARE's practices are DUTY's
+ * too; CRAFT's are FIELD's too). A card lists only kinds on its own track,
+ * so a single fit proves where the answer was given.
+ */
+function onlyTrackOf(asked: readonly CatalogKey[]): CatalogTrack | null {
+  if (asked.length === 0) return null;
+  const fits = CATALOG_TRACKS.filter((t) => askedFits(asked, t));
+  return fits.length === 1 ? fits[0] : null;
+}
+
 /**
  * THE gate (contracts §19), pure: which catalog kinds a plan path may place,
  * and what to ask. ON (activityAsksOn) on every BODY and CARE plan, and on a
@@ -860,8 +878,12 @@ function cardAnsweredOf(c: unknown): ActivityCardAnswered | null {
  * track, in CATALOG order:
  *   - the user said avoid (a stored AVOID, whatever the words): AVOID, not
  *     placed, on every track;
- *   - the card was answered under these words (ActivityConfirm.answered
- *     with state.key) and listed the kind, gated or suggested: FINE, placed;
+ *   - the card was answered under these words on this track
+ *     (ActivityConfirm.answered with state.key, cueKeyOf(texts, track); an
+ *     answer stored before the track was keyed, under cueLegacyKeyOf of the
+ *     same words, only when the kinds it listed fit this track alone) and
+ *     listed the kind, gated or suggested: FINE, placed. The release is per
+ *     card: one Save with a tick answers every row the card listed;
  *   - gated (on, and in cueGatedKindsOf) and not answered under these
  *     words: PENDING, not placed (a suggestion pre-ticks its box);
  *   - the parser's reading names it (a suggestion): WORDS, placed (its box
@@ -869,7 +891,8 @@ function cardAnsweredOf(c: unknown): ActivityCardAnswered | null {
  *   - otherwise placed, with no row.
  * The safe kinds are never gated. Nothing unlocks without the card's
  * answer; a stored per-kind FINE is never read. A changed text asks again
- * (the earlier answer's day shows as staleDay); an AVOID stands.
+ * (the earlier answer's day shows as staleDay); an answer given on another
+ * track asks again with no stale day; an AVOID stands.
  */
 export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityConfirm | null | undefined): ActivityGate {
   const track = state.track;
@@ -879,8 +902,12 @@ export function allowedKindsFor(state: ConstraintsState, confirmation: ActivityC
   const conf = confirmation && typeof confirmation === "object" ? confirmation : null;
   const kinds = conf && hasOwn(conf, "kinds") ? conf.kinds : null;
   const card = cardAnsweredOf(conf);
-  const fresh = card && conf?.key === state.key ? card : null;
-  const stale = card && !fresh ? card : null;
+  const storedKey = conf?.key;
+  // An answer stored before the track was keyed ("k1-") under the same words holds only where its listed kinds prove the track (§19.11).
+  const legacySameWords = !!card && typeof storedKey === "string" && storedKey.startsWith("k1-") && storedKey === cueLegacyKeyOf(state.texts);
+  const fresh = card && (storedKey === state.key || (legacySameWords && onlyTrackOf(card.asked) === track)) ? card : null;
+  // Stale (shown with its day): an answer this track's card gave under other words. Another track's answer, or an unproven legacy one under the same words, asks with no stale day.
+  const stale = card && !fresh && !legacySameWords && askedFits(card.asked, track) ? card : null;
   const askedNow = new Set<string>(fresh?.asked ?? []);
   const askedBefore = new Set<string>(stale?.asked ?? []);
   const shown = (e: CatalogEntry) => !e.codeOnly && (state.exam || !e.examOnly) && (state.practicesAllowed || e.slot !== "PRACTICE");
@@ -1025,8 +1052,9 @@ function reasonFor(state: ConstraintsState, kind: CatalogKey): string {
  * YOURS). Refuses:
  *   - a malformed answer, or a kind that is unknown, codeOnly or off this
  *     track, or ticks together with "Nothing to avoid" (ACTIVITY_ANSWER_REFUSAL);
- *   - an answer given against other words: answer.key !== state.key
- *     (ACTIVITY_ANSWER_STALE; the card asks again under the new words);
+ *   - an answer given against other words or on another track:
+ *     answer.key !== state.key (ACTIVITY_ANSWER_STALE; the card asks again
+ *     under the new words; a "k1-" key is never accepted);
  *   - a Save with nothing ticked (ACTIVITY_NOTHING_TICKED): an unticked row
  *     is never taken as fine by itself.
  * Otherwise the ticks replace the card's earlier ones: each ticked kind is
@@ -1034,7 +1062,10 @@ function reasonFor(state: ConstraintsState, kind: CatalogKey): string {
  * and the reason the server quotes, reasonFor: never text the client
  * sends); an AVOID the card didn't list stands. The card is answered under
  * state.key on `day`, about the kinds it listed (asked: the gate's rows and
- * the ticks), with none = nothingToAvoid. Kinds in CATALOG order.
+ * the ticks), with none = nothingToAvoid. Kinds in CATALOG order. The
+ * release is per card (the lead's ruling, contracts §19.11): a Save with at
+ * least one tick is the user's answer for every row the card listed, so
+ * each listed row left unticked is placed.
  */
 export function answerActivityCard(prev: ActivityConfirm | null | undefined, state: ConstraintsState, answer: ActivityCardAnswer, day: DayKey): RoadmapActionResult<ActivityConfirm> {
   const refuse = (error: string) => ({ ok: false as const, error });

@@ -104,7 +104,7 @@
  * parser's reading only suggests.
  *   Cue detector      CueClass · CueSource · CueSpan · CueReading · the CUE_* vocabularies ·
  *                     constraintCuesOf (text → {hasCue, cues, unparseable}) · CueTexts · cueTextsOf ·
- *                     cueReadingOf · cueKeyOf · userClauseOf
+ *                     cueReadingOf · cueKeyOf (the track's and the words') · cueLegacyKeyOf (read only) · userClauseOf
  *   The confirmation  ActivityCardAnswer (what the card sends: key, avoid, nothingToAvoid) ·
  *                     ActivityConfirm (stored, YOURS: key, AVOID kinds, answered) · ActivityCardAnswered ·
  *                     ActivityConfirmEntry · ActivityVerdict · ActivityAnswer (deprecated per-kind form) ·
@@ -5469,22 +5469,47 @@ export function cueReadingOf(texts: CueTexts): CueReading {
   return { hasCue: cues.length > 0 || unparseable, cues, unparseable };
 }
 
-/**
- * The fingerprint of the words an answer was given against: FNV-1a over the
- * texts (case and spacing ignored), "k1-" and 8 hex digits. A FINE stored
- * under another key is stale (the user's words changed: the kind is asked
- * again); an AVOID never goes stale. No text is stored twice.
- */
-export function cueKeyOf(texts: CueTexts): string {
+/** The texts as the keys read them (case and spacing ignored, empty notes left out). */
+function cueKeyPartsOf(texts: CueTexts): string[] {
   const clean = (x: unknown) => (typeof x === "string" ? x.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim() : "");
   const notes = (texts.notes ?? []).map(clean).filter(Boolean);
-  const s = [clean(texts.constraints), clean(texts.aim), ...notes].join("␞");
+  return [clean(texts.constraints), clean(texts.aim), ...notes];
+}
+
+/** FNV-1a, 32 bits, as 8 hex digits. */
+function fnv1aHex(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return `k1-${h.toString(16).padStart(8, "0")}`;
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * The fingerprint of the card an answer was given on: FNV-1a over the plan's
+ * catalog track and its texts (case and spacing ignored), "k2-" and 8 hex
+ * digits. The track is part of it, so an answer given on one track never
+ * releases kinds on another: "Nothing to avoid" said about running sessions
+ * on BODY is not an answer about a full attempt at a CRAFT piece (contracts
+ * §19.11). A card's answer stored under another key no longer holds: the
+ * card asks again. An AVOID never goes stale. No text is stored twice. The
+ * exam flag is not keyed: the exam label is itself a note, and a kind the
+ * card didn't list waits anyway (ActivityCardAnswered.asked).
+ */
+export function cueKeyOf(texts: CueTexts, track: CatalogTrack): string {
+  return `k2-${fnv1aHex([typeof track === "string" ? track : "", ...cueKeyPartsOf(texts)].join("␞"))}`;
+}
+
+/**
+ * The key before the track was keyed: "k1-" and FNV-1a over the texts alone
+ * (the answers stored before contracts §19.11 carry it). Read only: the gate
+ * (roadmap-catalog allowedKindsFor) holds such an answer under the same
+ * words only when the kinds it listed fit the plan's track and no other.
+ * Nothing writes it.
+ */
+export function cueLegacyKeyOf(texts: CueTexts): string {
+  return `k1-${fnv1aHex(cueKeyPartsOf(texts).join("␞"))}`;
 }
 
 // ── The confirmation (stored, YOURS) ──
@@ -5512,9 +5537,11 @@ export interface ActivityConfirmEntry {
 /**
  * The card's answer as stored: the user answered the activity card under
  * ActivityConfirm.key, on `day`, about the kinds the card listed then
- * (`asked`). Every listed kind they didn't tick is placed while the words
- * stay the same; a kind the card didn't list (another exam, a type added
- * later) still waits. `none`: the answer was "Nothing to avoid".
+ * (`asked`). The release is per card (the lead's ruling, contracts §19.11):
+ * a Save with at least one tick is the user's answer for every row the card
+ * listed, so every listed kind they didn't tick is placed while the words
+ * and the track stay the same; a kind the card didn't list (another exam, a
+ * type added later) still waits. `none`: the answer was "Nothing to avoid".
  */
 export interface ActivityCardAnswered {
   day: DayKey;
@@ -5527,11 +5554,11 @@ export interface ActivityCardAnswered {
  * The stored confirmation (Roadmap.coverage[ACTIVITY_CONFIRM_KEY]; read with
  * roadmap-catalog activityConfirmOf, written with coverageJsonOf). Editable
  * for the life of the plan; every plan path honours it through
- * allowedKindsFor. An AVOID stands whatever the words; the card's answer
- * holds only while the words keep `key`.
+ * allowedKindsFor. An AVOID stands whatever the words and the track; the
+ * card's answer holds only while the words and the track keep `key`.
  */
 export interface ActivityConfirm {
-  /** cueKeyOf the texts the card was last answered against. */
+  /** cueKeyOf(texts, track): the card the user last answered ("k2-"). A "k1-" key (cueLegacyKeyOf) is an answer stored before the track was keyed. */
   key: string;
   /** The kinds the user said to avoid (AVOID entries), in CATALOG order. */
   kinds: Partial<Record<CatalogKey, ActivityConfirmEntry>>;
@@ -5545,10 +5572,13 @@ export interface ActivityConfirm {
  * takes an explicit act: at least one kind ticked, or "Nothing to avoid"
  * (ACTIVITY_NOTHING_TO_AVOID). A Save with nothing ticked is not an answer
  * and is refused (ACTIVITY_NOTHING_TICKED), so an unticked row is never
- * taken as fine by itself. The reason is never sent: the server quotes it.
+ * taken as fine by itself. A Save with a tick answers for every row the card
+ * listed (the release is per card, contracts §19.11), and "Nothing to avoid"
+ * is offered only while no box is ticked (ticks with it are refused). The
+ * reason is never sent: the server quotes it.
  */
 export interface ActivityCardAnswer {
-  /** ActivityConfirmView.key: the words the card was shown against. Words changed meanwhile: refused (ACTIVITY_ANSWER_STALE), and the card asks again. */
+  /** ActivityConfirmView.key: the words and the track the card was shown against. Either changed meanwhile: refused (ACTIVITY_ANSWER_STALE), and the card asks again. */
   key: string;
   /** Every box ticked "avoid" when the user saved (a pre-ticked suggestion left ticked included), on this plan's track. Replaces the card's earlier ticks. */
   avoid: CatalogKey[];
@@ -5598,7 +5628,7 @@ export interface ConstraintsState {
   stated: boolean;
   /** cueReadingOf(texts). */
   reading: CueReading;
-  /** cueKeyOf(texts): what the card's answer must carry. */
+  /** cueKeyOf(texts, track): what the card's answer must carry. */
   key: string;
   /** The parser's exclusions on this track, one per kind: suggestions. */
   prefill: ActivityPrefill[];
@@ -5626,7 +5656,7 @@ export interface ActivityRow {
   reason: string;
   /** AVOID: the day the user ticked it; FINE: the day they answered the card. Null otherwise. */
   day: DayKey | null;
-  /** A row the card's earlier answer (under other words) released, now asked again: that answer's day; null otherwise. */
+  /** A row the card's earlier answer on this track (under other words) released, now asked again: that answer's day; null otherwise (never for another track's answer). */
   staleDay: DayKey | null;
   /** YOURS on an answered row (AVOID, FINE: the user's decision); null on PENDING and WORDS (code's reading of their words, not a decision). */
   cls: "YOURS" | null;
@@ -5643,7 +5673,7 @@ export interface ActivityGate {
   answered: DayKey | null;
   /** That answer was "Nothing to avoid". */
   none: boolean;
-  /** The day of the card's answer under earlier words (it asks again); null otherwise. */
+  /** The day of the card's answer under earlier words on this track (it asks again); null otherwise. An answer given on another track (its listed kinds aren't all on this one), or stored before the track was keyed under the same words, asks with no stale day: the words didn't change. */
   staleDay: DayKey | null;
   /** Every catalog kind on the track a plan path may place, in CATALOG order (the other filters — exam, practices, stage — still apply). */
   allowed: CatalogKey[];
@@ -5681,7 +5711,7 @@ export interface ActivityConfirmView {
   answered: DayKey | null;
   /** That answer was "Nothing to avoid". */
   none: boolean;
-  /** The day of an answer given under earlier words (the card asks again: "You answered on 3 Oct, before your words changed"); null otherwise. */
+  /** The day of an answer given on this track under earlier words (the card asks again: "You answered on 3 Oct, before your words changed"); null otherwise (another track's answer asks with no stale day). */
   staleDay: DayKey | null;
   /** What the plan places meanwhile: the safe kinds on this track (cueSafeKindsOf; [] while off). */
   safeKinds: CatalogKey[];

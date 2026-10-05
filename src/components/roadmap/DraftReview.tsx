@@ -72,7 +72,7 @@ import {
   type RunView,
   type RunWriter,
 } from "@/lib/roadmap-types";
-import type { CatalogKey } from "@/lib/roadmap-catalog";
+import { catalogTrackOf, type CatalogKey } from "@/lib/roadmap-catalog";
 import {
   ARRANGEMENT_LINE,
   BUILT_LEAD_LINE,
@@ -93,7 +93,6 @@ import {
   REPLAN_GEMINI_LINE,
   REPLAN_REFIT_LINE,
   RUN_REJECTED_LINE,
-  SESSION_PICKS_EASY,
   SESSION_PICKS_KEEP,
   TIME_FIXED_LINE,
   TRACK_WORD,
@@ -109,6 +108,8 @@ import {
   paragonDepthLine,
   plural,
   sessionPicksLine,
+  sessionPicksSwapLine,
+  sessionPicksSwapWord,
   timeSecondsLabel,
   uncoveredLine,
   unassignedLinesLine,
@@ -132,6 +133,7 @@ import {
   rankPlanOf,
   rowDomId,
   scheduledOf,
+  sessionSwapKindsOf,
   undecidedOf,
 } from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
@@ -498,12 +500,20 @@ function ExclusionsCard({ view, allowed, onAllow }: { view: RoadmapView; allowed
   );
 }
 
-/** A body or care plan's one session-picks confirm (F-R4-17): it quotes the constraints and blocks Accept until answered. */
+/**
+ * A body or care plan's one session-picks confirm (F-R4-17): it quotes the
+ * constraints and blocks Accept until answered. The swap names what it puts
+ * in place of the picks on this track (sessionSwapKindsOf): easy, mobility
+ * and technique on a body plan, Plan the week ahead and Keep a log on a care
+ * plan, never one the user said to avoid.
+ */
 function SessionPicksCard({ view }: { view: RoadmapView }) {
   const draft = view.draft!;
   const picks = draft.sessionPicks;
   const { run, pending, error } = useRoadmapAction();
   if (!picks || picks.decision !== "PENDING" || picks.kinds.length === 0) return null;
+  const h = view.header!;
+  const swap = sessionSwapKindsOf(catalogTrackOf({ fieldId: h.area.kind === "FIELD" ? h.area.fieldId : null, track: h.track }), activityConfirmOfView(view));
   return (
     <section className="card rm-adds" id={PICKS_DOM_ID} aria-label="Gemini's session picks">
       <p className="rm-adds-t">{sessionPicksLine(picks)}</p>
@@ -512,10 +522,10 @@ function SessionPicksCard({ view }: { view: RoadmapView }) {
           {SESSION_PICKS_KEEP}
         </Button>
         <Button variant="primary" className="rm-btn-wrap" disabled={pending} onClick={() => run((a) => a.confirmSessionPicks(view.header!.id, "EASY"))}>
-          {SESSION_PICKS_EASY}
+          {sessionPicksSwapWord(swap)}
         </Button>
       </div>
-      <p className="t-meta">Nothing reaches Today before you answer. Without Gemini the plan uses only easy, mobility and technique sessions.</p>
+      <p className="t-meta">{sessionPicksSwapLine(swap)}</p>
       {error && <ActionError>{error}</ActionError>}
     </section>
   );

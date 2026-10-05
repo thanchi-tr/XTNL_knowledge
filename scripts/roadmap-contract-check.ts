@@ -2400,9 +2400,21 @@ console.log("— confirm to unlock (§19): the cue detector —");
     const q = RT.userClauseOf(long, "running");
     check(`a long sentence is cut at word edges around the word, '…' where cut, within ACTIVITY_REASON_MAX (${RT.ACTIVITY_REASON_MAX})`, q.startsWith("…") && q.includes("no running until spring") && q.length <= RT.ACTIVITY_REASON_MAX, `${q.length}: ${q}`);
   }
-  // The words' fingerprint and the texts read.
-  const k1 = RT.cueKeyOf({ constraints: "Knee  injury", aim: "Run", notes: [] });
-  check("cueKeyOf: 'k1-' and 8 hex; case, spacing and empty notes ignored; any word change changes it", /^k1-[0-9a-f]{8}$/.test(k1) && k1 === RT.cueKeyOf({ constraints: "knee injury", aim: "run", notes: [null, ""] }) && k1 !== RT.cueKeyOf({ constraints: "knee injury, no running", aim: "run" }) && k1 !== RT.cueKeyOf({ constraints: "knee injury", aim: "run 5k" }));
+  // The card's fingerprint (the track's and the words', §19.11) and the texts read.
+  const k2 = RT.cueKeyOf({ constraints: "Knee  injury", aim: "Run", notes: [] }, "BODY");
+  check(
+    "cueKeyOf: 'k2-' and 8 hex over the track and the words; case, spacing and empty notes ignored; any word change, or another track, changes it",
+    /^k2-[0-9a-f]{8}$/.test(k2) &&
+      k2 === RT.cueKeyOf({ constraints: "knee injury", aim: "run", notes: [null, ""] }, "BODY") &&
+      k2 !== RT.cueKeyOf({ constraints: "knee injury, no running", aim: "run" }, "BODY") &&
+      k2 !== RT.cueKeyOf({ constraints: "knee injury", aim: "run 5k" }, "BODY") &&
+      new Set(CAT.CATALOG_TRACKS.map((t) => RT.cueKeyOf({ constraints: "Knee injury", aim: "Run" }, t))).size === CAT.CATALOG_TRACKS.length
+  );
+  eq(
+    "cueKeyOf and cueLegacyKeyOf, pinned: the legacy key is the one stored before §19.11 (the texts alone, 'k1-'), so an answer from then reads back",
+    [k2, RT.cueKeyOf({ constraints: "Knee injury", aim: "Run" }, "CRAFT"), RT.cueLegacyKeyOf({ constraints: "Knee  injury", aim: "Run", notes: [] })],
+    ["k2-f61aecde", "k2-7af92062", "k1-1322744a"]
+  );
   eq(
     "cueTextsOf reads the constraints, the aim and the notes (exam label, hours source, outline source and lines; empty ones left out)",
     RT.cueTextsOf({ constraints: "No jumping", aim: "Pass the fitness test", examLabel: "Army PT test", typicalHoursSource: "", syllabus: { lines: ["Sprints", " "], source: "Coach's sheet" } }),
@@ -2673,6 +2685,111 @@ console.log("— confirm to unlock (§19): the gate —");
     ].every((r) => !r.ok && r.error === CAT.ACTIVITY_ANSWER_REFUSAL)
   );
 
+  // The lead's ruling (1), §19.11: the release is per card.
+  {
+    const burpees = stateOf("BODY", "Can't do burpees or jumping jacks.", "Run a sub-50 10K", [{ kind: "HARDER_SESSION", word: "jumping jacks" }]);
+    const opened = CAT.allowedKindsFor(burpees, null);
+    const saved = CAT.answerActivityCard(null, burpees, card(burpees, ["HARDER_SESSION"]), DAY);
+    const after = saved.ok ? CAT.allowedKindsFor(burpees, saved.value) : null;
+    eq(
+      "ruling (1): the release is per card — one Save with only the parser's pre-tick left ticked is the user's answer for every row the card listed: Harder session avoided, the four rows never touched placed (FINE, YOURS, the answer's day), nothing waits",
+      [opened.rows.map((r) => [r.kind, r.state, r.prefill]), saved.ok ? saved.value.answered : null, after ? [after.pending, after.rows.map((r) => [r.kind, r.state, r.day, r.cls])] : null],
+      [
+        [
+          ["HARDER_SESSION", "PENDING", "AVOID"],
+          ["LONGER_SESSION", "PENDING", null],
+          ["STRENGTH_SESSION", "PENDING", null],
+          ["FULL_ATTEMPT", "PENDING", null],
+          ["PERFORMANCE_CHECK", "PENDING", null],
+        ],
+        { day: DAY, asked: ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"], none: false },
+        [
+          [],
+          [
+            ["HARDER_SESSION", "AVOID", DAY, "YOURS"],
+            ["LONGER_SESSION", "FINE", DAY, "YOURS"],
+            ["STRENGTH_SESSION", "FINE", DAY, "YOURS"],
+            ["FULL_ATTEMPT", "FINE", DAY, "YOURS"],
+            ["PERFORMANCE_CHECK", "FINE", DAY, "YOURS"],
+          ],
+        ],
+      ]
+    );
+    check("…and “Nothing to avoid” never rides with a tick (refused, ACTIVITY_ANSWER_REFUSAL): the all-clear stands only while no box is ticked", (() => {
+      const r = CAT.answerActivityCard(null, burpees, card(burpees, ["HARDER_SESSION"], true), DAY);
+      return !r.ok && r.error === CAT.ACTIVITY_ANSWER_REFUSAL;
+    })());
+  }
+  // The answer is the track's card (§19.11; the verifier's probe L8): the same words on another track ask again.
+  {
+    const words: RT.CueTexts = { constraints: "Wrist tendinitis, can't play more than 20 minutes.", aim: "Play Clair de Lune" };
+    const asBody = CAT.constraintsStateOf({ track: "BODY", texts: words });
+    const asCraft = CAT.constraintsStateOf({ track: "CRAFT", texts: words });
+    const said = CAT.answerActivityCard(null, asBody, card(asBody, [], true), DAY);
+    const onCraft = said.ok ? CAT.allowedKindsFor(asCraft, said.value) : null;
+    check(
+      "probe L8: “Nothing to avoid” said on BODY releases nothing when the same words are saved as CRAFT — Full attempt and Performance check wait with CRAFT's practices; no answer, and no stale day (the words didn't change)",
+      said.ok &&
+        asBody.key !== asCraft.key &&
+        !!onCraft &&
+        onCraft.on &&
+        onCraft.answered === null &&
+        onCraft.staleDay === null &&
+        json(onCraft.pending) === json(["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "FULL_ATTEMPT", "PERFORMANCE_CHECK"]) &&
+        !onCraft.allowed.includes("FULL_ATTEMPT") &&
+        !onCraft.allowed.includes("PERFORMANCE_CHECK") &&
+        onCraft.rows.every((r) => r.state === "PENDING" && r.staleDay === null),
+      json(onCraft)
+    );
+    check("…the BODY card's key is refused on the CRAFT card (ACTIVITY_ANSWER_STALE)", (() => {
+      const r = CAT.answerActivityCard(said.ok ? said.value : null, asCraft, card(asCraft, [], true, asBody.key), DAY2);
+      return !r.ok && r.error === CAT.ACTIVITY_ANSWER_STALE;
+    })());
+    check("…an AVOID ticked on BODY stands on CRAFT (a tick is the user's, whatever the track)", (() => {
+      const t = CAT.answerActivityCard(null, asBody, card(asBody, ["FULL_ATTEMPT"]), DAY);
+      const g = t.ok ? CAT.allowedKindsFor(asCraft, t.value) : null;
+      return !!g && g.blocked.includes("FULL_ATTEMPT") && g.rows.find((r) => r.kind === "FULL_ATTEMPT")?.state === "AVOID";
+    })());
+    check("…and answered on CRAFT, the CRAFT card holds; back on BODY the card asks again, with no stale day", (() => {
+      const c = CAT.answerActivityCard(said.ok ? said.value : null, asCraft, card(asCraft, [], true), DAY2);
+      if (!c.ok) return false;
+      const back = CAT.allowedKindsFor(asBody, c.value);
+      return CAT.allowedKindsFor(asCraft, c.value).answered === DAY2 && back.answered === null && back.staleDay === null && back.pending.includes("FULL_ATTEMPT");
+    })());
+    check("CARE and BODY, both always asking: an answer on one never holds on the other", (() => {
+      const asCare = CAT.constraintsStateOf({ track: "CARE", texts: words });
+      const onCare = CAT.answerActivityCard(null, asCare, card(asCare, [], true), DAY);
+      return onCare.ok && said.ok && CAT.allowedKindsFor(asBody, onCare.value).answered === null && CAT.allowedKindsFor(asCare, said.value).answered === null && CAT.allowedKindsFor(asCare, said.value).pending.includes("PERFORMANCE_CHECK");
+    })());
+  }
+  // An answer stored before the track was keyed ("k1-", §19.11): under the same words it holds only where the kinds it listed fit one track, this one.
+  {
+    const legacy = (s: RT.ConstraintsState, asked: CAT.CatalogKey[], key = RT.cueLegacyKeyOf(s.texts)): RT.ActivityConfirm => ({ key, kinds: {}, answered: { day: DAY, asked, none: true } });
+    const bodyAsked: CAT.CatalogKey[] = ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"];
+    const careAsked: CAT.CatalogKey[] = ["SET_TIME", "CHECK_IN", "ADMIN_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"];
+    const kneeCraft = CAT.constraintsStateOf({ track: "CRAFT", texts: knee.texts });
+    const kneeCare = CAT.constraintsStateOf({ track: "CARE", texts: knee.texts });
+    const held = CAT.allowedKindsFor(knee, legacy(knee, bodyAsked));
+    const reads = [
+      CAT.allowedKindsFor(kneeCraft, legacy(knee, bodyAsked)),
+      CAT.allowedKindsFor(knee, legacy(knee, ["FULL_ATTEMPT", "PERFORMANCE_CHECK"])),
+      CAT.allowedKindsFor(kneeCare, legacy(kneeCare, careAsked)),
+    ];
+    check("a legacy BODY answer under the same words still holds on BODY: Harder session is BODY's alone, so the card was BODY's", held.answered === DAY && held.none && held.pending.length === 0 && held.allowed.includes("HARDER_SESSION"));
+    check(
+      "…it never holds on CRAFT; one listing only shared kinds (practices off: Full attempt and Performance check) or CARE's (DUTY lists them too) proves no track: each asks again, with no stale day (the words didn't change)",
+      kneeCraft.reading.hasCue && reads.every((g) => g.on && g.answered === null && g.staleDay === null && g.pending.includes("FULL_ATTEMPT") && g.rows.every((r) => r.staleDay === null)),
+      json(reads.map((g) => [g.track, g.answered, g.staleDay, g.pending]))
+    );
+    const otherWords = CAT.allowedKindsFor(knee, legacy(knee, bodyAsked, RT.cueLegacyKeyOf({ constraints: "Knee injury", aim: "Run" })));
+    check("…a legacy answer under other words is stale as before: the card asks again, with the old day", otherWords.answered === null && otherWords.staleDay === DAY && otherWords.rows.find((r) => r.kind === "LONGER_SESSION")?.staleDay === DAY);
+    check("…an answer carrying a 'k1-' key is refused (ACTIVITY_ANSWER_STALE), and answering over a legacy record stores the track's key", (() => {
+      const r = CAT.answerActivityCard(null, knee, card(knee, [], true, RT.cueLegacyKeyOf(knee.texts)), DAY2);
+      const again = CAT.answerActivityCard(legacy(knee, bodyAsked), knee, card(knee, ["STRENGTH_SESSION"]), DAY2);
+      return !r.ok && r.error === CAT.ACTIVITY_ANSWER_STALE && again.ok && again.value.key === knee.key && again.value.key.startsWith("k2-");
+    })());
+  }
+
   // The view field.
   {
     const s = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: "Evenings only. Running causes me knee pain.", aim: "Recover from knee surgery and run 5k", notes: ["Physio plan"] } });
@@ -2771,13 +2888,22 @@ console.log("— confirm to unlock (§19): the gate —");
           else if ((mask + i) % 5 === 0) kinds[k] = { verdict: "AVOID", day: DAY, reason: "" };
         });
         const asked = ks.filter((_, i) => (mask + i) % 4 !== 1);
-        const confs: (RT.ActivityConfirm | null)[] = [null, { key: s0.key, kinds }, { key: "k1-00000000", kinds, answered: { day: DAY, asked: ks, none: false } }, { key: s0.key, kinds, answered: { day: DAY, asked, none: false } }];
+        const legacyKey = RT.cueLegacyKeyOf(s0.texts);
+        const confs: (RT.ActivityConfirm | null)[] = [
+          null,
+          { key: s0.key, kinds },
+          { key: "k1-00000000", kinds, answered: { day: DAY, asked: ks, none: false } },
+          { key: s0.key, kinds, answered: { day: DAY, asked, none: false } },
+          { key: legacyKey, kinds, answered: { day: DAY, asked, none: false } },
+        ];
         for (const conf of confs) {
           const a0 = CAT.allowedKindsFor(s0, conf);
           const a1 = CAT.allowedKindsFor(s1, conf);
           // A suggestion never blocks and never unlocks: the same split with or without it.
           if (json(a0.blocked) !== json(a1.blocked)) broke.push(`${track} ${mask}: a suggestion moved a kind`);
-          const fresh = conf?.answered && conf.key === s1.key ? conf.answered : null;
+          // Current: this track's key, or a legacy key of the same words whose listed kinds fit this track and no other.
+          const provenHere = (xs: readonly CAT.CatalogKey[]) => xs.length > 0 && json(CAT.CATALOG_TRACKS.filter((t) => xs.every((k) => CAT.catalogEntryOf(k)?.tracks.includes(t)))) === json([track]);
+          const fresh = conf?.answered && (conf.key === s1.key || (conf.key === legacyKey && provenHere(conf.answered.asked))) ? conf.answered : null;
           for (const k of CAT.cueGatedKindsOf(track)) {
             const avoided = conf?.kinds[k]?.verdict === "AVOID";
             // On BODY and CARE (always) and CRAFT here (a cue), a gated kind is placed only under a current card answer that listed it, and never when avoided.
@@ -2792,7 +2918,7 @@ console.log("— confirm to unlock (§19): the gate —");
         }
       }
     }
-    check("property (6 cases × 64 suggestion sets × 4 answers): a suggestion never moves a kind; a gated kind is placed only under a current answer that listed it and never when avoided; a safe kind and a Field kind are blocked only by the user's AVOID", broke.length === 0, broke.slice(0, 5).join(" | "));
+    check("property (6 cases × 64 suggestion sets × 5 answers, a legacy 'k1-' one among them): a suggestion never moves a kind; a gated kind is placed only under a current answer that listed it (this track's key, or a legacy one proving this track) and never when avoided; a safe kind and a Field kind are blocked only by the user's AVOID", broke.length === 0, broke.slice(0, 5).join(" | "));
   }
   // Where the answers are stored: Roadmap.coverage, under a key no Domain id can take.
   {

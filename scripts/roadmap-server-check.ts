@@ -258,6 +258,8 @@ class FakeWorld {
   sized: string[] = [];
   createFailOnce = false;
   domainsCreated: { fieldId: string; name: string }[] = [];
+  /** The templates paused through RoadmapIo.pauseTemplate (the safety pause: never archiveTemplate's deferral). */
+  paused: string[] = [];
   /** The throughput rows a scope's pace is read from (empty: every pace calibrating). */
   paceRows: ThroughputRows | null = null;
   /** The Body Area's weight view (null: none logged). */
@@ -562,6 +564,14 @@ class FakeWorld {
         const t = this.templates.find((x) => x.id === templateId);
         if (!t) return { ok: false, error: "gone" };
         t.archivedAt = now;
+        return { ok: true };
+      },
+      // tasks.ts pauseForSafetyCore: archived at once whatever the rule (the lead's ruling 2; duty-actions-check pins the plan).
+      pauseTemplate: async (_userId, templateId, now) => {
+        const t = this.templates.find((x) => x.id === templateId);
+        if (!t) return { ok: false, error: "gone" };
+        this.paused.push(templateId);
+        if (t.archivedAt == null) t.archivedAt = now;
         return { ok: true };
       },
       reachModifiers: async () => ({ intervalMultiplier: 1, extraStrikes: 0, graceExtraDays: 0 }),
@@ -4949,6 +4959,10 @@ async function main() {
     // Decision 4: the AVOID after Start pauses the started practice's Today task at once (archived through the task path,
     // never deleted), and the answer names it for the page's quiet notice and its Undo (the Today task's unarchive).
     const templatesBefore = w.templates.length;
+    const strengthItem = started.find((i) => i.catalogKey === "STRENGTH_SESSION");
+    const strengthMeasure = () =>
+      w.t.roadmapMeasure.find((x) => x.milestoneId === m1.id && x.kind === "PRACTICE_KEPT" && (x.itemLineageId === strengthItem?.lineageId || json(x.scope).includes(strengthItem?.lineageId ?? "-")));
+    const roleBefore = strengthMeasure()?.role;
     const after = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_000) });
     const tpl = w.templates.find((t) => t.id === strengthTpl);
     check(
@@ -4961,24 +4975,69 @@ async function main() {
         json(after.value.notPaused) === "[]",
       json([after, tpl])
     );
+    check(
+      "ruling 2: the pause goes through the safety pause (RoadmapIo.pauseTemplate → tasks.ts pauseForSafetyCore), never archiveCore's deferral, so the task is off Today now (deferredTo null)",
+      !!strengthTpl && w.paused.includes(strengthTpl) && /e\.io\.pauseTemplate\(userId, x\.templateId, now\)/.test(SERVER_SRC) && /pauseForSafetyCore\(userId, templateId, now\)/.test(SERVER_SRC),
+      json(w.paused)
+    );
+    // Ruling 3: the paused practice stops counting toward the started milestone from the pause day, in the answer's own write,
+    // and the page can say why (its measure stops paying; the card's AVOID row carries the day the user said so).
+    const pausedView = await S.loadRoadmapView(USER, at(1_200), depsFor(w));
+    const pausedRow = pausedView.current?.measures.find((x) => x.kind === "PRACTICE_KEPT" && x.measureKey === strengthMeasure()?.measureKey);
+    const avoidRow = pausedView.activityConfirm?.rows.find((r) => r.kind === "STRENGTH_SESSION");
+    check(
+      "ruling 3: the paused practice's PRACTICE_KEPT measure stops paying (PAYS → CONTEXT, in the answer's own write): from the pause day no g, reach or pay reads it and nothing more is asked of it (no pace; planned so far stops the day before the pause); the card's AVOID row says why and since when",
+      roleBefore === "PAYS" &&
+        strengthMeasure()?.role === "CONTEXT" &&
+        pausedRow?.role === "CONTEXT" &&
+        pausedRow.pace == null &&
+        pausedView.current?.practiceKept?.[strengthItem?.lineageId ?? "-"]?.of === 0 &&
+        avoidRow?.state === "AVOID" &&
+        avoidRow.day === TODAY,
+      json({ roleBefore, role: strengthMeasure()?.role, pausedRow, kept: pausedView.current?.practiceKept, avoidRow })
+    );
     // The user brings it back (Undo); answering again with the same ticks pauses nothing again.
     if (tpl) tpl.archivedAt = null;
     const again = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_500) });
     check("…a kind already avoided before an answer isn't paused again (the user brought its task back with Undo)", again.ok && json(again.value.paused) === "[]" && tpl?.archivedAt == null, json(again));
-    // The archive refused (still on Today: the page names it), then deferred (a must once Duty is live: its pending day).
-    const ioWith = (archiveTemplate: RoadmapIo["archiveTemplate"]): RoadmapDeps => depsFor(w, { io: { ...w.io(), archiveTemplate } });
+    // The pause refused (still on Today: the page names it); then a must (ruling 2): the archive path that would defer it
+    // (archiveCore's akrasia horizon) is never called, and the task leaves Today at once.
+    const ioWith = (io: Partial<RoadmapIo>): RoadmapDeps => depsFor(w, { io: { ...w.io(), ...io } });
     await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"], { now: at(1_600) });
-    const refusedArchive = await answerCard(id, ioWith(async () => ({ ok: false, error: "Something changed at the same moment. Try again." })), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_700) });
+    const refusedArchive = await answerCard(
+      id,
+      ioWith({ pauseTemplate: async () => ({ ok: false, error: "Something changed at the same moment. Try again." }) }),
+      ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"],
+      { now: at(1_700) }
+    );
     await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"], { now: at(1_800) });
-    const deferred = await answerCard(id, ioWith(async () => ({ ok: true, deferredTo: addDays(TODAY, 7) })), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_900) });
+    const deferrals: string[] = [];
+    const must = await answerCard(
+      id,
+      ioWith({
+        archiveTemplate: async (_userId, templateId) => {
+          deferrals.push(templateId);
+          return { ok: true, deferredTo: addDays(TODAY, 7) };
+        },
+      }),
+      ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"],
+      { now: at(1_900) }
+    );
     check(
-      "…an archive the task path refuses is listed as still on Today (notPaused), never thrown; a must's deferred archive carries the day it leaves Today",
+      "…a pause the task path refuses is listed as still on Today (notPaused), never thrown; ruling 2: a must is paused at once (the deferring archive is never called, deferredTo null, off Today now)",
       refusedArchive.ok &&
         json(refusedArchive.value.paused) === "[]" &&
         json(refusedArchive.value.notPaused.map((t) => t.templateId)) === json([strengthTpl]) &&
-        deferred.ok &&
-        json(deferred.value.paused.map((t) => [t.templateId, t.deferredTo])) === json([[strengthTpl, addDays(TODAY, 7)]]),
-      json([refusedArchive, deferred])
+        must.ok &&
+        json(must.value.paused.map((t) => [t.templateId, t.deferredTo])) === json([[strengthTpl, null]]) &&
+        deferrals.length === 0 &&
+        tpl?.archivedAt != null,
+      json([refusedArchive, must, deferrals])
+    );
+    check(
+      "…ruling 3: the measure stays off the target through the Undo and the answers after it (the AVOID still stands; it never pays again on its own)",
+      strengthMeasure()?.role === "CONTEXT",
+      json(strengthMeasure())
     );
     // The answer after Start: next week's set (R6 reads the gate from the row's own words and answers) holds no quest for it.
     const nextWeek = await QS.weekQuestSetFor(USER, m1.id, addDays(weekStartKeyOf(TODAY), 7), at(2_000), { store, env: WRITES_ON });
@@ -5043,6 +5102,195 @@ async function main() {
     row.coverage = { $activities: { ...stored, key: "k1-00000000" } };
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
     eq("accept refuses a draft that still holds a kind the gate now blocks, and points at the card", [view.draft?.acceptable, errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w)))], [false, pointed(S.ACTIVITY_HELD_IN_DRAFT)]);
+  }
+
+  // ═══ §19 follow-ups (the lead's rulings 2 and 3, decision 2's reach, decision 4's race, the re-gate on new words) ═══
+  console.log("— §19 follow-ups: every refusal points at the card, the re-gate on new words, Start's race with an AVOID —");
+
+  {
+    // Decision 2 as the lead ruled it: every refusal while the card waits points at it — re-plan, the review's edits and the
+    // builds too, beside accept, Start and a pick. Never twice, never with writes off, never on a plan that doesn't ask, and
+    // not once the card is answered.
+    const w = world();
+    const id = await drafted(w, { milestones: [{ practices: [] }, {}] }, kneeIntake);
+    const m1 = () => rowsOf(w, id, 1)[0];
+    const claimed = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w));
+    const running = errOf(await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w)));
+    const replanned = errOf(await S.replanCore(USER, id, "REFIT", NOW, depsFor(w)));
+    const edited = errOf(await S.editItemCore(USER, m1().id, {}, NOW, depsFor(w)));
+    const decided = errOf(await S.decideItemCore(USER, m1().id, "BOGUS" as never, NOW, depsFor(w)));
+    const remedied = errOf(await S.applyRemedyCore(USER, id, "BOGUS" as never, NOW, depsFor(w)));
+    const writesOff = errOf(await S.replanCore(USER, id, "REFIT", NOW, { ...depsFor(w), env: WRITES_OFF }));
+    const pick = errOf(await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "LONGER_SESSION" }, NOW, depsFor(w)));
+    check(
+      "decision 2 (the lead's ruling): a refusal from a build (Gemini's claim), a re-plan, an edit, a decision and a remedy while the card waits points at it; a pick's own refusal names it once; writes off is left as it is",
+      claimed.ok &&
+        running === pointed(S.DRAFT_RUNNING) &&
+        replanned === pointed("Only an accepted roadmap is re-planned.") &&
+        edited === pointed("Nothing to change.") &&
+        decided.endsWith(ACTIVITY_PENDING_POINTER) &&
+        remedied.endsWith(ACTIVITY_PENDING_POINTER) &&
+        writesOff === ROADMAP_WRITES_OFF &&
+        pick === S.ACTIVITY_WAITING_PICK &&
+        pick.split(ACTIVITY_CARD_NAME).length === 2,
+      json({ claimed, running, replanned, edited, decided, remedied, writesOff, pick })
+    );
+    const answered = await answerCard(id, depsFor(w), [], { none: true, now: at(1_000) });
+    eq("…once the card is answered nothing waits, so the same refusal is left as it is", [answered.ok, errOf(await S.replanCore(USER, id, "REFIT", at(2_000), depsFor(w)))], [true, "Only an accepted roadmap is re-planned."]);
+    const field = world();
+    const fieldId = await drafted(field);
+    eq("…a Field plan never asks, so its refusals are never pointed", errOf(await S.replanCore(USER, fieldId, "REFIT", NOW, depsFor(field))), "Only an accepted roadmap is re-planned.");
+    eq("…another user's roadmap: the refusal says nothing about the card", errOf(await S.replanCore("someone-else", id, "REFIT", NOW, depsFor(w))), "That roadmap no longer exists.");
+    const POINTED = [
+      "replanCore",
+      "claimDraftCore",
+      "buildStarterCore",
+      "startManualCore",
+      "acceptCore",
+      "startMilestoneCore",
+      "editItemCore",
+      "decideItemCore",
+      "addItemCore",
+      "keepUnflaggedCore",
+      "resolveDomainCore",
+      "moveLineCore",
+      "setLineDomainCore",
+      "applyRemedyCore",
+      "confirmSessionPicksCore",
+      "confirmDomainAdditionsCore",
+      "lowerDepthCore",
+      "keepCalibratedDatesCore",
+    ];
+    const unpointed = POINTED.filter((n) => !(new RegExp(`export async function ${n}\\([\\s\\S]*?\\n\\}\\n`).exec(SERVER_SRC)?.[0] ?? "").includes("pointedRefusal("));
+    check("…every re-plan, review edit, build, accept and Start core returns through pointedRefusal", unpointed.length === 0, unpointed.join(", "));
+  }
+
+  await integration("§19 new words on an answered CARE or CRAFT draft (the verifier's M4): the intake save re-gates its rows as the answer's own write does — Gemini's picks of a kind that waits again leave, and the track's safe kinds take the place the starter gives them, so no stage is left empty and the draft stays acceptable; a fresh build of the new words places the same (real R2, R3)", async () => {
+    const CARE_GATED = ["SET_TIME", "CHECK_IN", "ADMIN_SESSION", "PERFORMANCE_CHECK"];
+    const CRAFT_GATED = ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "FULL_ATTEMPT", "PERFORMANCE_CHECK"];
+    const reword = async (intake: Intake, words: string) => {
+      const w = world();
+      const id = await newDraft(w, intake);
+      const said = await answerCard(id, realDeps(w), [], { none: true, now: at(1_000) });
+      // Gemini's keys-only plan (the first kind each stage's schema offers), its session picks not confirmed yet.
+      const tasks: (() => Promise<void> | void)[] = [];
+      const deps = realDeps(w, { defer: (t) => tasks.push(t), callModel: async (req) => sdkReply(replyFromSchema((req as { responseSchema?: unknown }).responseSchema)), clock: () => NOW });
+      const c = await S.claimDraftCore(USER, id, { force: true }, at(1_500), deps);
+      if (!c.ok) throw new Error(`${intake.track}: ${c.error}`);
+      for (const t of tasks) await t();
+      const answered = kindsIn(w, id);
+      const saved = await S.saveIntakeCore(USER, { ...intake, constraints: words }, at(2_000), realDeps(w));
+      const after = kindsIn(w, id);
+      const view = await S.loadRoadmapView(USER, at(3_000), realDeps(w));
+      const fresh = await built({ ...intake, constraints: words });
+      return { said: said.ok, saved: saved.ok, answered, after, fresh: fresh.rows, acceptable: view.draft?.acceptable, pending: view.draft?.activityConfirm?.pending ?? 0 };
+    };
+    const care = await reword(careIntake, "No visits on weekdays, phone calls only. Mum had a fall last week.");
+    const craft = await reword({ ...craftIntake, constraints: "Wrist tendinitis, can't play more than 20 minutes." }, "Wrist tendinitis, can't play more than 15 minutes.");
+    const safeIn = (rows: string[][], safe: string[]) => rows.map((r) => r.filter((k) => safe.includes(k)).sort());
+    const holds = (r: Awaited<ReturnType<typeof reword>>, gated: string[], safe: string[]) =>
+      r.said &&
+      r.saved &&
+      r.answered.flat().some((k) => gated.includes(k)) &&
+      r.after.length > 0 &&
+      r.after.every((row) => row.length > 0 && row.every((k) => safe.includes(k))) &&
+      json(safeIn(r.after, safe)) === json(safeIn(r.fresh, safe)) &&
+      r.acceptable === true &&
+      r.pending > 0;
+    return [holds(care, CARE_GATED, ["PLAN_AHEAD", "KEEP_A_LOG"]) && holds(craft, CRAFT_GATED, ["TECHNIQUE_SESSION"]), json({ care, craft })];
+  });
+
+  {
+    // Decision 4's race (the verifier's R4 follow-up): an AVOID landing while Start's finish is under way — after its gate
+    // read, before its template ids are written — still pauses the task it created, and that practice stops counting.
+    const startingWorld = async () => {
+      const w = world();
+      const id = await newDraft(w, kneeIntake);
+      await answerCard(id, depsFor(w), ["LONGER_SESSION"]);
+      {
+        const tasks: (() => Promise<void> | void)[] = [];
+        const reply = { milestones: [{ practices: [{ name: "a", method: "X" }, { name: "b", method: "X" }] }, { practices: [{ name: "c", method: "X" }] }] };
+        await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { defer: (t) => tasks.push(t), callModel: async () => reply, clock: () => NOW }));
+        for (const t of tasks) await t();
+      }
+      await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
+      const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
+      const m1 = rowsOf(w, id, 1)[0];
+      w.createFailOnce = true;
+      const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
+      const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "STRENGTH_SESSION");
+      if (!acc.ok || st.ok || rowsOf(w, id, 1)[0].status !== "STARTING" || !strength) throw new Error(`fixture: not STARTING: ${json([acc, st])}`);
+      const measure = () =>
+        w.t.roadmapMeasure.find((x) => x.milestoneId === m1.id && x.kind === "PRACTICE_KEPT" && (x.itemLineageId === strength.lineageId || json(x.scope).includes(strength.lineageId)));
+      const task = () => w.templates.find((t) => t.id === itemsOf(w, m1.id).find((i) => i.lineageId === strength.lineageId)?.templateId);
+      return { w, id, m1, strength, measure, task };
+    };
+    const AVOID_ALL = ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"];
+
+    // (a) The answer lands between the finish's gate read and its write: it reads the row STARTING and pauses nothing; the
+    // finish re-reads the answers after its write and pauses the task it just created.
+    {
+      const r = await startingWorld();
+      let landed: Awaited<ReturnType<typeof S.setActivityVerdictsCore>> | null = null;
+      const base = r.w.io();
+      const io: Partial<RoadmapIo> = {
+        ...base,
+        createTemplate: async (userId, parsed, opts) => {
+          if (!landed && parsed.kind !== "GOAL") landed = await answerCard(r.id, depsFor(r.w), AVOID_ALL, { now: at(500) });
+          return (base.createTemplate as RoadmapIo["createTemplate"])(userId, parsed, opts);
+        },
+      };
+      const fin = await S.finishStartCore(USER, r.m1.id, at(600), depsFor(r.w, { io }));
+      const l = landed as Awaited<ReturnType<typeof S.setActivityVerdictsCore>> | null;
+      check(
+        "decision 4's race (a): an AVOID landing between Start's gate read and its write-back pauses nothing itself (the row read STARTING), and the finish re-reads the answers after its write and pauses the task it created; that practice stops counting (ruling 3)",
+        fin.ok &&
+          rowsOf(r.w, r.id, 1)[0].status === "STARTED" &&
+          !!l &&
+          l.ok &&
+          json(l.value.paused) === "[]" &&
+          r.task()?.archivedAt != null &&
+          r.w.paused.includes(r.task()?.id ?? "-") &&
+          r.measure()?.role === "CONTEXT",
+        json({ fin, landed: l, task: r.task(), measure: r.measure() })
+      );
+    }
+
+    // (b) The answer is read while the row is STARTING and saved after the finish (its re-check found nothing to pause): the
+    // finish moved the roadmap's updatedAt, so the answer's guard re-reads and it pauses the task itself.
+    {
+      const r = await startingWorld();
+      const updatedBefore = (r.w.t.roadmap.find((x) => x.id === r.id) as RoadmapRec).updatedAt.getTime();
+      const base = r.w.store();
+      let fin: Awaited<ReturnType<typeof S.finishStartCore>> | null = null;
+      let pausedByFinish: string[] = [];
+      const store: RoadmapStore = {
+        ...base,
+        apply: async (userId, ops) => {
+          if (!fin) {
+            fin = await S.finishStartCore(USER, r.m1.id, at(600), depsFor(r.w));
+            pausedByFinish = [...r.w.paused];
+          }
+          return base.apply(userId, ops);
+        },
+      };
+      const said = await answerCard(r.id, depsFor(r.w, { store }), AVOID_ALL, { now: at(700) });
+      const f = fin as Awaited<ReturnType<typeof S.finishStartCore>> | null;
+      const updatedAfter = (r.w.t.roadmap.find((x) => x.id === r.id) as RoadmapRec).updatedAt.getTime();
+      check(
+        "decision 4's race (b): an answer read while the row was STARTING and saved after the finish re-reads (the finish moved the roadmap's updatedAt) and pauses the started task itself; the practice stops counting",
+        !!f &&
+          f.ok &&
+          json(pausedByFinish) === "[]" &&
+          updatedAfter > updatedBefore &&
+          said.ok &&
+          json(said.value.paused.map((t) => t.kind)) === json(["HARDER_SESSION", "STRENGTH_SESSION"]) &&
+          said.value.paused.some((t) => t.templateId === r.task()?.id) &&
+          r.task()?.archivedAt != null &&
+          r.measure()?.role === "CONTEXT",
+        json({ fin: f, pausedByFinish, said, task: r.task(), measure: r.measure() })
+      );
+    }
   }
 
   if (failed > 0) {

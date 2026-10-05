@@ -324,6 +324,15 @@ export function weakeningsOf(before: RuleState, after: Partial<RuleState>): Weak
  * minutes old changes immediately (capture's own edit and undo). Otherwise
  * a weakening is deferred to today + AKRASIA_DAYS and anything else (a
  * strengthening, cancelling a pending change, adding a minimum) is immediate.
+ *
+ * One exception never comes here: a safety pause (roadmap contracts §19,
+ * the lead's ruling 2; tasks.ts planSafetyPause). When the user says a
+ * started roadmap practice is an activity to avoid, its task is archived at
+ * once even when it is a must. That is a pause, not a weakening of the
+ * commitment: the must's rule is not rewritten, so every day before the
+ * pause keeps its rule and its debts, and from the pause day on nothing is
+ * expected (the archive day). The horizon guards against akrasia; it never
+ * keeps an activity the user said to avoid on Today.
  */
 export function classifyChange(
   before: RuleState,

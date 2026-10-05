@@ -90,7 +90,7 @@ import { countsForStreakOf, foldStreakDays } from "../src/lib/streak-curve";
 import type { ActivityInput } from "../src/lib/life-types";
 import type { DutyBoard } from "../src/lib/duty-view";
 import { planCompletion, type BoardData, type BoardTemplate, type DayLedger, type PricedTemplate } from "../src/lib/today-board";
-import { freshnessGuardSql, isSettledDay, isStaleRead, settledDayGuardSql, todayCountsOf } from "../src/lib/tasks";
+import { freshnessGuardSql, isSettledDay, isStaleRead, planSafetyPause, settledDayGuardSql, todayCountsOf } from "../src/lib/tasks";
 import { SETTLE_WRITES_OFF, settleYesterdayCore } from "../src/lib/duty";
 import { WRITES_OFF_REFUSAL, type SettleResult } from "../src/lib/settlement";
 
@@ -489,6 +489,50 @@ const asDuty = (r: RuleRow, write: { compulsory?: boolean; compulsoryOnRest?: bo
   check("archive of a must before launch: immediate", pre.ok && pre.value.effect === "immediate" && pre.value.write?.archivedAt === NOW);
   const again = planRuleEdit(mustRow({ pendingChange: arch.ok ? arch.value.write?.pendingChange : null }), { kind: "archive" }, live);
   check("archive again while its archive pends: the pending one, no write", again.ok && again.value.effect === "deferred" && again.value.write === null);
+}
+{
+  // The one exception to the horizon (roadmap contracts §19, the lead's ruling 2): a started roadmap practice the user says
+  // to avoid is paused at once, a must included. A pause, not a weakening: the rule is not rewritten, the days before it
+  // keep their rule and debts, and from the pause day nothing is expected.
+  const pause = planSafetyPause(mustRow(), NOW);
+  check(
+    "safety pause of a must once live, past its typo grace: immediate (archivedAt now), where an archive would defer it",
+    pause.effect === "immediate" &&
+      pause.effectiveDay === null &&
+      pause.write?.archivedAt === NOW &&
+      (() => {
+        const deferred = planRuleEdit(mustRow(), { kind: "archive" }, live);
+        return deferred.ok && deferred.value.effect === "deferred";
+      })()
+  );
+  check(
+    "…the must's rule is not rewritten: no un-flag, no prior segment, no pending change",
+    pause.write?.compulsory === undefined && pause.write?.compulsoryOnRest === undefined && pause.write?.pendingChange === undefined
+  );
+  const t = asDuty(mustRow(), pause.write);
+  check(
+    "…every day before the pause keeps its rule and its debt (yesterday still a must, owed); from the pause day nothing is expected",
+    ruleOn(t, YESTERDAY).compulsory && mustsDueOn([{ ...t, id: "x" }], YESTERDAY).length === 1 && !expectedOn(t, TODAY) && mustsDueOn([{ ...t, id: "x" }], TODAY).length === 0 && !expectedOn(t, addDays(TODAY, 3))
+  );
+  const pendingArchive = planSafetyPause(mustRow({ pendingChange: { v: 1, next: { effectiveDay: EFF, archive: true }, prior: [{ throughDay: "2026-10-05", compulsoryOnRest: true }] } }), NOW);
+  check(
+    "…a pending archive is folded in (archived now; next cleared, the prior segments kept)",
+    pendingArchive.write?.archivedAt === NOW && json(pendingArchive.write?.pendingChange) === json({ v: 1, prior: [{ throughDay: "2026-10-05", compulsoryOnRest: true }] }) && pendingArchive.write?.pendingChangeAt === null
+  );
+  const pendingUnflag = planSafetyPause(mustRow({ pendingChange: { v: 1, next: { effectiveDay: EFF, compulsory: false } } }), NOW);
+  check("…any other pending change stays as it is", pendingUnflag.write?.archivedAt === NOW && pendingUnflag.write?.pendingChange === undefined && pendingUnflag.write?.pendingChangeAt === undefined);
+  check("…a template already archived: nothing to write", planSafetyPause(mustRow({ archivedAt: new Date(NOW.getTime() - 60_000) }), NOW).write === null);
+  check("…a non-must is paused at once too", planSafetyPause(mustRow({ compulsory: false }), NOW).write?.archivedAt === NOW);
+  const undo = planRuleEdit(mustRow({ archivedAt: NOW }), { kind: "unarchive" }, live);
+  check("…its Undo is unarchive's (the same day: back at once, no segment)", undo.ok && undo.value.write?.archivedAt === null && parsePendingChange(undo.value.write?.pendingChange) === null);
+  const tasksSrc = code(read("src/lib/tasks.ts"));
+  check(
+    "…tasks.ts pauseForSafetyCore writes it through the rule edit's compare-and-set (applyRuleEdit), and only it bypasses the classifier",
+    /export async function pauseForSafetyCore\([\s\S]*?applyRuleEdit\(userId, templateId, \{ kind: "safety-pause" \}, now\)/.test(tasksSrc) &&
+      /edit\.kind === "safety-pause" \? ok\(planSafetyPause\(ruleRowOf\(row\), now\)\)/.test(tasksSrc) &&
+      (tasksSrc.match(/planSafetyPause\(/g) ?? []).length === 2
+  );
+  check("…duty-rule.ts documents the exception beside the classifier", /One exception never comes here: a safety pause/.test(read("src/lib/duty-rule.ts")));
 }
 {
   const pendingArchive = mustRow({ pendingChange: { v: 1, next: { effectiveDay: EFF, archive: true } } });

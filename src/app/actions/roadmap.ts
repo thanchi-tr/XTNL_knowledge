@@ -35,8 +35,13 @@
  * or "Nothing to avoid", with the key of the words it was given against) on
  * the roadmap; the server refuses a stale key (the card asks again) and
  * quotes the reason from the user's own words, and every later plan path
- * reads it. An AVOID given after Start pauses the started task (the result's
- * `paused`; the Today task's own unarchiveTask undoes it).
+ * reads it. An AVOID given after Start pauses the started task at once, a
+ * must included (the lead's ruling 2: safety overrides the akrasia horizon),
+ * and its practice stops counting toward the milestone from that day
+ * (ruling 3); the result's `paused` lists them, and the Today task's own
+ * unarchiveTask undoes a pause. Every refusal while the card waits — accept,
+ * Start, a pick, a re-plan, an edit, a build — points at the card (the cores'
+ * pointedRefusal, decision 2).
  *
  * Contract: docs/life-plan/roadmap-contracts.md §R4.
  */
@@ -403,7 +408,8 @@ export async function confirmSessionPicks(roadmapId: string, choice: "KEEP" | "E
  * (ACTIVITY_ANSWER_STALE: the page re-reads and the card asks again). On a
  * draft the plan follows in the same write; on an accepted plan `replan`
  * says whether to offer a re-plan, and `paused` lists the started tasks an
- * AVOID took off Today (Undo: unarchiveTask). The earlier per-kind list
+ * AVOID took off Today at once, musts included, which from today no longer
+ * count toward their milestone (Undo: unarchiveTask). The earlier per-kind list
  * (ActivityAnswer[]) is refused like any malformed answer: it carries no
  * key, so the server couldn't tell which words it was given against.
  */

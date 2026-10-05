@@ -1203,6 +1203,66 @@ async function main() {
       /You wrote:[^.]*\.[^.]*\./.exec(bodyD)?.[0]
     );
     check("v3: the one session-picks confirm quotes the constraints", bodyD.includes("Gemini picked Strength session and Easy session. Your constraints say 'Knee injury, no running'. Keep them?") && bodyD.includes(copy.SESSION_PICKS_EASY));
+    // The swap names what it places on this track (the server's EASY swap: cueSafeKindsOf's practices, less the user's AVOIDs).
+    {
+      const CATP = await import("../src/lib/roadmap-catalog");
+      const swapRow = (kind: ActivityRow["kind"], state: ActivityRow["state"]): ActivityRow => ({ kind, state, gated: false, prefill: null, reason: "", day: state === "AVOID" ? "2026-10-05" : null, staleDay: null, cls: state === "AVOID" ? "YOURS" : null });
+      const bodySwap = model.sessionSwapKindsOf("BODY", null);
+      const careSwap = model.sessionSwapKindsOf("CARE", undefined);
+      check(
+        "session picks: the swap's kinds are the server's — the track's safe practices (cueSafeKindsOf, practice slot) — easy, mobility and technique on a body plan, Plan the week ahead and Keep a log on a care plan",
+        JSON.stringify(bodySwap) === JSON.stringify(["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"]) &&
+          JSON.stringify(careSwap) === JSON.stringify(["PLAN_AHEAD", "KEEP_A_LOG"]) &&
+          (["BODY", "CARE"] as const).every((t) => JSON.stringify(model.sessionSwapKindsOf(t, null)) === JSON.stringify(CATP.cueSafeKindsOf(t).filter((k) => CATP.catalogEntryOf(k)?.slot === "PRACTICE"))),
+        `${bodySwap.join(",")} | ${careSwap.join(",")}`
+      );
+      check(
+        "session picks: the button names the track's swap — body “Use easy, mobility and technique instead” (SESSION_PICKS_EASY), care “Use Plan the week ahead and Keep a log instead”, never easy/mobility/technique on care",
+        copy.sessionPicksSwapWord(bodySwap) === copy.SESSION_PICKS_EASY &&
+          copy.SESSION_PICKS_EASY === "Use easy, mobility and technique instead" &&
+          copy.sessionPicksSwapWord(careSwap) === "Use Plan the week ahead and Keep a log instead" &&
+          !/easy|mobility|technique/i.test(copy.sessionPicksSwapWord(careSwap) + copy.sessionPicksSwapLine(careSwap)),
+        copy.sessionPicksSwapWord(careSwap)
+      );
+      check(
+        "session picks: the line under them is per track and true whatever the card's answer (what takes the picks' place), never 'Without Gemini the plan uses only …'",
+        copy.sessionPicksSwapLine(bodySwap) === "Nothing reaches Today before you answer. Without Gemini's picks, easy, mobility and technique sessions take their place." &&
+          copy.sessionPicksSwapLine(careSwap) === "Nothing reaches Today before you answer. Without Gemini's picks, Plan the week ahead and Keep a log take their place." &&
+          !/uses only/.test(read("src/components/roadmap/DraftReview.tsx") + read("src/components/roadmap/roadmap-copy.ts"))
+      );
+      const noMobility = model.sessionSwapKindsOf("BODY", { rows: [swapRow("MOBILITY_SESSION", "AVOID"), swapRow("EASY_SESSION", "WORDS")] });
+      const careAllAvoided = model.sessionSwapKindsOf("CARE", { rows: [swapRow("PLAN_AHEAD", "AVOID"), swapRow("KEEP_A_LOG", "AVOID")] });
+      check(
+        "session picks: a kind the user said to avoid is never offered in the swap (a suggestion alone still is); with none left the button is “Leave them out”",
+        JSON.stringify(noMobility) === JSON.stringify(["EASY_SESSION", "TECHNIQUE_SESSION"]) &&
+          copy.sessionPicksSwapWord(noMobility) === "Use easy and technique instead" &&
+          copy.sessionPicksSwapLine(noMobility) === "Nothing reaches Today before you answer. Without Gemini's picks, easy and technique sessions take their place." &&
+          careAllAvoided.length === 0 &&
+          copy.sessionPicksSwapWord(careAllAvoided) === "Leave them out" &&
+          copy.sessionPicksSwapLine(careAllAvoided) === "Nothing reaches Today before you answer. Without Gemini's picks, nothing takes their place." &&
+          copy.sessionPicksSwapLine(["PLAN_AHEAD"]) === "Nothing reaches Today before you answer. Without Gemini's picks, Plan the week ahead takes their place.",
+        `${noMobility.join(",")} | ${copy.sessionPicksSwapWord(noMobility)}`
+      );
+      const bodyFx = roadmapFixture("draft-body").view!;
+      // The picks card's own markup (one <section>, nothing nested), as text.
+      const picksOf = (html: string) => {
+        const at = html.indexOf('id="rm-picks"');
+        return at < 0 ? "" : flat(html.slice(html.lastIndexOf("<section", at), html.indexOf("</section>", at)));
+      };
+      const bodyPicksCard = picksOf(pageOf("draft-body"));
+      const careFx: RoadmapView = { ...bodyFx, header: { ...bodyFx.header!, area: { kind: "TRACK", track: "CARE" }, track: "CARE", aim: "Support Mum's care at home", constraints: "Evenings only" }, draft: { ...bodyFx.draft!, sessionPicks: { kinds: ["SET_TIME", "CHECK_IN"], constraints: "Evenings only", decision: "PENDING" } } };
+      const carePicksCard = picksOf(R(createElement(RoadmapScreen, { view: careFx })));
+      check(
+        "session picks: rendered, a body draft's card offers easy, mobility and technique; a care draft's offers Plan the week ahead and Keep a log, with its own line",
+        bodyPicksCard.includes(`${copy.SESSION_PICKS_KEEP} ${copy.SESSION_PICKS_EASY}`) &&
+          bodyPicksCard.includes("Without Gemini's picks, easy, mobility and technique sessions take their place.") &&
+          carePicksCard.includes("Gemini picked Set time and Check-in. Your constraints say 'Evenings only'. Keep them?") &&
+          carePicksCard.includes(`${copy.SESSION_PICKS_KEEP} Use Plan the week ahead and Keep a log instead`) &&
+          carePicksCard.includes("Without Gemini's picks, Plan the week ahead and Keep a log take their place.") &&
+          !/easy|mobility|technique/i.test(carePicksCard),
+        `${bodyPicksCard.slice(0, 200)} || ${carePicksCard.slice(0, 260)}`
+      );
+    }
     const noExam = catalogChoicesOf("PRACTICE", { areaFieldId: "f-st", track: "CRAFT", examLabel: null, excluded: [], allowed: [] }, { lastStage: false });
     const withExamCk = catalogChoicesOf("CHECKPOINT", { areaFieldId: "f-st", track: "CRAFT", examLabel: "Exam P", excluded: [], allowed: [] }, { lastStage: true });
     check("catalog: the type picker never offers an exam-only type without an exam, nor the code-placed exam day", !noExam.includes("TIMED_PRACTICE") && noExam.includes("PROBLEM_SETS") && withExamCk.includes("MOCK_TEST") && !withExamCk.includes("EXAM_DAY"), `${noExam.join(",")} | ${withExamCk.join(",")}`);
@@ -1809,9 +1869,9 @@ async function main() {
         copy.activitySaveLine(0, 0) === ""
     );
     check(
-      "copy: the how-line offers the two explicit acts (tick and save, or “Nothing to avoid”), on the plan and on the intake",
-      copy.ACTIVITY_HOW_LINE === `Tick what the plan should avoid, or choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.` &&
-        copy.ACTIVITY_INTAKE_HOW_LINE === `Tick what the plan should avoid, or choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`
+      "copy: the how-line offers the two explicit acts (tick and save, or “Nothing to avoid” with nothing ticked) and says a Save answers every type listed (ruling 1: the release is per card), on the plan and on the intake",
+      copy.ACTIVITY_HOW_LINE === `Tick what the plan should avoid and save: your answer covers every type listed. With nothing ticked, choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.` &&
+        copy.ACTIVITY_INTAKE_HOW_LINE === `Tick what the plan should avoid and confirm: your answer covers every type listed. With nothing ticked, choose “${CAT.ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`
     );
     check(
       "copy: the Start sheet's, the picker's and the suggestions' lines (a suggestion never leaves one out; the picker points at the card)",
@@ -1884,7 +1944,7 @@ async function main() {
     });
     check(
       "model: the draft's gate is on, every gated BODY kind waits, none answered, and the view carries the words' key",
-      draftAc.on && draftAc.track === "BODY" && draftAc.pending === 5 && draftAc.rows.every((r) => r.state === "PENDING" && r.gated && r.cls === null) && draftAc.answered === null && draftAc.key === draftState.key && draftAc.key.startsWith("k1-")
+      draftAc.on && draftAc.track === "BODY" && draftAc.pending === 5 && draftAc.rows.every((r) => r.state === "PENDING" && r.gated && r.cls === null) && draftAc.answered === null && draftAc.key === draftState.key && draftAc.key.startsWith("k2-")
     );
     check(
       "model: the boxes ticked on opening are the suggestions (and AVOID / WORDS rows), never a row the answer released and never a plain pending row",
@@ -2073,6 +2133,43 @@ async function main() {
       JSON.stringify(buttonsOf(cCard))
     );
     check("care: the plan's line names planning the week and keeping a log (decision 2), with HEALTH_LINE", cText.includes("Planning the week and keeping a log only until you confirm.") && cCard.includes(copy.HEALTH_LINE));
+    // ── The lead's ruling 1: the release is per card. A Save with a box ticked is the user's answer for every row the card
+    // listed; "Nothing to avoid" stays hidden while any box is ticked, on every place the card is asked. ──
+    {
+      const oneTicked = { ...careAc, rows: careAc.rows.map((r, i) => (i === 0 ? { ...r, prefill: "AVOID" as const } : r)) };
+      const actsOf = (v: typeof draftAc) => [
+        buttonsOf(cardOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "draft" })))),
+        buttonsOf(R(createElement(ac.ActivityConfirmCard, { view: v, roadmapId: "rm7", today: DAY, place: "start" }))),
+        buttonsOf(R(createElement(ac.IntakeActivities, { view: v, keyNow: v.key, confirmed: null, onConfirm: () => {}, today: DAY }))),
+      ];
+      const ticked = [actsOf(draftAc), actsOf(oneTicked)];
+      const unticked = actsOf(careAc);
+      check(
+        "ruling 1: with any box ticked “Nothing to avoid” is hidden — the one act is Save (the intake's Confirm these), on the plan card, the Start sheet and the intake; with none ticked it is the only act",
+        ticked.every(([plan, start, intake]) => JSON.stringify(plan) === JSON.stringify([copy.ACTIVITY_SAVE_WORD]) && JSON.stringify(start) === JSON.stringify([copy.ACTIVITY_SAVE_WORD]) && JSON.stringify(intake) === JSON.stringify([copy.ACTIVITY_CONFIRM_WORD])) &&
+          unticked.every((acts) => JSON.stringify(acts) === JSON.stringify([CAT.ACTIVITY_NOTHING_TO_AVOID])),
+        JSON.stringify({ ticked, unticked })
+      );
+      const oneHtml = flat(cardOf(R(createElement(ac.ActivityConfirmCard, { view: oneTicked, roadmapId: "rm7", today: DAY, place: "draft" }))));
+      check(
+        "ruling 1: one tick says, beside Save, that the answer covers the rows left unticked too (“The plan leaves out 1 and can include the other 4.”), with the how-line's “covers every type listed”",
+        oneHtml.includes("The plan leaves out 1 and can include the other 4.") && oneHtml.includes("your answer covers every type listed") && !buttonsOf(oneHtml).includes(CAT.ACTIVITY_NOTHING_TO_AVOID),
+        oneHtml.slice(0, 400)
+      );
+      const careState = CAT.constraintsStateOf({ track: "CARE", texts: { constraints: null, aim: roadmapFixture("draft-care").view!.header!.aim, notes: [] }, exam: false, practicesAllowed: true, exclusions: [] });
+      const careKey = careState.key === careAc.key;
+      const oneSave = careKey ? answerThrough(careState, model.activityCardAnswerOf(careAc, [careAc.rows[0].kind])) : null;
+      check(
+        "ruling 1: through the real gate, a Save with one tick answers the whole card — the ticked kind stays out, every other listed kind is placed, and the stored answer lists them all",
+        careKey &&
+          oneSave?.ok === true &&
+          !oneSave.gate.allowed.includes(careAc.rows[0].kind) &&
+          careAc.rows.slice(1).every((r) => oneSave.gate.allowed.includes(r.kind)) &&
+          oneSave.gate.pending.length === 0 &&
+          JSON.stringify(oneSave.stored.answered?.asked) === JSON.stringify(careAc.rows.map((r) => r.kind)),
+        careKey ? JSON.stringify(oneSave) : "the care fixture's key isn't the empty-constraints CARE key"
+      );
+    }
     check("care: the next milestone places them meanwhile, so the plan is never a dead end", /Plan the week ahead/.test(flat(sectionOf(cHtml, /aria-label="Milestone 1"/))) && flat(sectionOf(cHtml, /aria-label="Milestone 1"/)).includes("Planning the week and keeping a log only until you confirm."));
 
     // ── Craft (draft-craft): asks on a cue, quoting it, with HEALTH_LINE; technique only meanwhile. ──
@@ -2260,6 +2357,112 @@ async function main() {
       const plain = toasts.getToasts().slice(quiet);
       check("save: …and an answer that took nothing off Today says only that it was saved", plain.length === 1 && plain[0].title === "Answers saved");
       for (const t of plain) toasts.dismissToast(t.id);
+      check(
+        "save: the re-plan toast no longer says started milestones 'stay as they are' (decision 4 takes an avoided started task off Today): they keep their history",
+        copy.ACTIVITY_REPLAN_LINE === "They change milestones you haven't started. Re-plan to apply them; started ones keep their history." && !/stay as they are/.test(read("src/components/roadmap/roadmap-copy.ts"))
+      );
+    }
+
+    // ── The lead's ruling 3: a paused practice stops counting toward the started milestone from the pause day (R4 turns
+    // its Practice kept measure CONTEXT), and the roadmap says so, never silently: on its row in place of its On Today
+    // link, under that measure, and on a paused step. ──
+    {
+      check(
+        "paused: the row's line (“paused because you said to avoid it”, with the day, and once its Practice kept no longer pays, that it no longer counts) and the line under that measure",
+        copy.pausedItemLine("2027-01-05", true, "2027-01-07") === "Paused on 5 Jan because you said to avoid it. From that day it no longer counts toward this milestone." &&
+          copy.pausedItemLine("2027-01-05", false, "2027-01-07") === "Paused on 5 Jan because you said to avoid it." &&
+          copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-05" }], "2027-01-07") === "Strength session is paused because you said to avoid it, so from 5 Jan this no longer counts toward the milestone." &&
+          copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-03" }, { label: "Harder session", day: "2027-01-05" }], "2027-01-07") ===
+            "Strength session and Harder session are paused because you said to avoid them, so from 5 Jan this no longer counts toward the milestone." &&
+          copy.practiceKeptPausedLine([]) === null
+      );
+      const pausedWords = [copy.pausedItemLine("2027-01-05", true), copy.practiceKeptPausedLine([{ label: "Strength session", day: "2027-01-05" }])!].join(" ");
+      check("paused: its words claim no medical knowledge and never say 'fine'", !MEDICAL.test(pausedWords) && !/\bfine\b/i.test(pausedWords), MEDICAL.exec(pausedWords)?.[0]);
+
+      // The body plan (body-practice) with typed rows: Strength started on Today, then avoided on 5 Jan; the 5 km a step.
+      // Revision 4 keeps one Practice kept per practice; R4 turned Strength's CONTEXT when the answer paused it.
+      const base = roadmapFixture("body-practice").view!;
+      const cur = base.current!;
+      const typed: Record<string, ActivityRow["kind"]> = { "lp-run": "EASY_SESSION", "lp-str": "STRENGTH_SESSION", "ls-5k": "FULL_ATTEMPT" };
+      const ms2 = { ...cur.milestone, items: cur.milestone.items.map((it) => (typed[it.lineageId] ? { ...it, catalogKey: typed[it.lineageId] } : it)) };
+      const kept0 = cur.measures[0];
+      const perPractice = [
+        { ...kept0, measureKey: "PRACTICE_KEPT|t:t-run|from:2026-12-14", target: 18 },
+        { ...kept0, measureKey: "PRACTICE_KEPT|t:t-str|from:2026-12-14", target: 6, role: "CONTEXT" as const, pace: null },
+      ];
+      const st = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: base.header!.constraints, aim: base.header!.aim, notes: [] }, exam: false, practicesAllowed: true, exclusions: [] });
+      const avoidOn = (day: string, kinds: ActivityRow["kind"][]) => {
+        const saved = CAT.answerActivityCard(null, st, { key: st.key, avoid: kinds, nothingToAvoid: false }, day);
+        return saved.ok ? CAT.activityConfirmViewOf(st, CAT.allowedKindsFor(st, saved.value)) : null;
+      };
+      const after = avoidOn("2027-01-05", ["STRENGTH_SESSION", "FULL_ATTEMPT"]);
+      const before = avoidOn("2026-12-01", ["STRENGTH_SESSION", "FULL_ATTEMPT"]);
+      const startedCur = { ...cur, milestone: ms2, measures: perPractice, startedDay: "2026-12-14" };
+      const sharedCur = { ...startedCur, measures: [kept0] };
+      const pausedNow = model.pausedItemsOf(startedCur, after);
+      check(
+        "paused: read from the view as R4 leaves it — a practice and an open step Start put on Today whose type the user said to avoid on or after the start day; the practice off target once its own Practice kept is CONTEXT",
+        JSON.stringify(pausedNow) ===
+          JSON.stringify([
+            { lineageId: "lp-str", templateId: "t-str", kind: "PRACTICE", label: "Strength for knees and hips", day: "2027-01-05", offTarget: true },
+            { lineageId: "ls-5k", templateId: "t-5k", kind: "STEP", label: "Run a timed 5 km", day: "2027-01-05", offTarget: false },
+          ]) && model.pausedItemsOf(sharedCur, after)[0]?.offTarget === false,
+        JSON.stringify(pausedNow)
+      );
+      check(
+        "paused: never an AVOID from before Start (Start held the kind back), never before Start, never without the gate's view, never a finished step or a practice with no task",
+        model.pausedItemsOf(startedCur, before).length === 0 &&
+          model.pausedItemsOf({ ...startedCur, startedDay: null }, after).length === 0 &&
+          model.pausedItemsOf(startedCur, null).length === 0 &&
+          model.pausedItemsOf({ ...startedCur, stepDone: { "ls-5k": "2027-01-06" } }, after).every((p) => p.kind === "PRACTICE") &&
+          model.pausedItemsOf({ ...startedCur, milestone: { ...ms2, items: ms2.items.map((it) => (it.lineageId === "lp-str" ? { ...it, templateId: null } : it)) } }, after).every((p) => p.lineageId !== "lp-str")
+      );
+      check(
+        "paused: the measure line speaks only for a CONTEXT Practice kept all of whose tasks are paused practices (never one that still pays, never a shared one)",
+        JSON.stringify(model.pausedOfMeasure(perPractice[1], pausedNow).map((p) => p.lineageId)) === JSON.stringify(["lp-str"]) &&
+          model.pausedOfMeasure(perPractice[0], pausedNow).length === 0 &&
+          model.pausedOfMeasure({ ...kept0, role: "CONTEXT" }, pausedNow).length === 0 &&
+          model.pausedOfMeasure({ ...perPractice[1], role: "PAYS" }, pausedNow).length === 0
+      );
+      const pausedView: RoadmapView = { ...base, weekQuests: null, current: startedCur, activityConfirm: after };
+      const nowOf = (v: RoadmapView) => sectionOf(R(createElement(RoadmapScreen, { view: v })), /aria-label="Current milestone"/);
+      const chunkOf = (nowHtml: string, title: string) => {
+        const at = nowHtml.indexOf(`>${title}<`);
+        if (at < 0) return "";
+        const end = nowHtml.indexOf('<div class="rm-ms-sec">', at);
+        return nowHtml.slice(at, end < 0 ? undefined : end);
+      };
+      const nowHtml = nowOf(pausedView);
+      const practise = chunkOf(nowHtml, "What to practise");
+      const measures = chunkOf(nowHtml, "Measures");
+      const steps = chunkOf(nowHtml, "Steps");
+      check(
+        "paused: on the roadmap the paused practice says so in place of its On Today link, and that it no longer counts toward the milestone; the practice still on Today keeps its link",
+        flat(practise).includes("Strength for knees and hips") &&
+          flat(practise).includes("Paused on 5 Jan because you said to avoid it. From that day it no longer counts toward this milestone.") &&
+          !practise.includes(`href="${todayTaskHref("t-str")}"`) &&
+          practise.includes(`href="${todayTaskHref("t-run")}"`),
+        flat(practise).slice(0, 600)
+      );
+      // The measure rows in order: the line sits inside the second (Strength's) row, not after it.
+      const measureRows = measures.split('<div class="rm-mr">').slice(1);
+      check(
+        "paused: under the Practice kept that no longer pays, inside its row, the line names the paused practice and the day; the one that still pays carries none",
+        measureRows.length === 2 &&
+          !measureRows[0].includes("is paused because") &&
+          flat(measureRows[1]).includes("Strength for knees and hips is paused because you said to avoid it, so from 5 Jan this no longer counts toward the milestone."),
+        flat(measures).slice(0, 500)
+      );
+      check("paused: a paused open step says so in place of its On Today link", flat(steps).includes("Run a timed 5 km Paused on 5 Jan because you said to avoid it.") && !steps.includes(`href="${todayTaskHref("t-5k")}"`), flat(steps).slice(0, 300));
+      const sharedHtml = nowOf({ ...pausedView, current: sharedCur });
+      check(
+        "paused: a Practice kept the paused practice shares with one the user didn't avoid still pays, so the row says only that it is paused, and no measure line",
+        flat(chunkOf(sharedHtml, "What to practise")).includes("Paused on 5 Jan because you said to avoid it.") && !flat(sharedHtml).includes("no longer counts"),
+        flat(chunkOf(sharedHtml, "What to practise")).slice(0, 400)
+      );
+      const plainHtml = R(createElement(RoadmapScreen, { view: { ...pausedView, activityConfirm: before } }));
+      check("paused: nothing paused, no paused line (an AVOID from before Start held the practice back instead)", !flat(plainHtml).includes("Paused on") && !flat(plainHtml).includes("no longer counts") && !flat(pageOf("body-practice")).includes("Paused on"));
+      check("paused: never red on the paused lines", !/danger|owed/.test(practise + measures + steps));
     }
     check(
       "health: every body or care card carries HEALTH_LINE, and a craft card that asks; a Field card never does",

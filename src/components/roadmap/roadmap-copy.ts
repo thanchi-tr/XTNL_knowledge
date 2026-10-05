@@ -1416,7 +1416,41 @@ export function sessionPicksLine(p: Pick<SessionPicks, "kinds" | "constraints">)
   return `Gemini picked ${andList(p.kinds.map((k) => KIND_NAME[k] ?? k))}. Your constraints say '${p.constraints}'. Keep them?`;
 }
 export const SESSION_PICKS_KEEP = "Keep them";
+/** A body plan's swap (sessionPicksSwapWord over BODY's safe practices); a care plan's names its own two. */
 export const SESSION_PICKS_EASY = "Use easy, mobility and technique instead";
+
+/**
+ * The kinds the swap places, named (the server's swap: the track's safe
+ * practices, roadmap-catalog cueSafeKindsOf, less any the user said to
+ * avoid): the session words on a body plan ("easy, mobility and technique",
+ * `sessions`), the types' own names otherwise ("Plan the week ahead and Keep
+ * a log"). Null when none is left.
+ */
+function swapNamesOf(kinds: readonly CatalogKey[]): { names: string; sessions: boolean } | null {
+  if (kinds.length === 0) return null;
+  const sessions = kinds.every((k) => SESSION_WORD_KINDS.includes(k));
+  return { names: andList(kinds.map((k) => (sessions ? SAFE_KIND_WORD[k] : null) ?? KIND_NAME[k] ?? k)), sessions };
+}
+
+/** The swap's button, per track: "Use easy, mobility and technique instead" (body), "Use Plan the week ahead and Keep a log instead" (care); "Leave them out" when the user avoided every one. */
+export function sessionPicksSwapWord(kinds: readonly CatalogKey[]): string {
+  const s = swapNamesOf(kinds);
+  return s ? `Use ${s.names} instead` : "Leave them out";
+}
+
+/**
+ * The line under the picks, per track and true whatever the card's answer
+ * (the swap removes Gemini's picks and puts the track's own practices in the
+ * picked practices' place; it never says what the rest of the plan holds):
+ * "Nothing reaches Today before you answer. Without Gemini's picks, Plan the
+ * week ahead and Keep a log take their place."
+ */
+export function sessionPicksSwapLine(kinds: readonly CatalogKey[]): string {
+  const s = swapNamesOf(kinds);
+  const one = kinds.length === 1;
+  const tail = s ? `${s.names}${s.sessions ? (one ? " session" : " sessions") : ""} ${one ? "takes" : "take"} their place` : "nothing takes their place";
+  return `Nothing reaches Today before you answer. Without Gemini's picks, ${tail}.`;
+}
 
 /** Gemini's Domain additions (F-R4-21): "Gemini suggests adding 2 of your Domains: Risk Management (14 cards · 3 at level 6+), Calculus (30 cards). Each would count at every milestone, at 25 and 30 cards." */
 export function additionsLine(adds: readonly Pick<DomainAddition, "name" | "cards" | "atSix" | "n">[]): string {
@@ -1525,17 +1559,23 @@ export function gapUngroundedConfirm(name: string): string {
 export const ACTIVITY_QUESTION = "Which activities should the plan avoid?";
 /** Some of the user's words couldn't be read here (CueReading.unparseable): the plan asks rather than guess. */
 export const ACTIVITY_UNREAD_LINE = "Some of your words couldn't be read here, so the plan asks.";
-/** How the list answers (the draft review, the roadmap page and the Start sheet): two explicit acts, never a Save with nothing ticked. */
-export const ACTIVITY_HOW_LINE = `Tick what the plan should avoid, or choose “${ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.`;
+/**
+ * How the list answers (the draft review, the roadmap page and the Start
+ * sheet): two explicit acts, never a Save with nothing ticked. The release is
+ * the card's (the lead's ruling 1): a Save with a box ticked answers every
+ * type the card lists, so the line says so, and "Nothing to avoid" is offered
+ * only while no box is ticked.
+ */
+export const ACTIVITY_HOW_LINE = `Tick what the plan should avoid and save: your answer covers every type listed. With nothing ticked, choose “${ACTIVITY_NOTHING_TO_AVOID}”. You can change this later on the roadmap page.`;
 /** The intake's version: the answer is saved with the plan. */
-export const ACTIVITY_INTAKE_HOW_LINE = `Tick what the plan should avoid, or choose “${ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`;
+export const ACTIVITY_INTAKE_HOW_LINE = `Tick what the plan should avoid and confirm: your answer covers every type listed. With nothing ticked, choose “${ACTIVITY_NOTHING_TO_AVOID}”. Your answer is saved with the plan.`;
 export const ACTIVITY_SAVE_WORD = "Save my answers";
 export const ACTIVITY_CONFIRM_WORD = "Confirm these";
 export const ACTIVITY_CHANGE_WORD = "Change";
 /** The save's toast. */
 export const ACTIVITY_SAVED_LINE = "The plan follows what you said. You can change it on the roadmap page.";
 /** The save's toast on an ACTIVE plan whose unstarted milestones the answers change (R4's ActivityVerdictsResult.replan). */
-export const ACTIVITY_REPLAN_LINE = "They change milestones you haven't started. Re-plan to apply them; started ones stay as they are.";
+export const ACTIVITY_REPLAN_LINE = "They change milestones you haven't started. Re-plan to apply them; started ones keep their history.";
 /** The intake once the user confirmed (saved after the intake, before the plan is built). */
 export const ACTIVITY_CONFIRMED_LINE = "Confirmed. Your answer is saved with the plan.";
 /** The intake, when the answer couldn't be saved (refused, or the words changed meanwhile): the draft asks again. */
@@ -1694,6 +1734,32 @@ export function activityPickerLine(names: readonly string[]): string | null {
 export function activityPausedLine(names: readonly string[]): string | null {
   if (names.length === 0) return null;
   return `You said to avoid ${names.length === 1 ? "it" : "them"}, so ${andList(names)} ${names.length === 1 ? "is" : "are"} off Today. History is kept; Undo brings ${names.length === 1 ? "it" : "them"} back.`;
+}
+
+/**
+ * A started practice or step an answer took off Today (decision 4), on its
+ * row of the roadmap page in place of its On Today link, for as long as the
+ * user's AVOID stands: never a silent change. A practice whose Practice kept
+ * no longer pays also says so (the lead's ruling 3): "Paused on 5 Oct
+ * because you said to avoid it. From that day it no longer counts toward
+ * this milestone."
+ */
+export function pausedItemLine(day: DayKey, offTarget: boolean, today?: DayKey): string {
+  const head = `Paused on ${dayLabel(day, today)} because you said to avoid it.`;
+  return offTarget ? `${head} From that day it no longer counts toward this milestone.` : head;
+}
+
+/**
+ * Under a Practice kept measure that no longer pays (the lead's ruling 3;
+ * R4 turns it CONTEXT from the day the last of its practices was paused):
+ * "Strength session is paused because you said to avoid it, so from 5 Oct
+ * this no longer counts toward the milestone." Null with none.
+ */
+export function practiceKeptPausedLine(rows: readonly { label: string; day: DayKey }[], today?: DayKey): string | null {
+  if (rows.length === 0) return null;
+  const one = rows.length === 1;
+  const last = rows.map((r) => r.day).reduce((a, b) => (b > a ? b : a));
+  return `${andList(rows.map((r) => r.label))} ${one ? "is" : "are"} paused because you said to avoid ${one ? "it" : "them"}, so from ${dayLabel(last, today)} this no longer counts toward the milestone.`;
 }
 
 /** The toast's title and body when a started practice the user now avoids couldn't be taken off Today (R4's `notPaused`): where to do it. */

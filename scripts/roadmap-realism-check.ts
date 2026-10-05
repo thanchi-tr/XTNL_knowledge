@@ -2136,7 +2136,7 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
   eq("words the app can't read ('Đau đầu gối khi chạy') gate the same", kindsOf(ladder4("vi", stageLadderOf(body({ constraints: "Đau đầu gối khi chạy" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
   eq("cue-less constraints ('Evenings only') gate the same", kindsOf(ladder4("evenings", stageLadderOf(body({ constraints: "Evenings only" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
   const cued = body({ constraints: "Running causes me knee pain." });
-  const key = RT.cueKeyOf(RT.cueTextsOf(cued));
+  const key = RT.cueKeyOf(RT.cueTextsOf(cued), "BODY");
   /** AVOIDs stored with no answer to the card (the card still asks: every gated kind waits). */
   const avoidedOnly = (kinds: readonly string[]): RT.Intake => ({
     ...cued,

@@ -18,7 +18,8 @@
  *   Aim figure   aimFigureOf
  *   Activities   activityCardOf · activityAsksOf · activitySuggestsOf · activityOpenOf · activityAvoidOf · activityCardAnswerOf ·
  *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
- *                practiceOnlyLineOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply · notPausedOfReply (§19)
+ *                practiceOnlyLineOf · sessionSwapKindsOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply ·
+ *                notPausedOfReply · pausedItemsOf · pausedOfMeasure (§19)
  */
 import {
   ACTIVITY_REASON_MAX,
@@ -28,6 +29,7 @@ import {
   TYPICAL_HOURS_MIN,
   WEEK_QUEST_ROWS_TODAY,
   draftNeedsOf,
+  parseMeasureKey,
   positionCountOf,
   practiceMinutesPerWeekOf,
   provenanceOf,
@@ -42,6 +44,7 @@ import {
   type AimRankView,
   type BlockingFlag,
   type CueTexts,
+  type CurrentMilestoneView,
   type Decision,
   type ItemDraft,
   type ItemKind,
@@ -51,6 +54,7 @@ import {
   type MilestoneDraft,
   type MilestoneRowView,
   type MilestoneStatus,
+  type MeasureRowView,
   type Origin,
   type ProficiencyView,
   type DraftView,
@@ -71,6 +75,7 @@ import {
   catalogEntryOf,
   catalogKindsFor,
   constraintsStateOf,
+  cueSafeKindsOf,
   isCatalogKey,
   type CatalogKey,
   type CatalogTrack,
@@ -894,6 +899,18 @@ export function heldPracticesOf(m: Pick<MilestoneDraft, "items">, v: Pick<Activi
   };
 }
 
+/**
+ * The practices Gemini's session picks give way to (the server's EASY swap,
+ * confirmSessionPicks): the track's safe practices (cueSafeKindsOf, practice
+ * slot only), less any the user said to avoid (an AVOID row). Easy, mobility
+ * and technique on a body plan; Plan the week ahead and Keep a log on a care
+ * plan. The swap's button and its line name these, never another track's.
+ */
+export function sessionSwapKindsOf(track: CatalogTrack, confirm: Pick<ActivityConfirmView, "rows"> | null | undefined): CatalogKey[] {
+  const avoided = new Set<string>((confirm?.rows ?? []).filter((r) => r.state === "AVOID").map((r) => r.kind));
+  return cueSafeKindsOf(track).filter((k) => catalogEntryOf(k)?.slot === "PRACTICE" && !avoided.has(k));
+}
+
 /** The plan's line while rows wait ("Easy, mobility and technique practice only until you confirm."); null when nothing waits. */
 export function practiceOnlyLineOf(v: Pick<ActivityConfirmView, "on" | "pending" | "safeKinds"> | null | undefined): string | null {
   return v && activityAsksOf(v) ? activityPendingLine(v.safeKinds) : null;
@@ -1012,4 +1029,70 @@ export function pausedOfReply(reply: unknown): PausedTemplate[] {
 /** Those R4 couldn't take off Today (ActivityVerdictsResult.notPaused): still live there, so the notice names them and says where to archive them. */
 export function notPausedOfReply(reply: unknown): PausedTemplate[] {
   return pausedListOf(reply, "notPaused");
+}
+
+/** A started practice or step of the current milestone an answer paused: its lineage and task, its row's words, and the day. */
+export interface PausedItem {
+  lineageId: string;
+  templateId: string;
+  kind: "PRACTICE" | "STEP";
+  label: string;
+  /** The AVOID's day: the pause is immediate, a must included (the lead's ruling 2). */
+  day: DayKey;
+  /**
+   * A practice whose own Practice kept measure no longer pays (role CONTEXT:
+   * R4's offTargetOpsOf, the lead's ruling 3): from `day` it no longer counts
+   * toward the milestone. False for a step, and for a practice whose measure
+   * still pays (it shares one with a practice the user didn't avoid).
+   */
+  offTarget: boolean;
+}
+
+/** The task ids a Practice kept measure counts (its key's `t:`); [] for another measure. */
+function keptTemplatesOf(measureKey: string): string[] {
+  const p = parseMeasureKey(measureKey);
+  return p?.kind === "PRACTICE_KEPT" ? p.templateIds : [];
+}
+
+/**
+ * The current milestone's practices and steps an answer took off Today
+ * (decision 4), shown on the roadmap page for as long as the AVOID stands
+ * (the lead's ruling 3: never a silent change to the milestone). Read from
+ * the view, as R4 leaves it: an item Start put on Today (its templateId)
+ * whose type the user said to avoid on or after the milestone's start day
+ * (an AVOID row and its day); a practice is `offTarget` when its Practice
+ * kept measure turned CONTEXT. An AVOID given before Start never reaches
+ * Today (Start holds the kind back), so it is no pause. [] before Start,
+ * without the gate's view, or with nothing avoided; a finished step
+ * (stepDone) is never called paused.
+ */
+export function pausedItemsOf(
+  current: Pick<CurrentMilestoneView, "milestone" | "measures" | "startedDay" | "stepDone"> | null | undefined,
+  confirm: Pick<ActivityConfirmView, "rows"> | null | undefined
+): PausedItem[] {
+  const from = current?.startedDay ?? null;
+  if (!current || !from || !confirm || !Array.isArray(confirm.rows)) return [];
+  const avoidedOn = new Map<string, DayKey>();
+  for (const r of confirm.rows) if (r.state === "AVOID" && typeof r.day === "string" && r.day >= from) avoidedOn.set(r.kind, r.day);
+  const context = new Set((current.measures ?? []).filter((x) => x.kind === "PRACTICE_KEPT" && x.role === "CONTEXT").flatMap((x) => keptTemplatesOf(x.measureKey)));
+  const out: PausedItem[] = [];
+  for (const it of [...current.milestone.items].sort((a, b) => a.ord - b.ord)) {
+    if ((it.kind !== "PRACTICE" && it.kind !== "STEP") || it.decision === "REMOVED" || !it.templateId || !isCatalogKey(it.catalogKey)) continue;
+    if (it.kind === "STEP" && current.stepDone?.[it.lineageId]) continue;
+    const day = avoidedOn.get(it.catalogKey);
+    if (day) out.push({ lineageId: it.lineageId, templateId: it.templateId, kind: it.kind, label: it.label, day, offTarget: it.kind === "PRACTICE" && context.has(it.templateId) });
+  }
+  return out;
+}
+
+/**
+ * The paused practices a Practice kept measure row speaks for (the lead's
+ * ruling 3): a CONTEXT measure every one of whose tasks is a paused
+ * practice. [] for a measure that still pays or counts another practice.
+ */
+export function pausedOfMeasure(row: Pick<MeasureRowView, "measureKey" | "kind" | "role">, paused: readonly PausedItem[]): PausedItem[] {
+  if (row.kind !== "PRACTICE_KEPT" || row.role !== "CONTEXT") return [];
+  const ids = keptTemplatesOf(row.measureKey);
+  const mine = ids.map((id) => paused.find((p) => p.kind === "PRACTICE" && p.templateId === id));
+  return ids.length > 0 && mine.every((p): p is PausedItem => p != null) ? mine : [];
 }

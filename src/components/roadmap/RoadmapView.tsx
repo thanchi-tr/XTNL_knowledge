@@ -80,6 +80,8 @@ import {
   paragonDepthLine,
   pastDueLine,
   paceLine,
+  pausedItemLine,
+  practiceKeptPausedLine,
   spanLabel,
   statedLine,
   topRankDepthLine,
@@ -94,6 +96,8 @@ import {
   geminiNamedOf,
   milestoneRowLine,
   paragonLineShown,
+  pausedItemsOf,
+  pausedOfMeasure,
   positionsOf,
   practiceOnlyLineOf,
   referenceRunOf,
@@ -259,6 +263,9 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
   const prevBest = Math.max(0, ...rows.filter((r) => r.ord < m.ord && r.rankIndex != null).map((r) => r.rankIndex!));
   // Constraint safety (contracts §19): while the plan waits on the user's answer about activities.
   const practiceOnly = practiceOnlyLineOf(view.activityConfirm);
+  // Started practices and steps an answer took off Today (decision 4): said on their rows, and under a Practice kept that no longer pays (the lead's ruling 3).
+  const paused = started ? pausedItemsOf(current, view.activityConfirm) : [];
+  const pausedOf = new Map(paused.map((p) => [p.lineageId, p] as const));
   const rank = { rankIndex: m.rankIndex, gives: m.rankIndex != null && m.rankIndex > prevBest, paragonAfter: false };
 
   const items = (kind: ItemDraft["kind"]) => m.items.filter((it) => it.kind === kind && it.decision !== "REMOVED").sort((a, b) => a.ord - b.ord);
@@ -370,7 +377,19 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
                 const parsed = parseMeasureKey(x.measureKey);
                 const label =
                   x.label ?? (parsed?.kind === "CARDS_AT_LEVEL" ? `Cards at level ${parsed.level}+ in ${scopeNamesOf(parsed.domainIds, index) ?? "this milestone's Domains"}` : "Practice kept");
-                return <MeasureRow key={x.measureKey} row={x} label={label} m={view.feasibility?.m ?? 1} today={today} slowest={slowest === x.measureKey} since="since start" writesOff={view.writesOff} />;
+                return (
+                  <MeasureRow
+                    key={x.measureKey}
+                    row={x}
+                    label={label}
+                    m={view.feasibility?.m ?? 1}
+                    today={today}
+                    slowest={slowest === x.measureKey}
+                    since="since start"
+                    writesOff={view.writesOff}
+                    note={practiceKeptPausedLine(pausedOfMeasure(x, paused), today)}
+                  />
+                );
               })
           )}
 
@@ -404,7 +423,14 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
             <>
               {practiceOnly && <p className="rm-avd-p rm-avd-ms">{practiceOnly}</p>}
               {items("PRACTICE").map((it) => (
-                <PracticeRow key={it.id ?? it.lineageId} target={{ row: editorRowOf(it), item: it, milestone: m }} stage="active" kept={current.practiceKept?.[it.lineageId] ?? null} />
+                <PracticeRow
+                  key={it.id ?? it.lineageId}
+                  target={{ row: editorRowOf(it), item: it, milestone: m }}
+                  stage="active"
+                  kept={current.practiceKept?.[it.lineageId] ?? null}
+                  paused={pausedOf.get(it.lineageId) ?? null}
+                  today={today}
+                />
               ))}
             </>
           )}
@@ -442,9 +468,13 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
                     <p className="rm-it-l">{it.label}</p>
                     {started && it.templateId && (
                       <div className="rm-it-m">
-                        <Link className="rm-ilink" href={todayTaskHref(it.templateId)}>
-                          On Today
-                        </Link>
+                        {pausedOf.has(it.lineageId) ? (
+                          pausedItemLine(pausedOf.get(it.lineageId)!.day, false, today)
+                        ) : (
+                          <Link className="rm-ilink" href={todayTaskHref(it.templateId)}>
+                            On Today
+                          </Link>
+                        )}
                       </div>
                     )}
                   </div>

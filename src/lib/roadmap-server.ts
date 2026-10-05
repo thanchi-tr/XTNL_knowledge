@@ -25,7 +25,7 @@
  *   RoadmapDeps.store  the roadmap tables (prismaRoadmapStore by default)
  *   RoadmapDeps.io     every other read and write (Field tree, throughput,
  *                      rest days, templates, goal mints, createTemplateCore,
- *                      createDomain, archiveCore)
+ *                      createDomain, archiveCore, pauseForSafetyCore)
  *   RoadmapDeps.lanes  the other lanes' functions (R1, R2, R3, R6), so this
  *                      lane's logic is checked against fixtures while theirs land
  *   RoadmapDeps.defer, callModel, clock, makeId, goalsLive (no sizing: a plan-born
@@ -139,17 +139,25 @@
  *     The safety-gaps round: every BODY or CARE plan asks, CRAFT asks on a
  *     cue; a kept pick or the user's own row of a kind that waits again is
  *     held (accept reads every live row); every refusal while the card waits
- *     points at it (pointedAt: accept, Start, a pick).
+ *     points at it (pointedAt inline for accept, Start and a pick, and
+ *     pointedRefusal around every re-plan, review edit and build core, accept
+ *     and Start: the lead's ruling on decision 2).
  *   - The answer (setActivityVerdictsCore, YOURS: ActivityCardAnswer, ticks
  *     or "Nothing to avoid", carrying the words' key; a stale key is refused
  *     and the card asks again) lives in Roadmap.coverage["$activities"]:
  *     intakeOf reads it, intakeData writes the column through coverageJsonOf,
- *     an intake save carries it and prunes the draft to the new words, and
- *     both writes are guarded on the row as read (ROADMAP_IS updatedAt). On a
- *     DRAFT the answer re-syncs the draft (regatedDrafts); on an ACTIVE plan
- *     it offers a re-plan, and an AVOID given after Start pauses the started
- *     task (archived through tasks.ts; ActivityVerdictsResult.paused, undone
- *     with unarchiveTask).
+ *     an intake save carries it and re-gates the draft to the new words
+ *     (draftGateOps through regatedDrafts: the track's safe kinds take the
+ *     released kinds' place, as in a fresh build), and both writes are
+ *     guarded on the row as read (ROADMAP_IS updatedAt). On a DRAFT the
+ *     answer re-syncs the draft (regatedDrafts); on an ACTIVE plan it offers
+ *     a re-plan, and an AVOID given after Start pauses the started task at
+ *     once, a must included (the lead's ruling 2: tasks.ts
+ *     pauseForSafetyCore; ActivityVerdictsResult.paused, undone with
+ *     unarchiveTask), and its practice stops counting toward the milestone
+ *     from that day (ruling 3: offTargetOpsOf; the view shows no pace and
+ *     stops "planned so far" there). A Start finishing meanwhile re-checks
+ *     the answers after its write (pauseAvoidedAfterFinish).
  *   - Views: DraftView/RoadmapView.activityConfirm (activityConfirmViewOf);
  *     DraftView.exclusions lists what the gate left out because of the words;
  *     DraftView.aimConflict shows only until the card is answered.
@@ -176,7 +184,7 @@ import { hasGeminiKey } from "./gemini";
 import { loadFieldTree } from "./queries";
 import { loadMaintenanceIds } from "./field-focus";
 import { loadModifiers } from "./skill-effects";
-import { archiveCore, createTemplateCore, ledgerOf, readDayTaskEvents, readDayTotals, type CaptureLink } from "./tasks";
+import { archiveCore, createTemplateCore, ledgerOf, pauseForSafetyCore, readDayTaskEvents, readDayTotals, type CaptureLink } from "./tasks";
 import { planCompletion, shortDate, type DayLedger, type PricedTemplate } from "./today-board";
 import { goalAsOf, goalPercent, type GoalStep } from "./goals";
 import type { CaptureSource, ParsedCapture, Track } from "./life-types";
@@ -845,11 +853,16 @@ export interface RoadmapIo {
   /** taxonomy createDomain. */
   createDomain(fieldId: string, name: string): Promise<CreateDomainResult>;
   /**
-   * tasks.ts archiveCore (the aftercare, the archive's goal, and a started task an AVOID pauses). `deferredTo`: a must
-   * past its typo grace once Duty is live leaves Today only on that day (archiveCore's pending archive); absent or null:
-   * archived at once.
+   * tasks.ts archiveCore (the aftercare and the archive's goal). `deferredTo`: a must past its typo grace once Duty is
+   * live leaves Today only on that day (archiveCore's pending archive); absent or null: archived at once.
    */
   archiveTemplate(userId: string, templateId: string, now: Date): Promise<{ ok: true; deferredTo?: DayKey | null } | { ok: false; error: string }>;
+  /**
+   * tasks.ts pauseForSafetyCore (the lead's ruling 2, contracts §19): a started task of a kind the user said to avoid
+   * leaves Today at once, a must included (safety overrides the akrasia horizon; the must's earlier days keep their rule
+   * and debts). Never deferred, never a delete; the Today task's own unarchive is the Undo.
+   */
+  pauseTemplate(userId: string, templateId: string, now: Date): Promise<{ ok: true } | { ok: false; error: string }>;
   // ── Revision 4 ──
   /** The loadout's reach modifiers (skill-effects loadModifiers): the interval multiplier, extra strikes and grace days (F-R4-8). */
   reachModifiers(userId: string): Promise<{ intervalMultiplier: number; extraStrikes: number; graceExtraDays: number }>;
@@ -1461,6 +1474,10 @@ export const prismaRoadmapIo: RoadmapIo = {
   async archiveTemplate(userId, templateId, now) {
     const res = await archiveCore(userId, templateId, now);
     return res.ok ? { ok: true, deferredTo: res.value.effect === "deferred" ? res.value.effectiveDay : null } : { ok: false, error: res.error };
+  },
+  async pauseTemplate(userId, templateId, now) {
+    const res = await pauseForSafetyCore(userId, templateId, now);
+    return res.ok ? { ok: true } : { ok: false, error: res.error };
   },
   async reachModifiers(userId) {
     const m = await loadModifiers(userId);
@@ -2740,7 +2757,7 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
         { op: "update", table: "roadmap", where: { id: draft.id, status: "DRAFT" }, data: { ...kept, updatedAt: now } },
       ];
       // The draft's rows follow the new words in the same write (contracts §19): a kind the gate now holds leaves.
-      ops.push(...(await draftGateOps(e, userId, { ...draft, ...kept } as RoadmapRec, tree, now)));
+      ops.push(...(await draftGateOps(e, userId, draft, { ...draft, ...kept } as RoadmapRec, tree, now)));
       const out = await e.store.apply(userId, ops);
       return out === "ok" ? ok({ roadmapId: draft.id }) : "stale";
     }
@@ -2757,29 +2774,49 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
 
 /**
  * A DRAFT roadmap's draft rows through the gate of its row as it will read
- * (contracts §19; saveIntakeCore after the user's words changed): every live
- * item a plan path placed of a kind the gate now blocks leaves its row,
- * through the one writer, each row guarded on its status (a row of the
- * user's own of a kind that waits again stays, held: gatePlanRows). None when the
- * gate blocks nothing, the roadmap holds no draft, or it is a legacy draft;
- * a write the tripwire refuses leaves the rows (logged): accept refuses a
- * draft that still holds one (acceptBlockersOf).
+ * (contracts §19; saveIntakeCore after the user's words changed), `prev`
+ * being the row as stored. When the new words move the gate on the same
+ * track (the card asks again, so the kinds its answer released wait), the
+ * rows follow it as the answer's own write does (regatedDrafts, since the
+ * kinds `prev` blocked): every live item a plan path placed of a kind the
+ * gate now blocks leaves its row, and the track's safe kinds take the place
+ * the starter gives them (a CARE draft keeps Plan the week ahead and Keep a
+ * log, a CRAFT draft the technique session), so a changed text leaves the
+ * same plan a fresh build would, never empty stages. Otherwise (the gate
+ * didn't move, or the track changed: the rows are another track's until the
+ * user builds again) only the blocked kinds leave (gatePlanRows). A row of
+ * the user's own of a kind that waits again stays, held (gatePlanRows).
+ * Through the one writer, each row guarded on its status. None when the
+ * gate blocks nothing and didn't move, the roadmap holds no draft, or it is
+ * a legacy draft; a write the tripwire refuses leaves the rows (logged):
+ * accept refuses a draft that still holds one (acceptBlockersOf).
  */
-async function draftGateOps(e: Env, userId: string, next: RoadmapRec, tree: readonly TreeField[], now: Date): Promise<StoreOp[]> {
+async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: RoadmapRec, tree: readonly TreeField[], now: Date): Promise<StoreOp[]> {
   const gate = planGateOf(e, next).gate;
-  if (gate.blocked.length === 0) return [];
+  const before = planGateOf(e, prev).gate;
+  const moved = before.track === gate.track && JSON.stringify(gate.blocked) !== JSON.stringify(before.blocked);
+  if (!moved && gate.blocked.length === 0) return [];
   const b = await e.store.bundle(userId, next.id);
   if (!b || legacyOf(b)) return [];
   const group = draftRowsOf(b);
   if (group.length === 0) return [];
-  const afters = gatePlanRows(group.map(draftOf), gate, next.fieldId == null, e.makeId);
+  const drafts = group.map(draftOf);
+  let afters = gatePlanRows(drafts, gate, next.fieldId == null, e.makeId);
+  if (moved) {
+    try {
+      const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
+      afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf({ roadmap: next }, group)), before.blocked);
+    } catch (err) {
+      console.error("roadmap: the draft wasn't re-synced to the new words (the blocked kinds left it):", err instanceof Error ? err.message : err);
+    }
+  }
   const ops: StoreOp[] = [];
   try {
     group.forEach((row, i) => {
-      const after = afters[i];
-      if (JSON.stringify(after) === JSON.stringify(draftOf(row))) return;
+      const after = afters.find((d) => d.id != null && d.id === row.id) ?? afters.find((d) => d.lineageId === row.lineageId) ?? afters[i];
+      if (!after || JSON.stringify(after) === JSON.stringify(draftOf(row))) return;
       ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: row.id, statuses: [row.status as MilestoneStatus] } });
-      writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((_, k) => k !== i) }, modelTextContextOf(b, tree, true));
+      writeRoadmapRows(ops, { kind: "REWRITE", before: row, after, now, makeId: e.makeId, decided: new Set(), others: afters.filter((d) => d !== after) }, modelTextContextOf(b, tree, true));
     });
   } catch (err) {
     if (!(err instanceof ModelTextError)) throw err;
@@ -3982,6 +4019,17 @@ export async function claimDraftCore(
   now: Date,
   deps: RoadmapDeps = {}
 ): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await claimDraftUnpointed(userId, roadmapId, opts, now, deps));
+}
+
+/** claimDraftCore's work; claimDraftCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function claimDraftUnpointed(
+  userId: string,
+  roadmapId: string,
+  opts: { force: boolean },
+  now: Date,
+  deps: RoadmapDeps = {}
+): Promise<RoadmapActionResult<{ runId: string; status: RunStatus }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (!(deps.geminiLive ?? ROADMAP_GEMINI_LIVE)) return fail(GEMINI_DRAFTING_OFF);
   const e = envOf(deps);
@@ -4441,12 +4489,12 @@ async function buildInHouse(userId: string, roadmapId: string, kind: "INHOUSE" |
 
 /** "Build from my numbers": an INHOUSE run (status OK, outside the cap) with the starter ladder. */
 export async function buildStarterCore(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ runId: string }>> {
-  return buildInHouse(userId, roadmapId, "INHOUSE", now, deps);
+  return pointedRefusal(deps, userId, { roadmapId }, await buildInHouse(userId, roadmapId, "INHOUSE", now, deps));
 }
 
 /** "Write it myself": a MANUAL run (status OK, outside the cap) with an empty ladder of n milestones. */
 export async function startManualCore(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ runId: string }>> {
-  return buildInHouse(userId, roadmapId, "MANUAL", now, deps);
+  return pointedRefusal(deps, userId, { roadmapId }, await buildInHouse(userId, roadmapId, "MANUAL", now, deps));
 }
 
 // ═══ Review (F9) ════════════════════════════════════════════════════════════
@@ -4671,6 +4719,11 @@ const TEXT_FIELDS: readonly string[] = ["title", "label", "origin", "titleOrigin
 
 /** Keep → KEPT_SUGGESTION; I checked this → CHECKED (YOURS); Remove → REMOVED (kept as a row). A NUMBER item cannot be kept or checked. The milestone's own id decides its title. */
 export async function decideItemCore(userId: string, itemId: string, decision: ItemDecisionChoice, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { ref: itemId }, await decideItemUnpointed(userId, itemId, decision, now, deps));
+}
+
+/** decideItemCore's work; decideItemCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function decideItemUnpointed(userId: string, itemId: string, decision: ItemDecisionChoice, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (decision !== "KEPT" && decision !== "CHECKED" && decision !== "REMOVED") return fail("Pick Keep, I checked this or Remove.");
   const e = envOf(deps);
@@ -4845,6 +4898,11 @@ const EDIT_FIELDS: readonly (keyof ItemEdit)[] = ["label", "method", "sessionsPe
  * target": targetSource YOURS), touching no item's decision.
  */
 export async function editItemCore(userId: string, itemId: string, edit: ItemEdit, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { ref: itemId }, await editItemUnpointed(userId, itemId, edit, now, deps));
+}
+
+/** editItemCore's work; editItemCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function editItemUnpointed(userId: string, itemId: string, edit: ItemEdit, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   const ed: ItemEdit = edit && typeof edit === "object" ? edit : {};
@@ -5096,6 +5154,11 @@ const KIND_CAP: Readonly<Record<ItemKind, number>> = {
 
 /** Adds one item the user wrote to a DRAFT, LATER or PLANNED milestone (caps per F6 step 11); code re-fits the numbers. */
 export async function addItemCore(userId: string, milestoneId: string, input: NewItem, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ itemId: string }>> {
+  return pointedRefusal(deps, userId, { ref: milestoneId }, await addItemUnpointed(userId, milestoneId, input, now, deps));
+}
+
+/** addItemCore's work; addItemCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function addItemUnpointed(userId: string, milestoneId: string, input: NewItem, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ itemId: string }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   const n: Partial<NewItem> = input && typeof input === "object" ? input : {};
@@ -5248,6 +5311,11 @@ function bulkKeepOff(e: Env, r: Pick<RoadmapRec, "aim" | "examLabel">): boolean 
 
 /** "Keep this milestone's unflagged suggestions": the next milestone's DRAFT items with no blocking flag → KEPT_SUGGESTION. Absent for credential and non-English aims. */
 export async function keepUnflaggedCore(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ kept: number }>> {
+  return pointedRefusal(deps, userId, { ref: milestoneId }, await keepUnflaggedUnpointed(userId, milestoneId, now, deps));
+}
+
+/** keepUnflaggedCore's work; keepUnflaggedCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function keepUnflaggedUnpointed(userId: string, milestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ kept: number }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   let kept = 0;
@@ -5283,6 +5351,11 @@ export async function keepUnflaggedCore(userId: string, milestoneId: string, now
 
 /** A Domain item: [I checked this] (CHECKED), [Map to…] (EDITED), [Create] (taxonomy createDomain under a confirmed name; EDITED or CHECKED), or [Drop]. */
 export async function resolveDomainCore(userId: string, itemId: string, resolution: DomainResolution, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ domainId: string | null }>> {
+  return pointedRefusal(deps, userId, { ref: itemId }, await resolveDomainUnpointed(userId, itemId, resolution, now, deps));
+}
+
+/** resolveDomainCore's work; resolveDomainCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function resolveDomainUnpointed(userId: string, itemId: string, resolution: DomainResolution, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ domainId: string | null }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   const r = resolution && typeof resolution === "object" ? resolution : ({ kind: "" } as unknown as DomainResolution);
@@ -5509,6 +5582,11 @@ async function createFromSuggestion(
 
 /** One remedy tap: rewrite the draft (roadmap-realism applyRemedy) and re-run the engine; moving the date moves the aim's date. */
 export async function applyRemedyCore(userId: string, roadmapId: string, remedy: Remedy, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await applyRemedyUnpointed(userId, roadmapId, remedy, now, deps));
+}
+
+/** applyRemedyCore's work; applyRemedyCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function applyRemedyUnpointed(userId: string, roadmapId: string, remedy: Remedy, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (remedy !== "MOVE_DATE" && remedy !== "REFIT_LIGHT" && remedy !== "MOVE_TO_LATER" && remedy !== "USE_REALISTIC_DATE" && remedy !== "LOWER_DEPTH") return fail("Pick a remedy.");
   const e = envOf(deps);
@@ -5925,6 +6003,11 @@ function latestOf(readings: readonly Reading[], key: string, today: DayKey): Rea
  *     REALISTIC date becomes the realistic one.
  */
 export async function acceptCore(userId: string, roadmapId: string, choices: AcceptChoices, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ version: number }>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await acceptUnpointed(userId, roadmapId, choices, now, deps));
+}
+
+/** acceptCore's work; acceptCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function acceptUnpointed(userId: string, roadmapId: string, choices: AcceptChoices, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ version: number }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   const overAccepted = !!(choices && typeof choices === "object" && choices.overAccepted === true);
@@ -6766,6 +6849,11 @@ async function proficiencyFor(
  * `link`, then finishStartCore. Refuses while ROADMAP_GOALS_LIVE is false.
  */
 export async function startMilestoneCore(userId: string, milestoneId: string, choices: StartChoices, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ goalId: string }>> {
+  return pointedRefusal(deps, userId, { ref: milestoneId }, await startMilestoneUnpointed(userId, milestoneId, choices, now, deps));
+}
+
+/** startMilestoneCore's work; startMilestoneCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function startMilestoneUnpointed(userId: string, milestoneId: string, choices: StartChoices, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ goalId: string }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
   if (!e.goalsLive) return fail(GATE_OFF);
@@ -6992,6 +7080,9 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
       }
     }
     ops.push({ op: "update", table: "roadmapMilestone", where: { id: row.id, status: "STARTING" }, data: { status: "STARTED", goalId } });
+    // The roadmap row moves too (strictly later than as read): an activity answer read while this row was STARTING is
+    // guarded on the row's updatedAt, so it re-reads and finds the row STARTED with its tasks (decision 4's race).
+    ops.push({ op: "update", table: "roadmap", where: { id: roadmapId }, data: { updatedAt: new Date(Math.max(now.getTime(), b.roadmap.updatedAt.getTime() + 1)) } });
 
     // PROFICIENCY: the basis the acceptance gave (carried in the last reading of this version), less any practice switched off at Start.
     const planRows = planRowsOf(b).map((m) => (m.id === row.id ? { ...m, status: "STARTED", goalId } : m));
@@ -7037,7 +7128,51 @@ export async function finishStartCore(userId: string, milestoneId: string, now: 
     return out === "ok" ? ok({ goalId }) : "stale";
   });
   invalidate("roadmap");
+  if (res.ok) await pauseAvoidedAfterFinish(e, userId, roadmapId, milestoneId, templateOf, now);
   return res;
+}
+
+/**
+ * The race finishStartCore closes (decision 4; the verifier's R4 follow-up):
+ * an AVOID that landed between the finish's gate read and its write-back of
+ * the template ids. The answer saw the row STARTING (no template ids yet), so
+ * it paused nothing, and the finish had already created the task. After its
+ * write the finish re-reads the stored answers: every task it created (by
+ * item lineage, `templateOf`) whose kind is now avoided is paused at once
+ * (pauseAvoidedTasks; a must included, ruling 2), and its practice stops
+ * counting toward the milestone (offTargetOpsOf, ruling 3). An answer read
+ * before the write and saved after it re-reads instead (the write moves the
+ * roadmap's updatedAt) and pauses them itself; a task already archived is
+ * not paused twice. Nothing is refused here: Start has finished, and a
+ * failure is logged (the page's card still shows the AVOID, and the task can
+ * be archived on Today).
+ */
+async function pauseAvoidedAfterFinish(e: Env, userId: string, roadmapId: string, milestoneId: string, templateOf: ReadonlyMap<string, string>, now: Date): Promise<PausedTask[]> {
+  if (templateOf.size === 0) return [];
+  try {
+    const b = await e.store.bundle(userId, roadmapId);
+    const row = b?.milestones.find((m) => m.id === milestoneId);
+    if (!b || !row || row.status !== "STARTED") return [];
+    const confirm = intakeOf(b.roadmap).activities ?? null;
+    const avoided = new Set<string>(confirm ? Object.keys(confirm.kinds).filter((k) => confirm.kinds[k as CatalogKey]?.verdict === "AVOID") : []);
+    if (avoided.size === 0) return [];
+    const list: TaskToPause[] = [];
+    for (const i of [...row.items].sort((x, y) => x.ord - y.ord)) {
+      const t = templateOf.get(i.lineageId);
+      if (!t || !liveItem(i) || (i.kind !== "PRACTICE" && i.kind !== "STEP") || !isCatalogKey(i.catalogKey) || !avoided.has(i.catalogKey)) continue;
+      if (!list.some((x) => x.templateId === t)) list.push({ templateId: t, kind: i.catalogKey, label: i.label });
+    }
+    if (list.length === 0) return [];
+    const off = offTargetOpsOf(b, confirm, await carriedGoalsOf(e, userId, b), milestoneId);
+    if (off.length > 0 && (await e.store.apply(userId, off)) !== "ok") console.error("roadmap: an avoided practice still counts toward its milestone (the row moved meanwhile)");
+    const { paused, notPaused } = await pauseAvoidedTasks(e, userId, list, now);
+    if (notPaused.length > 0) console.error("roadmap: Start's tasks of an avoided kind weren't all paused:", notPaused.map((x) => x.templateId).join(", "));
+    invalidate("roadmap");
+    return paused;
+  } catch (err) {
+    console.error("roadmap: Start's tasks weren't re-checked against the answers:", err instanceof Error ? err.message : err);
+    return [];
+  }
 }
 
 function practiceValue(
@@ -7168,6 +7303,11 @@ export async function logCheckpointCore(
 
 /** A re-plan (REFIT or MANUAL) of unstarted positions only, as version + 1 DRAFT rows; reviewed and accepted as in F9. */
 export async function replanCore(userId: string, roadmapId: string, kind: ReplanKind, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ version: number }>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await replanUnpointed(userId, roadmapId, kind, now, deps));
+}
+
+/** replanCore's work; replanCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function replanUnpointed(userId: string, roadmapId: string, kind: ReplanKind, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<{ version: number }>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (kind !== "REFIT" && kind !== "MANUAL") return fail("Pick Re-fit or Edit by hand.");
   const e = envOf(deps);
@@ -7787,10 +7927,13 @@ function milestonePaceOf(e: Env, ctx: PlanContext, v: Pick<ViewData, "readings" 
  * A started practice's sessions so far (fix round): kept from the stored
  * PRACTICE_KEPT detail (byLineage; a one-practice measure keeps it all), and
  * planned over [startedDay, min(today, due)] less the held days since Start
- * ("kept 10 of 16 so far"). null when no reading holds it.
+ * ("kept 10 of 16 so far"). A practice off its milestone's target (ruling 3:
+ * its measure stopped paying when the user said to avoid it) is planned only
+ * up to the day before its pause (offTargetDayOf), so nothing is asked of it
+ * from that day. null when no reading holds it.
  */
 function practiceSoFarOf(
-  v: Pick<ViewData, "readings" | "today" | "pastHeld">,
+  v: Pick<ViewData, "readings" | "today" | "pastHeld" | "b" | "templates">,
   m: { startedDay: DayKey | null; dueDay: DayKey | null; measures: readonly MeasureSpec[] },
   it: ItemDraft
 ): { kept: number; of: number } | null {
@@ -7803,9 +7946,26 @@ function practiceSoFarOf(
   const own = d.byLineage?.[it.lineageId];
   const kept = typeof own === "number" ? own : lineages.length <= 1 ? (typeof d.kept === "number" ? d.kept : r.value) : null;
   if (kept == null) return null;
-  const to = m.dueDay && m.dueDay < v.today ? m.dueDay : v.today;
+  const pausedFrom = x.role === "PAYS" ? null : offTargetDayOf(v, it, r);
+  const due = m.dueDay && m.dueDay < v.today ? m.dueDay : v.today;
+  const to = pausedFrom && addDays(pausedFrom, -1) < due ? addDays(pausedFrom, -1) : due;
   const of = to < m.startedDay ? 0 : plannedUnits(practiceRule(it), { from: m.startedDay, to, startDay: m.startedDay }, v.pastHeld);
   return { kept, of };
+}
+
+/**
+ * The day a started practice stopped counting toward its milestone (ruling
+ * 3; its PRACTICE_KEPT measure CONTEXT, offTargetOpsOf): the day the user
+ * said to avoid its kind (the card's AVOID), else the day its task was
+ * paused, else the day after its measure's last reading (R1 reads it no
+ * more). The page's "paused because you said to avoid it" reads the same
+ * AVOID row.
+ */
+function offTargetDayOf(v: Pick<ViewData, "b" | "templates">, it: ItemDraft, last: Pick<Reading, "day">): DayKey {
+  const avoided = isCatalogKey(it.catalogKey) ? activityConfirmOf(v.b.roadmap.coverage)?.kinds[it.catalogKey] : undefined;
+  if (avoided?.verdict === "AVOID" && avoided.day) return avoided.day;
+  const archivedAt = it.templateId ? v.templates.get(it.templateId)?.archivedAt : null;
+  return archivedAt ? dayKeyOf(archivedAt) : addDays(last.day, 1);
 }
 
 function measureRowOfView(e: Env, v: ViewData, m: MilestoneDraft, x: MeasureSpec, paceOf: MeasureRowView["pace"] = null): MeasureRowView {
@@ -8014,7 +8174,8 @@ function currentViewOf(e: Env, v: ViewData, ctx: PlanContext, m: MilestoneBundle
     measures: d.measures
       .filter((x) => x.kind !== "CHECKPOINT")
       .map((x) =>
-        measureRowOfView(e, v, d, x, carried ? paceOfMeasure(e, ctx, v.readings, { dueDay: due, reachedDay: m.reachedDay, startedDay: m.startedDay, items: d.items }, x, v.pastHeld) : null)
+        // A practice off the target (ruling 3: the user said to avoid it) has no pace: nothing more is asked of it.
+        measureRowOfView(e, v, d, x, carried && x.role === "PAYS" ? paceOfMeasure(e, ctx, v.readings, { dueDay: due, reachedDay: m.reachedDay, startedDay: m.startedDay, items: d.items }, x, v.pastHeld) : null)
       ),
     headline: h.headline,
     goalId: m.goalId,
@@ -8373,6 +8534,36 @@ const gateOf = (e: Env, ctx: Pick<PlanContext, "roadmap">): ActivityGate => plan
  */
 const pointedAt = (gate: Pick<ActivityGate, "on" | "pending"> | null | undefined, message: string): string =>
   !gate || message.includes(ACTIVITY_CARD_NAME) ? message : withActivityPointer(gate, message);
+
+/**
+ * Decision 2 as the lead ruled it (contracts §19): every refusal while the
+ * activity card waits points at it — re-plan (replanCore), the review's
+ * edits (editItemCore, decideItemCore, addItemCore, keepUnflaggedCore,
+ * resolveDomainCore, moveLineCore, setLineDomainCore, applyRemedyCore,
+ * confirmSessionPicksCore, confirmDomainAdditionsCore, lowerDepthCore,
+ * keepCalibratedDatesCore) and the builds (buildStarterCore,
+ * startManualCore, claimDraftCore), as well as accept and Start. A core's
+ * refusal on a roadmap comes back through here: the roadmap's row is read
+ * again only when the core refused (`ref`: the roadmap, or an item or
+ * milestone of it), and pointedAt adds the pointer while its gate (as it
+ * reads now) holds kinds waiting on the answer; a refusal that already
+ * names the card is never pointed twice. Unchanged with writes off (nothing
+ * is read), when the roadmap isn't the user's or can't be read, and when no
+ * card waits.
+ */
+async function pointedRefusal<T>(deps: RoadmapDeps, userId: string, ref: { roadmapId: string } | { ref: string }, res: RoadmapActionResult<T>): Promise<RoadmapActionResult<T>> {
+  if (res.ok || writesOff(deps) || res.error.includes(ACTIVITY_CARD_NAME)) return res;
+  try {
+    const e = envOf(deps);
+    const roadmapId =
+      "roadmapId" in ref ? ref.roadmapId : typeof ref.ref === "string" && STEP_REF.test(ref.ref) ? ((await e.store.ownerOf(userId, { itemId: ref.ref })) ?? (await e.store.ownerOf(userId, { milestoneId: ref.ref }))) : null;
+    const row = typeof roadmapId === "string" ? (await e.store.listRoadmaps(userId)).find((r) => r.id === roadmapId) : undefined;
+    return row ? fail(pointedAt(planGateOf(e, row).gate, res.error)) : res;
+  } catch (err) {
+    console.error("roadmap: a refusal wasn't pointed at the activity card:", err instanceof Error ? err.message : err);
+    return res;
+  }
+}
 
 /** An item a plan path placed (code's starter or requirement, or Gemini's pick), not a decision of the user's (YOURS: picked, edited or checked). */
 const placedByPlan = (i: Pick<ItemDraft, "origin" | "decision">): boolean => provenanceOf(i.origin, i.decision) !== "YOURS";
@@ -9432,6 +9623,11 @@ const depthWordOf = (d: AimDepth): string => `${stageOfLevel(d) ? (stageOfLevel(
  * touched, and a given rank is never taken back.
  */
 export async function lowerDepthCore(userId: string, roadmapId: string, to: AimDepth, reason: "CHOICE" | "EXAM", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await lowerDepthUnpointed(userId, roadmapId, to, reason, now, deps));
+}
+
+/** lowerDepthCore's work; lowerDepthCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function lowerDepthUnpointed(userId: string, roadmapId: string, to: AimDepth, reason: "CHOICE" | "EXAM", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (!isAimDepth(to)) return fail("Pick a depth: Fluent or Retained.");
   if (reason !== "CHOICE" && reason !== "EXAM") return fail("Pick a depth: Fluent or Retained.");
@@ -9559,6 +9755,11 @@ export async function lowerDepthCore(userId: string, roadmapId: string, to: AimD
  * when the additions would take the realistic date past SPAN_MAX_DAYS.
  */
 export async function confirmDomainAdditionsCore(userId: string, roadmapId: string, version: number, domainIds: readonly string[], now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await confirmDomainAdditionsUnpointed(userId, roadmapId, version, domainIds, now, deps));
+}
+
+/** confirmDomainAdditionsCore's work; confirmDomainAdditionsCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function confirmDomainAdditionsUnpointed(userId: string, roadmapId: string, version: number, domainIds: readonly string[], now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (!Array.isArray(domainIds) || domainIds.some((d) => typeof d !== "string")) return fail("Pick the Domains to add.");
   const e = envOf(deps);
@@ -9612,6 +9813,11 @@ export async function confirmDomainAdditionsCore(userId: string, roadmapId: stri
  * pick waiting.
  */
 export async function confirmSessionPicksCore(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await confirmSessionPicksUnpointed(userId, roadmapId, choice, now, deps));
+}
+
+/** confirmSessionPicksCore's work; confirmSessionPicksCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function confirmSessionPicksUnpointed(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (choice !== "KEEP" && choice !== "EASY") return fail("Keep the picks, or use easy, mobility and technique sessions.");
   const e = envOf(deps);
@@ -9697,10 +9903,15 @@ export async function confirmSessionPicksCore(userId: string, roadmapId: string,
 }
 
 /**
- * A started practice's Today task an AVOID paused (decision 4): archived
- * through tasks.ts archiveCore (RoadmapIo.archiveTemplate), never deleted;
- * its history and streak stand, and the Today task's own undo
- * (actions/tasks unarchiveTask) brings it back.
+ * A started practice's Today task an AVOID paused (decision 4): archived at
+ * once through tasks.ts pauseForSafetyCore (RoadmapIo.pauseTemplate), never
+ * deleted; its history and streak stand, and the Today task's own undo
+ * (actions/tasks unarchiveTask) brings it back. A must is paused at once too
+ * (the lead's ruling 2: safety overrides the akrasia horizon; its earlier
+ * days keep their rule and debts). From the pause day it no longer counts
+ * toward its milestone (ruling 3): a practice's PRACTICE_KEPT measure stops
+ * paying (offTargetOpsOf), and a step leaves the steps' share as any
+ * archived step does.
  */
 export interface PausedTask {
   templateId: string;
@@ -9708,7 +9919,11 @@ export interface PausedTask {
   title: string;
   /** The catalog type the user said to avoid. */
   kind: CatalogKey;
-  /** The day it leaves Today when archiveCore deferred it (a must, once Duty is live: its pending archive); null: off Today now. */
+  /**
+   * Always null since the lead's ruling 2: a pause is never deferred, so the
+   * task is off Today now, a must included. Kept so a reader written for the
+   * deferred archive ("leaves Today on <day>") stays right.
+   */
   deferredTo: DayKey | null;
 }
 
@@ -9719,9 +9934,9 @@ export interface ActivityVerdictsResult {
   /**
    * Decision 4: the started practices' (and steps') Today tasks of a kind
    * this answer newly avoids, paused at once so an avoided activity never
-   * stays live on Today. The page shows a quiet notice with an Undo
-   * (unarchiveTask per task). A must's archive that tasks.ts defers (Duty)
-   * carries its day (deferredTo). [] when none.
+   * stays live on Today, a must included (ruling 2). From today they no
+   * longer count toward their milestone (ruling 3). The page shows a quiet
+   * notice with an Undo (unarchiveTask per task). [] when none.
    */
   paused: PausedTask[];
   /** Those whose archive was refused or failed: still on Today, so the page names them (the user archives them there). */
@@ -9755,10 +9970,16 @@ export interface ActivityVerdictsResult {
  *
  * Decision 4: once the answer is stored, every live Today task of a started
  * milestone (a practice or a step, superseded or finished rows included)
- * whose kind this answer newly avoids is paused through the existing task
- * path (archiveCore; never deleted) and listed in `paused` for the page's
- * quiet notice and its Undo. A kind avoided before this answer is not
- * paused again (the user may have brought its task back).
+ * whose kind this answer newly avoids is paused at once through the task
+ * path (pauseForSafetyCore; never deleted, never deferred, a must included:
+ * the lead's ruling 2) and listed in `paused` for the page's quiet notice
+ * and its Undo. A kind avoided before this answer is not paused again (the
+ * user may have brought its task back). Ruling 3: in the answer's own write,
+ * every avoided started practice stops counting toward its milestone
+ * (offTargetOpsOf). A row still STARTING (Start's finish under way) is the
+ * finish's to pause: it re-reads the answers after its write
+ * (pauseAvoidedAfterFinish), and its write moves the roadmap's updatedAt, so
+ * an answer read before it re-reads here and finds the row STARTED.
  */
 export async function setActivityVerdictsCore(userId: string, roadmapId: string, answer: ActivityCardAnswer, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<ActivityVerdictsResult>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
@@ -9785,6 +10006,10 @@ export async function setActivityVerdictsCore(userId: string, roadmapId: string,
     const after = planGateOf(e, next).gate;
     const moved = JSON.stringify(after.blocked) !== JSON.stringify(before.gate.blocked);
     toPause = tasksToPauseOf(b, intake.activities ?? null, answered.value);
+    // Ruling 3: a started practice the user now avoids stops counting toward its milestone from today, in this same write.
+    if (Object.keys(answered.value.kinds).length > 0 && b.milestones.some((m) => m.status === "STARTED")) {
+      ops.push(...offTargetOpsOf(b, answered.value, await carriedGoalsOf(e, userId, b)));
+    }
     let replan = false;
     if (b.roadmap.status === "ACTIVE") {
       replan = moved && planRowsOf(b).some((m) => !isCarried(m) && m.status !== "LATER");
@@ -9826,6 +10051,52 @@ export async function setActivityVerdictsCore(userId: string, roadmapId: string,
   return ok({ replan: res.value.replan, paused, notPaused });
 }
 
+/**
+ * Ruling 3 (contracts §19, the lead's): a paused practice stops counting
+ * toward its started milestone's practice-kept target from the pause day,
+ * and the roadmap says so (never silently). Pure: on every STARTED row still
+ * worked (not superseded; its goal neither closed nor archived, as `goals`
+ * reads them) — or only row `only` — each paying PRACTICE_KEPT measure whose
+ * practices (its item lineages) are all live, started (they have a task) and
+ * of a kind `confirm` avoids turns CONTEXT. From then on R1 writes no reading
+ * for it and every g, reach and pay reads the milestone's other measures and
+ * steps (roadmap-measures payingMeasures); its readings so far stay as
+ * history. The page reads it on the started milestone: the practice's
+ * measure is CONTEXT and its kind is an AVOID row of the card, with the day
+ * the user said so ("paused because you said to avoid it"); its "kept so
+ * far" stops at that day (practiceSoFarOf) and it shows no pace. A measure
+ * that also holds a practice the user didn't avoid stays as it is (a
+ * revision-3 shape; never written now). A measure already CONTEXT is left
+ * alone: neither the Undo of a pause (the task back on Today) nor a later
+ * answer that lifts the AVOID makes it pay again, since the days it was
+ * paused would then count against the user; Start again or a re-plan gives
+ * the practice a measure afresh. Each changed row is guarded on its status.
+ * [] when none.
+ */
+function offTargetOpsOf(b: RoadmapBundle, confirm: ActivityConfirm | null, goals: ReadonlyMap<string, GoalFacts>, only?: string): StoreOp[] {
+  const avoided = new Set<string>(confirm && confirm.kinds ? Object.keys(confirm.kinds).filter((k) => confirm.kinds[k as CatalogKey]?.verdict === "AVOID") : []);
+  const ops: StoreOp[] = [];
+  if (avoided.size === 0) return ops;
+  for (const m of [...b.milestones].sort(byOrd)) {
+    if (m.status !== "STARTED" || (only != null && m.id !== only) || superseded(b, m)) continue;
+    const goal = m.goalId ? goals.get(m.goalId) : undefined;
+    if (goal && (goal.closedScore != null || goal.archivedAt != null)) continue;
+    const off = new Set(m.items.filter((i) => i.kind === "PRACTICE" && liveItem(i) && i.templateId && isCatalogKey(i.catalogKey) && avoided.has(i.catalogKey)).map((i) => i.lineageId));
+    if (off.size === 0) continue;
+    const ids = m.measures
+      .filter((x) => {
+        if (x.kind !== "PRACTICE_KEPT" || x.role !== "PAYS") return false;
+        const lineages = scopeOf(x.scope).itemLineageIds ?? (x.itemLineageId ? [x.itemLineageId] : []);
+        return lineages.length > 0 && lineages.every((l) => off.has(l));
+      })
+      .map((x) => x.id);
+    if (ids.length === 0) continue;
+    ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: m.id, statuses: ["STARTED"] } });
+    for (const id of ids) ops.push({ op: "update", table: "roadmapMeasure", where: { id }, data: { role: "CONTEXT" } });
+  }
+  return ops;
+}
+
 /** A started milestone's live Today task of a kind the answer newly avoids (decision 4). */
 interface TaskToPause {
   templateId: string;
@@ -9857,12 +10128,13 @@ function tasksToPauseOf(b: RoadmapBundle, prev: ActivityConfirm | null, next: Ac
 }
 
 /**
- * Pauses the tasks (decision 4) through the existing task path:
- * RoadmapIo.archiveTemplate (tasks.ts archiveCore: never a delete; the Today
- * task's own unarchive is the undo). A task already archived, or a one-off
- * step already done, is left as it is and not listed. A refusal or a failure
- * is logged and listed in `notPaused` (still on Today), never thrown: the
- * answer itself is already stored.
+ * Pauses the tasks (decision 4) through the task path: RoadmapIo.pauseTemplate
+ * (tasks.ts pauseForSafetyCore: archived at once, a must included — the
+ * lead's ruling 2, safety overrides the akrasia horizon — never a delete;
+ * the Today task's own unarchive is the undo). A task already archived, or a
+ * one-off step already done, is left as it is and not listed. A refusal or a
+ * failure is logged and listed in `notPaused` (still on Today), never
+ * thrown: the answer itself is already stored.
  */
 async function pauseAvoidedTasks(e: Env, userId: string, list: readonly TaskToPause[], now: Date): Promise<{ paused: PausedTask[]; notPaused: PausedTask[] }> {
   const paused: PausedTask[] = [];
@@ -9880,8 +10152,8 @@ async function pauseAvoidedTasks(e: Env, userId: string, list: readonly TaskToPa
     if (templates && (!t || t.archivedAt != null || (t.recurrence == null && t.completedAt != null))) continue;
     const row: PausedTask = { templateId: x.templateId, title: t?.title || x.label, kind: x.kind, deferredTo: null };
     try {
-      const r = await e.io.archiveTemplate(userId, x.templateId, now);
-      if (r.ok) paused.push({ ...row, deferredTo: r.deferredTo ?? null });
+      const r = await e.io.pauseTemplate(userId, x.templateId, now);
+      if (r.ok) paused.push(row);
       else {
         console.error("roadmap: an avoided practice's task wasn't paused:", r.error);
         notPaused.push(row);
@@ -9903,6 +10175,11 @@ async function pauseAvoidedTasks(e: Env, userId: string, list: readonly TaskToPa
  * dates stand.
  */
 export async function moveLineCore(userId: string, itemId: string, toMilestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { ref: itemId }, await moveLineUnpointed(userId, itemId, toMilestoneId, now, deps));
+}
+
+/** moveLineCore's work; moveLineCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function moveLineUnpointed(userId: string, itemId: string, toMilestoneId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (typeof toMilestoneId !== "string" || !STEP_REF.test(toMilestoneId)) return fail("That milestone no longer exists.");
   const e = envOf(deps);
@@ -9946,6 +10223,11 @@ export async function moveLineCore(userId: string, itemId: string, toMilestoneId
  * STARTED row. The Domain must be one of R, or none.
  */
 export async function setLineDomainCore(userId: string, roadmapId: string, lineIndex: number, domainId: string | null, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await setLineDomainUnpointed(userId, roadmapId, lineIndex, domainId, now, deps));
+}
+
+/** setLineDomainCore's work; setLineDomainCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function setLineDomainUnpointed(userId: string, roadmapId: string, lineIndex: number, domainId: string | null, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (!Number.isInteger(lineIndex) || lineIndex < 0) return fail("That outline line is no longer here.");
   if (domainId != null && (typeof domainId !== "string" || !STEP_REF.test(domainId))) return fail(LINE_DOMAIN_OUTSIDE);
@@ -10042,6 +10324,11 @@ export const NO_CALIBRATED_OFFER = "There's nothing to keep: no input these date
  * double tap or a re-plan in between harmless.
  */
 export async function keepCalibratedDatesCore(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+  return pointedRefusal(deps, userId, { roadmapId }, await keepCalibratedDatesUnpointed(userId, roadmapId, now, deps));
+}
+
+/** keepCalibratedDatesCore's work; keepCalibratedDatesCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
+async function keepCalibratedDatesUnpointed(userId: string, roadmapId: string, now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   if (typeof roadmapId !== "string" || !STEP_REF.test(roadmapId)) return fail(NO_ROADMAP);
   const e = envOf(deps);
