@@ -254,5 +254,37 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: an English aim about a language: needs and three picks.",
+    "replies": [
+      {
+        "id": "japanese-work-v4-a",
+        "about": "Listening needed; listen-and-repeat, saying it aloud, a partner at Mastered.",
+        "reply": {
+          "needs": [
+            "D4"
+          ],
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "RETAINED": "SAY_IT_ALOUD",
+            "MASTERED": "WITH_A_PARTNER"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_ja_listen"
+          ],
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "RETAINED": "SAY_IT_ALOUD",
+            "MASTERED": "WITH_A_PARTNER"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
   }
 }

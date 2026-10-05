@@ -104,6 +104,7 @@ import type {
 } from "../src/lib/roadmap-server";
 import {
   ORIGINS,
+  ROADMAP_PROMPT_VERSION,
   ROADMAP_WRITES_OFF,
   coveragePolicyOf,
   domainName,
@@ -146,6 +147,7 @@ import {
   activityConfirmOf,
   catalogEntryOf,
   catalogLabelOf,
+  progressionViolationsOf,
   type CatalogKey,
 } from "../src/lib/roadmap-catalog";
 import type { QuestMilestoneFacts, QuestStore } from "../src/lib/roadmap-quests-server";
@@ -848,7 +850,7 @@ function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
     buildEvidencePack: (input) => {
       const listed = input.domains.map((d) => d.id);
       return {
-        promptVersion: 3,
+        promptVersion: ROADMAP_PROMPT_VERSION,
         lines: [input.intake.aim, ...input.domains.map((d) => `${d.name} · ${Math.floor(d.cards / 5) * 5}`)],
         sections: ["area", "aim", "domains", "plan"],
         domains: [],
@@ -912,8 +914,10 @@ function lanesFor(w: FakeWorld): Partial<RoadmapLanes> {
     withLabelChecks: (ms) => ms.map((m) => ({ ...m, titleFlags: [] })),
     isNonEnglish: () => false,
     bulkKeepAllowed: (i) => !/[A-Z]{2,6}/.test(i.aim) && !i.examLabel,
-    fitPlan: (plan, input) =>
-      plan.map((m) => ({
+    // The fixture's sizing over R2's own practice progression (contracts §20: code owns it on every plan path, so the
+    // fixture places it as R2 does whenever R4 passes the plan's intake).
+    fitPlan: (plan0, input, opts) =>
+      (opts?.intake ? REALISM.syncProgression(plan0, opts.intake, input, {}, w.makeId, { excluded: opts.excluded, picks: opts.picks }) : plan0).map((m) => ({
         ...m,
         measures: m.measures.map((x) => {
           if (x.kind !== "CARDS_AT_LEVEL" || x.targetSource === "YOURS" || x.targetSource === "DEPTH") return x;
@@ -1232,15 +1236,17 @@ const measuresOf = (w: FakeWorld, milestoneId: string) => w.t.roadmapMeasure.fil
 
 /**
  * What a user does to a revision-4 milestone before accepting (no Gemini
- * words to decide): set each checkpoint's bar. Code's names and the user's
- * own rows need no tap.
+ * words to decide): set each checkpoint's bar, and keep Gemini's practice
+ * picks still waiting on the draft ("I checked this" on each: contracts
+ * §20.5, accept waits on them). Code's names and the user's own rows need no tap.
  */
 async function decideAll(w: FakeWorld, roadmapId: string, milestoneId: string) {
   const deps = depsFor(w);
   for (const i of itemsOf(w, milestoneId)) {
     if (i.kind === "CHECKPOINT" && (i.bar == null || i.outOf == null)) await S.editItemCore(USER, i.id, { outOf: 100, bar: 70 }, NOW, deps);
   }
-  void roadmapId;
+  for (const m of rowsOf(w, roadmapId).filter((x) => x.status === "DRAFT"))
+    for (const i of itemsOf(w, m.id)) if (i.kind === "PRACTICE" && i.decision === "PENDING" && i.notes.includes("GEMINI_PICK")) await S.decideItemCore(USER, i.id, "CHECKED", NOW, deps);
 }
 
 /** An ACTIVE roadmap: drafted, the next milestone decided, accepted. */
@@ -1492,6 +1498,44 @@ async function main() {
     await S.runDraftCore(c2.ok ? c2.value.runId : "", depsFor(w2, { callModel: async () => ({ milestones: [] }), clock: () => NOW }));
     check("an empty reply: FAILED, starter written", w2.t.roadmapRun[0].status === "FAILED" && rowsOf(w2, id2, 1).length >= 1);
 
+    // A v4 schema that asks Gemini nothing (no Domain to suggest, no outline, practices off: every property left out) is
+    // never sent: the claim refuses in words, writes no run and uses none of the day's cap; a run claimed before that
+    // guard fails without the call, the starter in its place.
+    const emptySchema = () => ({ type: "OBJECT", propertyOrdering: [], properties: {} });
+    const we = world();
+    const ide = await newDraft(we);
+    const calls0 = we.modelCalls;
+    const refused = await S.claimDraftCore(USER, ide, { force: true }, NOW, depsFor(we, { lanes: { ...lanesFor(we), buildResponseSchema: emptySchema }, callModel: async () => REPLY }));
+    check(
+      "a schema with no property: the claim refuses (“nothing here for Gemini to arrange”), no run row is written and the model is never called",
+      !refused.ok && refused.error === S.NOTHING_TO_ARRANGE && we.t.roadmapRun.length === 0 && we.modelCalls === calls0,
+      json([refused, we.t.roadmapRun.length, we.modelCalls - calls0])
+    );
+    const we2 = world();
+    const ide2 = await newDraft(we2);
+    const ce2 = await S.claimDraftCore(USER, ide2, { force: false }, NOW, depsFor(we2));
+    const callsE = we2.modelCalls;
+    await S.runDraftCore(ce2.ok ? ce2.value.runId : "", depsFor(we2, { lanes: { ...lanesFor(we2), buildResponseSchema: emptySchema }, callModel: async () => REPLY, clock: () => NOW }));
+    check(
+      "…a run claimed before it fails without the call (“nothing for Gemini to arrange”), the starter written",
+      we2.t.roadmapRun[0].status === "FAILED" && /nothing for Gemini to arrange/.test(we2.t.roadmapRun[0].error ?? "") && we2.modelCalls === callsE && rowsOf(we2, ide2, 1).length >= 1,
+      json([we2.t.roadmapRun[0].status, we2.t.roadmapRun[0].error, we2.modelCalls - callsE])
+    );
+    // A pack of an earlier prompt version (a v3 run still RUNNING across the deploy) is never sent beside today's
+    // instruction and schema: the run fails without the call, the starter in its place.
+    const wv = world();
+    const idv = await newDraft(wv);
+    const cv = await S.claimDraftCore(USER, idv, { force: false }, NOW, depsFor(wv));
+    const runV = wv.t.roadmapRun.find((r) => r.id === (cv.ok ? cv.value.runId : ""));
+    if (runV && runV.pack && typeof runV.pack === "object") (runV.pack as { promptVersion: number }).promptVersion = 3;
+    const callsV = wv.modelCalls;
+    await S.runDraftCore(cv.ok ? cv.value.runId : "", depsFor(wv, { callModel: async () => REPLY, clock: () => NOW }));
+    check(
+      `a v3 pack (prompt version 3, today's is ${ROADMAP_PROMPT_VERSION}) is never sent: FAILED as “an earlier prompt version (never read)”, no model call, the starter written`,
+      ROADMAP_PROMPT_VERSION === 4 && runV?.status === "FAILED" && /an earlier prompt version \(never read\)/.test(runV?.error ?? "") && wv.modelCalls === callsV && rowsOf(wv, idv, 1).length >= 1,
+      json([runV?.status, runV?.error, wv.modelCalls - callsV])
+    );
+
     const w3 = world();
     const id3 = await newDraft(w3);
     const built = await S.buildStarterCore(USER, id3, NOW, depsFor(w3));
@@ -1533,14 +1577,27 @@ async function main() {
     check("a keys-only draft: every row has a stage and every title is code's", rows0.length === 2 && rows0.every((m) => m.stage != null && m.titleOrigin === CODE_ORIGIN), json(rows0.map((m) => [m.stage, m.titleOrigin])));
     check("…no item with origin GEMINI except its Domain additions (NOT_CHOSEN)", items0.every((i) => i.origin !== "GEMINI" || (i.kind === "DOMAIN" && i.notes.includes("NOT_CHOSEN"))), json(items0.filter((i) => i.origin === "GEMINI").map((i) => [i.kind, i.notes])));
     const picks = items0.filter((i) => i.kind === "PRACTICE" || i.kind === "STEP");
-    check("…every practice and step a catalog type, code-worded, Gemini's pick", picks.length === 3 && picks.every((i) => i.origin === CODE_ORIGIN && !!i.catalogKey && i.notes.includes("GEMINI_PICK")), json(picks.map((i) => [i.catalogKey, i.label])));
+    const gemini = items0.filter((i) => i.notes.includes("GEMINI_PICK"));
+    check(
+      "…every practice and step a catalog type in code's words, the practice progression's (contracts §20): Gemini's pick only as the first stage's focus (its first practice that stage offers, PENDING), every other one the app's (decided)",
+      picks.length > 3 &&
+        picks.every((i) => i.origin === CODE_ORIGIN && !!i.catalogKey) &&
+        gemini.length === 1 &&
+        gemini[0].catalogKey === "PROBLEM_SETS" &&
+        gemini[0].kind === "PRACTICE" &&
+        gemini[0].decision === "PENDING" &&
+        itemsOf(w, rows0[0].id).some((i) => i.id === gemini[0].id) &&
+        picks.filter((i) => !i.notes.includes("GEMINI_PICK")).every((i) => i.decision === "KEPT"),
+      json(picks.map((i) => [i.catalogKey, i.decision, i.notes]))
+    );
     check("…the addition sits on every milestone, pending", rows0.every((m) => itemsOf(w, m.id).some((i) => i.kind === "DOMAIN" && i.domainId === "d-risk" && i.decision === "PENDING")));
     const pend = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
     eq("a pending Domain addition blocks accept", pend.ok ? "ok" : pend.error, S.DECIDE_ADDITIONS);
-    const practice = picks.find((i) => i.kind === "PRACTICE") as ItemRec;
+    const practice = gemini[0] as ItemRec;
     eq("Keep is retired on a revision-4 plan", ((r) => (r.ok ? "ok" : r.error))(await S.decideItemCore(USER, practice.id, "KEPT", NOW, deps)), S.NOTHING_TO_KEEP);
     eq("…so is bulk keep", ((r) => (r.ok ? "ok" : r.error))(await S.keepUnflaggedCore(USER, rows0[0].id, NOW, deps)), S.NOTHING_TO_KEEP);
-    eq("…and 'I checked this' on code's words", ((r) => (r.ok ? "ok" : r.error))(await S.decideItemCore(USER, practice.id, "CHECKED", NOW, deps)), S.NOTHING_TO_CHECK);
+    const codeRow = picks.find((i) => i.kind === "PRACTICE" && !i.notes.includes("GEMINI_PICK")) as ItemRec;
+    eq("…and 'I checked this' on code's words (a practice the app added)", ((r) => (r.ok ? "ok" : r.error))(await S.decideItemCore(USER, codeRow.id, "CHECKED", NOW, deps)), S.NOTHING_TO_CHECK);
     const offAdd = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-risk"], NOW, { ...deps, env: WRITES_OFF });
     eq("confirming additions refuses with writes off", offAdd.ok ? "ok" : offAdd.error, ROADMAP_WRITES_OFF);
     const ghost = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-inf-ghost"], NOW, deps);
@@ -1548,7 +1605,21 @@ async function main() {
     const added = await S.confirmDomainAdditionsCore(USER, id, 1, ["d-risk"], NOW, deps);
     const rows1 = rowsOf(w, id, 1);
     check("confirming it: CHECKED on every row, and the plan re-dated with it (each stage measures Risk Management)", added.ok && rows1.every((m) => itemsOf(w, m.id).some((i) => i.domainId === "d-risk" && i.decision === "CHECKED") && measuresOf(w, m.id).some((x) => x.kind === "CARDS_AT_LEVEL" && json(x.scope).includes("d-risk"))), json(added));
-    check("…the picks kept their places through the re-date", itemsOf(w, rows1[0].id).filter((i) => i.kind === "PRACTICE").length === 2 && itemsOf(w, rows1[0].id).some((i) => i.kind === "STEP"));
+    check(
+      "…the progression kept its places through the re-date: the first stage's focus is still Gemini's pick (PENDING), beside the app's practices and steps",
+      itemsOf(w, rows1[0].id).some((i) => i.kind === "PRACTICE" && i.catalogKey === "PROBLEM_SETS" && i.notes.includes("GEMINI_PICK") && i.decision === "PENDING") &&
+        itemsOf(w, rows1[0].id).filter((i) => i.kind === "PRACTICE").length >= 2 &&
+        itemsOf(w, rows1[0].id).some((i) => i.kind === "STEP"),
+      json(itemsOf(w, rows1[0].id).map((i) => [i.kind, i.catalogKey, i.decision]))
+    );
+    // Gemini's practice pick (contracts §20.5): a pick that isn't code's default for its stage, still waiting, blocks accept
+    // on a Field plan too, "Next item to decide" pointing at it; "I checked this" on the row keeps it (CHECKED, still Gemini's).
+    const pickNow = itemsOf(w, rows1[0].id).find((i) => i.kind === "PRACTICE" && i.notes.includes("GEMINI_PICK") && i.decision === "PENDING") as ItemRec;
+    const waitingPick = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
+    const viewPick = await S.loadRoadmapView(USER, NOW, deps);
+    eq("a Field plan's Gemini pick still waiting blocks accept (“keep them, or use the app's default”), and 'Next item to decide' is that pick", [waitingPick.ok ? "ok" : waitingPick.error, viewPick.draft?.nextToDecide], [S.DECIDE_PRACTICE_PICKS, pickNow?.id]);
+    const keptPick = await S.decideItemCore(USER, pickNow.id, "CHECKED", NOW, deps);
+    check("…'I checked this' on the pick keeps it (CHECKED, still marked as Gemini's)", keptPick.ok && itemsOf(w, rows1[0].id).some((i) => i.id === pickNow.id && i.decision === "CHECKED" && i.notes.includes("GEMINI_PICK")), json(keptPick));
     const m2 = rows1[1];
     w.t.roadmapMilestone.find((m) => m.id === m2.id)!.title += " [impossible]";
     const impossible = await S.acceptCore(USER, id, { overAccepted: false }, NOW, deps);
@@ -1932,11 +2003,17 @@ async function main() {
           { title: "Two", domains: ["d-inf"] },
         ],
       });
-      const [p1, p2] = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE");
+      const all = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+      const [p1, p2] = all;
       const r = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, practicesOff: [p2.lineageId] }, NOW, depsFor(w));
-      check("a switched-off practice is not added to Today", r.ok && w.templates.filter((t) => t.kind === "HABIT").length === 1, json(r));
+      check("a switched-off practice is not added to Today (the others are)", r.ok && all.length >= 2 && w.templates.filter((t) => t.kind === "HABIT").length === all.length - 1, json([r, all.length]));
       const pk = measuresOf(w, m1.id).find((x) => x.kind === "PRACTICE_KEPT") as MeasureRec;
-      eq("…its lineage leaves the PRACTICE_KEPT scope", (pk.scope as { itemLineageIds: string[] }).itemLineageIds, [p1.lineageId]);
+      const keptScopes = measuresOf(w, m1.id)
+        .filter((x) => x.kind === "PRACTICE_KEPT")
+        .flatMap((x) => (x.scope as { itemLineageIds?: string[] }).itemLineageIds ?? []);
+      eq("…its lineage leaves the PRACTICE_KEPT scope (the others' stay)", [...new Set(keptScopes)].sort(), all.filter((i) => i !== p2).map((i) => i.lineageId).sort());
+      void p1;
+      void pk;
       check("…and its item is kept with addToToday false", itemsOf(w, m1.id).find((i) => i.id === p2.id)?.addToToday === false);
       const prof = w.t.readings.filter((x) => x.measureKey.startsWith("PROFICIENCY|")).pop();
       check("…the PROFICIENCY reading says the basis changed (rebased SWITCHED_OFF)", (prof?.detail as { rebased?: { cause?: string } })?.rebased?.cause === "SWITCHED_OFF", json(prof?.detail));
@@ -1981,8 +2058,13 @@ async function main() {
       const m2 = rowsOf(w, id, 1)[1];
       await decideAll(w, id, m2.id);
       const pv = await S.startPreview(USER, m2.id, NOW, depsFor(w));
-      const row = pv?.practices.find((p) => p.name === "Problem sets: Probability");
-      check("'Problem sets: Probability is already on Today (from Milestone 1)': its switch starts off", row?.on === false && row.alreadyOnToday?.fromOrd === 1, json(pv?.practices));
+      // The build-up rule's carry (contracts §20.3): milestone 2 keeps what milestone 1 trained, and Start doesn't add it twice.
+      const carriedRows = (pv?.practices ?? []).filter((p) => p.alreadyOnToday != null);
+      check(
+        "a practice milestone 2 carries from milestone 1 is already on Today ('… is already on Today (from Milestone 1)'): its switch starts off",
+        carriedRows.length >= 1 && carriedRows.every((p) => p.on === false && p.alreadyOnToday?.fromOrd === 1),
+        json(pv?.practices)
+      );
     }
   }
 
@@ -1991,11 +2073,12 @@ async function main() {
   {
     const w = world();
     const id = await accepted(w);
-    const cp = itemsOf(w, rowsOf(w, id, 1)[0].id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
-    const a = await S.logCheckpointCore(USER, cp.lineageId, { score: 68, nonce: "nonce-1" }, NOW, depsFor(w));
-    const b = await S.logCheckpointCore(USER, cp.lineageId, { score: 68, nonce: "nonce-1" }, NOW, depsFor(w));
+    // The progression's first checkpoint (contracts §20: none on the first stage; the last holds the performance check).
+    const cp = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id)).find((i) => i.kind === "CHECKPOINT") as ItemRec;
+    const a = await S.logCheckpointCore(USER, cp.lineageId, { score: 68, outOf: 100, nonce: "nonce-1" }, NOW, depsFor(w));
+    const b = await S.logCheckpointCore(USER, cp.lineageId, { score: 68, outOf: 100, nonce: "nonce-1" }, NOW, depsFor(w));
     check("a checkpoint log writes once per nonce (append-only, SELF)", a.ok && b.ok && w.t.readings.filter((r) => r.source === "SELF").length === 1);
-    const c = await S.logCheckpointCore(USER, cp.lineageId, { score: 101, nonce: "nonce-2" }, NOW, depsFor(w));
+    const c = await S.logCheckpointCore(USER, cp.lineageId, { score: 101, outOf: 100, nonce: "nonce-2" }, NOW, depsFor(w));
     check("a score above the scale is refused", !c.ok);
     check("checkpoint logs never touch computed rows", w.t.readings.filter((r) => r.source === "SELF").every((r) => r.measureKey.startsWith("SELF|CHECKPOINT|")));
   }
@@ -2081,7 +2164,8 @@ async function main() {
     const w = world();
     const empty = await S.loadAimCard(USER, NOW, depsFor(w));
     eq("no roadmap: the EMPTY state", empty?.state, "EMPTY");
-    const id = await drafted(w);
+    // Code's practice progression needs no decision (contracts §20); Gemini's pending Domain addition does.
+    const id = await drafted(w, { milestones: [{ domains: ["d-prob"], needs: ["d-risk"] }, { domains: ["d-inf"] }] });
     const draft = await S.loadAimCard(USER, NOW, depsFor(w));
     check("a draft waiting: DRAFT with its items to decide", draft?.state === "DRAFT" && (draft.draftItems ?? 0) > 0 && draft.roadmapId === id, json(draft));
     const missing = await S.loadAimCard(USER, NOW, {
@@ -2310,15 +2394,21 @@ async function main() {
       return { w, m1, practices: itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE") };
     };
     const { w, m1, practices } = await setUp();
-    check("fixture: a plan-only edit keeps the practices' decisions (code's, PENDING) and makes the plan YOURS", practices.every((p) => p.decision === "PENDING" && p.planSource === "YOURS" && p.sessionsPerWeek === 1), json(practices.map((p) => [p.decision, p.planSource, p.sessionsPerWeek])));
+    check(
+      "fixture: a plan-only edit keeps the practices' decisions (Gemini's pick as the user kept it before accepting, CHECKED; the app's KEPT) and makes the plan YOURS",
+      practices.length >= 2 && practices.every((p) => p.decision === (p.notes.includes("GEMINI_PICK") ? "CHECKED" : "KEPT") && p.planSource === "YOURS" && p.sessionsPerWeek === 1),
+      json(practices.map((p) => [p.decision, p.planSource, p.sessionsPerWeek, p.notes]))
+    );
     const pv = await S.startPreview(USER, m1.id, NOW, depsFor(w));
     check("the sheet carries its pay basis and each practice's minutes a week", !!pv?.payBasis && pv.practices.every((p) => p.weeklyMinutes === 30), json([pv?.payBasis, pv?.practices.map((p) => p.weeklyMinutes)]));
     eq("…both on: ⬡ 6", pv?.pay.stated, 6);
     check("…each practice priced with planCompletion against today's ledger", !!pv && pv.practices.every((p) => typeof p.price === "number" && Number.isFinite(p.price)), json(pv?.practices.map((p) => p.price)));
     const rows = (pv?.practices ?? []).map((p) => ({ lineageId: p.lineageId, weeklyMinutes: p.weeklyMinutes ?? 0 }));
-    const offOne = statedForMilestone(startStatedInputOf(pv!.payBasis!, rows, [practices[1].lineageId]));
-    eq("…switching one off on the sheet recomputes to 'pays nothing · practice under an hour a week'", [offOne.stated, offOne.zeroReason], [0, "PRACTICE_UNDER_HOUR"]);
-    const st = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, practicesOff: [practices[1].lineageId] }, NOW, depsFor(w));
+    // All but one off (the progression places two or three practices here, 30 minutes a week each): under an hour a week.
+    const offRest = practices.slice(1).map((p) => p.lineageId);
+    const offOne = statedForMilestone(startStatedInputOf(pv!.payBasis!, rows, offRest));
+    eq("…switching all but one off on the sheet recomputes to 'pays nothing · practice under an hour a week'", [offOne.stated, offOne.zeroReason], [0, "PRACTICE_UNDER_HOUR"]);
+    const st = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, practicesOff: offRest }, NOW, depsFor(w));
     check("…and Start with that switch freezes exactly what the sheet showed (0)", st.ok && goalOf(w, m1.id).stated === offOne.stated, json([st, goalOf(w, m1.id)?.stated]));
     const second = await setUp();
     const pv2 = await S.startPreview(USER, second.m1.id, NOW, depsFor(second.w));
@@ -2342,19 +2432,22 @@ async function main() {
     const viaItem = await S.editItemCore(USER, itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE")!.id, { target: 3 }, NOW, depsFor(w));
     eq("…and so is a typed target sent with an item's id", errOf(viaItem), S.DEPTH_COUNTS_FROM_COVERAGE);
     eq("…and changes no item's decision, nor the title's", [itemsOf(w, m1.id).map((i) => [i.id, i.decision]), w.t.roadmapMilestone.find((m) => m.id === m1.id)?.titleDecision], [before, "PENDING"]);
-    const cp = itemsOf(w, m1.id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
+    // The progression's first checkpoint (contracts §20: none on the first stage).
+    const cpRow = rowsOf(w, id, 1).find((m) => itemsOf(w, m.id).some((i) => i.kind === "CHECKPOINT")) as MilestoneRec;
+    const cp = itemsOf(w, cpRow.id).find((i) => i.kind === "CHECKPOINT") as ItemRec;
+    const cpDecision = cp.decision;
     const bar = await S.editItemCore(USER, cp.id, { outOf: 100, bar: 70 }, NOW, depsFor(w));
-    const cpAfter = itemsOf(w, m1.id).find((i) => i.id === cp.id) as ItemRec;
-    check("'Set the bar' alone keeps the checkpoint's code words and decision", bar.ok && cpAfter.decision === "PENDING" && cpAfter.bar === 70 && cpAfter.origin === CODE_ORIGIN, json(cpAfter));
+    const cpAfter = itemsOf(w, cpRow.id).find((i) => i.id === cp.id) as ItemRec;
+    check("'Set the bar' alone keeps the checkpoint's code words and decision", bar.ok && cpAfter.decision === cpDecision && cpAfter.bar === 70 && cpAfter.origin === CODE_ORIGIN, json(cpAfter));
     const practice = itemsOf(w, m1.id).find((i) => i.kind === "PRACTICE") as ItemRec;
     const decisionBefore = practice.decision;
     const plan = await S.editItemCore(USER, practice.id, { sessionsPerWeek: 2, method: practice.method as never, durationBand: practice.durationBand as never }, NOW, depsFor(w));
     const pAfter = itemsOf(w, m1.id).find((i) => i.id === practice.id) as ItemRec;
     check("a practice's plan edit keeps its decision and makes the plan YOURS", plan.ok && pAfter.decision === decisionBefore && pAfter.planSource === "YOURS" && pAfter.sessionsPerWeek === 2, json(pAfter));
     const same = await S.editItemCore(USER, cp.id, { label: cpAfter.label }, NOW, depsFor(w));
-    check("an Edit sent with the words unchanged changes nothing", same.ok && itemsOf(w, m1.id).find((i) => i.id === cp.id)?.decision === "PENDING");
+    check("an Edit sent with the words unchanged changes nothing", same.ok && itemsOf(w, cpRow.id).find((i) => i.id === cp.id)?.decision === cpDecision);
     const words = await S.editItemCore(USER, cp.id, { label: "My own mock test" }, NOW, depsFor(w));
-    const cpWords = itemsOf(w, m1.id).find((i) => i.id === cp.id) as ItemRec;
+    const cpWords = itemsOf(w, cpRow.id).find((i) => i.id === cp.id) as ItemRec;
     check("…new words make it EDITED (YOURS) and clear its flags", words.ok && cpWords.decision === "EDITED" && cpWords.flags.length === 0 && cpWords.label === "My own mock test", json(cpWords));
     const ok2 = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     check("…and then the plan is accepted", ok2.ok, json(ok2));
@@ -2442,12 +2535,13 @@ async function main() {
     await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
     goalOf(w, m1.id).closedScore = 0.9;
     const list = await S.practiceAftercare(USER, id, depsFor(w));
-    check("a closed milestone's practice is offered in aftercare", list.length === 1, json(list));
+    const m1Practices = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED").length;
+    check("a closed milestone's practices are offered in aftercare (each of the progression's, contracts §20)", m1Practices >= 2 && list.length === m1Practices, json([m1Practices, list]));
     const off = await S.keepOnTodayCore(USER, m1.id, list[0]?.templateId ?? "", NOW, { ...depsFor(w), env: WRITES_OFF });
     eq("[Keep on Today] refuses with writes off", off.ok ? "ok" : off.error, ROADMAP_WRITES_OFF);
     const kept = await S.keepOnTodayCore(USER, m1.id, list[0]?.templateId ?? "", NOW, depsFor(w));
     const list2 = await S.practiceAftercare(USER, id, depsFor(w));
-    check("[Keep on Today] is remembered: the row stops asking", kept.ok && list2.length === 0, json([kept, list2]));
+    check("[Keep on Today] is remembered: that row stops asking, the others still ask", kept.ok && list2.length === list.length - 1 && !list2.some((r) => r.templateId === list[0]?.templateId), json([kept, list2]));
     check("…stored as StartSnapshot.aftercareKept", json((w.t.roadmapMilestone.find((m) => m.id === m1.id)?.feasibility as { aftercareKept?: string[] }).aftercareKept) === json([list[0]?.templateId]));
     const again = await S.keepOnTodayCore(USER, m1.id, list[0]?.templateId ?? "", NOW, depsFor(w));
     check("…a second tap changes nothing", again.ok && json((w.t.roadmapMilestone.find((m) => m.id === m1.id)?.feasibility as { aftercareKept?: string[] }).aftercareKept) === json([list[0]?.templateId]));
@@ -2477,7 +2571,8 @@ async function main() {
     const w = world();
     await drafted(w);
     const card = await S.loadAimCard(USER, NOW, depsFor(w));
-    eq("'A draft is waiting for your check · 1 item': milestone 1's checkpoint bar (code's words need no tap; not milestone 2's)", card?.draftItems, 1);
+    // The practice progression's first stage holds no checkpoint (contracts §20.10, point 2), and code's words need no tap.
+    eq("'A draft is waiting for your check': nothing on milestone 1 (code's words need no tap, its first stage holds no bar to set; not milestone 2's)", card?.draftItems, 0);
     const w2 = world();
     const id2 = await accepted(w2);
     await S.replanCore(USER, id2, "MANUAL", at(1_000), depsFor(w2));
@@ -2653,9 +2748,9 @@ async function main() {
       seen.push({ where, carried: plan.filter(isCarriedDraft).map((d): [string | null, DayKey | null] => [d.id, d.dueDay]), lineage: plan.filter((d) => d.lineageId === lineageId).length });
     const lanes: Partial<RoadmapLanes> = {
       ...fx,
-      fitPlan: (plan, input) => {
+      fitPlan: (plan, input, opts) => {
         note("fitPlan", plan);
-        return fx.fitPlan!(plan, input);
+        return fx.fitPlan!(plan, input, opts);
       },
       feasibilityOf: (plan, input) => {
         note("feasibilityOf", plan);
@@ -2765,12 +2860,16 @@ async function main() {
     const w = world();
     const id = await drafted(w, REPLY, { ...INTAKE, syllabus: { lines: ["Conditional probability"], source: null } });
     const [m1] = rowsOf(w, id, 1);
+    // Gemini's practice picks are decided first (contracts §20.5: while one waits, "Next item to decide" is that pick).
+    const kept = await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
+    check("fixture: Gemini's practice picks kept first", kept.ok || errOf(kept) === "There are no practice picks to decide.", json(kept));
     const topic = await S.addItemCore(USER, m1.id, { kind: "TOPIC", syllabusRef: 0 }, NOW, depsFor(w));
     check("fixture: the syllabus line is a topic, PENDING as validation writes it (origin SYLLABUS)", topic.ok && itemsOf(w, m1.id).some((i) => i.origin === "SYLLABUS" && i.decision === "PENDING"), json(topic));
     const recs = itemsOf(w, m1.id);
     const dom = recs.find((i) => i.kind === "DOMAIN") as ItemRec;
     const prac = recs.find((i) => i.kind === "PRACTICE") as ItemRec;
-    (recs.find((i) => i.kind === "CHECKPOINT") as ItemRec).ord = -1;
+    // A checkpoint ordered first on milestone 1 (the progression places none there: an older draft's, or one the user added).
+    w.t.roadmapItem.push({ ...prac, id: "cp-early", lineageId: "lin-cp-early", kind: "CHECKPOINT", ord: -1, label: "Self-test: Probability", catalogKey: "SELF_TEST", checkpointKind: "SELF_TEST", method: null, sessionsPerWeek: null, durationBand: null, rule: null, planSource: null, origin: CODE_ORIGIN, decision: "KEPT", bar: null, outOf: null, notes: [], flags: [] });
     w.t.roadmapItem.push(
       { ...prac, id: "ph-named", lineageId: "lin-ph-named", ord: 60, label: "My own drills", origin: CODE_ORIGIN, decision: "EDITED", notes: ["PLACEHOLDER"], flags: [] },
       { ...prac, id: "ph-open", lineageId: "lin-ph-open", ord: 61, label: "Practice for the aim", origin: CODE_ORIGIN, decision: "PENDING", notes: ["PLACEHOLDER"], flags: [] }
@@ -3159,7 +3258,10 @@ async function main() {
     const id = await newDraft(w);
     const gemini = { ...lanesFor(w), validateKeysOnly: ((parsed, c) => {
       const v = lanesFor(w).validateKeysOnly!(parsed, c);
-      return { ...v, milestones: v.milestones.map((m) => ({ ...m, items: m.items.map((i) => (i.kind === "PRACTICE" ? { ...i, origin: "GEMINI" as const, label: "Buy the official course" } : i)) })) };
+      // v4 (contracts §20): the reply's practices never reach a row (code owns them), so the words ride on what does reach
+      // one, a Domain addition (`needs`).
+      const smuggled = item("DOMAIN", 99, "Buy the official course", { origin: "GEMINI", domainId: "d-risk", notes: ["NOT_CHOSEN"], lineageId: "lin-smuggled" });
+      return { ...v, milestones: v.milestones.map((m, k) => ({ ...m, items: [...m.items.map((i) => (i.kind === "PRACTICE" ? { ...i, origin: "GEMINI" as const, label: "Buy the official course" } : i)), ...(k === 0 ? [smuggled] : [])] })) };
     }) as RoadmapLanes["validateKeysOnly"] };
     const tasks: (() => Promise<void> | void)[] = [];
     const c = await S.claimDraftCore(USER, id, { force: true }, NOW, depsFor(w, { lanes: gemini, defer: (t) => tasks.push(t), callModel: async () => REPLY, clock: () => NOW }));
@@ -3190,23 +3292,54 @@ async function main() {
     check("…and no prisma.roadmapItem / roadmapMilestone create, createMany, update, updateMany or upsert anywhere", !/prisma\.roadmap(Item|Milestone)\.(create|createMany|update|updateMany|upsert)\(/.test(srcFiles));
   }
   {
-    // Materialisation (F-R4-17): a merged slot's picks go into the next kept milestone, within the caps, the higher stage's first.
-    const ladderRow = (stage: string, level: number, ord: number): MilestoneDraft => ({ id: null, lineageId: `L-${stage}`, version: 1, ord, title: stage, titleOrigin: CODE_ORIGIN, titleDecision: "PENDING", windowStart: TODAY, dueDay: addDays(TODAY, 40 * ord), status: "DRAFT", rankIndex: null, overAccepted: false, items: [], measures: [measure("CARDS_AT_LEVEL", { minLevel: level, scope: { domainIds: ["d-prob"] } })], notes: [], stage: stage as MilestoneDraft["stage"] });
+    // Materialisation (v4, contracts §20): code owns every practice, step and checkpoint; the reply's part is its Domain
+    // additions, its suggestions and the outline's learning order, split across the kept milestones in that order.
+    const ladderRow = (stage: string, level: number, ord: number, lines: number[] = []): MilestoneDraft => ({
+      id: null,
+      lineageId: `L-${stage}`,
+      version: 1,
+      ord,
+      title: stage,
+      titleOrigin: CODE_ORIGIN,
+      titleDecision: "PENDING",
+      windowStart: TODAY,
+      dueDay: addDays(TODAY, 40 * ord),
+      status: "DRAFT",
+      rankIndex: null,
+      overAccepted: false,
+      items: [item("PRACTICE", 1, "Recall drills: Probability", { catalogKey: "RECALL_DRILLS", lineageId: `L-${stage}-p` }), ...lines.map((l) => item("TOPIC", 10 + l, `Line ${l}`, { origin: "SYLLABUS", syllabusRef: l, lineageId: `L-line-${l}` }))],
+      measures: [measure("CARDS_AT_LEVEL", { minLevel: level, scope: { domainIds: ["d-prob"] } })],
+      notes: [],
+      stage: stage as MilestoneDraft["stage"],
+    });
     const pick = (key: string) => item("PRACTICE", 1, key, { catalogKey: key as ItemDraft["catalogKey"], notes: ["GEMINI_PICK"] });
     const slot = (stage: string, keys: string[], extra: ItemDraft[] = []): MilestoneDraft => ({ ...ladderRow(stage, 0, 1), items: [...keys.map(pick), ...extra] });
-    const ladder = [ladderRow("FAMILIAR", 6, 1), ladderRow("RETAINED", 8, 2), ladderRow("BETWEEN", 11, 3), ladderRow("MASTERED", 12, 4)];
-    const placed = S.materialiseKeys(
-      ladder,
-      { milestones: [slot("FOUNDATION", ["RECALL_DRILLS", "READ_AND_CARD"], [item("TOPIC", 9, "Line A", { origin: "SYLLABUS", syllabusRef: 0 })]), slot("FAMILIAR", ["PROBLEM_SETS", "EXPLAIN_IT"]), slot("RETAINED", ["WRITING_PRACTICE"]), slot("FLUENT", ["MISTAKE_REVIEW"]), slot("MASTERED", ["BUILD_SOMETHING", "SAY_IT_ALOUD"])] },
-      ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"],
-      { gapsOn: false, makeId: () => globalThis.crypto.randomUUID() }
-    );
+    const ladder = [ladderRow("FAMILIAR", 6, 1, [0]), ladderRow("RETAINED", 8, 2, [1]), ladderRow("BETWEEN", 11, 3, [2]), ladderRow("MASTERED", 12, 4)];
+    const need = item("DOMAIN", 5, "Risk Management", { origin: "GEMINI", domainId: "d-risk", notes: ["NOT_CHOSEN"] });
+    const gap = item("GAP", 6, "Risk theory", { origin: "GEMINI" });
+    const reply = {
+      milestones: [
+        slot("FOUNDATION", ["RECALL_DRILLS", "READ_AND_CARD"], [item("TOPIC", 9, "Line 3", { origin: "SYLLABUS", syllabusRef: 3 }), need, gap]),
+        slot("FAMILIAR", ["PROBLEM_SETS", "EXPLAIN_IT"], [item("STEP", 2, "Outline", { catalogKey: "OUTLINE", notes: ["GEMINI_PICK"] })]),
+        slot("MASTERED", ["BUILD_SOMETHING"], [item("CHECKPOINT", 3, "Self-test", { catalogKey: "SELF_TEST", checkpointKind: "SELF_TEST", notes: ["GEMINI_PICK"] })]),
+      ],
+    };
+    const slots = ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"];
+    const placed = S.materialiseKeys(ladder, reply, slots, { gapsOn: true, makeId: () => globalThis.crypto.randomUUID(), order: [3, 2, 0, 9, 3] });
     const keysOf = (i: number, kind = "PRACTICE") => placed[i].items.filter((x) => x.kind === kind).map((x) => x.catalogKey ?? x.label);
-    eq("a merged slot (Foundation) goes into the next kept milestone, the higher stage's picks first, ≤ 3 practices", keysOf(0), ["PROBLEM_SETS", "EXPLAIN_IT", "RECALL_DRILLS"]);
-    eq("…its lines always (unlimited)", keysOf(0, "TOPIC"), ["Line A"]);
-    eq("a merged Fluent slot goes into the next kept milestone (BETWEEN at 11), after the copied higher stage's picks", keysOf(2), ["BUILD_SOMETHING", "SAY_IT_ALOUD", "MISTAKE_REVIEW"]);
-    check("…and BETWEEN copies the practices of the slot above it (Mastered's)", ["BUILD_SOMETHING", "SAY_IT_ALOUD"].every((k) => keysOf(2).includes(k)) && keysOf(2).length <= 3, json(keysOf(2)));
-    eq("the Mastered slot's picks stay with Mastered", keysOf(3), ["BUILD_SOMETHING", "SAY_IT_ALOUD"]);
+    eq(
+      "the reply's practices, steps and checkpoints never reach a row: each milestone keeps the ladder's own (the progression's)",
+      [0, 1, 2, 3].map((i) => [keysOf(i), keysOf(i, "STEP"), keysOf(i, "CHECKPOINT")]),
+      [0, 1, 2, 3].map(() => [["RECALL_DRILLS"], [], []])
+    );
+    eq(
+      "the outline split across the kept milestones in the reply's order (each line once; an unknown or repeated entry left out; a line it didn't list appended in the user's order), the reply's own line kept",
+      [0, 1, 2, 3].map((i) => keysOf(i, "TOPIC")),
+      [["Line 3"], ["Line 2"], ["Line 0"], ["Line 1"]]
+    );
+    check("…the ladder's line rows keep their lineage (moved, not copied)", placed[2].items.some((x) => x.kind === "TOPIC" && x.lineageId === "L-line-0") && placed.flatMap((m) => m.items).filter((x) => x.kind === "TOPIC").length === 4);
+    eq("without an order, the lines stay in the user's order", S.materialiseKeys(ladder, { milestones: [] }, slots, { gapsOn: false, makeId: () => "x" }).map((m) => m.items.filter((x) => x.kind === "TOPIC").map((x) => x.label)), [["Line 0"], ["Line 1"], ["Line 2"], []]);
+    check("Gemini's Domain addition sits on every kept milestone, pending; its suggestion on the first only", placed.every((m) => m.items.some((x) => x.kind === "DOMAIN" && x.domainId === "d-risk")) && placed.map((m) => m.items.filter((x) => x.kind === "GAP").length).join() === "1,0,0,0");
   }
   {
     // A body plan with constraints (F-R4-17): Gemini's session picks wait for one confirm; "easy, mobility and technique" replaces them.
@@ -3260,7 +3393,40 @@ async function main() {
     check("…then the plan is accepted", acc.ok, json(acc));
     const w2 = world();
     const id2 = await drafted(w2, { milestones: [{ domains: ["d-prob"], practices: [{ name: "a", method: "X" }] }, { domains: ["d-inf"] }] });
-    eq("a Field plan's picks never wait for a confirm", errOf(await S.confirmSessionPicksCore(USER, id2, "KEEP", NOW, depsFor(w2))), "There are no session picks to confirm.");
+    // A Field plan's picks need no session confirm (F-R4-17), but Gemini's practice picks still wait on the user's one
+    // decision (contracts §20.5): KEEP sets them CHECKED; DEFAULT removes the ones that aren't code's default and the
+    // re-fit keeps code's default in their stage; either way accept is no longer blocked by them.
+    const pendingPicksOf = (ww: FakeWorld, rid: string) => rowsOf(ww, rid, 1).flatMap((m) => itemsOf(ww, m.id)).filter((i) => i.kind === "PRACTICE" && i.notes.includes("GEMINI_PICK") && i.decision === "PENDING");
+    const before2 = pendingPicksOf(w2, id2);
+    const kept2 = await S.confirmSessionPicksCore(USER, id2, "KEEP", NOW, depsFor(w2));
+    const after2 = rowsOf(w2, id2, 1).flatMap((m) => itemsOf(w2, m.id)).filter((i) => before2.some((b) => b.id === i.id));
+    check(
+      "a Field plan's Gemini picks: KEEP (the one decision) sets every waiting pick CHECKED",
+      kept2.ok && before2.length > 0 && after2.length === before2.length && after2.every((i) => i.decision === "CHECKED") && pendingPicksOf(w2, id2).length === 0,
+      json([kept2, before2.map((i) => i.catalogKey), after2.map((i) => i.decision)])
+    );
+    eq("…a second decision finds none waiting", errOf(await S.confirmSessionPicksCore(USER, id2, "KEEP", NOW, depsFor(w2))), "There are no practice picks to decide.");
+    const w3 = world();
+    const id3 = await drafted(w3, { milestones: [{ domains: ["d-prob"], practices: [{ name: "a", method: "X" }] }, { domains: ["d-inf"] }] });
+    const picked3 = pendingPicksOf(w3, id3);
+    const toDefault = await S.confirmSessionPicksCore(USER, id3, "DEFAULT", NOW, depsFor(w3));
+    const live3 = (rid: string) => itemsOf(w3, rid).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+    const stage3 = rowsOf(w3, id3, 1).find((m) => picked3.some((p) => p.milestoneId === m.id));
+    check(
+      "…DEFAULT removes them (REMOVED, never added back) and the stage keeps code's default with its other practices",
+      toDefault.ok &&
+        picked3.length > 0 &&
+        picked3.every((p) => itemsOf(w3, p.milestoneId).some((i) => i.id === p.id && i.decision === "REMOVED")) &&
+        !!stage3 &&
+        live3(stage3.id).length >= 2 &&
+        !live3(stage3.id).some((i) => picked3.some((p) => p.catalogKey === i.catalogKey)) &&
+        pendingPicksOf(w3, id3).length === 0,
+      json([toDefault, picked3.map((i) => i.catalogKey), stage3 && live3(stage3.id).map((i) => [i.catalogKey, i.decision])])
+    );
+    const nextRow3 = rowsOf(w3, id3, 1).find((m) => m.status === "DRAFT") as MilestoneRec;
+    await decideAll(w3, id3, nextRow3.id);
+    const acc3 = await S.acceptCore(USER, id3, { overAccepted: false }, NOW, depsFor(w3));
+    check("…then the plan is accepted", acc3.ok, json(acc3));
   }
   {
     // The outline (F-R4-9, F-R4-21): every topic is the user's line with the user's Domain, whatever the reply; moves and Domain changes.
@@ -3390,6 +3556,8 @@ async function main() {
     const held = w.t.roadmapMilestone.find((m) => m.id === h1.id) as MilestoneRec;
     held.feasibility = { ...((held.feasibility as object) ?? {}), notes: ["HELD_AT_START"] };
     w.t.roadmapItem = w.t.roadmapItem.filter((i) => i.milestoneId !== h1.id || i.kind === "DOMAIN");
+    // The next stage is now the second: its checkpoint (the progression's performance check) asks for its bar.
+    await decideAll(w, id, rowsOf(w, id, 1)[1].id);
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     const after = w.t.roadmapMilestone.find((m) => m.id === h1.id) as MilestoneRec;
     check("a held stage is PLANNED with reachedDay the acceptance day, and no goal", acc.ok && after.status === "PLANNED" && after.reachedDay === TODAY && after.goalId == null, json([acc, after]));
@@ -3815,18 +3983,27 @@ async function main() {
     const id = await draftWith(w);
     const view = await S.loadRoadmapView(USER, NOW, depsFor(w));
     const kinds = view.draft?.sessionPicks?.kinds ?? [];
-    check("the confirm lists a picked FULL_ATTEMPT step and PERFORMANCE_CHECK checkpoint with the practices, the constraint quoted", view.draft?.sessionPicks?.decision === "PENDING" && ["FULL_ATTEMPT", "PERFORMANCE_CHECK", "HARDER_SESSION"].every((k) => kinds.includes(k as never)) && view.draft.sessionPicks.constraints === "pregnant", json(view.draft?.sessionPicks));
+    // v4 (contracts §20): Gemini picks one practice per stage, its focus; the full attempt and the performance check are the
+    // progression's (code's, decided), never a pick, so the confirm lists the picked session alone.
+    const rows = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id));
+    check(
+      "the confirm lists Gemini's picked session (its stage's focus), the constraint quoted; the reply's FULL_ATTEMPT step and PERFORMANCE_CHECK checkpoint never reach the plan as picks (the last stage holds the progression's own, decided)",
+      view.draft?.sessionPicks?.decision === "PENDING" &&
+        json(kinds) === json(["HARDER_SESSION"]) &&
+        view.draft.sessionPicks.constraints === "pregnant" &&
+        !rows.some((i) => (i.lineageId === "lin-full" || i.lineageId === "lin-perf") && i.notes.includes("GEMINI_PICK")) &&
+        ["FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => itemsOf(w, rowsOf(w, id, 1).slice(-1)[0].id).some((i) => i.catalogKey === k && i.decision === "KEPT" && !i.notes.includes("GEMINI_PICK"))),
+      json([view.draft?.sessionPicks, rows.map((i) => [i.catalogKey, i.decision, i.notes])])
+    );
     eq("…accept waits for the confirm", errOf(await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))), S.CONFIRM_PICKS);
     const easy = await S.confirmSessionPicksCore(USER, id, "EASY", NOW, depsFor(w));
     const all = rowsOf(w, id, 1).flatMap((m) => itemsOf(w, m.id));
-    check("'Use easy, mobility and technique instead' removes the picked step and checkpoint too", easy.ok && all.filter((i) => i.catalogKey === "FULL_ATTEMPT" || i.catalogKey === "PERFORMANCE_CHECK").every((i) => i.decision === "REMOVED"), json(all.map((i) => [i.catalogKey, i.decision])));
-    const lastRow = rowsOf(w, id, 1).slice(-1)[0];
-    check("…a milestone whose only picks were the step and the checkpoint gets no practice in their place", !itemsOf(w, lastRow.id).some((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED"), json(itemsOf(w, lastRow.id).map((i) => [i.kind, i.catalogKey, i.decision])));
+    check("'Use easy, mobility and technique instead' removes Gemini's picked session", easy.ok && all.filter((i) => i.notes.includes("GEMINI_PICK")).every((i) => i.decision === "REMOVED"), json(all.map((i) => [i.catalogKey, i.decision])));
     check("…the picked practice is replaced by code's safe sessions, and the plan is accepted", all.some((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(i.catalogKey ?? "")) && (await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w))).ok);
     const k = world();
     const kid = await draftWith(k);
     const kept = await S.confirmSessionPicksCore(USER, kid, "KEEP", NOW, depsFor(k));
-    check("[Keep them] keeps every pick (CHECKED), the step and the checkpoint included", kept.ok && rowsOf(k, kid, 1).flatMap((m) => itemsOf(k, m.id)).filter((i) => i.notes.includes("GEMINI_PICK")).every((i) => i.decision === "CHECKED"));
+    check("[Keep them] keeps every pick (CHECKED)", kept.ok && rowsOf(k, kid, 1).flatMap((m) => itemsOf(k, m.id)).filter((i) => i.notes.includes("GEMINI_PICK")).every((i) => i.decision === "CHECKED") && rowsOf(k, kid, 1).flatMap((m) => itemsOf(k, m.id)).some((i) => i.notes.includes("GEMINI_PICK")));
   }
   {
     // Production practice (§15.9): roadmap-catalog practiceRoleOf, catalog type first, then the method.
@@ -4167,8 +4344,8 @@ async function main() {
       const fx = lanesFor(w);
       return {
         ...fx,
-        fitPlan: (plan, input) =>
-          fx.fitPlan!(plan, input).map((m) => {
+        fitPlan: (plan, input, opts) =>
+          fx.fitPlan!(plan, input, opts).map((m) => {
             const domains = m.items
               .filter((i) => i.kind === "DOMAIN" && i.decision !== "REMOVED" && i.domainId)
               .sort((a, b) => a.ord - b.ord)
@@ -4367,8 +4544,21 @@ async function main() {
     const plan = REALISM.starterLadder({ ...intake, depth: 12 }, input, names, () => globalThis.crypto.randomUUID());
     if (plan.some((m) => m.stage == null)) throw new Error("Not yet: R2's depth starter sets no stage on its rows");
   };
-  /** A keys-only reply the run's own schema allows: every slot, no steps, the first practice kind where the schema offers one. */
+  /**
+   * A keys-only reply the run's own schema allows. v4 (contracts §20: `picks` and `order`): each stage's first offered
+   * kind, and the outline's keys in reverse (a learning order of its own). v3 (`stages`): every slot, no steps, the
+   * first practice kind where the schema offers one.
+   */
   const replyFromSchema = (schema: unknown) => {
+    const props = (schema as { properties?: Record<string, unknown> } | null)?.properties ?? {};
+    if (!("stages" in props)) {
+      const picks = (props.picks as { properties?: Record<string, { enum?: string[] }> } | undefined)?.properties ?? {};
+      const order = (props.order as { items?: { enum?: string[] } } | undefined)?.items?.enum ?? [];
+      const chosen = Object.entries(picks)
+        .map(([slot, p]) => [slot, p.enum?.[0]] as const)
+        .filter((e): e is readonly [string, string] => typeof e[1] === "string");
+      return { ...(chosen.length ? { picks: Object.fromEntries(chosen) } : {}), ...(order.length ? { order: [...order].reverse() } : {}) };
+    }
     type Pick = { items?: { properties?: { kind?: { enum?: string[] } } } };
     const stages = (schema as { properties?: { stages?: { required?: string[]; properties?: Record<string, { properties?: { practices?: Pick } }> } } } | null)?.properties?.stages;
     const out: Record<string, unknown> = {};
@@ -4628,6 +4818,11 @@ async function main() {
   console.log("— confirm to unlock (§19): every plan path honours the gate —");
   const GATED_BODY = ["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK", "MOCK_TEST"];
   const SAFE = ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"];
+  /**
+   * A stage while the card waits (contracts §19, §20): it holds a practice, every practice one of the track's safe kinds,
+   * and nothing else but the progression's opening step (setting up, never gated) on the first stage.
+   */
+  const waitingRow = (r: readonly string[], safe: readonly string[]) => r.some((k) => safe.includes(k)) && r.every((k) => safe.includes(k) || k === "SET_UP");
   /** Each row's live catalog kinds, in ord (the plan's draft or accepted version). */
   const kindsIn = (w: FakeWorld, id: string, version = 1): string[][] =>
     rowsOf(w, id, version)
@@ -4662,7 +4857,8 @@ async function main() {
     const all = (rows: string[][]) => rows.flat();
     return [
       all(control.rows).includes("TIMED_PRACTICE") &&
-        all(control.rows).includes("MOCK_TEST") &&
+        // A dated exam's stage holds the exam itself, its timed practice the rehearsal (contracts §20.10, point 1).
+        all(control.rows).includes("EXAM_DAY") &&
         json(timed.rows) === json(control.rows) &&
         json(mock.rows) === json(control.rows) &&
         json(timed.view.draft?.exclusions) === "[]" &&
@@ -4695,7 +4891,7 @@ async function main() {
     const pending = (b.card?.rows ?? []).filter((r) => r.state === "PENDING").map((r) => r.kind);
     return [
       b.rows.length > 1 &&
-        b.rows.every((r) => r.length > 0 && r.every((k) => SAFE.includes(k))) &&
+        b.rows.every((r) => waitingRow(r, SAFE)) &&
         !!b.card &&
         b.card.on &&
         json(b.card.quotes) === json(["Running causes me knee pain"]) &&
@@ -4707,7 +4903,7 @@ async function main() {
     ];
   });
 
-  await integration("§19 decision 1: a BODY plan asks whatever the user wrote — no constraints and a plain aim: only the safe sessions and no performance check until the card is answered, yet the draft is acceptable and Start puts only the safe sessions on Today; a refusal meanwhile points at the card; “Nothing to avoid” places Longer from the third stage and the performance check (real R2)", async () => {
+  await integration("§19 decision 1: a BODY plan asks whatever the user wrote — no constraints and a plain aim: only the safe sessions and no performance check until the card is answered, yet the draft is acceptable and Start puts only the safe sessions on Today (and the progression's setting up); a refusal meanwhile points at the card; “Nothing to avoid” places the progression's climb (Longer from the third stage, Harder from the fourth, the full attempt and the performance check on the last) (real R2)", async () => {
     const plain = await built({ ...runIntake, constraints: null });
     const view0 = plain.view;
     // A second, accepted copy: Start while the card waits (only the safe sessions get a Today task), and a refusal points at it.
@@ -4721,7 +4917,7 @@ async function main() {
     const after = kindsIn(fresh.w, fresh.id);
     return [
       plain.rows.length > 2 &&
-        plain.rows.every((r) => r.length > 0 && r.every((k) => SAFE.includes(k))) &&
+        plain.rows.every((r) => waitingRow(r, SAFE)) &&
         !!plain.card &&
         plain.card.on &&
         plain.card.pending >= 4 &&
@@ -4731,11 +4927,14 @@ async function main() {
         gateOff?.refusal === pointed(S.GATE_OFF) &&
         st.ok &&
         started.length > 0 &&
-        started.every((k) => SAFE.includes(k)) &&
+        started.some((k) => SAFE.includes(k)) &&
+        started.every((k) => SAFE.includes(k) || k === "SET_UP") &&
         said.ok &&
         after.slice(2).every((r) => r.includes("LONGER_SESSION")) &&
-        after[after.length - 1].includes("PERFORMANCE_CHECK") &&
-        !after.flat().some((k) => k === "HARDER_SESSION" || k === "STRENGTH_SESSION"),
+        after.slice(3).every((r) => r.includes("HARDER_SESSION")) &&
+        ["FULL_ATTEMPT", "PERFORMANCE_CHECK"].every((k) => after[after.length - 1].includes(k)) &&
+        !after.slice(0, 3).flat().includes("HARDER_SESSION") &&
+        !after.flat().includes("STRENGTH_SESSION"),
       json({ rows: plain.rows, card: plain.card, acceptable: view0.draft?.acceptable, acc, refusal: gateOff?.refusal, st, started, said, after }),
     ];
   });
@@ -4749,7 +4948,7 @@ async function main() {
         plain.rows.flat().includes("PERFORMANCE_CHECK") &&
         plain.card == null &&
         wrist.rows.flat().length > 0 &&
-        wrist.rows.every((r) => r.every((k) => k === "TECHNIQUE_SESSION")) &&
+        wrist.rows.every((r) => waitingRow(r, ["TECHNIQUE_SESSION"])) &&
         wrist.card?.on === true &&
         json(wrist.card.safeKinds) === json(["TECHNIQUE_SESSION"]) &&
         ["SLOW_DRILLS", "RUN_THROUGHS", "PERFORMANCE_CHECK"].every((k) => pending.includes(k as never)),
@@ -4784,7 +4983,8 @@ async function main() {
       said.ok &&
       said.value.replan === false &&
       gatedIn(before).length === 0 &&
-      json(Array.from(new Set(gatedIn(fine))).sort()) === json(["LONGER_SESSION", "PERFORMANCE_CHECK"]) &&
+      // The kinds the answer released, where the progression places them (contracts §20): the climb, the full attempt and the check.
+      json(Array.from(new Set(gatedIn(fine))).sort()) === json(["FULL_ATTEMPT", "HARDER_SESSION", "LONGER_SESSION", "PERFORMANCE_CHECK"]) &&
       fine[fine.length - 1].includes("PERFORMANCE_CHECK") &&
       !fine.flat().includes("STRENGTH_SESSION") &&
       stored?.kinds.STRENGTH_SESSION?.verdict === "AVOID" &&
@@ -4822,7 +5022,7 @@ async function main() {
     const after = kindsIn(b.w, b.id);
     return [
       b.rows.length > 2 &&
-        b.rows.every((r) => r.length > 0 && r.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG")) &&
+        b.rows.every((r) => waitingRow(r, ["PLAN_AHEAD", "KEEP_A_LOG"])) &&
         b.rows[0].includes("PLAN_AHEAD") &&
         b.rows[b.rows.length - 1].includes("KEEP_A_LOG") &&
         b.card?.on === true &&
@@ -4880,7 +5080,12 @@ async function main() {
       json([both, stored])
     );
     check("…the guard's SQL reads the row's updatedAt", SERVER_SRC.includes('const unwritten = g.updatedAt != null ? Prisma.sql`AND "updatedAt" = ${g.updatedAt}`'));
-    check("…intakeOf reads the answers with activityConfirmOf, intakeData writes the column with coverageJsonOf", /activities: activityConfirmOf\(r\.coverage\)/.test(SERVER_SRC) && /coverage: coverageJsonOf\(i\.coverage \?\? null, i\.activities \?\? null\)/.test(SERVER_SRC));
+    check(
+      "…intakeOf reads the answers with activityConfirmOf (and the practice family with practiceFamilyOfCoverage), intakeData writes the column with coverageJsonOf (the family beside them, contracts §20.11)",
+      /activities: activityConfirmOf\(r\.coverage\)/.test(SERVER_SRC) &&
+        /practiceFamily: r\.fieldId != null \? practiceFamilyOfCoverage\(r\.coverage\)/.test(SERVER_SRC) &&
+        /coverage: coverageJsonOf\(i\.coverage \?\? null, i\.activities \?\? null, /.test(SERVER_SRC)
+    );
     const ACTION_SRC = readFileSync(join(__dirname, "../src/app/actions/roadmap.ts"), "utf8");
     check(
       "the action takes an ActivityCardAnswer and cleans its shape (a string key, an array of strings, a boolean); the earlier per-kind list is refused, never read as an answer",
@@ -4897,9 +5102,16 @@ async function main() {
     const w = world();
     const id = await drafted(w, { milestones: [{ practices: [] }, {}] }, kneeIntake);
     const m1 = () => rowsOf(w, id, 1)[0];
+    // The progression fills the stage (contracts §20): the user takes out code's practices to make room for theirs.
+    const makeRoom = async () => {
+      for (const it of itemsOf(w, m1().id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && i.origin !== "USER")) await S.decideItemCore(USER, it.id, "REMOVED", NOW, depsFor(w));
+    };
+    await makeRoom();
     const waits = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "LONGER_SESSION" }, NOW, depsFor(w));
     const safe = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "MOBILITY_SESSION" }, NOW, depsFor(w));
     await answerCard(id, depsFor(w), ["TECHNIQUE_SESSION"]);
+    // The answer released kinds the progression places there (never one the user removed): room again for the user's pick.
+    await makeRoom();
     const fine = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "LONGER_SESSION" }, NOW, depsFor(w));
     const avoided = await S.addItemCore(USER, m1().id, { kind: "PRACTICE", catalogKey: "TECHNIQUE_SESSION" }, NOW, depsFor(w));
     eq("a pick of a gated kind waits for the user's answer; a safe one is added; once the answer leaves it unticked it is; an avoided safe one isn't", [errOf(waits), safe.ok, fine.ok, errOf(avoided)], [S.ACTIVITY_WAITING_PICK, true, true, S.ACTIVITY_AVOIDED_PICK]);
@@ -4925,8 +5137,11 @@ async function main() {
     const kept = await S.confirmSessionPicksCore(USER, id, "KEEP", NOW, depsFor(w));
     const acc = await S.acceptCore(USER, id, { overAccepted: false }, NOW, depsFor(w));
     const m1 = rowsOf(w, id, 1)[0];
+    // v4 (contracts §20): Gemini's pick is the first stage's focus (Harder session, kept); the progression's other practices
+    // on it (its partner, the mobility session, and the easy session) are code's. The mobility session is the one followed.
     const harder = itemsOf(w, m1.id).find((i) => i.catalogKey === "HARDER_SESSION");
-    const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "STRENGTH_SESSION");
+    const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "MOBILITY_SESSION");
+    const others = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && i.catalogKey !== "HARDER_SESSION");
     const said = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"]);
     check(
       "on an ACTIVE plan the answer rewrites nothing accepted and offers a re-plan (an unstarted milestone holds a kind it now blocks); nothing started, so nothing is paused",
@@ -4941,8 +5156,8 @@ async function main() {
     };
     const preview = await S.startPreview(USER, m1.id, NOW, depsFor(w, { lanes }));
     check(
-      "the Start sheet lists no practice the answer holds back (only Strength session goes to Today)",
-      json(preview?.practices.map((p) => p.lineageId)) === json([strength?.lineageId]) && !(preview?.todayRows ?? []).some((r) => r.itemId === harder?.id),
+      "the Start sheet lists no practice the answer holds back (the progression's other practices go to Today, the mobility session among them)",
+      !!strength && json(preview?.practices.map((p) => p.lineageId)) === json(others.map((i) => i.lineageId)) && !(preview?.todayRows ?? []).some((r) => r.itemId === harder?.id),
       json(preview?.practices)
     );
     const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w, { lanes }));
@@ -4950,20 +5165,21 @@ async function main() {
     const titles = w.templates.map((t) => t.title);
     const set = w.t.questWeeks.find((q) => q.milestoneId === m1.id)?.set;
     const practiceQuests = (set?.quests ?? []).filter((q) => q.kind === "PRACTICE").map((q) => (q as { templateId: string }).templateId);
-    const strengthTpl = started.find((i) => i.catalogKey === "STRENGTH_SESSION")?.templateId;
+    const strengthTpl = started.find((i) => i.catalogKey === "MOBILITY_SESSION")?.templateId;
+    const otherTpls = others.map((o) => started.find((i) => i.id === o.id)?.templateId);
     check(
-      "Start creates no task for the held kind (off Today on the started milestone), the other practice starts, and the week's quests name only it",
-      st.ok && !titles.includes(harder?.label ?? "-") && titles.includes(strength?.label ?? "-") && started.find((i) => i.catalogKey === "HARDER_SESSION")?.addToToday === false && json(practiceQuests) === json([strengthTpl]),
+      "Start creates no task for the held kind (off Today on the started milestone), the other practices start, and the week's quests name only them",
+      st.ok && !titles.includes(harder?.label ?? "-") && titles.includes(strength?.label ?? "-") && started.find((i) => i.catalogKey === "HARDER_SESSION")?.addToToday === false && json([...practiceQuests].sort()) === json([...otherTpls].sort()) && practiceQuests.includes(strengthTpl as string),
       json([st, titles, practiceQuests, strengthTpl])
     );
     // Decision 4: the AVOID after Start pauses the started practice's Today task at once (archived through the task path,
     // never deleted), and the answer names it for the page's quiet notice and its Undo (the Today task's unarchive).
     const templatesBefore = w.templates.length;
-    const strengthItem = started.find((i) => i.catalogKey === "STRENGTH_SESSION");
+    const strengthItem = started.find((i) => i.catalogKey === "MOBILITY_SESSION");
     const strengthMeasure = () =>
       w.t.roadmapMeasure.find((x) => x.milestoneId === m1.id && x.kind === "PRACTICE_KEPT" && (x.itemLineageId === strengthItem?.lineageId || json(x.scope).includes(strengthItem?.lineageId ?? "-")));
     const roleBefore = strengthMeasure()?.role;
-    const after = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_000) });
+    const after = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "MOBILITY_SESSION"], { now: at(1_000) });
     const tpl = w.templates.find((t) => t.id === strengthTpl);
     check(
       "decision 4: an AVOID given after Start pauses the started practice's Today task at once — archived through the task path, never deleted — and lists it for the notice and its Undo",
@@ -4971,7 +5187,7 @@ async function main() {
         !!tpl &&
         tpl.archivedAt != null &&
         w.templates.length === templatesBefore &&
-        json(after.value.paused) === json([{ templateId: strengthTpl, title: tpl.title, kind: "STRENGTH_SESSION", deferredTo: null }]) &&
+        json(after.value.paused) === json([{ templateId: strengthTpl, title: tpl.title, kind: "MOBILITY_SESSION", deferredTo: null }]) &&
         json(after.value.notPaused) === "[]",
       json([after, tpl])
     );
@@ -4984,7 +5200,7 @@ async function main() {
     // and the page can say why (its measure stops paying; the card's AVOID row carries the day the user said so).
     const pausedView = await S.loadRoadmapView(USER, at(1_200), depsFor(w));
     const pausedRow = pausedView.current?.measures.find((x) => x.kind === "PRACTICE_KEPT" && x.measureKey === strengthMeasure()?.measureKey);
-    const avoidRow = pausedView.activityConfirm?.rows.find((r) => r.kind === "STRENGTH_SESSION");
+    const avoidRow = pausedView.activityConfirm?.rows.find((r) => r.kind === "MOBILITY_SESSION");
     check(
       "ruling 3: the paused practice's PRACTICE_KEPT measure stops paying (PAYS → CONTEXT, in the answer's own write): from the pause day no g, reach or pay reads it and nothing more is asked of it (no pace; planned so far stops the day before the pause); the card's AVOID row says why and since when",
       roleBefore === "PAYS" &&
@@ -4998,7 +5214,7 @@ async function main() {
     );
     // The user brings it back (Undo); answering again with the same ticks pauses nothing again.
     if (tpl) tpl.archivedAt = null;
-    const again = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"], { now: at(1_500) });
+    const again = await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION", "MOBILITY_SESSION"], { now: at(1_500) });
     check("…a kind already avoided before an answer isn't paused again (the user brought its task back with Undo)", again.ok && json(again.value.paused) === "[]" && tpl?.archivedAt == null, json(again));
     // The pause refused (still on Today: the page names it); then a must (ruling 2): the archive path that would defer it
     // (archiveCore's akrasia horizon) is never called, and the task leaves Today at once.
@@ -5007,7 +5223,7 @@ async function main() {
     const refusedArchive = await answerCard(
       id,
       ioWith({ pauseTemplate: async () => ({ ok: false, error: "Something changed at the same moment. Try again." }) }),
-      ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"],
+      ["LONGER_SESSION", "HARDER_SESSION", "MOBILITY_SESSION"],
       { now: at(1_700) }
     );
     await answerCard(id, depsFor(w), ["LONGER_SESSION", "HARDER_SESSION"], { now: at(1_800) });
@@ -5020,7 +5236,7 @@ async function main() {
           return { ok: true, deferredTo: addDays(TODAY, 7) };
         },
       }),
-      ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"],
+      ["LONGER_SESSION", "HARDER_SESSION", "MOBILITY_SESSION"],
       { now: at(1_900) }
     );
     check(
@@ -5041,10 +5257,15 @@ async function main() {
     );
     // The answer after Start: next week's set (R6 reads the gate from the row's own words and answers) holds no quest for it.
     const nextWeek = await QS.weekQuestSetFor(USER, m1.id, addDays(weekStartKeyOf(TODAY), 7), at(2_000), { store, env: WRITES_ON });
-    check("an answer given after Start: the next week's quests skip the avoided practice (R6's own reading of the gate)", !!nextWeek && !(nextWeek.quests ?? []).some((q) => q.kind === "PRACTICE"), json(nextWeek?.quests));
+    const nextPractice = (nextWeek?.quests ?? []).filter((q) => q.kind === "PRACTICE").map((q) => (q as { templateId: string }).templateId);
+    check(
+      "an answer given after Start: the next week's quests skip the avoided practice (R6's own reading of the gate), and keep the progression's others",
+      !!nextWeek && !nextPractice.includes(strengthTpl as string) && nextPractice.length === otherTpls.length - 1,
+      json(nextWeek?.quests)
+    );
     const re = await S.replanCore(USER, id, "REFIT", at(3_000), depsFor(w));
     const replanned = rowsOf(w, id, 2).flatMap((m) => itemsOf(w, m.id)).filter((i) => i.decision !== "REMOVED").map((i) => i.catalogKey);
-    check("the re-plan keeps no avoided kind (the user's kept pick of it is REMOVED, their own decision)", re.ok && !replanned.includes("HARDER_SESSION") && !replanned.includes("STRENGTH_SESSION"), json([re, replanned]));
+    check("the re-plan keeps no avoided kind (the user's kept pick of it is REMOVED, their own decision)", re.ok && !replanned.includes("HARDER_SESSION") && !replanned.includes("MOBILITY_SESSION") && !replanned.includes("LONGER_SESSION"), json([re, replanned]));
   }
 
   {
@@ -5193,7 +5414,7 @@ async function main() {
       r.saved &&
       r.answered.flat().some((k) => gated.includes(k)) &&
       r.after.length > 0 &&
-      r.after.every((row) => row.length > 0 && row.every((k) => safe.includes(k))) &&
+      r.after.every((row) => waitingRow(row, safe)) &&
       json(safeIn(r.after, safe)) === json(safeIn(r.fresh, safe)) &&
       r.acceptable === true &&
       r.pending > 0;
@@ -5238,7 +5459,7 @@ async function main() {
         toCare.ok &&
         careOff.length === 0 &&
         careRows.length > 0 &&
-        careRows.every((r) => r.length > 0 && r.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG")) &&
+        careRows.every((r) => waitingRow(r, ["PLAN_AHEAD", "KEEP_A_LOG"])) &&
         sorted(careRows) === sorted(fresh.rows) &&
         careView.draft?.acceptable === true &&
         (careView.draft.activityConfirm?.pending ?? 0) > 0 &&
@@ -5251,7 +5472,7 @@ async function main() {
         !!st &&
         st.ok &&
         onToday.length > 0 &&
-        onToday.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG") &&
+        onToday.every((k) => k === "PLAN_AHEAD" || k === "KEEP_A_LOG" || k === "SET_UP") &&
         rp.ok,
       json({ said, build, bodyRows, toCare, careRows, careOff, fresh: fresh.rows, careCard: careView.draft?.activityConfirm?.pending, acceptable: careView.draft?.acceptable, toBody, bodyAgain, bodyOff, bodyCard: bodyView.draft?.activityConfirm?.pending, acc, st, onToday, rp }),
     ];
@@ -5333,14 +5554,15 @@ async function main() {
       const m1 = rowsOf(w, id, 1)[0];
       w.createFailOnce = true;
       const st = await S.startMilestoneCore(USER, m1.id, START_ALL, NOW, depsFor(w));
-      const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "STRENGTH_SESSION");
+      // v4 (contracts §20): the progression's partner on the first stage, beside Gemini's kept pick (Harder session).
+      const strength = itemsOf(w, m1.id).find((i) => i.catalogKey === "MOBILITY_SESSION");
       if (!acc.ok || st.ok || rowsOf(w, id, 1)[0].status !== "STARTING" || !strength) throw new Error(`fixture: not STARTING: ${json([acc, st])}`);
       const measure = () =>
         w.t.roadmapMeasure.find((x) => x.milestoneId === m1.id && x.kind === "PRACTICE_KEPT" && (x.itemLineageId === strength.lineageId || json(x.scope).includes(strength.lineageId)));
       const task = () => w.templates.find((t) => t.id === itemsOf(w, m1.id).find((i) => i.lineageId === strength.lineageId)?.templateId);
       return { w, id, m1, strength, measure, task };
     };
-    const AVOID_ALL = ["LONGER_SESSION", "HARDER_SESSION", "STRENGTH_SESSION"];
+    const AVOID_ALL = ["LONGER_SESSION", "HARDER_SESSION", "MOBILITY_SESSION"];
 
     // (a) The answer lands between the finish's gate read and its write: it reads the row STARTING and pauses nothing; the
     // finish re-reads the answers after its write and pauses the task it just created.
@@ -5399,13 +5621,252 @@ async function main() {
           json(pausedByFinish) === "[]" &&
           updatedAfter > updatedBefore &&
           said.ok &&
-          json(said.value.paused.map((t) => t.kind)) === json(["HARDER_SESSION", "STRENGTH_SESSION"]) &&
+          json(said.value.paused.map((t) => t.kind)) === json(["HARDER_SESSION", "MOBILITY_SESSION"]) &&
           said.value.paused.some((t) => t.templateId === r.task()?.id) &&
           r.task()?.archivedAt != null &&
           r.measure()?.role === "CONTEXT",
         json({ fin: f, pausedByFinish, said, task: r.task(), measure: r.measure() })
       );
     }
+  }
+
+  // ═══ The practice progression on every plan path (contracts §20; R4, with the real lanes) ═══
+  //
+  // Code owns the practice progression: the starter, Gemini's keys-only plan (its picks and order only), every re-plan,
+  // the activity answer's re-sync and Start all leave each DRAFT stage holding exactly what R2's progression places for the
+  // plan (read here with roadmap-realism planProgressionOf at each stage's own room, so the comparison is exact), and that
+  // progression keeps every rule roadmap-catalog progressionViolationsOf checks: every stage carries practice, each later one
+  // carries the kind the one before trained and its focus never falls, checkpoints escalate, nothing lastStageOnly early, no
+  // kind the gate holds.
+  console.log("— the practice progression on every plan path (§20, real lanes) —");
+  {
+    const draftsOf = (w: FakeWorld, id: string, version = 1): MilestoneDraft[] =>
+      rowsOf(w, id, version)
+        .filter((m) => m.status !== "DISCARDED" && m.status !== "SUPERSEDED")
+        .map((m) => S.draftOf({ ...m, items: itemsOf(w, m.id), measures: measuresOf(w, m.id) }));
+    const intakeIn = (w: FakeWorld, id: string): Intake => S.intakeOf(w.t.roadmap.find((r) => r.id === id) as RoadmapRec);
+    const liveKinds = (m: MilestoneDraft) => m.items.filter((i) => i.decision !== "REMOVED" && !!i.catalogKey);
+    const practicesIn = (m: MilestoneDraft) => liveKinds(m).filter((i) => i.kind === "PRACTICE");
+    const sortedKinds = (m: MilestoneDraft) => liveKinds(m).map((i) => i.catalogKey as string).sort();
+    /** Every breach of a plan path's rows (see the section's head); [] when the rows are the progression and it keeps every rule. */
+    const breachesOf = (plan: readonly MilestoneDraft[], intake: Intake): string[] => {
+      const facts = { practicesAllowed: intake.fieldId == null || intake.practicesAllowed, trackArea: intake.fieldId == null, examDay: intake.examDay ?? null } as Parameters<typeof REALISM.planProgressionOf>[2];
+      const pp = REALISM.planProgressionOf(plan, intake, facts, { room: (m) => practicesIn(m).length || null });
+      const blocked = REALISM.blockedKindsOf(intake);
+      const out: string[] = [];
+      pp.rows.forEach((m, k) => {
+        const sp = pp.progression.stages[k];
+        if (m.status !== "DRAFT" || sp.held) return;
+        const want = [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])].map((x) => x.kind as string).sort();
+        if (json(sortedKinds(m)) !== json(want)) out.push(`ROWS ${m.stage}@${k}: ${sortedKinds(m).join(" ")} ≠ ${want.join(" ")}`);
+        if (facts.practicesAllowed && practicesIn(m).length === 0) out.push(`EMPTY ${m.stage}@${k}`);
+        for (const i of liveKinds(m)) if (blocked.has(i.catalogKey as CatalogKey)) out.push(`GATE ${m.stage}@${k}: ${i.catalogKey}`);
+      });
+      return [...out, ...progressionViolationsOf(pp.input, pp.progression)];
+    };
+    const fieldIntake: Intake = { ...INTAKE, dateMode: "REALISTIC", newCardsPerWeek: 20 };
+    const starterOf = async (intake: Intake, answer?: { avoid: string[]; none?: boolean }) => {
+      const w = world();
+      const id = await newDraft(w, intake);
+      const res = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+      if (!res.ok) throw new Error(`${intake.aim}: ${res.error}`);
+      if (answer) {
+        const said = await answerCard(id, realDeps(w), answer.avoid, { none: answer.none, now: at(1_000) });
+        if (!said.ok) throw new Error(`${intake.aim}: ${said.error}`);
+      }
+      return { w, id, plan: draftsOf(w, id), intake: intakeIn(w, id) };
+    };
+
+    await integration("the starter (\"Build from my numbers\") and the activity answer's re-sync: every DRAFT stage of every track's plan is the practice progression's, under every gate state (R2, R4)", async () => {
+      const cases: [string, Intake, { avoid: string[]; none?: boolean } | undefined][] = [
+        ["Field", fieldIntake, undefined],
+        ["Field, an exam with its day", { ...fieldIntake, examLabel: "SOA Exam P", examDay: addDays(TODAY, 120) }, undefined],
+        ["Field, an exam with no day", { ...fieldIntake, examLabel: "SOA Exam P" }, undefined],
+        ["Field, practices off", { ...fieldIntake, practicesAllowed: false }, undefined],
+        ["Field, timed practice avoided", { ...fieldIntake, examLabel: "SOA Exam P", examDay: addDays(TODAY, 120), constraints: "No timed practice, it stresses me out." }, { avoid: ["TIMED_PRACTICE"] }],
+        ["BODY waiting", runIntake, undefined],
+        ["BODY, “Nothing to avoid”", runIntake, { avoid: [], none: true }],
+        ["BODY, Strength avoided", runIntake, { avoid: ["STRENGTH_SESSION"] }],
+        ["BODY, Longer and Harder avoided", runIntake, { avoid: ["LONGER_SESSION", "HARDER_SESSION"] }],
+        ["BODY, the activity itself avoided", runIntake, { avoid: ["FULL_ATTEMPT", "PERFORMANCE_CHECK"] }],
+        ["CARE waiting", careIntake, undefined],
+        ["CARE, Check-in avoided", careIntake, { avoid: ["CHECK_IN"] }],
+        ["CRAFT", craftIntake, undefined],
+        ["CRAFT with a cue, waiting", { ...craftIntake, constraints: "Wrist tendinitis, can't play more than 20 minutes." }, undefined],
+        ["CRAFT with a cue, “Nothing to avoid”", { ...craftIntake, constraints: "Wrist tendinitis, can't play more than 20 minutes." }, { avoid: [], none: true }],
+        ["DUTY with an exam", { ...craftIntake, aim: "Pass the driving test", track: "DUTY", examLabel: "the driving test" }, undefined],
+      ];
+      const bad: string[] = [];
+      for (const [label, intake, answer] of cases) {
+        const r = await starterOf(intake, answer);
+        for (const b of breachesOf(r.plan, r.intake)) bad.push(`${label}: ${b}`);
+        if (r.plan.length === 0) bad.push(`${label}: no plan`);
+      }
+      return [bad.length === 0, bad.slice(0, 8).join(" | ")];
+    });
+
+    await integration("“Nothing to avoid” on a waiting BODY draft: the re-sync places the climb, the full attempt and the performance check where a fresh build places them (R2, R4)", async () => {
+      const waited = await starterOf(runIntake, { avoid: [], none: true });
+      const fresh = await starterOf(runIntake);
+      const freshAnswered = await (async () => {
+        const w = world();
+        const id = await newDraft(w, runIntake);
+        await answerCard(id, realDeps(w), [], { none: true });
+        await S.buildStarterCore(USER, id, NOW, realDeps(w));
+        return draftsOf(w, id);
+      })();
+      const last = waited.plan[waited.plan.length - 1];
+      return [
+        json(waited.plan.map(sortedKinds)) === json(freshAnswered.map(sortedKinds)) &&
+          json(waited.plan.map(sortedKinds)) !== json(fresh.plan.map(sortedKinds)) &&
+          ["FULL_ATTEMPT", "PERFORMANCE_CHECK", "HARDER_SESSION"].every((k) => liveKinds(last).some((i) => i.catalogKey === k)),
+        json({ waited: waited.plan.map(sortedKinds), fresh: freshAnswered.map(sortedKinds) }),
+      ];
+    });
+
+    await integration("a v4 Gemini reply (one pick per stage, the outline's order) through the real pack, schema, walk and validator: each valid pick is its stage's focus (GEMINI_PICK, left to decide), the outline follows Gemini's order, and the rest is code's progression (R2, R3, R4)", async () => {
+      const outline: Syllabus = { lines: ["Counting", "Conditional probability", "Bayes", "Random variables", "Expectation", "Variance"], source: null };
+      const intake: Intake = { ...fieldIntake, syllabus: outline };
+      const w = world();
+      requireRealStages(w, intake);
+      const id = await newDraft(w, intake);
+      const tasks: (() => Promise<void> | void)[] = [];
+      let sent: Record<string, string> = {};
+      let order: string[] = [];
+      let v4 = false;
+      const callModel = async (req: unknown) => {
+        const props = ((req as { responseSchema?: { properties?: Record<string, unknown> } }).responseSchema?.properties ?? {}) as Record<string, unknown>;
+        v4 = "picks" in props;
+        // The last kind each stage offers (code's default is the first), and the outline's keys in reverse.
+        const enums = (props.picks as { properties?: Record<string, { enum?: string[] }> } | undefined)?.properties ?? {};
+        sent = Object.fromEntries(Object.entries(enums).map(([slot, p]) => [slot, (p.enum ?? [])[(p.enum ?? []).length - 1]]).filter(([, k]) => typeof k === "string"));
+        order = [...((props.order as { items?: { enum?: string[] } } | undefined)?.items?.enum ?? [])].reverse();
+        return sdkReply({ picks: sent, ...(order.length ? { order } : {}) });
+      };
+      const c = await S.claimDraftCore(USER, id, { force: false }, NOW, realDeps(w, { defer: (t) => tasks.push(t), callModel, clock: () => NOW }));
+      if (!c.ok) return [false, c.error];
+      for (const t of tasks) await t();
+      if (!v4) throw new Error("Not yet: R3's v4 schema (picks and order) isn't issued");
+      const run = w.t.roadmapRun.find((r) => r.kind === "GEMINI");
+      const plan = draftsOf(w, id);
+      const intakeNow = intakeIn(w, id);
+      const kept = plan.filter((m) => m.stage !== "PART" && m.stage !== "BETWEEN" && !m.notes.includes("HELD_AT_START"));
+      // A pick stands as its stage's focus unless the stage's room or shape reshaped it (the validator logs it): every GEMINI_PICK is a sent pick.
+      const geminiRows = plan.flatMap((m) => practicesIn(m).filter((i) => i.notes.includes("GEMINI_PICK")).map((i) => ({ stage: m.stage, kind: i.catalogKey, decision: i.decision })));
+      const lines = plan.flatMap((m) => m.items.filter((i) => i.kind === "TOPIC").map((i) => i.syllabusRef as number));
+      const expected = [...outline.lines.keys()].reverse();
+      return [
+        run?.status === "OK" &&
+          geminiRows.length > 0 &&
+          geminiRows.every((g) => g.decision === "PENDING" && Object.values(sent).includes(g.kind as string)) &&
+          kept.some((m) => practicesIn(m).some((i) => i.notes.includes("GEMINI_PICK") && sent[m.stage as string] === i.catalogKey)) &&
+          json(lines) === json(expected) &&
+          plan.flatMap((m) => m.items.filter((i) => i.kind === "TOPIC")).every((i) => i.label === outline.lines[i.syllabusRef as number] && i.origin === "SYLLABUS") &&
+          plan.flatMap((m) => m.items).every((i) => i.origin !== "GEMINI" || (i.kind === "DOMAIN" && i.notes.includes("NOT_CHOSEN"))) &&
+          breachesOf(plan, intakeNow).length === 0,
+        json({ status: run?.status, error: run?.error, sent, geminiRows, lines, breaches: breachesOf(plan, intakeNow).slice(0, 4) }),
+      ];
+    });
+
+    await integration("the claim asks a pick only for the stage keys the dated ladder holds (pickStagesOf): a 4-month track plan merged to two rows stands at STAGE_1 and STAGE_5, and only those are offered (R2, R3, R4)", async () => {
+      const w = world();
+      const intake: Intake = { ...runIntake, constraints: null, targetDay: addDays(TODAY, 120) };
+      const id = await newDraft(w, intake);
+      const said = await answerCard(id, realDeps(w), [], { none: true });
+      if (!said.ok) return [false, said.error];
+      const tasks: (() => Promise<void> | void)[] = [];
+      let slots: string[] = [];
+      const callModel = async (req: unknown) => {
+        const props = ((req as { responseSchema?: { properties?: Record<string, unknown> } }).responseSchema?.properties ?? {}) as Record<string, unknown>;
+        slots = Object.keys((props.picks as { properties?: Record<string, unknown> } | undefined)?.properties ?? {});
+        return sdkReply({});
+      };
+      const c = await S.claimDraftCore(USER, id, { force: true }, NOW, realDeps(w, { defer: (t) => tasks.push(t), callModel, clock: () => NOW }));
+      if (!c.ok) return [false, c.error];
+      for (const t of tasks) await t();
+      const stages = draftsOf(w, id).map((m) => m.stage);
+      return [json(slots) === json(["STAGE_1", "STAGE_5"]) && json(stages) === json(["STAGE_1", "STAGE_5"]), json({ slots, stages })];
+    });
+
+    await integration("a type the user changes in the Edit sheet stays theirs through every re-fit: the kind it replaced never comes back beside it, and the stage keeps as many practices (R2, R4)", async () => {
+      const w = world();
+      const id = await newDraft(w, fieldIntake);
+      const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+      if (!built.ok) return [false, built.error];
+      const stage = rowsOf(w, id, 1).find((m) => itemsOf(w, m.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED").length >= 2) as MilestoneRec;
+      const practices0 = itemsOf(w, stage.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+      const from = practices0[0];
+      const onRow = new Set(practices0.map((i) => i.catalogKey));
+      const to = ["WRITING_PRACTICE", "SAY_IT_ALOUD", "EXPLAIN_IT", "PROBLEM_SETS", "MISTAKE_REVIEW", "LISTEN_AND_REPEAT"].find((k) => !onRow.has(k as CatalogKey)) as CatalogKey;
+      const swapped = await S.editItemCore(USER, from.id, { catalogKey: to }, NOW, realDeps(w));
+      if (!swapped.ok) return [false, `swap: ${swapped.error}`];
+      // A second structural edit on another practice re-fits the plan again (its sessions, the user's plan for it).
+      const other = itemsOf(w, stage.id).find((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && i.id !== from.id) as ItemRec;
+      const again = await S.editItemCore(USER, other.id, { sessionsPerWeek: 2 }, NOW, realDeps(w));
+      if (!again.ok) return [false, `second edit: ${again.error}`];
+      const live = itemsOf(w, stage.id).filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+      return [
+        !live.some((i) => i.catalogKey === from.catalogKey) &&
+          live.some((i) => i.id === from.id && i.catalogKey === to && i.decision === "EDITED") &&
+          live.length === practices0.length &&
+          practices0.slice(1).every((p) => live.some((i) => i.catalogKey === p.catalogKey)),
+        json({ before: practices0.map((i) => i.catalogKey), after: live.map((i) => [i.catalogKey, i.decision]), from: from.catalogKey, to }),
+      ];
+    });
+
+    await integration("the practice family is the user's answer, stored with the intake (Roadmap.coverage) and kept by an activity answer; the plan's progression reads it (R2, R4)", async () => {
+      const w = world();
+      const id = await newDraft(w, { ...fieldIntake, practiceFamily: "PERFORM" });
+      const stored = intakeIn(w, id).practiceFamily;
+      const again = await S.saveIntakeCore(USER, { ...fieldIntake, aim: "Pass the probability exam soon" }, NOW, depsFor(w));
+      const kept = intakeIn(w, id).practiceFamily;
+      const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+      if (!built.ok) return [false, built.error];
+      const plan = draftsOf(w, id);
+      const pp = REALISM.planProgressionOf(plan, intakeIn(w, id), { practicesAllowed: true, trackArea: false, examDay: null } as Parameters<typeof REALISM.planProgressionOf>[2], { room: (m) => practicesIn(m).length || null });
+      return [
+        stored === "PERFORM" && again.ok && kept === "PERFORM" && pp.input.family === "PERFORM" && breachesOf(plan, intakeIn(w, id)).length === 0,
+        json({ stored, kept, family: pp.input.family, breaches: breachesOf(plan, intakeIn(w, id)).slice(0, 3) }),
+      ];
+    });
+
+    await integration("a re-plan (Re-fit, and Edit by hand) after Start: the DRAFT stages are the progression with the started one carried — no opening or booking again, the next stage carries what it trained — and Start put exactly its progression's practices on Today (R2, R4)", async () => {
+      const examined: string[] = [];
+      for (const kind of ["REFIT", "MANUAL"] as const) {
+        const w = world();
+        const id = await newDraft(w, { ...fieldIntake, examLabel: "SOA Exam P" });
+        const built = await S.buildStarterCore(USER, id, NOW, realDeps(w));
+        if (!built.ok) return [false, built.error];
+        for (const m of rowsOf(w, id, 1)) await decideAll(w, id, m.id);
+        const acc = await S.acceptCore(USER, id, { overAccepted: true }, NOW, realDeps(w));
+        if (!acc.ok) return [false, acc.error];
+        const m1 = rowsOf(w, id, 1).find((m) => m.status === "PLANNED" && !(m.feasibility as { notes?: string[] } | null)?.notes?.includes("HELD_AT_START")) as MilestoneRec;
+        const before = sortedKinds(S.draftOf({ ...m1, items: itemsOf(w, m1.id), measures: measuresOf(w, m1.id) }));
+        const st = await S.startMilestoneCore(USER, m1.id, { ...START_ALL, overAccepted: true }, NOW, realDeps(w));
+        if (!st.ok) return [false, st.error];
+        const started = S.draftOf({ ...(w.t.roadmapMilestone.find((m) => m.id === m1.id) as MilestoneRec), items: itemsOf(w, m1.id), measures: measuresOf(w, m1.id) });
+        const onToday = itemsOf(w, m1.id).filter((i) => i.kind === "PRACTICE" && i.templateId).map((i) => i.catalogKey);
+        const rp = await S.replanCore(USER, id, kind, at(1_000), realDeps(w));
+        if (!rp.ok) return [false, `${kind}: ${rp.error}`];
+        const drafts = draftsOf(w, id, 2).filter((m) => m.status === "DRAFT");
+        const plan = [started, ...drafts];
+        const first = drafts.find((m) => !m.notes.includes("HELD_AT_START"));
+        const focus = practicesIn(started)[0]?.catalogKey;
+        const bad = breachesOf(plan, intakeIn(w, id));
+        if (
+          !(
+            json(sortedKinds(started)) === json(before) &&
+            json(onToday.sort()) === json(practicesIn(started).map((i) => i.catalogKey).sort()) &&
+            !!first &&
+            !liveKinds(first).some((i) => i.catalogKey === "CHOOSE_MATERIAL" || i.catalogKey === "BOOK_EXAM") &&
+            (first.stage === "BETWEEN" || first.stage === "PART" || practicesIn(first).some((i) => i.catalogKey === focus)) &&
+            bad.length === 0
+          )
+        )
+          examined.push(`${kind}: ${json({ before, started: sortedKinds(started), onToday, first: first && sortedKinds(first), focus, bad: bad.slice(0, 4) })}`);
+      }
+      return [examined.length === 0, examined.join(" | ")];
+    });
   }
 
   if (failed > 0) {

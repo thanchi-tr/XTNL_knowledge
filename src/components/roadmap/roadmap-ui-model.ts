@@ -16,6 +16,9 @@
  *   Verdicts     typedTargetVerdict
  *   Start pay    startPayOf
  *   Aim figure   aimFigureOf
+ *   Progression  PROGRESSION_PROMPT_VERSION · picksAreChoicesOf · rowsAreProgressionOf · stageRunOf (StageRun) · stageLevelOf · stageOptionsOf ·
+ *                geminiChoiceOf (GeminiChoice) · stageWhysOf (StageWhy, StageEnd) · geminiV4PartsOf (GeminiV4Parts) ·
+ *                geminiAsksOf (GeminiAsks) (contracts §20)
  *   Activities   activityCardOf · activityAsksOf · activitySuggestsOf · activityOpenOf · activityAvoidOf · activityCardAnswerOf ·
  *                activityNothingToAvoidOf · activityBlockedOf · pickerExcludedOf · activityWaitingOf · heldPracticesOf ·
  *                practiceOnlyLineOf · sessionSwapKindsOf · rowsAnsweredBy · intakeActivityOf · aimConflictLineOf · pausedOfReply ·
@@ -23,6 +26,7 @@
  */
 import {
   ACTIVITY_REASON_MAX,
+  PACK_MAX_DOMAINS,
   PARAGON_MIN_MILESTONES,
   SOURCE_NOTE_MAX,
   TYPICAL_HOURS_MAX,
@@ -55,6 +59,7 @@ import {
   type MilestoneRowView,
   type MilestoneStatus,
   type MeasureRowView,
+  type PracticeFamily,
   type Origin,
   type ProficiencyView,
   type DraftView,
@@ -70,18 +75,25 @@ import {
 } from "@/lib/roadmap-types";
 import { statedForMilestone } from "@/lib/roadmap-economy";
 import {
+  PROGRESSION,
   activityConfirmViewOf,
   allowedKindsFor,
   catalogEntryOf,
   catalogKindsFor,
+  catalogTrackOf,
   constraintsStateOf,
   cueSafeKindsOf,
   isCatalogKey,
+  practiceFamilyOf,
+  progressionCandidatesOf,
   type CatalogKey,
   type CatalogTrack,
+  type PracticeKind,
+  type ProgressionRung,
 } from "@/lib/roadmap-catalog";
 import { constraintExclusionsOf } from "@/lib/roadmap-validate";
 import type { DayKey } from "@/lib/life-day";
+import type { Track } from "@/lib/life-types";
 import type { Segment } from "@/components/ui/Meter";
 import {
   DRAFTED_BY_LABEL,
@@ -96,6 +108,7 @@ import {
   dayLabel,
   pendingReachLine,
   weekQuestCountLine,
+  type StageEnd,
 } from "./roadmap-copy";
 
 // ═══ The user's library (RoadmapView.library, the contract's LibraryDomain) ═══
@@ -234,7 +247,7 @@ export function needsRecheckOf(row: EditorRow): boolean {
   return (row.flags.includes("NUMBER") && row.struck === undefined) || row.reasons === undefined;
 }
 
-export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP" | "TYPE";
+export type ItemAction = "KEEP" | "EDIT" | "REMOVE" | "CHECK" | "MAP" | "CREATE" | "DROP" | "TYPE" | "DEFAULT";
 
 /** What a row offers: all of them from 380 px; below it the first is a button and the rest sit in ⋯. */
 export interface ItemActions {
@@ -258,13 +271,26 @@ function withoutMap(a: ItemActions): ItemActions {
  *     I checked this and Map to…; a proposed Domain offers Create · Map to… · Drop; the title has no Remove.
  *   KEPT_SUGGESTION: I checked this and Edit (Map to… for a Domain), kept in ⋯ on the living roadmap.
  *   A placeholder practice: Edit ("Name this practice").
+ *   Gemini's choice that isn't the app's default (`choice`, geminiChoiceOf; contracts §20), on a draft: Use the app's
+ *     default first (one tap), then Change the type and Edit.
  *   YOURS, WORKED_OUT and REMOVED rows: none.
  * An outline row (a later milestone) offers nothing: it is decided at its Start.
  * Without the user's Domains on the page (`canMap` false) no row offers Map to….
  */
-export function itemActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "start", opts: { canMap?: boolean } = {}): ItemActions {
-  const out = baseActionsOf(row, stage);
+export function itemActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "start", opts: { canMap?: boolean; choice?: Pick<GeminiChoice, "isDefault"> | null } = {}): ItemActions {
+  const base = baseActionsOf(row, stage);
+  const out = opts.choice && !opts.choice.isDefault && base.wide.includes("TYPE") ? withDefault(base) : base;
   return opts.canMap === false ? withoutMap(out) : out;
+}
+
+/**
+ * Gemini's choice that isn't the app's default (contracts §20): one tap puts
+ * the app's default back ("Use the app's default"; the type change R4's
+ * editItem makes, so it reads "you chose this"). It leads the row, before
+ * Change the type.
+ */
+function withDefault(a: ItemActions): ItemActions {
+  return { wide: ["DEFAULT", ...a.wide], narrow: { shown: ["DEFAULT"], more: [...a.narrow.shown, ...a.narrow.more] } };
 }
 
 function baseActionsOf(row: EditorRow, stage: "draft" | "outline" | "active" | "start"): ItemActions {
@@ -306,6 +332,7 @@ export const ITEM_ACTION_WORD: Readonly<Record<ItemAction, string>> = {
   CREATE: "Create",
   DROP: "Drop",
   TYPE: "Change the type",
+  DEFAULT: "Use the app's default",
 };
 
 /** An action's words on a row: an empty title's Edit reads "Name this milestone". */
@@ -800,6 +827,260 @@ export function additionsDatesOf(draft: Pick<DraftView, "dateCheck" | "additions
   if (picked.length === 0) return { from, to: null };
   const to = picked.map((a) => a.dateWith as string).sort().pop() ?? null;
   return { from, to };
+}
+
+// ═══ The practice progression, as the plan shows it (contracts §20) ═════════
+//
+// Code owns every stage's practice on every plan path (roadmap-catalog
+// progressionOf). The page never re-runs it: it reads what each stage holds
+// and says, in code's words (roadmap-copy stageWhyPartsOf), what the stage
+// trains (its focus: Gemini's pick among the stage's options, else the first
+// practice the app placed), what it builds on from the stage before (the
+// build-up rule's carry), and what closes it (the exam, a mock test, the
+// full attempt, the performance check). Gemini's pick on a v4 plan is
+// labelled as its choice among the stage's options (progressionCandidatesOf),
+// with how many there were and the app's default.
+
+/** The first prompt version whose reply picks at most one practice per stage among code's options (ROADMAP_PROMPT_VERSION 4, contracts §20). */
+export const PROGRESSION_PROMPT_VERSION = 4;
+
+/**
+ * Gemini's picks on the rows a run wrote are choices among each stage's
+ * options (contracts §20): every run but one from before the progression
+ * (promptVersion 3 or below: that reply chose every practice, step and
+ * checkpoint type from the app's whole list). No run, or no version: true.
+ */
+export function picksAreChoicesOf(run: Pick<RunView, "promptVersion"> | null | undefined): boolean {
+  return !(run && typeof run.promptVersion === "number" && run.promptVersion < PROGRESSION_PROMPT_VERSION);
+}
+
+/**
+ * The rows a run wrote are code's progression (contracts §20): the app wrote
+ * them (its starter, a re-fit, a rejected reply's stand-in) or a Gemini reply
+ * from the progression on did. Only a v3 reply's rows, whose every type
+ * Gemini chose itself, are not: they get no "why this stage" line.
+ */
+export function rowsAreProgressionOf(run: RunView | null): boolean {
+  return draftRunWriterOf(run) !== "GEMINI" || picksAreChoicesOf(run);
+}
+
+/**
+ * What the progression reads of a plan: its catalog track, whether there is
+ * an exam, a Field plan's practice family (contracts §20.11: which table its
+ * stages' options come from; absent: KNOW, as the catalog reads it), and the
+ * kinds its gate holds (`blocked`: the activity card's PENDING and AVOID
+ * rows, activityBlockedOf; no plan path places one, and Gemini's v4 enum
+ * never offered one). Absent `blocked`: nothing held.
+ */
+export interface StageRun {
+  track: CatalogTrack;
+  exam: boolean;
+  family?: PracticeFamily | null;
+  blocked?: readonly CatalogKey[];
+}
+
+/**
+ * A plan's StageRun from its Area and exam (the editor's scope or the
+ * header): catalogTrackOf, and examLabel set. A Field plan's family is the
+ * catalog's reading (practiceFamilyOf): the user's answer when the view
+ * carries it (`practiceFamily`), else code's reading of the aim and the
+ * exam's name, the same prefill the server reads when no answer was given.
+ * With the scope's `excluded` (pickerExcludedOf: what the gate holds) less
+ * what the user allowed back (`allowed`, an older server's [Allow one]), the
+ * gate's blocked kinds: the same kinds the type picker leaves out.
+ */
+export function stageRunOf(p: {
+  areaFieldId: string | null;
+  track: Track;
+  examLabel: string | null;
+  aim?: string | null;
+  practiceFamily?: unknown;
+  excluded?: readonly CatalogKey[] | null;
+  allowed?: readonly CatalogKey[] | null;
+}): StageRun {
+  const allowed = new Set<string>(p.allowed ?? []);
+  const blocked = (p.excluded ?? []).filter((k) => !allowed.has(k));
+  const track = catalogTrackOf({ fieldId: p.areaFieldId, track: p.track });
+  const family = track === "FIELD" ? practiceFamilyOf({ aim: p.aim ?? "", examLabel: p.examLabel, practiceFamily: p.practiceFamily }) : null;
+  return { track, exam: p.examLabel != null && p.examLabel.trim().length > 0, ...(family ? { family } : {}), ...(blocked.length > 0 ? { blocked } : {}) };
+}
+
+/** A stage's level as its paying card measure states it (a gate's, BETWEEN's odd level, PART's gate level); null without one. */
+export function stageLevelOf(m: Pick<MilestoneDraft, "measures">): number | null {
+  return m.measures.find((x) => x.kind === "CARDS_AT_LEVEL" && x.role === "PAYS" && typeof x.minLevel === "number")?.minLevel ?? null;
+}
+
+/**
+ * The practice types a stage offers as its focus, code's default first
+ * (roadmap-catalog progressionCandidatesOf over the stage key and level, the
+ * plan's family's table on a Field plan, through the exam filter and the
+ * plan's gate, `run.blocked`): the options
+ * the v4 enum offered Gemini for that stage (a BETWEEN's or PART's are its
+ * gate's), the first being code's default under the gate (a held default
+ * gives way to the next placeable candidate, as progressionOf places it).
+ * A kind the gate holds is never an option and never "the app's default".
+ * [] without a stage (a rev-3 row).
+ */
+export function stageOptionsOf(m: Pick<MilestoneDraft, "stage" | "measures">, run: StageRun): PracticeKind[] {
+  if (!m.stage) return [];
+  return progressionCandidatesOf(run.track, { stage: m.stage, level: stageLevelOf(m) }, { exam: run.exam, practicesAllowed: true, family: run.family ?? null, gate: { blocked: [...(run.blocked ?? [])] } });
+}
+
+/** Gemini's pick on a practice row, as a choice among its stage's options: the options in order (the app's default first), and whether it is the default. */
+export interface GeminiChoice {
+  kind: PracticeKind;
+  options: readonly PracticeKind[];
+  isDefault: boolean;
+}
+
+/**
+ * A row's Gemini choice (contracts §20.5): a practice Gemini picked (it still
+ * reads GEMINI_PICK, catalogByOf GEMINI) on a plan whose picks are choices
+ * (picksAreChoicesOf), whose type is one of its stage's options under the
+ * plan's gate (stageOptionsOf with `run.blocked`). null for anything else:
+ * the app's or the user's type, a step or a checkpoint, a v3 pick, or a type
+ * off the stage's list (one the gate now holds included).
+ */
+export function geminiChoiceOf(
+  it: Pick<ItemDraft, "kind" | "catalogKey" | "notes" | "origin" | "decision">,
+  m: Pick<MilestoneDraft, "stage" | "measures">,
+  run: StageRun & { choices: boolean }
+): GeminiChoice | null {
+  if (!run.choices || it.kind !== "PRACTICE" || catalogByOf(it) !== "GEMINI") return null;
+  const options = stageOptionsOf(m, run);
+  const kind = options.find((k) => k === it.catalogKey);
+  return kind ? { kind, options, isDefault: options[0] === kind } : null;
+}
+
+/** What closes a stage (roadmap-copy StageEnd), in this order when a stage holds more than one. */
+export type { StageEnd };
+const STAGE_ENDS: readonly StageEnd[] = ["EXAM_DAY", "MOCK_TEST", "FULL_ATTEMPT", "PERFORMANCE_CHECK"];
+
+/** Why a stage holds what it practises (roadmap-copy stageWhyPartsOf words it). */
+export interface StageWhy {
+  /** The kind the stage trains: its focus. */
+  focus: PracticeKind | null;
+  /** How demanding the focus is on the track (PROGRESSION's rung); null off the track's table. */
+  rung: ProgressionRung | null;
+  /** The stage before's focus this stage keeps (the build-up rule's carry), with that milestone's number; `same`: this stage trains it again. */
+  carry: { kind: PracticeKind; ord: number; same: boolean } | null;
+  /** What closes the stage: the exam, a mock test, the full attempt or the performance check. */
+  end: StageEnd | null;
+}
+
+/** A row the progression placed and the user hasn't removed: a catalog type, live. */
+function liveCatalogItems(m: Pick<MilestoneDraft, "items">): ItemDraft[] {
+  return m.items.filter((it) => it.decision !== "REMOVED" && (isCatalogKey(it.catalogKey) || (it.kind === "CHECKPOINT" && it.checkpointKind != null))).sort((a, b) => a.ord - b.ord);
+}
+
+/**
+ * A stage's focus, read from what it holds: the first practice it holds (the
+ * progression lists code's default focus first, a stand-in, a copy's gate's
+ * and a carried stage's kinds included; Gemini's pick sits beside it, never
+ * in its place). Never timed practice (the exam's extra) or a type off the
+ * track; one you removed is gone, so the next practice reads as the focus.
+ */
+function stageFocusOf(m: Pick<MilestoneDraft, "items">, run: StageRun): PracticeKind | null {
+  const practices = liveCatalogItems(m).filter((it) => {
+    const e = it.kind === "PRACTICE" ? catalogEntryOf(it.catalogKey) : null;
+    return e != null && e.slot === "PRACTICE" && !e.examOnly && e.tracks.includes(run.track);
+  });
+  return (practices[0]?.catalogKey as PracticeKind | undefined) ?? null;
+}
+
+/** What closes a stage: its live exam, mock test, full attempt or performance check (STAGE_ENDS order). */
+function stageEndOf(m: Pick<MilestoneDraft, "items">): StageEnd | null {
+  const keys = new Set<string>(liveCatalogItems(m).map((it) => (it.catalogKey ?? it.checkpointKind) as string));
+  return STAGE_ENDS.find((k) => keys.has(k)) ?? null;
+}
+
+/**
+ * Each stage's why, by lineage (contracts §20): its focus and the focus's
+ * rung, the stage before's focus it keeps (carry, or `same` when it trains
+ * it again), and what closes it. Read in order of the milestone number; a
+ * held stage gets none and is never "the stage before". A stage with no
+ * practice (practices off) has no focus and breaks no chain: the next one
+ * builds on the last stage that had one.
+ */
+export function stageWhysOf(milestones: readonly MilestoneDraft[], run: StageRun): Map<string, StageWhy> {
+  const out = new Map<string, StageWhy>();
+  let prev: { kind: PracticeKind; ord: number } | null = null;
+  for (const m of [...milestones].sort((a, b) => a.ord - b.ord)) {
+    if (isHeldMilestone(m)) continue;
+    const focus = stageFocusOf(m, run);
+    const holds = new Set<string>(liveCatalogItems(m).filter((it) => it.kind === "PRACTICE").map((it) => it.catalogKey as string));
+    const carry = prev && focus && holds.has(prev.kind) ? { kind: prev.kind, ord: prev.ord, same: prev.kind === focus } : null;
+    out.set(m.lineageId, { focus, rung: focus ? (PROGRESSION[run.track].rung[focus] ?? null) : null, carry, end: stageEndOf(m) });
+    if (focus) prev = { kind: focus, ord: m.ord };
+  }
+  return out;
+}
+
+/**
+ * What a keys-only v4 Gemini draft's reply decided, read from the rows it
+ * left (contracts §20). The draft header (roadmap-copy geminiV4LeadLine) and
+ * the arrangement line (arrangementV4Line) name only these parts, never one
+ * the run didn't ask (a track Area asks no Domains and no order; a plan
+ * without an outline, no order; practices off, no pick) or the reply left
+ * to the app (a slot with no pick keeps code's default):
+ *   needs   Gemini suggested another Domain: a NOT_CHOSEN Domain row it
+ *           wrote, still waiting or decided (Add or Leave out keep the row)
+ *   order   a Field run with an outline: MOVED when the lines Gemini placed
+ *           sit out of your order, KEPT when your order stands (Gemini gave
+ *           yours back, or left the order to the app); null with no outline.
+ *           A line you moved yourself (EDITED) is yours and isn't read.
+ *   picks   practice rows still Gemini's choice (catalogByOf GEMINI, not
+ *           removed; BETWEEN's and PART's copies included, as the page labels
+ *           each); `picked`: any row Gemini picked, one you changed or removed
+ *           included, so a plan whose every pick you changed never reads "the
+ *           app chose every practice"
+ *   field   a Field Area: the names come from the aim, the outline and the
+ *           Domains; a track Area's from the aim alone
+ */
+export interface GeminiV4Parts {
+  needs: boolean;
+  order: "MOVED" | "KEPT" | null;
+  picks: number;
+  picked: boolean;
+  field: boolean;
+}
+
+export function geminiV4PartsOf(milestones: readonly Pick<MilestoneDraft, "ord" | "items">[], opts: { field: boolean }): GeminiV4Parts {
+  const items = [...milestones].sort((a, b) => a.ord - b.ord).flatMap((m) => [...m.items].sort((a, b) => a.ord - b.ord));
+  const needs = opts.field && items.some((it) => it.kind === "DOMAIN" && it.origin === "GEMINI" && it.notes.includes("NOT_CHOSEN"));
+  const lines = opts.field ? items.filter((it) => it.kind === "TOPIC" && it.origin === "SYLLABUS" && typeof it.syllabusRef === "number") : [];
+  const placed = lines.filter((it) => it.decision !== "EDITED").map((it) => it.syllabusRef as number);
+  const order = lines.length === 0 ? null : placed.every((r, i) => i === 0 || r > placed[i - 1]) ? "KEPT" : "MOVED";
+  const pickRows = items.filter((it) => it.kind === "PRACTICE" && it.notes.includes("GEMINI_PICK"));
+  const picks = pickRows.filter((it) => it.decision !== "REMOVED" && catalogByOf(it) === "GEMINI").length;
+  return { needs, order, picks, picked: pickRows.length > 0, field: opts.field };
+}
+
+/**
+ * What "Draft with Gemini" would ask (contracts §20.5: the v4 schema's parts
+ * as the pack and keysOnlySchemaOf issue them), from the form as it stands:
+ *   lines   the outline lines Gemini would put in order (a Field Area; 0: no
+ *           `order`)
+ *   needs   which other Domains the aim may need (a Field Area with a Domain
+ *           of the Area not in the plan, while the plan's Domains leave the
+ *           pack room for one: PACK_MAX_DOMAINS)
+ *   picks   one practice per stage among the app's options (practices on;
+ *           always on a life-track Area)
+ * null: nothing for Gemini to decide (a Field Area with practices off, no
+ * outline and every Domain of the Area in the plan): the v4 schema would have
+ * no property, so the form offers only "Build from my numbers" and says why.
+ */
+export interface GeminiAsks {
+  lines: number;
+  needs: boolean;
+  picks: boolean;
+}
+
+export function geminiAsksOf(p: { fieldArea: boolean; lines: number; otherDomains: number; chosenDomains: number; practicesAllowed: boolean }): GeminiAsks | null {
+  const lines = p.fieldArea && Number.isFinite(p.lines) ? Math.max(0, Math.floor(p.lines)) : 0;
+  const needs = p.fieldArea && p.otherDomains > 0 && p.chosenDomains < PACK_MAX_DOMAINS;
+  const picks = !p.fieldArea || p.practicesAllowed;
+  return lines > 0 || needs || picks ? { lines, needs, picks } : null;
 }
 
 /// ═══ Constraint safety: confirm to unlock (contracts §19) ════════════════════

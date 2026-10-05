@@ -168,5 +168,35 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a non-English aim: five picks.",
+    "replies": [
+      {
+        "id": "vietnamese-japanese-v4-a",
+        "about": "Listen and repeat, recall, saying it aloud twice, a partner at Mastered.",
+        "reply": {
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "FAMILIAR": "RECALL_DRILLS",
+            "RETAINED": "SAY_IT_ALOUD",
+            "FLUENT": "SAY_IT_ALOUD",
+            "MASTERED": "WITH_A_PARTNER"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "FAMILIAR": "RECALL_DRILLS",
+            "RETAINED": "SAY_IT_ALOUD",
+            "FLUENT": "SAY_IT_ALOUD",
+            "MASTERED": "WITH_A_PARTNER"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
   }
 }

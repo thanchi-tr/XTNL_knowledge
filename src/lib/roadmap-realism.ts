@@ -35,16 +35,43 @@
  * Confirm to unlock (contracts §19, lane R2's half): every kind code places
  * goes through roadmap-catalog's one gate. stageLadderOf and starterLadder
  * take the plan's gate (StageLadderOpts.gate; without one, activityGateOf
- * over the intake) and its blocked kinds join `excluded`; a track stage's
- * starter kinds are trackStarterKindsOf's (a blocked kind gives way to a safe
- * one on its track: CARE's are planning the week and keeping a log); the
- * final performance check is placed only when the
- * gate places it; fitPlan, refit, applyRemedy and lowerDepthPlanOf take the
- * blocked kinds (PlaceOpts) so a stage's required practice is never one of
- * them; syncTrackStarter re-syncs a track draft after the user's answer.
+ * over the intake) and its blocked kinds join `excluded`; fitPlan, refit,
+ * applyRemedy and lowerDepthPlanOf take the blocked kinds (PlaceOpts), never
+ * placed; syncTrackStarter re-syncs a track draft after the user's answer.
  * F-R4-17's non-empty-constraints test (bodySafeOf) is gone: the gate holds it.
  *
  *   blockedKindsOf · trackStarterKindsOf · syncTrackStarter · PlaceOpts
+ *
+ * The practice progression (contracts §20, lane R2's half): code owns every
+ * stage's practices, steps and checkpoint on every plan path. roadmap-catalog
+ * progressionOf decides them (the focus and its climb, the carry, the spaced
+ * review, the steps, the escalating checkpoint, the exam's placement, the
+ * gate's stand-ins); "The practice progression on a plan's rows" below puts
+ * it on a plan: the depth starter and the track starter (stageLadderOf), every
+ * re-fit of a revision-4 plan (fitPlan, refit, applyRemedy, lowerDepthPlanOf,
+ * with the intake in PlaceOpts) and the re-syncs (syncTrackStarter,
+ * syncStagePractices, syncProgression). Each stage's room is what its weekly
+ * practice budget holds (practicesThatFitOf), sized by roadmap-catalog
+ * practiceSizeOf at its stageBandFloorOf (one definition); Gemini's picks
+ * (StageLadderOpts.picks, PlaceOpts.picks, or a stage's GEMINI_PICK row) are
+ * added beside the stage's focus where valid (code's default stays the
+ * focus, contracts §20.11), and the outline is split in Gemini's order
+ * (StageLadderOpts.order, roadmap-types outlineStagesOf).
+ *
+ *   planProgressionOf · syncProgression · PlanProgressionOpts · StageLadderOpts.picks/order
+ *
+ * The review round (contracts §20.11, R2's half): the chain passes the plan's
+ * practice family (practiceFamilyOf(intake)) and a dated exam's stage and
+ * run-up (examStagesOf over the rows' windows); a short track plan's rows
+ * stand at their stages by position (trackStagePlacesOf: the base is never
+ * skipped, a working start at most one rung up), a pick made for a merged
+ * key reaching the row that holds it; a stage is sized together by
+ * practiceSizesOf (the focus weighed), within what keeps every week FITS,
+ * with a body plan's harder and longer sessions at most twice a week; and a
+ * type the user changed covers the kind it replaced (swapsOf), so no re-fit
+ * adds that kind back or drops another code row for it.
+ *
+ *   trackStagePlacesOf
  *
  * The model, in one place (every rule is the spec's; the choices the spec
  * leaves open are marked "choice"):
@@ -80,7 +107,10 @@
  *     the window's mean weekly reviews and writing), less the practices the
  *     user set (YOURS), split equally over the rest; each gets its method's
  *     band, stepped down while one session does not fit, and
- *     clamp(floor(share ÷ band), 1, 7) sessions.
+ *     clamp(floor(share ÷ band), 1, 7) sessions. A stage of the practice
+ *     progression is sized together instead (roadmap-catalog
+ *     practiceSizesOf: its focus two shares and the others' rounding), within
+ *     what keeps every judged week FITS (see allocate).
  *
  * Statuses. Dated DRAFT and PLANNED milestones are fitted; STARTING and
  * STARTED rows are carried: never changed, but their measures share the
@@ -126,6 +156,7 @@ import {
   ADHERENCE_LOW_SESSIONS,
   CALIBRATION_WEEKS,
   CARD_WRITE_MIN,
+  CHECKPOINTS_PER_MILESTONE,
   CLEARANCE_MIN,
   DECLARED_FACTOR,
   DOMAINS_PER_MILESTONE,
@@ -136,16 +167,15 @@ import {
   MILESTONE_MAX_DAYS,
   MILESTONE_MIN_DAYS,
   PRACTICES_PER_MILESTONE,
-  PRACTICE_BANDS,
   PRACTICE_BUDGET_SHARE,
   RAMP_ALLOWANCE,
   RAMP_FLOOR_MIN,
   REVIEW_SECONDS,
   SESSIONS_MAX,
-  SESSIONS_MIN,
   SPAN_MAX_DAYS,
   SPAN_MIN_DAYS,
   START_POINT_FLOOR,
+  STEPS_PER_MILESTONE,
   THRESHOLDS,
   THRESHOLD_SPAN_SHARE,
   TIME_FITS_MAX,
@@ -189,6 +219,7 @@ import {
   type PlanWeek,
   type PlanWindow,
   type PracticeBand,
+  type PracticeFamily,
   type PracticeMethod,
   type RealismInput,
   type RealismScope,
@@ -224,7 +255,6 @@ import {
   STAGE_KEYS,
   STAGE_LEVEL,
   STAGE_NAMES,
-  STAGE_PRACTICE_BAND_MIN,
   TRACK_STAGE_KEYS,
   TRACK_STAGE_SHARES,
   bestReach,
@@ -265,15 +295,30 @@ import {
   type WriteDay,
 } from "./roadmap-types";
 import {
-  CUE_SAFE_KINDS,
   activityGateOf,
   catalogEntryOf,
   catalogLabelOf,
+  examStagesOf,
+  practiceFamilyOf,
   practiceRoleOf,
+  practiceSizeOf,
+  practiceSizesOf,
+  practicesThatFitOf,
+  progressionCandidatesOf,
+  progressionNotesOf,
+  progressionOf,
+  progressionShapeOf,
+  progressionStageKeysOf,
+  stageBandFloorOf,
   type CatalogKey,
   type CatalogTrack,
-  type PracticeKind,
+  type PracticeSize,
+  type Progression,
+  type ProgressionInput,
+  type ProgressionItem,
+  type ProgressionStageInput,
 } from "./roadmap-catalog";
+import { outlineStagesOf } from "./roadmap-types";
 import { DOMAIN_STOP_WORDS } from "./roadmap-lexicon";
 import { words } from "./synonyms";
 import type { Track } from "./life-types";
@@ -948,19 +993,11 @@ function planStateOf(plan: readonly MilestoneDraft[], ctx: Ctx): PlanState {
 }
 
 // ═══ Practice allocation (F4 step 5) ═════════════════════════════════════════
-
-/**
- * Steps a band down (PRACTICE_BANDS order) while one session is more than the
- * share; D15 at least. `floor` (a depth stage's STAGE_PRACTICE_BAND_MIN,
- * F-R4-13): never below it, and a method whose default band is under it
- * starts at it.
- */
-function bandFor(method: PracticeMethod, share: number, floor: PracticeBand | null = null): PracticeBand {
-  const lo = floor ? PRACTICE_BANDS.indexOf(floor) : 0;
-  let i = Math.max(lo, PRACTICE_BANDS.indexOf(METHOD_DEFAULT_BAND[method]));
-  while (i > lo && share < practiceBandMinutes(PRACTICE_BANDS[i])) i -= 1;
-  return PRACTICE_BANDS[Math.max(0, i)];
-}
+//
+// The sizing itself (a practice's band and sessions from its share, never under
+// the stage's band floor) is roadmap-catalog's practiceSizeOf, and a stage's
+// floor its stageBandFloorOf: one definition, which the practice progression's
+// room (practicesThatFitOf) reads too (contracts §20.6).
 
 interface Allocation {
   /** Each WORKED_OUT practice's share of the budget a week; null with none to allocate. */
@@ -969,32 +1006,140 @@ interface Allocation {
   cut: boolean;
 }
 
-function allocationOf(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: PracticeBand | null = null): Allocation {
-  const practices = livePractices(ms);
-  const auto = practices.filter((p) => p.planSource !== "YOURS");
-  if (auto.length === 0) return { share: null, cut: false };
-  const fixedMin = practices.filter((p) => p.planSource === "YOURS").reduce((s, p) => s + sessionsPerWeekOf(p) * bandMinutesOf(p), 0);
+/**
+ * A milestone's weekly practice budget for code's practices: PRACTICE_BUDGET_SHARE
+ * × (a full week's available − the window's mean weekly reviews and writing),
+ * less the practices whose sessions the user set (YOURS).
+ */
+function practiceBudgetOf(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey): number {
+  const fixedMin = livePractices(ms)
+    .filter((p) => p.planSource === "YOURS")
+    .reduce((s, p) => s + sessionsPerWeekOf(p) * bandMinutesOf(p), 0);
   const load = meanLoadWeek(sim, from, ms.dueDay!, ctx.held);
-  const budget = PRACTICE_BUDGET_SHARE * (ctx.cap.weekMin - load) - fixedMin;
-  const share = budget / auto.length;
+  return PRACTICE_BUDGET_SHARE * (ctx.cap.weekMin - load) - fixedMin;
+}
+
+function allocationOf(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: PracticeBand | null = null): Allocation {
+  const auto = livePractices(ms).filter((p) => p.planSource !== "YOURS");
+  if (auto.length === 0) return { share: null, cut: false };
+  const share = practiceBudgetOf(ms, sim, ctx, from) / auto.length;
   return { share, cut: share < practiceBandMinutes(floor ?? "D15") };
 }
 
-/** Sets sessions, band and rule on the milestone's WORKED_OUT practices (planSource WORKED_OUT); YOURS ones keep theirs. `floor`: a depth stage's band floor. */
-function allocate(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: PracticeBand | null = null): Allocation {
+/**
+ * The most sessions a week code sizes of a body plan's demanding kinds (its intensity: most of the week stays easy):
+ * a harder session and a longer one at most twice a week each; what they leave of the budget goes to the stage's
+ * other practices. A realism guard over roadmap-catalog practiceSizesOf (the one sizing), for the lead to fold into it.
+ */
+const BODY_SESSIONS_MAX: Readonly<Partial<Record<string, number>>> = { HARDER_SESSION: 2, LONGER_SESSION: 2 };
+
+/** What practiceSizeOf and practiceSizesOf read a row as: its catalog type, else its method. */
+const sizedKindOf = (p: ItemDraft): CatalogKey | PracticeMethod => p.catalogKey ?? p.method ?? "DELIBERATE_PRACTICE";
+const minutesOfSize = (s: PracticeSize): number => s.sessionsPerWeek * practiceBandMinutes(s.band);
+const setSize = (p: ItemDraft, s: PracticeSize): void => {
+  p.durationBand = s.band;
+  p.sessionsPerWeek = s.sessionsPerWeek;
+  p.rule = s.rule;
+  p.planSource = "WORKED_OUT";
+};
+
+/**
+ * Sets sessions, band and rule on the milestone's WORKED_OUT practices (planSource WORKED_OUT); YOURS ones keep theirs.
+ * `floor`: a depth stage's band floor. `focus`: the kind the stage trains (the practice progression's focus,
+ * contracts §20): with it and two or more practices to size, the stage is sized together by roadmap-catalog
+ * practiceSizesOf (the one definition: the focus two shares and each other one, a longer session a band above the
+ * easy one, the focus taking what the others' rounding leaves), within the most every judged week of the window
+ * still FITS (fitsRoomOf; never under what an equal split would take, so a stage that was tight stays as it was);
+ * then a body plan's harder and longer sessions are held to BODY_SESSIONS_MAX a week, and what that, or a focus at
+ * its most sessions a week, leaves goes to the other practices (never below their size, within that budget). So a
+ * third practice never thins the focus to the others' size, and the budget isn't left unused. Without a focus (a
+ * rev 3 plan, a skeleton), an equal split as before.
+ */
+function allocate(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey, floor: PracticeBand | null = null, focus: string | null = null): Allocation {
   const alloc = allocationOf(ms, sim, ctx, from, floor);
   if (alloc.share == null) return alloc;
+  const auto = livePractices(ms).filter((p) => p.planSource !== "YOURS");
+  const lead = focus != null && auto.length >= 2 ? leadPracticeOf(ms, auto, focus) : -1;
   const share = Math.max(0, alloc.share);
-  for (const p of livePractices(ms)) {
-    if (p.planSource === "YOURS") continue;
-    const band = bandFor(p.method ?? "DELIBERATE_PRACTICE", share, floor);
-    const sessions = clamp(Math.floor(share / practiceBandMinutes(band) + EPS), SESSIONS_MIN, SESSIONS_MAX);
-    p.durationBand = band;
-    p.sessionsPerWeek = sessions;
-    p.rule = sessions >= SESSIONS_MAX ? "DAILY" : `TARGET:${sessions}/W`;
-    p.planSource = "WORKED_OUT";
+  if (lead < 0) {
+    for (const p of auto) setSize(p, practiceSizeOf(p.method ?? "DELIBERATE_PRACTICE", share, floor));
+    return alloc;
+  }
+  const ordered = [auto[lead], ...auto.filter((_, j) => j !== lead)];
+  const budget = share * auto.length;
+  const even = ordered.reduce((sum, p) => sum + minutesOfSize(practiceSizeOf(sizedKindOf(p), share, floor)), 0);
+  const ceiling = Math.min(budget, Math.max(fitsRoomOf(ms, sim, ctx, from), even));
+  const sizes = practiceSizesOf(ordered.map(sizedKindOf), ceiling, floor);
+  ordered.forEach((p, k) => {
+    const s = sizes[k];
+    const most = p.catalogKey ? BODY_SESSIONS_MAX[p.catalogKey] : undefined;
+    setSize(p, most != null && s.sessionsPerWeek > most ? { band: s.band, sessionsPerWeek: most, rule: `TARGET:${most}/W` } : s);
+  });
+  // What a capped session or a focus at its most sessions a week leaves goes to the others, in order, within the budget.
+  const minutesOfRow = (p: ItemDraft) => (p.sessionsPerWeek ?? 0) * (p.durationBand ? practiceBandMinutes(p.durationBand) : 0);
+  let left = ceiling - ordered.reduce((sum, p) => sum + minutesOfRow(p), 0);
+  const open = ordered.filter((p) => !(p.catalogKey && BODY_SESSIONS_MAX[p.catalogKey] != null) && (p.sessionsPerWeek ?? 0) < SESSIONS_MAX);
+  for (let k = 0; left > EPS && k < open.length; k++) {
+    const p = open[k];
+    const was = minutesOfRow(p);
+    const next = practiceSizeOf(sizedKindOf(p), was + left / (open.length - k), p.durationBand ?? floor);
+    const now = minutesOfSize(next);
+    if (now <= was || now - was > left + EPS) continue;
+    setSize(p, next);
+    left -= now - was;
   }
   return alloc;
+}
+
+/**
+ * The weekly practice minutes code's practices may take while every judged
+ * week of the window (WEEK_MIN_ELIGIBLE_DAYS open days or more) stays within
+ * TIME_FITS_MAX of its available time beside its reviews, new cards and the
+ * practices the user set (YOURS), as the time check reads them (the review
+ * load reads no practice, so it is the time check's own); Infinity when no
+ * week is judged. A partial week's room is read per open day.
+ */
+function fitsRoomOf(ms: MilestoneDraft, sim: Sim, ctx: Ctx, from: DayKey): number {
+  const to = ms.dueDay;
+  if (!to || from > to) return Infinity;
+  const fixedMin = livePractices(ms)
+    .filter((p) => p.planSource === "YOURS")
+    .reduce((s, p) => s + sessionsPerWeekOf(p) * bandMinutesOf(p), 0);
+  let room = Infinity;
+  for (let w = weekStartKeyOf(from); w <= to; w = addDays(w, 7)) {
+    const a = maxDay(w, from);
+    const b = minDay(addDays(w, 6), to);
+    const open = openDays(a, b, ctx.held);
+    const available = (ctx.cap.weekMin * open) / 7;
+    if (open < WEEK_MIN_ELIGIBLE_DAYS || !(available > 0)) continue;
+    const other = sumIn(sim.review, sim, a, b) + sumIn(sim.write, sim, a, b);
+    room = Math.min(room, ((TIME_FITS_MAX * available - other) * 7) / open - fixedMin);
+  }
+  return room;
+}
+
+/**
+ * The kind a stage being started trains, as the practice progression reads
+ * an accepted stage (a carried one): its first live catalog practice in item
+ * order, which the build placed first (its focus). Start re-sizes the stage
+ * with it weighed, as the plan was sized; null on a stage with no catalog
+ * practice (an equal split, as rev 3).
+ */
+function rowFocusOf(ms: MilestoneDraft): string | null {
+  return [...livePractices(ms)].sort((a, b) => a.ord - b.ord).find((p) => !!p.catalogKey)?.catalogKey ?? null;
+}
+
+/**
+ * The practice the allocation weighs first among a stage's sized ones: the
+ * progression's focus kind; else, when the user re-typed it (an EDITED code
+ * row of a kind the progression doesn't place), that row, which holds the
+ * focus's place; else none (-1: an equal split).
+ */
+function leadPracticeOf(ms: MilestoneDraft, auto: readonly ItemDraft[], focus: string): number {
+  const at = auto.findIndex((p) => p.catalogKey === focus);
+  if (at >= 0) return at;
+  const swap = swapsOf(ms, "PRACTICE", new Set(auto.filter((p) => isProgressionRow(p)).map((p) => p.catalogKey as string)))[0];
+  return swap ? auto.indexOf(swap) : -1;
 }
 
 /** effTarget = round(KEEP_SHARE × planned units over [from, dueDay] after held days). */
@@ -1204,25 +1349,51 @@ function practiceItem(lineageId: string, ord: number, label: string, method: Pra
  * Revision 4: a depth plan (input.depth set on a Field Area) takes the depth
  * branch (fitDepth): its card targets are the depth's counts and are never
  * fitted, scaled or lowered; it re-stamps baselines, keeps each key's `r`/`rc`
- * segment, re-renders code titles, keeps each stage's retrieval or
- * production practice (syncStagePractices) and allocates practices never
- * below the stage's band floor, beside the writing the date check sets.
+ * segment, re-renders code titles, puts the practice progression on every
+ * DRAFT stage (contracts §20: its practices, steps and checkpoint, within the
+ * stage's room) and allocates practices never below the stage's band floor,
+ * beside the writing the date check sets. A revision-4 track plan (its rows
+ * on STAGE_1..STAGE_5, with the intake given) gets the progression too, then
+ * rev 3's allocation.
  */
 export function fitPlan(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
-  if (isDepthInput(input)) return fitDepth(plan, input, { excluded: opts.excluded });
-  return fitWith(plan, input, {});
+  if (isDepthInput(input)) return fitDepth(plan, input, { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks });
+  return fitRows(plan, input, opts);
 }
 
 /**
- * What the re-fits read besides the plan (confirm to unlock, contracts §19):
- * the kinds the plan's gate blocks (R4 passes ActivityGate.blocked). A stage
- * practice code adds (syncStagePractices' requirement) is never one of them.
+ * What the re-fits read besides the plan (confirm to unlock, contracts §19;
+ * the practice progression, contracts §20): the kinds the plan's gate blocks
+ * (R4 passes ActivityGate.blocked), never placed; the plan's intake (R4
+ * passes it: the exam, the aim's words and a track plan's track, without
+ * which a track plan's progression isn't re-synced and a depth plan's exam
+ * is read off its rows); Gemini's picks (a v4 reply's), over each stage's
+ * GEMINI_PICK row.
  */
 export interface PlaceOpts {
   excluded?: Iterable<CatalogKey>;
+  intake?: Intake | null;
+  picks?: unknown;
 }
 
-function fitWith(plan: readonly MilestoneDraft[], input: RealismInput, opts: { resetTyped?: boolean; makeId?: () => string }): MilestoneDraft[] {
+/** The kinds a re-fit never places: `excluded`, and with the intake its own gate (activityGateOf) too. */
+const placeBlockedOf = (opts: PlaceOpts): Set<CatalogKey> => blockedKindsOf(opts.intake ?? null, { excluded: opts.excluded });
+
+/** A revision-4 track plan with its intake: rows on the track stages (STAGE_1..STAGE_5). */
+const isTrackStagePlan = (plan: readonly MilestoneDraft[], input: RealismInput, intake: Intake | null | undefined): intake is Intake =>
+  input.trackArea && intake != null && intake.fieldId == null && plan.some((ms) => ms.stage != null && (TRACK_STAGE_KEYS as readonly string[]).includes(ms.stage));
+
+/** rev 3's fit (fitWith), after the practice progression on a revision-4 track plan's DRAFT stages (contracts §20). */
+function fitRows(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts, fitOpts: { resetTyped?: boolean; makeId?: () => string } = {}): MilestoneDraft[] {
+  if (!isTrackStagePlan(plan, input, opts.intake)) return fitWith(plan, input, fitOpts);
+  const out = plan.map(cloneMilestone);
+  const { state, ctx } = roomStateOf(out, input);
+  const focus = syncRowsInPlace(out, rowProgressionCtxOf(opts.intake.track, input, opts.intake, out, placeBlockedOf(opts), roomOf(state, ctx), { picks: opts.picks, makeId: fitOpts.makeId }));
+  return fitWith(out, input, { ...fitOpts, focus });
+}
+
+/** rev 3's fit; `focus` (lineage → the progression's focus kind) weighs each stage's allocation (allocate). */
+function fitWith(plan: readonly MilestoneDraft[], input: RealismInput, opts: { resetTyped?: boolean; makeId?: () => string; focus?: ReadonlyMap<string, string> }): MilestoneDraft[] {
   const ctx = contextOf(input);
   const out = plan.map(cloneMilestone);
   const order = planOrder(out);
@@ -1339,7 +1510,7 @@ function fitWith(plan: readonly MilestoneDraft[], input: RealismInput, opts: { r
     const ms = out[idx];
     if (!fittable(ms)) continue;
     const from = maxDay(ms.windowStart!, ctx.today);
-    allocate(ms, state.sim, ctx, from);
+    allocate(ms, state.sim, ctx, from, null, opts.focus?.get(ms.lineageId) ?? null);
     syncPracticeMeasures(ms, from, ctx);
     setNote(ms, "NOT_MEASURABLE", !ms.measures.some((m) => m.role === "PAYS"));
   }
@@ -1817,9 +1988,9 @@ const scheduledUnstarted = (plan: readonly MilestoneDraft[]): number => plan.fil
  * "Re-date later milestones" and the CALIBRATED offer run it.
  */
 export function refit(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): MilestoneDraft[] {
-  if (isDepthInput(input)) return redateDepth(plan, input, "PLAN", opts.excluded);
+  if (isDepthInput(input)) return redateDepth(plan, input, "PLAN", opts);
   const split = resplit(plan, input, (span, unstarted) => Math.min(unstarted, milestoneCountFor(Math.max(span, 1))));
-  return fitWith(split, input, {});
+  return fitRows(split, input, opts);
 }
 
 // ═══ Remedies (F4 step 9) ════════════════════════════════════════════════════
@@ -1827,10 +1998,10 @@ export function refit(plan: readonly MilestoneDraft[], input: RealismInput, opts
 const passes = (fe: Feasibility): boolean => !fe.impossible && !fe.over;
 const knowledgeProblem = (milestones: readonly MilestoneFeasibility[]): boolean => milestones.some((m) => m.knowledge.some((k) => k.verdict === "OVER" || k.verdict === "IMPOSSIBLE"));
 
-function movedTo(plan: readonly MilestoneDraft[], input: RealismInput, targetDay: DayKey): { plan: MilestoneDraft[]; input: RealismInput } {
+function movedTo(plan: readonly MilestoneDraft[], input: RealismInput, targetDay: DayKey, opts: PlaceOpts = {}): { plan: MilestoneDraft[]; input: RealismInput } {
   const moved: RealismInput = { ...input, targetDay };
   const keep = Math.max(1, scheduledUnstarted(plan));
-  return { plan: fitWith(resplit(plan, moved, () => keep), moved, {}), input: moved };
+  return { plan: fitRows(resplit(plan, moved, () => keep), moved, opts), input: moved };
 }
 
 /**
@@ -1874,7 +2045,7 @@ function laterCount(plan: readonly MilestoneDraft[], input: RealismInput): numbe
   return null;
 }
 
-function laterBy(plan: readonly MilestoneDraft[], input: RealismInput, k: number): MilestoneDraft[] {
+function laterBy(plan: readonly MilestoneDraft[], input: RealismInput, k: number, opts: PlaceOpts = {}): MilestoneDraft[] {
   const scheduled = planOrder(plan).filter((i) => fittable(plan[i]));
   const later = new Set(scheduled.slice(scheduled.length - k));
   const marked = plan.map((ms, i) => {
@@ -1888,12 +2059,12 @@ function laterBy(plan: readonly MilestoneDraft[], input: RealismInput, k: number
     return c;
   });
   const keep = scheduled.length - k;
-  return fitWith(resplit(marked, input, () => keep), input, {});
+  return fitRows(resplit(marked, input, () => keep), input, opts);
 }
 
-function refitLight(plan: readonly MilestoneDraft[], input: RealismInput): { plan: MilestoneDraft[]; input: RealismInput } {
+function refitLight(plan: readonly MilestoneDraft[], input: RealismInput, opts: PlaceOpts = {}): { plan: MilestoneDraft[]; input: RealismInput } {
   const light: RealismInput = { ...input, intensity: "LIGHT" };
-  return { plan: fitWith(plan, light, { resetTyped: true }), input: light };
+  return { plan: fitRows(plan, light, opts, { resetTyped: true }), input: light };
 }
 
 /**
@@ -1938,14 +2109,14 @@ function remediesFor(plan: readonly MilestoneDraft[], input: RealismInput, befor
  * changes a depth term).
  */
 export function applyRemedy(plan: readonly MilestoneDraft[], input: RealismInput, remedy: Remedy, opts: PlaceOpts = {}): MilestoneDraft[] {
-  if (isDepthInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateDepth(plan, input, "REALISTIC", opts.excluded) : plan.map(cloneMilestone);
+  if (isDepthInput(input)) return remedy === "USE_REALISTIC_DATE" || remedy === "MOVE_DATE" ? redateDepth(plan, input, "REALISTIC", opts) : plan.map(cloneMilestone);
   if (remedy === "MOVE_DATE") {
     const day = remedyTargetDay(plan, input);
-    return day ? movedTo(plan, input, day).plan : plan.map(cloneMilestone);
+    return day ? movedTo(plan, input, day, opts).plan : plan.map(cloneMilestone);
   }
-  if (remedy === "REFIT_LIGHT") return refitLight(plan, input).plan;
+  if (remedy === "REFIT_LIGHT") return refitLight(plan, input, opts).plan;
   const k = laterCount(plan, input);
-  return k == null ? plan.map(cloneMilestone) : laterBy(plan, input, k);
+  return k == null ? plan.map(cloneMilestone) : laterBy(plan, input, k, opts);
 }
 
 // ═══ The in-house starter and the manual ladder (F7) ═════════════════════════
@@ -2108,7 +2279,8 @@ export function starterLadder(
  * Revision 4: a revision-4 draft is the stage ladder's skeleton
  * (stageLadderOf, items NONE): every stage with its Domains, counts, dates and
  * code's title, and no practice, step or checkpoint until the user writes
- * them (fitPlan adds each stage's retrieval or production practice). A Field
+ * them (a re-fit, fitPlan, then puts the practice progression on each DRAFT
+ * stage, contracts §20; what the user removed never comes back). A Field
  * Area needs `names` (the Domains' names); an empty list without them, or
  * when the ladder refuses.
  */
@@ -2176,7 +2348,7 @@ export function refitForStart(milestone: MilestoneDraft, plan: readonly Mileston
   const full = [...others.map(cloneMilestone), ms];
   const state = planStateOf(full, ctx);
   if (ms.dueDay != null) {
-    allocate(ms, state.sim, ctx, ctx.today);
+    allocate(ms, state.sim, ctx, ctx.today, null, rowFocusOf(ms));
     syncPracticeMeasures(ms, ctx.today, ctx);
   }
   // Judged as the milestone being started (its stored target is the one accepted), whatever its row's status:
@@ -2616,13 +2788,8 @@ function rowLevelOf(ms: MilestoneDraft): number | null {
 /** A stage held when the plan began (HELD_AT_START): never fitted, judged, dated or ranked. */
 const isHeldRow = (ms: MilestoneDraft): boolean => ms.notes.includes("HELD_AT_START");
 
-/** The band floor of a stage (STAGE_PRACTICE_BAND_MIN): a gate's own; BETWEEN keeps the gate below's; a count gate its gate's. */
-function floorBandOf(ms: MilestoneDraft): PracticeBand | null {
-  const lv = rowLevelOf(ms);
-  if (lv == null) return null;
-  const gate = ms.stage === "BETWEEN" ? stageOfLevel(lv - 1) : stageOfLevel(lv);
-  return gate ? (STAGE_PRACTICE_BAND_MIN[gate] ?? null) : null;
-}
+/** The band floor of a stage's row (roadmap-catalog stageBandFloorOf over its stage and level: a gate's own; BETWEEN keeps the gate below's; a count gate its gate's). */
+const rowBandFloorOf = (ms: MilestoneDraft): PracticeBand | null => stageBandFloorOf(ms.stage ?? null, rowLevelOf(ms));
 
 /** Retrieval below RETAINED; production at RETAINED and above (BETWEEN at L9 and L11 included) (F-R4-13). */
 const wantsProduction = (level: number): boolean => level >= STAGE_LEVEL.RETAINED;
@@ -2792,7 +2959,7 @@ function capRateOf(model: DepthModel, ctx: Ctx, upper: number): number {
       return plan.map((row) => {
         const ms = cloneMilestone(row);
         const from = maxDay(ms.windowStart!, ctx.today);
-        const floor = floorBandOf(ms);
+        const floor = rowBandFloorOf(ms);
         allocate(ms, state.sim, ctx, from, floor);
         const weeks = weeksOf(
           ms,
@@ -3346,82 +3513,407 @@ function catalogItemOf(
   };
 }
 
-/** The kind code adds for a stage's requirement: RECALL_DRILLS (retrieval) or EXPLAIN_IT (production), else the next of its list that the constraints left in. */
-function requiredKindOf(role: "RETRIEVAL" | "PRODUCTION", excluded: ReadonlySet<string>): PracticeKind | null {
-  const pref: readonly PracticeKind[] =
-    role === "RETRIEVAL" ? ["RECALL_DRILLS", "READ_AND_CARD", "LISTEN_AND_REPEAT"] : ["EXPLAIN_IT", "PROBLEM_SETS", "WRITING_PRACTICE", "MISTAKE_REVIEW", "SAY_IT_ALOUD", "BUILD_SOMETHING", "RUN_THROUGHS"];
-  return pref.find((k) => !excluded.has(k)) ?? null;
+// ─── The practice progression on a plan's rows (contracts §20; R2's half) ────
+//
+// Code owns the practice progression on every plan path (the lead's decision
+// after the probe, contracts §20): roadmap-catalog's progressionOf decides
+// what every stage holds (its practices, steps and checkpoint), and the
+// functions below put it on a plan's rows. A plan's chain is its scheduled
+// rows with a stage key on its track, in plan order:
+//   - a held row (HELD_AT_START) gets nothing;
+//   - a row that is not a DRAFT (PLANNED, STARTING, STARTED: accepted or under
+//     way) is carried: its live kinds are kept as they are and read (the next
+//     stage carries its focus, and a first stage carried keeps the opening);
+//   - a DRAFT row is reconciled with the progression:
+//       a code row (origin CODE, worked out: never one the user added, edited
+//       or checked) of a kind the progression no longer wants there leaves;
+//       a code row of a kind it wants stays, its notes following
+//       progressionNotesOf and its label its Domains' names;
+//       a kind it wants that the row lacks is added, in its priority order and
+//       within the caps, unless the user removed one of that kind there (a
+//       REMOVED row), a type the user changed there took its place (an EDITED
+//       code row of a kind it doesn't want: swapsOf, which the room counts in
+//       that kind's place too), or its label can't be filled: Gemini's pick PENDING (the
+//       user decides it), every other kind decided (KEPT, "added by the app");
+//       the user's own rows always stay, and a catalog kind of theirs counts as
+//       the progression's.
+// The room (maxPractices) is what the stage's weekly practice budget holds at
+// its band floor (practicesThatFitOf), less the user's own practices sharing
+// it, so the plan stays within the user's hours. Gemini's picks are the
+// reply's (`picks`), else each DRAFT gate or track stage's live GEMINI_PICK
+// practice, so a re-sync keeps them.
+
+/** Kinds only an exam places: without the intake, a plan holding one has an exam. */
+const EXAM_ONLY_KINDS: ReadonlySet<string> = new Set(["BOOK_EXAM", "EXAM_DAY", "MOCK_TEST", "TIMED_PRACTICE"]);
+
+/** What the progression on a plan's rows reads besides the rows. */
+interface RowProgressionCtx {
+  track: CatalogTrack;
+  practicesAllowed: boolean;
+  /** The user's Yes to the exam question. */
+  exam: boolean;
+  examDay: DayKey | null;
+  /** A Field plan's practice family (roadmap-catalog practiceFamilyOf(intake)); null on a track or without the intake (KNOW). */
+  family: PracticeFamily | null;
+  /** The gate's blocked kinds and every kind left out: never placed. */
+  blocked: ReadonlySet<string>;
+  /** Gemini's picks (read as unknown), over each stage's GEMINI_PICK row. */
+  picks: unknown;
+  fill: { aim: YoursText | null; exam: YoursText | null };
+  /** A DRAFT row's room for practices before the user's own (null: PRACTICES_PER_MILESTONE). */
+  room: (ms: MilestoneDraft) => number | null;
+  /** The Domains' names, over the rows' DOMAIN labels. */
+  names?: Readonly<Record<string, DomainName>>;
+  makeId?: () => string;
+}
+
+/** A row's stage key on the track: its own, else (a Field row without one) its gate level's; null when it has none. */
+function rowStageKeyOf(ms: MilestoneDraft, track: CatalogTrack): StageKey | null {
+  const keys = progressionStageKeysOf(track) as readonly string[];
+  const st = ms.stage ?? null;
+  if (st && (keys.includes(st) || (track === "FIELD" && (st === "BETWEEN" || st === "PART")))) return st;
+  if (track !== "FIELD" || st != null) return null;
+  const lv = rowLevelOf(ms);
+  return lv != null ? stageOfLevel(lv) : null;
 }
 
 /**
- * The stage shape (F-R4-13), in place, on a DRAFT stage with card measures:
- * below RETAINED it holds a retrieval practice, from RETAINED on (BETWEEN at
- * L9 and L11 included) a production one. Where it lacks one and practices
- * are allowed, code adds it (origin CODE, STUDY_ADDED or PRODUCTION_ADDED,
- * "added by the app") if a slot is free, else notes NO_STUDY_SLOT or
- * NO_PRODUCTION_SLOT. A practice code added earlier follows its Domains'
- * names, stays removed once the user removed it, keeps the user's words once
- * edited, and leaves when the stage no longer needs it (another practice
- * covers it, or practices are off).
+ * A code-written catalog row the progression owns (origin CODE, worked out, a
+ * practice, step or checkpoint): never the user's, and never a practice whose
+ * sessions the user set (planSource YOURS: their plan for it stands).
  */
-function syncStageInPlace(ms: MilestoneDraft, practicesAllowed: boolean, domains: readonly DomainName[], excluded: ReadonlySet<string>, makeId?: () => string): void {
-  if (ms.status !== "DRAFT" || isHeldRow(ms)) return;
-  const level = rowLevelOf(ms);
-  if (level == null || !ms.measures.some((x) => x.kind === "CARDS_AT_LEVEL")) return;
-  const role: "RETRIEVAL" | "PRODUCTION" = wantsProduction(level) ? "PRODUCTION" : "RETRIEVAL";
-  const note: ItemNote = role === "PRODUCTION" ? "PRODUCTION_ADDED" : "STUDY_ADDED";
-  const mine = ms.items.find((i) => i.kind === "PRACTICE" && i.origin === CODE && i.notes.includes(note) && practiceRoleOf(i) === role && i.catalogKey !== "TIMED_PRACTICE");
-  const others = livePractices(ms).filter((p) => p !== mine);
-  const needs = practicesAllowed && domains.length > 0 && !others.some((p) => practiceRoleOf(p) === role);
-  const free = others.length < PRACTICES_PER_MILESTONE;
-  setNote(ms, "NO_STUDY_SLOT", role === "RETRIEVAL" && needs && !free);
-  setNote(ms, "NO_PRODUCTION_SLOT", role === "PRODUCTION" && needs && !free);
-  // The other role's note can't stand on this stage (a re-dated or lowered stage changes level).
-  setNote(ms, role === "RETRIEVAL" ? "NO_PRODUCTION_SLOT" : "NO_STUDY_SLOT", false);
-  if (needs && free) {
-    if (mine) {
-      if (mine.decision !== "REMOVED" && provenanceOf(mine.origin, mine.decision) === "WORKED_OUT" && mine.catalogKey) {
-        try {
-          mine.label = catalogLabelOf(mine.catalogKey, { track: "FIELD", domains });
-        } catch {
-          // a type whose label can't be filled keeps its words
-        }
-      }
-      return;
+const isProgressionRow = (i: ItemDraft): boolean =>
+  i.origin === CODE &&
+  !!i.catalogKey &&
+  (i.kind === "PRACTICE" || i.kind === "STEP" || i.kind === "CHECKPOINT") &&
+  provenanceOf(i.origin, i.decision) === "WORKED_OUT" &&
+  i.planSource !== "YOURS";
+
+/** The user's own practices that share a stage's budget with code's (live, sized by code, not a progression row). */
+const sharedPracticesOf = (ms: MilestoneDraft): ItemDraft[] => livePractices(ms).filter((p) => p.planSource !== "YOURS" && !isProgressionRow(p));
+
+/** A stage's Domains' names (the caller's names over its DOMAIN labels), in item order. */
+function stageNamesOf(ms: MilestoneDraft, names?: Readonly<Record<string, DomainName>>): DomainName[] {
+  return rowDomainsOf(ms).map((d) => (names && Object.prototype.hasOwnProperty.call(names, d.id) ? names[d.id] : d.name));
+}
+
+/** A plan's chain and the progression's input over it (see the section's head). */
+function chainOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx, maxOf: (ms: MilestoneDraft, k: number) => number | null): { rows: MilestoneDraft[]; input: ProgressionInput } {
+  const rows = planOrder(plan)
+    .map((i) => plan[i])
+    .filter((ms) => SCHEDULED.has(ms.status) && rowStageKeyOf(ms, c.track) != null);
+  const stages: ProgressionStageInput[] = rows.map((ms) => {
+    const stage = rowStageKeyOf(ms, c.track) as StageKey;
+    const level = c.track === "FIELD" ? rowLevelOf(ms) : null;
+    if (isHeldRow(ms)) return { stage, level, held: true };
+    if (ms.status !== "DRAFT")
+      return {
+        stage,
+        level,
+        carried: [...ms.items]
+          .sort((a, b) => a.ord - b.ord)
+          .filter(liveItem)
+          .map((i) => i.catalogKey ?? null),
+      };
+    return { stage, level };
+  });
+  // Gemini's picks: each DRAFT gate or track stage's live GEMINI_PICK practice, then the reply's own (exact own keys only).
+  const keys = progressionStageKeysOf(c.track) as readonly string[];
+  const picks: Record<string, string> = Object.create(null) as Record<string, string>;
+  rows.forEach((ms, k) => {
+    const st = stages[k];
+    if (ms.status !== "DRAFT" || st.held || !keys.includes(st.stage) || Object.prototype.hasOwnProperty.call(picks, st.stage)) return;
+    const pick = [...ms.items].sort((a, b) => a.ord - b.ord).find((i) => i.kind === "PRACTICE" && liveItem(i) && i.notes.includes("GEMINI_PICK") && !!i.catalogKey);
+    if (pick?.catalogKey) picks[st.stage] = pick.catalogKey;
+  });
+  const given = c.picks;
+  if (given && typeof given === "object" && !Array.isArray(given))
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(given, key)) continue;
+      const v = (given as Record<string, unknown>)[key];
+      if (typeof v === "string") picks[key] = v;
     }
-    const kind = requiredKindOf(role, excluded);
-    if (!kind) return;
-    const added = catalogItemOf(kind, {
-      lineageId: makeId ? makeId() : `${ms.lineageId.slice(0, 54)}-${role === "RETRIEVAL" ? "study" : "prod"}`,
-      ord: nextItemOrd(ms),
-      track: "FIELD",
-      domains,
-      aim: null,
-      exam: null,
-      notes: [note],
-    });
-    if (added) ms.items.push(added);
-    return;
-  }
-  if (mine && provenanceOf(mine.origin, mine.decision) === "WORKED_OUT") ms.items = ms.items.filter((i) => i !== mine);
+  // A dated exam's stage and its run-up (roadmap-catalog examStagesOf over the rows' windows: the first kept stage due on or
+  // after the day, else the last; the run-up is that stage when the exam falls EXAM_PREP_MIN_DAYS or more into its window,
+  // else the stage before). No day, no index (the last stage holds the exam).
+  const placed = c.exam && c.examDay ? examStagesOf(rows.map((ms, k) => ({ start: ms.windowStart, due: ms.dueDay, held: stages[k].held === true })), c.examDay) : { examStage: null, examPrepStage: null };
+  return {
+    rows,
+    input: {
+      track: c.track,
+      stages,
+      practicesAllowed: c.practicesAllowed,
+      exam: c.exam,
+      examStage: placed.examStage,
+      examPrepStage: placed.examPrepStage,
+      family: c.family,
+      excluded: [...c.blocked] as CatalogKey[],
+      picks,
+      maxPractices: rows.map((ms, k) => (ms.status === "DRAFT" && !stages[k].held ? maxOf(ms, k) : null)),
+    },
+  };
 }
 
 /**
- * A stage's practices (F-R4-13): a retrieval type at Foundation and Familiar,
- * a production type from Retained on (STUDY_ADDED, PRODUCTION_ADDED, or the
- * NO_STUDY_SLOT / NO_PRODUCTION_SLOT notes when no slot is free). Only a
- * DRAFT stage with card measures changes; the input milestone is not
- * mutated. `names` maps the stage's Domains to their names (its DOMAIN
- * items' labels otherwise); `excluded` holds the types the plan's gate
- * blocks (R4 passes ActivityGate.blocked: the user's AVOIDs and the kinds
- * their words name, contracts §19), never added here: the requirement takes
- * the next kind of its role the gate leaves in.
+ * The user's type changes on a stage (roadmap-server catalogPickOf: a code
+ * row re-typed in the Edit sheet, origin CODE, decided EDITED): live catalog
+ * rows of a slot that are EDITED code rows of a kind the progression doesn't
+ * place there. Each took the place of one kind the progression wants that
+ * the row lacks (and the user didn't remove), so that kind isn't added back
+ * beside it and its place isn't counted twice in the room (contracts §20.10:
+ * the user's swap covers it).
  */
-export function syncStagePractices(m: MilestoneDraft, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string, excluded: Iterable<CatalogKey> = []): MilestoneDraft {
-  const ms = cloneMilestone(m);
-  const domains = rowDomainsOf(ms).map((d) => (Object.prototype.hasOwnProperty.call(names, d.id) ? names[d.id] : d.name));
-  syncStageInPlace(ms, input.practicesAllowed, domains, new Set<string>(excluded), makeId);
-  return ms;
+function swapsOf(ms: MilestoneDraft, slot: string, placed: ReadonlySet<string>): ItemDraft[] {
+  return ms.items.filter((i) => i.kind === slot && liveItem(i) && i.origin === CODE && i.decision === "EDITED" && !!i.catalogKey && !placed.has(i.catalogKey));
+}
+
+/** The kinds a stage holds a row of, live or removed (a REMOVED row is the user's no: never added back). */
+const kindsOnRow = (ms: MilestoneDraft): Set<string> => new Set(ms.items.map((i) => i.catalogKey).filter((k): k is CatalogKey => !!k));
+
+/**
+ * The progression over a plan's rows, sized: each DRAFT stage's room is what
+ * its budget holds (c.room) less the user's own practices sharing it, read
+ * twice so a catalog kind of the user's that the progression places counts as
+ * the progression's, and a practice the user re-typed counts in the place of
+ * the kind it replaced, not beside it (swapsOf). Pure, so a re-read of the
+ * synced plan gives the same.
+ */
+function rowProgressionOf(plan: readonly MilestoneDraft[], c: RowProgressionCtx): { rows: MilestoneDraft[]; input: ProgressionInput; progression: Progression } {
+  const fit = (ms: MilestoneDraft): number => Math.min(PRACTICES_PER_MILESTONE, Math.max(1, c.room(ms) ?? PRACTICES_PER_MILESTONE));
+  const first = chainOf(plan, c, (ms) => Math.max(1, fit(ms) - sharedPracticesOf(ms).length));
+  const p1 = progressionOf(first.input);
+  const second = chainOf(plan, c, (ms, k) => {
+    const placed = new Set<string>(p1.stages[k]?.practices.map((x) => x.kind) ?? []);
+    const shared = sharedPracticesOf(ms).filter((p) => !(p.catalogKey && placed.has(p.catalogKey))).length;
+    const onRow = kindsOnRow(ms);
+    const lacking = [...placed].filter((kind) => !onRow.has(kind)).length;
+    const covered = Math.min(swapsOf(ms, "PRACTICE", placed).length, lacking);
+    return Math.max(1, fit(ms) - (shared - covered));
+  });
+  return { rows: second.rows, input: second.input, progression: progressionOf(second.input) };
+}
+
+/**
+ * Puts the progression on a plan's DRAFT rows, in place (see the section's
+ * head). Returns each chain row's focus (lineage → the kind the stage trains),
+ * which the allocation weighs first.
+ */
+function syncRowsInPlace(plan: MilestoneDraft[], c: RowProgressionCtx): Map<string, string> {
+  const { rows, progression } = rowProgressionOf(plan, c);
+  const focus = new Map<string, string>();
+  rows.forEach((ms, k) => {
+    const sp = progression.stages[k];
+    if (sp.focus) focus.set(ms.lineageId, sp.focus);
+    if (ms.status !== "DRAFT" || sp.held || sp.carried) return;
+    const wanted: ProgressionItem[] = [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])];
+    const want = new Map<string, ProgressionItem>(wanted.map((x) => [x.kind, x]));
+    const domains = stageNamesOf(ms, c.names);
+    const fill = { track: c.track, domains: domains.length ? domains : undefined, aim: c.fill.aim ?? undefined, exam: c.fill.exam ?? undefined };
+    // Code's rows the progression no longer wants (or a second row of one kind) leave, with their checkpoint measure.
+    const gone = new Set<string>();
+    const seen = new Set<string>();
+    ms.items = ms.items.filter((i) => {
+      if (!liveItem(i) || !isProgressionRow(i)) return true;
+      const key = i.catalogKey as string;
+      if (want.has(key) && !seen.has(key)) {
+        seen.add(key);
+        return true;
+      }
+      gone.add(i.lineageId);
+      return false;
+    });
+    if (gone.size) ms.measures = ms.measures.filter((x) => !(x.kind === "CHECKPOINT" && ((x.itemLineageId != null && gone.has(x.itemLineageId)) || (x.scope.itemLineageIds ?? []).some((id) => gone.has(id)))));
+    // Code's rows it keeps: their notes follow the progression, their labels the stage's names.
+    for (const it of ms.items) {
+      if (!liveItem(it) || !isProgressionRow(it)) continue;
+      const x = want.get(it.catalogKey as string);
+      if (!x) continue;
+      const notes = progressionNotesOf(x);
+      // Gemini's pick of the kind code had placed there: shown as Gemini's choice, left for the user to decide (as a new one is).
+      if (x.picked && !it.notes.includes("GEMINI_PICK") && it.decision === CODE_DECISION) it.decision = "PENDING";
+      it.notes = [...it.notes.filter((n) => n !== "STUDY_ADDED" && n !== "PRODUCTION_ADDED" && n !== "GEMINI_PICK"), ...notes];
+      try {
+        it.label = catalogLabelOf(it.catalogKey as CatalogKey, fill);
+      } catch {
+        // a label that can't be filled keeps its words
+      }
+    }
+    // What it wants that the row lacks, in its priority order, within the caps; never a kind the user removed here, and
+    // never one whose place the user's re-typed row took (swapsOf: each covers the first such kind of its slot).
+    const cap: Readonly<Record<string, number>> = { PRACTICE: PRACTICES_PER_MILESTONE, STEP: STEPS_PER_MILESTONE, CHECKPOINT: CHECKPOINTS_PER_MILESTONE };
+    const wantedKinds = new Set<string>(wanted.map((x) => x.kind));
+    const swapped: Record<string, number> = {
+      PRACTICE: swapsOf(ms, "PRACTICE", wantedKinds).length,
+      STEP: swapsOf(ms, "STEP", wantedKinds).length,
+      CHECKPOINT: swapsOf(ms, "CHECKPOINT", wantedKinds).length,
+    };
+    for (const x of wanted) {
+      if (ms.items.some((i) => i.catalogKey === x.kind)) continue;
+      if ((swapped[x.slot] ?? 0) > 0) {
+        swapped[x.slot] -= 1;
+        continue;
+      }
+      if (ms.items.filter((i) => i.kind === x.slot && liveItem(i)).length >= (cap[x.slot] ?? 0)) continue;
+      const it = catalogItemOf(x.kind, {
+        lineageId: c.makeId ? c.makeId() : `${ms.lineageId.slice(0, 40)}-pg-${x.kind.toLowerCase().slice(0, 18)}`,
+        ord: nextItemOrd(ms),
+        track: c.track,
+        domains,
+        aim: c.fill.aim,
+        exam: c.fill.exam,
+        notes: progressionNotesOf(x),
+      });
+      if (!it) continue;
+      if (x.picked) it.decision = "PENDING";
+      ms.items.push(it);
+    }
+    // F-R4-13's notes: the stage's role has no slot left (the user's own practices fill them).
+    const shape = progressionShapeOf(c.track, { stage: sp.stage, level: sp.level });
+    const live = livePractices(ms);
+    const short = c.practicesAllowed && shape != null && domains.length > 0 && !live.some((p) => practiceRoleOf(p) === shape) && live.length >= PRACTICES_PER_MILESTONE;
+    setNote(ms, "NO_STUDY_SLOT", short && shape === "RETRIEVAL");
+    setNote(ms, "NO_PRODUCTION_SLOT", short && shape === "PRODUCTION");
+  });
+  return focus;
+}
+
+/** A DRAFT row's room for practices: what its weekly practice budget holds at its band floor (practicesThatFitOf); null without dates. */
+function roomOf(state: PlanState, ctx: Ctx): (ms: MilestoneDraft) => number | null {
+  return (ms) => (ms.windowStart && ms.dueDay ? practicesThatFitOf(practiceBudgetOf(ms, state.sim, ctx, maxDay(ms.windowStart, ctx.today)), rowBandFloorOf(ms)) : null);
+}
+
+/** The plan's load as the allocation reads it (a depth plan's at its writing rate), for the room. */
+function roomStateOf(plan: readonly MilestoneDraft[], input: RealismInput): { state: PlanState; ctx: Ctx } {
+  const ctx = contextOf(input);
+  if (isDepthInput(input)) {
+    const model = depthModelOfPlan(plan, input);
+    if (model) {
+      const dating = datingOf(input);
+      return { state: depthStateOf(plan, model, ctx, dateCoreOf(plan, model, ctx, dating.mode, dating.userDate, dating.examDay).rate), ctx };
+    }
+  }
+  return { state: planStateOf(plan, ctx), ctx };
+}
+
+/** The progression's context for a plan: the track, the exam (the intake's Yes; without it, a dated exam or an exam kind on the plan), the fill and the room. */
+function rowProgressionCtxOf(
+  track: CatalogTrack,
+  input: Pick<RealismInput, "practicesAllowed" | "examDay">,
+  intake: Intake | null | undefined,
+  plan: readonly MilestoneDraft[],
+  blocked: ReadonlySet<string>,
+  room: (ms: MilestoneDraft) => number | null,
+  extra: { picks?: unknown; names?: Readonly<Record<string, DomainName>>; makeId?: () => string } = {}
+): RowProgressionCtx {
+  const fills = intake ? aimFillsOf(intake) : null;
+  const exam = fills
+    ? fills.exam != null
+    : input.examDay != null || plan.some((ms) => SCHEDULED.has(ms.status) && ms.items.some((i) => liveItem(i) && i.catalogKey != null && EXAM_ONLY_KINDS.has(i.catalogKey)));
+  return {
+    track,
+    practicesAllowed: input.practicesAllowed,
+    exam,
+    examDay: exam ? (intake?.examDay ?? input.examDay ?? null) : null,
+    family: track === "FIELD" && intake ? practiceFamilyOf(intake) : null,
+    blocked,
+    picks: extra.picks,
+    fill: { aim: fills?.aim ?? null, exam: fills?.exam ?? null },
+    room,
+    names: extra.names,
+    makeId: extra.makeId,
+  };
+}
+
+/** What the plan-level progression reads besides the plan (contracts §19, §20). */
+export interface PlanProgressionOpts {
+  /** The plan's gate (roadmap-catalog allowedKindsFor): its `blocked` kinds are never placed. Absent: activityGateOf(intake). */
+  gate?: Pick<ActivityGate, "blocked"> | null;
+  /** More kinds never placed (the constraint filter's, a caller's own). */
+  excluded?: Iterable<CatalogKey>;
+  /** Gemini's picks (a v4 reply's `picks`, read as unknown: stage key → one kind; one outside the stage's candidates is ignored). Absent: each stage's live GEMINI_PICK practice. */
+  picks?: unknown;
+  /**
+   * planProgressionOf only: each DRAFT stage's room for practices, given (a checker reading a built plan at the room it
+   * was built with) instead of what the stage's budget holds at the plan's load. null: PRACTICES_PER_MILESTONE.
+   */
+  room?: (ms: MilestoneDraft) => number | null;
+}
+
+/** The plan's track as the progression reads it: FIELD on a Field Area, the Area's track otherwise. */
+const planTrackOf = (intake: Pick<Intake, "fieldId" | "track">, input: Pick<RealismInput, "trackArea">): CatalogTrack => (intake.fieldId != null && !input.trackArea ? "FIELD" : intake.track);
+
+/**
+ * The practice progression of a plan as code places it (contracts §20): the
+ * chain of its scheduled stages (plan order), the progression's input over
+ * them (held rows held, accepted and started rows carried with their live
+ * kinds, the exam's stage from its day, Gemini's picks, each DRAFT stage's
+ * room from its budget, or `opts.room`) and roadmap-catalog progressionOf's
+ * result. Pure; the rows are the plan's own. A built or synced plan's DRAFT
+ * rows hold exactly this, so progressionViolationsOf(input, progression)
+ * reads the plan (R2's and R4's checks run it over every plan path).
+ */
+export function planProgressionOf(
+  plan: readonly MilestoneDraft[],
+  intake: Intake,
+  input: RealismInput,
+  opts: PlanProgressionOpts = {}
+): { rows: MilestoneDraft[]; input: ProgressionInput; progression: Progression } {
+  let room = opts.room;
+  if (!room) {
+    const { state, ctx } = roomStateOf(plan, input);
+    room = roomOf(state, ctx);
+  }
+  return rowProgressionOf(plan, rowProgressionCtxOf(planTrackOf(intake, input), input, intake, plan, blockedKindsOf(intake, opts), room, { picks: opts.picks }));
+}
+
+/**
+ * The practice progression put on a plan's DRAFT rows (contracts §20; see
+ * the section's head), pure: R4's re-sync after the gate or the plan changed,
+ * and every plan path through fitPlan. Held rows stay empty; accepted and
+ * started rows are never changed (their kinds are read). `names` maps the
+ * Domains to their names (the rows' DOMAIN labels otherwise). The input is
+ * not mutated.
+ */
+export function syncProgression(
+  plan: readonly MilestoneDraft[],
+  intake: Intake,
+  input: RealismInput,
+  names: Readonly<Record<string, DomainName>>,
+  makeId: () => string,
+  opts: PlanProgressionOpts = {}
+): MilestoneDraft[] {
+  const out = plan.map(cloneMilestone);
+  const { state, ctx } = roomStateOf(out, input);
+  syncRowsInPlace(out, rowProgressionCtxOf(planTrackOf(intake, input), input, intake, out, blockedKindsOf(intake, opts), roomOf(state, ctx), { picks: opts.picks, names, makeId }));
+  return out;
+}
+
+/**
+ * One stage's practices, steps and checkpoint (F-R4-13, contracts §20): the
+ * milestone as syncProgression leaves it within `plan` (the plan it belongs
+ * to, by lineage; alone without one), so its carry and its place in the
+ * chain are the plan's. Only a DRAFT stage changes; the input milestone is
+ * not mutated. `names` maps the stage's Domains to their names; `excluded`
+ * holds the kinds the plan's gate blocks (R4 passes ActivityGate.blocked),
+ * never placed. Without the intake (`opts.intake`) the stage's Field kinds
+ * whose words need the aim or the exam's name are kept where they are, not added.
+ */
+export function syncStagePractices(
+  m: MilestoneDraft,
+  input: RealismInput,
+  names: Readonly<Record<string, DomainName>>,
+  makeId: () => string,
+  excluded: Iterable<CatalogKey> = [],
+  opts: { plan?: readonly MilestoneDraft[]; intake?: Intake | null } = {}
+): MilestoneDraft {
+  const plan = opts.plan && opts.plan.some((x) => x.lineageId === m.lineageId) ? opts.plan.map((x) => (x.lineageId === m.lineageId ? m : x)) : [m];
+  const out = plan.map(cloneMilestone);
+  const { state, ctx } = roomStateOf(out, input);
+  // A track plan's labels need its aim: without the intake it is left as it is.
+  if (!opts.intake && input.trackArea) return cloneMilestone(m);
+  const track: CatalogTrack = opts.intake ? planTrackOf(opts.intake, input) : "FIELD";
+  syncRowsInPlace(out, rowProgressionCtxOf(track, input, opts.intake ?? null, out, new Set<string>(excluded), roomOf(state, ctx), { names, makeId }));
+  return out.find((x) => x.lineageId === m.lineageId) ?? cloneMilestone(m);
 }
 
 /** Practices a plan plans from Fluent on (topRankIndexOfDepth's productionPlannedFromFluent): every unheld stage at level ≥ 10 holds a live production practice. */
@@ -3472,8 +3964,20 @@ function depthWritingPlanOf(plan: readonly MilestoneDraft[], input: RealismInput
     .sort((a, b) => (a.scopeKey < b.scopeKey ? -1 : a.scopeKey > b.scopeKey ? 1 : 0));
 }
 
-/** fitPlan's depth branch (see fitPlan). `sync` false leaves the practices alone (a skeleton whose slots R4 fills next). */
-function fitDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, opts: { makeId?: () => string; sync?: boolean; excluded?: Iterable<CatalogKey> }): MilestoneDraft[] {
+/**
+ * fitPlan's depth branch (see fitPlan). `sync` false leaves the practices,
+ * steps and checkpoints alone (a skeleton: "Write it myself"); otherwise the
+ * practice progression is put on every DRAFT stage (syncRowsInPlace, within
+ * each stage's room at the plan's load) before the allocation. `intake` gives
+ * the exam and the aim's words (without it the exam is read off the plan, and
+ * a kind whose words need the aim or the exam's name is kept, never added);
+ * `picks` are Gemini's (a v4 reply's), over the stages' GEMINI_PICK rows.
+ */
+function fitDepth(
+  plan: readonly MilestoneDraft[],
+  input: RealismInput & { depth: AimDepth },
+  opts: { makeId?: () => string; sync?: boolean; excluded?: Iterable<CatalogKey>; intake?: Intake | null; picks?: unknown }
+): MilestoneDraft[] {
   const ctx = contextOf(input);
   const out = plan.map(cloneMilestone);
   const order = planOrder(out);
@@ -3517,17 +4021,18 @@ function fitDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth
         // a label that can't be filled keeps its words
       }
     }
-    if (opts.sync !== false) syncStageInPlace(ms, input.practicesAllowed, domains, excluded, opts.makeId);
   }
   const model = depthModelOfPlan(out, input);
   const dating = datingOf(input);
   const rate = model ? dateCoreOf(out, model, ctx, dating.mode, dating.userDate, dating.examDay).rate : 0;
   const state = model ? depthStateOf(out, model, ctx, rate) : planStateOf(out, ctx);
+  // The practice progression (contracts §20): the load above reads no practice, so each stage's room is its budget's.
+  const focus = opts.sync !== false ? syncRowsInPlace(out, rowProgressionCtxOf("FIELD", input, opts.intake, out, excluded, roomOf(state, ctx), { picks: opts.picks, makeId: opts.makeId })) : null;
   for (const i of order) {
     const ms = out[i];
     if (!fit(ms)) continue;
     const from = maxDay(ms.windowStart!, ctx.today);
-    allocate(ms, state.sim, ctx, from, floorBandOf(ms));
+    allocate(ms, state.sim, ctx, from, rowBandFloorOf(ms), focus?.get(ms.lineageId) ?? null);
     syncPracticeMeasures(ms, from, ctx);
     setNote(ms, "NOT_MEASURABLE", !ms.measures.some((x) => x.role === "PAYS"));
   }
@@ -3624,7 +4129,7 @@ function depthMilestoneFeasibilityOf(ms: MilestoneDraft, state: PlanState, model
     ctx,
     model.doms.map((d) => ({ key: d.id, lastCardDay: ms.dueDay! }))
   );
-  const time = timeCheckOf(ms, from, rows, state, ctx, floorBandOf(ms));
+  const time = timeCheckOf(ms, from, rows, state, ctx, rowBandFloorOf(ms));
   let worst: KnowledgeVerdict | TimeVerdict = time.verdict;
   for (const k of knowledge) if (SEVERITY[k.verdict] > SEVERITY[worst]) worst = k.verdict;
   const basis: string[] = [];
@@ -3722,10 +4227,11 @@ function realisticDayOf(plan: readonly MilestoneDraft[], input: RealismInput & {
  * never touched. Re-dated rows come back as DRAFT (the new version R4
  * writes), then fitted.
  */
-function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, mode: "PLAN" | "REALISTIC", excluded?: Iterable<CatalogKey>): MilestoneDraft[] {
+function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { depth: AimDepth }, mode: "PLAN" | "REALISTIC", opts: PlaceOpts = {}): MilestoneDraft[] {
   const out = plan.map(cloneMilestone);
   const model = depthModelOfPlan(out, input);
-  if (!model) return fitDepth(out, input, { excluded });
+  const place = { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks };
+  if (!model) return fitDepth(out, input, place);
   const ctx = contextOf(input);
   const dating = mode === "REALISTIC" ? { mode: "REALISTIC" as DateMode, userDate: null, examDay: input.examDay ?? null } : datingOf(input);
   const core = dateCoreOf(out, model, ctx, dating.mode, dating.userDate, dating.examDay);
@@ -3773,7 +4279,7 @@ function redateDepth(plan: readonly MilestoneDraft[], input: RealismInput & { de
   const finalDue = lastIdx != null ? out[lastIdx].dueDay : null;
   const next: RealismInput & { depth: AimDepth } =
     mode === "REALISTIC" ? { ...input, targetDay: finalDue ?? input.targetDay, dateMode: "REALISTIC", userDate: null } : { ...input, targetDay: finalDue && finalDue > input.targetDay ? finalDue : input.targetDay };
-  return fitDepth(out, next, { excluded });
+  return fitDepth(out, next, place);
 }
 
 /** refitForStart's depth branch (see refitForStart). */
@@ -3787,7 +4293,7 @@ function refitForStartDepth(milestone: MilestoneDraft, plan: readonly MilestoneD
   if (!model || ms.dueDay == null) {
     const state = planStateOf(full, ctx);
     if (ms.dueDay != null) {
-      allocate(ms, state.sim, ctx, ctx.today, floorBandOf(ms));
+      allocate(ms, state.sim, ctx, ctx.today, rowBandFloorOf(ms), rowFocusOf(ms));
       syncPracticeMeasures(ms, ctx.today, ctx);
     }
     return { milestone: ms, feasibility: ms.dueDay != null ? milestoneFeasibilityOf(ms, state, ctx, ctx.today, false) : emptyFeasibility(ms), todayCheck: null, impossible: false };
@@ -3797,7 +4303,7 @@ function refitForStartDepth(milestone: MilestoneDraft, plan: readonly MilestoneD
   // "At today's cards": the realistic writing rate, so a slip shows here instead of hiding behind a faster pace the plan would now ask.
   const rate = core.realisticRate;
   const state = depthStateOf(full, model, ctx, rate);
-  allocate(ms, state.sim, ctx, ctx.today, floorBandOf(ms));
+  allocate(ms, state.sim, ctx, ctx.today, rowBandFloorOf(ms), rowFocusOf(ms));
   syncPracticeMeasures(ms, ctx.today, ctx);
   const feasibility = depthMilestoneFeasibilityOf(ms, state, model, ctx, rate, ctx.today);
   // The stage's own date check, on F-R4-11's ladder: FITS by its realistic day; TIGHT by its day at your full pace;
@@ -4060,15 +4566,30 @@ function requiredDomainsOf(intake: Intake, input: RealismInput, names: Readonly<
 /** stageLadderOf's options. */
 export interface StageLadderOpts {
   /**
-   * 'STARTER' (the default, "Build from my numbers"): code's practices, the
-   * final checkpoint and the exam placement, and the outline lines split
-   * across the stages in order. 'NONE': the skeleton only (Domains,
-   * measures, dates, titles): "Write it myself", or a Gemini draft whose
-   * slots R4 fills before fitPlan adds what each stage still needs.
+   * 'STARTER' (the default, "Build from my numbers"; R4's ladder for a
+   * Gemini draft too): the practice progression on every stage (contracts
+   * §20: its practices, steps and checkpoint, each stage within its room),
+   * and the outline lines split across the stages in order. 'NONE': the
+   * skeleton only (Domains, measures, dates, titles): "Write it myself".
    */
   items?: "STARTER" | "NONE";
   /** The outline lines as TOPIC items (default: with STARTER only). */
   lines?: boolean;
+  /**
+   * The outline's lines in learning order, as line indices (a v4 reply's
+   * `order` through roadmap-types outlineOrderOf; contracts §20.5): split
+   * across the kept stages in that order (outlineStagesOf), each line once,
+   * any line left out appended in the user's order. Absent: the user's order.
+   */
+  order?: readonly number[] | null;
+  /**
+   * Gemini's picks (a v4 reply's `picks`, read as unknown: stage key → one
+   * kind among that stage's candidates; contracts §20.5, §20.11). With
+   * STARTER a valid pick is added beside the stage's focus (code's default,
+   * which stays), written GEMINI_PICK and left for the user to decide; absent
+   * or invalid, nothing is added.
+   */
+  picks?: unknown;
   /** Types the constraint filter left out (R3's constraintExclusionsOf): code never places one. */
   excluded?: Iterable<CatalogKey>;
   /**
@@ -4147,14 +4668,11 @@ function depthMilestonesOf(
 ): MilestoneDraft[] {
   const starter = (opts.items ?? "STARTER") === "STARTER";
   const withLines = opts.lines ?? starter;
-  const excluded = new Set<string>(opts.excluded ?? []);
-  const { aim, exam } = aimFillsOf(intake);
-  const examDay = exam ? (intake.examDay ?? model.input.examDay ?? null) : null;
   const nameOf = new Map(domains.map((d) => [d.id, d.name]));
   const kept = rows.filter((r) => !r.held);
   const lines = withLines ? (intake.syllabus?.lines ?? []) : [];
-  const chunks = syllabusChunks(lines.length, Math.max(1, kept.length), Number.POSITIVE_INFINITY);
-  const examAt = examDay ? Math.max(0, kept.findIndex((r) => r.due >= examDay) === -1 ? kept.length - 1 : kept.findIndex((r) => r.due >= examDay)) : -1;
+  // The outline split across the kept stages in its order (Gemini's, a v4 reply's `order`; else the user's), every line once.
+  const chunks = outlineStagesOf(lineOrderOf(opts.order, lines.length), Math.max(1, kept.length));
   const out: MilestoneDraft[] = [];
   let prevDue: DayKey | null = null;
   let k = -1;
@@ -4229,31 +4747,8 @@ function depthMilestonesOf(
         notes: [],
       });
     }
-    if (starter) {
-      const isFinal = row.level === model.L && row.stage !== "PART";
-      const add = (key: CatalogKey, notes: ItemNote[] = []): boolean => {
-        if (excluded.has(key)) return false;
-        const it = catalogItemOf(key, { lineageId: makeId(), ord: ord, track: "FIELD", domains: names, aim, exam, notes });
-        if (!it) return false;
-        ord += 1;
-        ms.items.push(it);
-        return true;
-      };
-      if (model.input.practicesAllowed) {
-        const timed = examDay != null && k <= examAt && add("TIMED_PRACTICE", ["PRODUCTION_ADDED"]);
-        const role = wantsProduction(row.level) ? "PRODUCTION" : "RETRIEVAL";
-        if (!(timed && role === "PRODUCTION")) {
-          const kind = requiredKindOf(role, excluded);
-          if (kind) add(kind, [role === "PRODUCTION" ? "PRODUCTION_ADDED" : "STUDY_ADDED"]);
-        }
-      }
-      if (examDay != null && k === 0) add("BOOK_EXAM");
-      if (examDay != null && k === examAt) add("EXAM_DAY");
-      else if (examDay != null && k === examAt - 1) add("MOCK_TEST");
-      else if (examDay == null && isFinal) {
-        if (!(exam && add("MOCK_TEST"))) add("PERFORMANCE_CHECK");
-      }
-    }
+    // The starter's practices, steps and checkpoint are the practice progression's (contracts §20), put on the rows by
+    // fitDepth once the plan's load sets each stage's room (stageLadderOf: syncRowsInPlace).
     for (const [id, target] of row.targets) {
       const isFinal = row.level === model.L && row.stage !== "PART";
       const cov = model.doms.find((d) => d.id === id);
@@ -4276,6 +4771,25 @@ function depthMilestonesOf(
     }
     out.push(ms);
   });
+  return out;
+}
+
+/**
+ * The outline's lines in learning order (StageLadderOpts.order), read as
+ * unknown: each valid line index once, in the order given, then every line it
+ * left out in the user's order, so no line is ever lost (roadmap-types
+ * outlineOrderOf's rule over indices). Absent or not an array: the user's order.
+ */
+function lineOrderOf(order: unknown, lines: number): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  if (Array.isArray(order))
+    for (const v of order) {
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v >= lines || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+  for (let i = 0; i < lines; i++) if (!seen.has(i)) out.push(i);
   return out;
 }
 
@@ -4330,6 +4844,13 @@ function slotMapOf(plan: readonly MilestoneDraft[], L: number): Partial<Record<S
  * the final stage's measures are the depth terms (`rc`); titles are code's.
  * A track Area gets its practice stages (STAGE_1..STAGE_5 at
  * TRACK_STAGE_SHARES of the time to its date, the same merge rule).
+ *
+ * The practice progression (contracts §20; items STARTER): every stage's
+ * practices, steps and checkpoint are roadmap-catalog progressionOf's, each
+ * stage within the room its weekly practice budget holds at the plan's load
+ * (practicesThatFitOf), through the gate; Gemini's valid picks (opts.picks)
+ * are added beside their stages' focus (GEMINI_PICK, left to the user to
+ * decide), and the outline is split in Gemini's order (opts.order).
  */
 export function stageLadderOf(intake: Intake, input: RealismInput, names: Readonly<Record<string, DomainName>>, makeId: () => string, opts0: StageLadderOpts = {}): StageLadderResult {
   // The one gate (contracts §19): the gate's blocked kinds join `excluded`, so no stage, checkpoint or re-sync below places one.
@@ -4365,7 +4886,8 @@ export function stageLadderOf(intake: Intake, input: RealismInput, names: Readon
     if (!rows.ok) return rows;
     const ms = depthMilestonesOf(rows.rows, model, intake, domains, lineDomains, makeId, opts);
     const next: RealismInput & { depth: AimDepth } = { ...dinput, targetDay: finalDue, dateMode: mode, userDate };
-    return { ok: true, plan: fitDepth(ms, next, { makeId, sync: (opts.items ?? "STARTER") === "STARTER", excluded: opts.excluded }) };
+    // "Build from my numbers" puts the practice progression on every stage (contracts §20); a skeleton (NONE) stays empty.
+    return { ok: true, plan: fitDepth(ms, next, { makeId, sync: (opts.items ?? "STARTER") === "STARTER", excluded: opts.excluded, intake, picks: opts.picks }) };
   };
 
   const built = build(dateCoreOf(null, model, ctx, mode, userDate, examDay));
@@ -4413,40 +4935,20 @@ export function blockedKindsOf(intake: Intake | null, opts: { gate?: Pick<Activi
 /** A gate already folded into `excluded` (stageLadderOf's inner calls): nothing more to block, nothing to work out again. */
 const GATE_APPLIED: Pick<ActivityGate, "blocked"> = { blocked: [] };
 
-/** The starter's practice types on a track stage at place p (1-based), before the gate: one type, a second from the third stage on. */
-function trackKindsOf(track: Track, place: number): CatalogKey[] {
-  const later = place >= 3;
-  switch (track) {
-    case "BODY":
-      return later ? ["EASY_SESSION", "LONGER_SESSION"] : ["EASY_SESSION"];
-    case "CARE":
-      return later ? ["SET_TIME", "CHECK_IN"] : ["SET_TIME"];
-    case "DUTY":
-      return later ? ["ADMIN_SESSION", "PLAN_AHEAD"] : ["ADMIN_SESSION"];
-    default:
-      return later ? ["SLOW_DRILLS", "RUN_THROUGHS"] : ["SLOW_DRILLS"];
-  }
-}
-
 /**
- * The starter's practice types on a track stage at place p (1-based) through
- * the gate (contracts §19): trackKindsOf's, each blocked one replaced by the
- * first of the track's safe kinds (roadmap-catalog CUE_SAFE_KINDS on the
- * track: easy, mobility and technique on BODY; planning the week and keeping
- * a log on CARE; the technique session on CRAFT) that is neither blocked nor
- * already placed, or left out when none is. A BODY plan whose card waits
- * gets Easy, then Mobility, as F-R4-17's starter did; once the user's answer
- * releases Longer session, Easy and Longer. A waiting CARE plan gets planning
- * the week, then keeping a log, so it is never empty (decision 2).
+ * The practice types the progression places on a track stage at place p
+ * (1-based) of a full five-stage track plan with no exam, through `blocked`
+ * (contracts §19, §20): roadmap-catalog progressionOf's practices for that
+ * stage (its focus, the carry or the opening partner, the track's spaced
+ * review), a blocked kind giving way to the track's safe kinds (BODY's easy,
+ * mobility and technique sessions; CARE's planning the week and keeping a
+ * log; CRAFT's technique session). A BODY plan whose card waits gets only
+ * safe sessions; a waiting CARE plan gets planning the week and keeping a
+ * log, so it is never empty (decision 2).
  */
 export function trackStarterKindsOf(track: Track, place: number, blocked: ReadonlySet<string>): CatalogKey[] {
-  const safe = CUE_SAFE_KINDS.filter((k) => catalogEntryOf(k)?.tracks.includes(track) === true);
-  const out: CatalogKey[] = [];
-  for (const key of trackKindsOf(track, place)) {
-    const pick = !blocked.has(key) ? key : (safe.find((k) => !blocked.has(k) && !out.includes(k)) ?? null);
-    if (pick && !out.includes(pick)) out.push(pick);
-  }
-  return out;
+  const p = progressionOf({ track, stages: TRACK_STAGE_KEYS.map((stage) => ({ stage })), practicesAllowed: true, exam: false, excluded: [...blocked] as CatalogKey[] });
+  return (p.stages[place - 1]?.practices ?? []).map((x) => x.kind);
 }
 
 /**
@@ -4455,12 +4957,14 @@ export function trackStarterKindsOf(track: Track, place: number, blocked: Readon
  * accrues on open days, so a stage is due once its share of the open days
  * has passed; choice: typicalHours, where given, is the date check's, not
  * the stages'), each due on the Sunday on or after (the last on the date),
- * with the same merge rule. Titles "{aim} · stage {k} of {n}" (k the place
- * among the kept stages). The starter's practices are catalog types for the
- * track through the gate (trackStarterKindsOf: on BODY and CARE, and on CRAFT
- * while the user's words carry a cue, only the safe kinds until the user
- * answers the activity card), and the last stage's checkpoint a performance
- * check when the gate places it (blockedKindsOf).
+ * with the same merge rule; the kept rows then stand at their stages by
+ * position (trackStagePlacesOf: a short plan keeps its base and its top,
+ * never the later key a merge kept). Titles "{aim} · stage {k} of {n}" (k
+ * the place among the kept stages). The starter's practices, steps and checkpoint are
+ * the practice progression's (contracts §20: progressionOf over the kept
+ * stages, each within the room its weekly practice budget holds, through the
+ * gate: on BODY and CARE, and on CRAFT while the user's words carry a cue,
+ * only the safe kinds until the user answers the activity card).
  */
 function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string, opts: StageLadderOpts): StageLadderResult {
   const today = input.today;
@@ -4482,11 +4986,14 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
   type TrackRow = { k: number; due: DayKey };
   let kept: TrackRow[] = TRACK_STAGE_SHARES.map((s, i) => ({ k: i + 1, due: i === TRACK_STAGE_SHARES.length - 1 ? target : minDay(sundayOnOrAfter(shareDay(s)), target) }));
   kept = mergeShortWindows(kept, today, (r) => r.due, (r) => r.k === TRACK_STAGE_SHARES.length);
+  // The kept rows' stages by position (a short plan never skips the base): the first is STAGE_1 (STAGE_2 from a working or
+  // strong start), the last STAGE_5, the ones between spread evenly; a full plan keeps STAGE_1..STAGE_5.
+  const places = trackStagePlacesOf(kept.length, intake.startPoint ?? input.startPoint);
+  kept = kept.map((row, i) => ({ ...row, k: places[i] }));
   const starter = (opts.items ?? "STARTER") === "STARTER";
   // The one gate (contracts §19): what the caller's gate (or the intake's own) and `excluded` leave out is never placed.
   const blocked = blockedKindsOf(intake, opts);
   const { aim } = aimFillsOf(intake);
-  const ctrack: CatalogTrack = intake.track;
   const n = kept.length;
   const plan = kept.map((row, i) => {
     let title = "";
@@ -4498,78 +5005,119 @@ function trackLadderOf(intake: Intake, input: RealismInput, makeId: () => string
     const ms = blankMilestone(makeId(), i + 1, { start: i === 0 ? today : addDays(kept[i - 1].due, 1), end: row.due }, title, title ? CODE : "USER", title ? CODE_DECISION : "PENDING");
     ms.stage = TRACK_STAGE_KEYS[row.k - 1];
     if (intake.track === "BODY") ms.notes.push("HEALTH_LINE");
-    if (starter) {
-      let ord = 0;
-      for (const key of trackStarterKindsOf(intake.track, i + 1, blocked)) {
-        const it = catalogItemOf(key, { lineageId: makeId(), ord, track: ctrack, domains: [], aim, exam: null });
-        if (it) {
-          ms.items.push(it);
-          ord += 1;
-        }
-      }
-      if (i === n - 1 && !blocked.has("PERFORMANCE_CHECK")) {
-        const cp = catalogItemOf("PERFORMANCE_CHECK", { lineageId: makeId(), ord, track: ctrack, domains: [], aim, exam: null });
-        if (cp) ms.items.push(cp);
-      }
-    }
     return ms;
   });
-  const fitted = fitWith(plan, { ...input, targetDay: target, trackArea: true }, { makeId });
+  const fitInput: RealismInput = { ...input, targetDay: target, trackArea: true };
+  // Each stage key → the row that holds it (its own row, else, merged, the next kept one; past the last kept, the last).
+  const holderOf = (k: number): number => {
+    const at = kept.findIndex((r) => r.k >= k);
+    return at >= 0 ? at : kept.length - 1;
+  };
+  let focus = new Map<string, string>();
+  if (starter) {
+    // The practice progression (contracts §20), each stage within the room its weekly practice budget holds; a pick
+    // Gemini made for a merged stage key reaches the row that holds it (when it is one of that row's candidates).
+    const { state, ctx } = roomStateOf(plan, fitInput);
+    const picks = mergedPicksOf(opts.picks, intake.track, kept.map((r) => r.k), holderOf, { exam: aimFillsOf(intake).exam != null, practicesAllowed: fitInput.practicesAllowed, blocked });
+    focus = syncRowsInPlace(plan, rowProgressionCtxOf(intake.track, fitInput, intake, plan, blocked, roomOf(state, ctx), { picks, makeId }));
+  }
+  const fitted = fitWith(plan, fitInput, { makeId, focus });
   const stageDays: Record<number, DayKey | null> = {};
   for (const row of kept) stageDays[row.k] = row.due;
   const slotTo: Partial<Record<StageKey, string>> = {};
-  for (let k = 1; k <= TRACK_STAGE_KEYS.length; k++) {
-    const at = kept.findIndex((r) => r.k >= k);
-    if (at >= 0) slotTo[TRACK_STAGE_KEYS[k - 1]] = fitted[at].lineageId;
-  }
+  for (let k = 1; k <= TRACK_STAGE_KEYS.length; k++) if (kept.length > 0) slotTo[TRACK_STAGE_KEYS[k - 1]] = fitted[holderOf(k)].lineageId;
   return { ok: true, plan: fitted, stageDays, dateCheck: null, coverage: [], slotTo, rate: null, endState: [] };
 }
 
 /**
- * A track plan's starter practices after the user's answer (confirm to
- * unlock, contracts §19; R4's setActivityVerdictsCore and re-plan), pure: on
- * every DRAFT stage (its place among the plan's scheduled, unheld stages by
- * ord, carried ones counted), each kind trackStarterKindsOf places there
- * under the new gate but did not under the blocked kinds the stage was built
- * with (`since`) is added when the stage lacks it (origin CODE, worked out):
- * a kind the user's answer just released, or the safe kind that takes the place
- * of one they just said to avoid. Never one the user removed there (a REMOVED
- * row of that kind), never past PRACTICES_PER_MILESTONE. The last stage gets
- * the performance check when the gate places it now but did not then, and it
- * holds no live checkpoint. Without `since`, every starter kind the stage
- * lacks is added. Nothing is taken out here (R4 removes the blocked kinds
- * first); a Field plan, or any other row, comes back as it was. The input is
- * not mutated.
+ * The track stages (1..5) a track plan's n kept rows stand at, by position
+ * (a short plan merged to fewer rows keeps its base and its top): the first
+ * row is STAGE_1, or STAGE_2 from a WORKING or STRONG start point (one rung
+ * of base at most is skipped); the last is STAGE_5; the rows between spread
+ * evenly. A full plan (five rows) is STAGE_1..STAGE_5 whatever the start
+ * point; one row is the first stage (the base, which then also closes).
+ */
+export function trackStagePlacesOf(n: number, startPoint: StartPoint | null | undefined): number[] {
+  const top = TRACK_STAGE_KEYS.length;
+  if (!Number.isInteger(n) || n <= 0) return [];
+  const ahead = startPoint === "WORKING" || startPoint === "STRONG" ? 1 : 0;
+  const from = 1 + Math.max(0, Math.min(ahead, top - n));
+  if (n === 1) return [from];
+  return Array.from({ length: n }, (_, i) => Math.min(top, Math.round(from + (i * (top - from)) / (n - 1))));
+}
+
+/**
+ * Gemini's picks for a merged track plan (contracts §20.5): each kept row's
+ * own key's pick, else a pick made for a stage key the row holds (merged
+ * into it), nearest first, when it is one of the row's own candidates on
+ * this run (through the gate); every other key is left out. Read as unknown,
+ * exact own keys only.
+ */
+function mergedPicksOf(
+  given: unknown,
+  track: CatalogTrack,
+  places: readonly number[],
+  holderOf: (k: number) => number,
+  run: { exam: boolean; practicesAllowed: boolean; blocked: ReadonlySet<string> }
+): Record<string, string> {
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  if (!given || typeof given !== "object" || Array.isArray(given)) return out;
+  const pickAt = (key: string): string | null => {
+    if (!Object.prototype.hasOwnProperty.call(given, key)) return null;
+    const v = (given as Record<string, unknown>)[key];
+    return typeof v === "string" ? v : null;
+  };
+  places.forEach((k, i) => {
+    const own = TRACK_STAGE_KEYS[k - 1];
+    const cands = progressionCandidatesOf(track, { stage: own }, { exam: run.exam, practicesAllowed: run.practicesAllowed, excluded: [...run.blocked] as CatalogKey[] }) as readonly string[];
+    const held = TRACK_STAGE_KEYS.map((_, j) => j + 1)
+      .filter((j) => j !== k && holderOf(j) === i)
+      .sort((a, b) => Math.abs(a - k) - Math.abs(b - k) || b - a);
+    for (const j of [k, ...held]) {
+      const v = pickAt(TRACK_STAGE_KEYS[j - 1]);
+      if (v != null && cands.includes(v)) {
+        out[own] = v;
+        break;
+      }
+    }
+  });
+  return out;
+}
+
+/**
+ * A track plan's practices, steps and checkpoint after its gate changed (the
+ * user's answer, a re-plan; R4's setActivityVerdictsCore and re-plan), pure:
+ * the practice progression put on every DRAFT stage (contracts §20; see "The
+ * practice progression on a plan's rows"), its chain the plan's scheduled
+ * stages with the accepted and started ones carried. A kind the answer
+ * released is placed where the progression places it, a safe kind standing
+ * in for one now released leaves when code placed it, and the activity
+ * itself (the full attempt, the performance check) comes in on the last
+ * stage once the gate places it. Never a kind the user removed there (a
+ * REMOVED row), never past the caps; the user's own rows always stay. With
+ * `input` each stage's room is its weekly practice budget's; without it, up
+ * to PRACTICES_PER_MILESTONE. `since` (the blocked kinds the rows were built
+ * with) is accepted and no longer read: the progression is a function of the
+ * plan and the gate, and a REMOVED row keeps the user's no. A Field plan
+ * comes back as it was. The input is not mutated.
  */
 export function syncTrackStarter(
   plan: readonly MilestoneDraft[],
   intake: Intake,
   makeId: () => string,
-  opts: Pick<StageLadderOpts, "gate" | "excluded"> & { since?: Iterable<CatalogKey> } = {}
+  opts: Pick<StageLadderOpts, "gate" | "excluded" | "picks"> & { since?: Iterable<CatalogKey>; input?: RealismInput } = {}
 ): MilestoneDraft[] {
   const out = plan.map(cloneMilestone);
   if (intake.fieldId != null) return out;
   const blocked = blockedKindsOf(intake, opts);
-  const before = opts.since ? new Set<string>(opts.since) : null;
-  const { aim } = aimFillsOf(intake);
-  const ctrack: CatalogTrack = intake.track;
-  const rows = out.filter((ms) => SCHEDULED.has(ms.status) && !isHeldRow(ms)).sort((a, b) => a.ord - b.ord);
-  rows.forEach((ms, i) => {
-    if (ms.status !== "DRAFT") return;
-    const has = (key: CatalogKey, live: boolean) => ms.items.some((it) => it.catalogKey === key && liveItem(it) === live);
-    const was = before ? trackStarterKindsOf(intake.track, i + 1, before) : [];
-    for (const key of trackStarterKindsOf(intake.track, i + 1, blocked)) {
-      if (was.includes(key) || has(key, true) || has(key, false) || livePractices(ms).length >= PRACTICES_PER_MILESTONE) continue;
-      const it = catalogItemOf(key, { lineageId: makeId(), ord: nextItemOrd(ms), track: ctrack, domains: [], aim, exam: null });
-      if (it) ms.items.push(it);
-    }
-    const last = i === rows.length - 1;
-    const checkNow = !blocked.has("PERFORMANCE_CHECK") && (!before || before.has("PERFORMANCE_CHECK"));
-    if (last && checkNow && !has("PERFORMANCE_CHECK", false) && !ms.items.some((it) => it.kind === "CHECKPOINT" && liveItem(it))) {
-      const cp = catalogItemOf("PERFORMANCE_CHECK", { lineageId: makeId(), ord: nextItemOrd(ms), track: ctrack, domains: [], aim, exam: null });
-      if (cp) ms.items.push(cp);
-    }
-  });
+  let room: (ms: MilestoneDraft) => number | null = () => null;
+  const input = opts.input ? { ...opts.input, trackArea: true } : null;
+  if (input) {
+    const { state, ctx } = roomStateOf(out, input);
+    room = roomOf(state, ctx);
+  }
+  const facts = input ?? { practicesAllowed: intake.practicesAllowed, examDay: intake.examDay ?? null };
+  syncRowsInPlace(out, rowProgressionCtxOf(intake.track, facts, intake, out, blocked, room, { picks: opts.picks, makeId }));
   return out;
 }
 
@@ -4742,7 +5290,7 @@ export function lowerDepthPlanOf(plan: readonly MilestoneDraft[], input: Realism
     setNote(ms, "DEPTH_LOWERED", true);
     dropped.push(ms.lineageId);
   }
-  return { ok: true, plan: fitDepth(out, lowered, { excluded: opts.excluded }), dropped };
+  return { ok: true, plan: fitDepth(out, lowered, { excluded: placeBlockedOf(opts), intake: opts.intake, picks: opts.picks }), dropped };
 }
 
 /**

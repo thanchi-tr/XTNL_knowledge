@@ -21,6 +21,9 @@
  *   ACTIVITY_QUESTION · activityLeadLine · activityPendingLine · activityRowLine · activitySummaryLines ·
  *   activityStaleLine · activitySaveLine · activitySuggestedLine · activityPausedLine · aimConflictLine
  *   (confirm to unlock, contracts §19)
+ *   geminiV4LeadLine · GEMINI_V4_LEAD_LINE · arrangementV4Line · ARRANGEMENT_V4_LINE · geminiArrangesLine ·
+ *   GEMINI_NOTHING_TO_ASK_LINE · GEMINI_CHOICE_WORDS · geminiChoiceLine · STAGE_WHY_WORD · StageEnd ·
+ *   STAGE_END_WORD · stageWhyPartsOf · stageWhyLine (the practice progression, contracts §20)
  *   + the formatting, flag, rank, Proficiency, pace and pay lines below.
  */
 import { LIFE_TZ, addDays, dayKeyOf, daysBetween, type DayKey } from "@/lib/life-day";
@@ -75,6 +78,7 @@ import {
   type NextRank,
   type PackSection,
   type PaceResult,
+  type PracticeFamily,
   type PracticeMethod,
   type PracticePace,
   type ProficiencyChange,
@@ -87,7 +91,7 @@ import {
   type WeekQuestKind,
   type WeekQuestUnit,
 } from "@/lib/roadmap-types";
-import { ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, CATALOG, catalogHowOf, type CatalogKey } from "@/lib/roadmap-catalog";
+import { ACTIVITY_CARD_NAME, ACTIVITY_NOTHING_TO_AVOID, CATALOG, catalogHowOf, type CatalogKey, type CatalogTrack } from "@/lib/roadmap-catalog";
 import { AIM_LATER_DAYS } from "@/lib/roadmap-invite";
 
 // ═══ The contract's copy ═════════════════════════════════════════════════════
@@ -1092,6 +1096,28 @@ export const WHEN_REALISTIC = "When realistic";
 export const EXAM_WAYPOINT_HINT = "Your exam date is a waypoint: the depth goes on past it.";
 export const NEW_CARDS_REQUIRED_HINT = "The app needs a pace to date your milestones. Your rate, not yet measured.";
 export const EXAM_QUESTION = "Is there an exam or qualification at the end?";
+/**
+ * The practice family question (contracts §20.11; a Field Area with practices
+ * on): which kind of skill the aim trains, so code's progression trains it.
+ * The user's answer (Intake.practiceFamily), prefilled by code's reading of
+ * the aim (practiceFamilyPrefillOf). Each answer's line says, in code's
+ * words, what the practices go from and to (the family's table).
+ */
+export const FAMILY_QUESTION = "What kind of skill is it?";
+export const FAMILY_WORD: Readonly<Record<PracticeFamily, string>> = {
+  KNOW: "Knowledge",
+  LANGUAGE: "A language",
+  PERFORM: "Doing or playing",
+  BUILD: "Making things",
+};
+export const FAMILY_HINT: Readonly<Record<PracticeFamily, string>> = {
+  KNOW: "The practices go from study and recall to problems and explaining it in your own words.",
+  LANGUAGE: "The practices go from listening and repeating to saying it aloud, writing and practising with a partner.",
+  PERFORM: "The practices go from slow, focused drills to full run-throughs and practising with a teacher or partner.",
+  BUILD: "The practices go from study and recall to problems and building things.",
+};
+/** Under the family answer while the user hasn't touched it (the exam question's own words). */
+export const FAMILY_PREFILL_HINT = "Prefilled from your aim; yours to change.";
 export const EXAM_NAME_LABEL = "The exam or qualification";
 export const EXAM_DATE_LABEL = "When is it? (optional)";
 export const OUTLINE_EXAM_LABEL = "Official syllabus: paste the topic list from the official source";
@@ -1129,13 +1155,36 @@ export function paceShareHint(i: Intensity): string {
   return `${INTENSITY_WORD[i]} counts on ${Math.round(INTENSITY[i] * 100)}% of your usual pace, so a lean week doesn't break the plan.`;
 }
 
-/** "Draft with Gemini" says what it will arrange (F-R4-24; only while ROADMAP_GEMINI_LIVE and a key). */
-export function geminiArrangesLine(lines: number, domains: number): string {
-  const what: string[] = [];
-  if (lines > 0) what.push(`arrange your ${plural(lines, "outline line")}`);
-  what.push(domains > 0 ? `pick practice types for your ${plural(domains, "Domain")}` : "pick practice types from the app's list");
-  return `Gemini will ${what.join(" and ")}; the app writes every word.`;
+/** "a", "a and b", "a, b, and c": a list of clauses in the copy's own voice. */
+function clauses(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
+
+/**
+ * "Draft with Gemini" says what it will do (F-R4-24; contracts §20: its v4
+ * part, only while ROADMAP_GEMINI_LIVE and a key), naming only what the run
+ * will ask (roadmap-ui-model geminiAsksOf): put the outline in order (an
+ * outline), suggest Domains (a Field Area with a Domain not in the plan),
+ * and choose at most one practice per stage from the app's options
+ * (practices on); the app builds the rest. Nothing to ask: null (the form
+ * offers only "Build from my numbers", with GEMINI_NOTHING_TO_ASK_LINE).
+ */
+export function geminiArrangesLine(asks: { lines: number; needs: boolean; picks: boolean } | null): string | null {
+  if (!asks) return null;
+  const what = [
+    ...(asks.lines > 0 ? [`put your ${plural(asks.lines, "outline line")} in order`] : []),
+    ...(asks.needs ? ["suggest which of your other Domains the aim may need"] : []),
+    ...(asks.picks ? ["choose at most one practice per stage from the app's options"] : []),
+  ];
+  if (what.length === 0) return null;
+  return `Gemini will ${clauses(what)}; the app builds the rest and writes every word.`;
+}
+
+/** The form with nothing for Gemini to decide (geminiAsksOf null): why only "Build from my numbers" is offered. */
+export const GEMINI_NOTHING_TO_ASK_LINE =
+  "Practices are off, there is no outline, and all of the Area's Domains are in the plan, so there is nothing for Gemini to choose: the app builds it from your numbers. Turn practices on or add an outline to draft with Gemini.";
 
 /** One coverage row (F-R4-9): "Probability · 34 cards: the most of the 25-card floor, 80% of your 42 (34), and 3 × 8 outline lines (24)". */
 export function coverageRowLine(c: Pick<CoverageBreakdown, "name" | "n" | "floor" | "share" | "outline" | "live" | "linesTied" | "linesShared" | "typed" | "policy">): string {
@@ -1300,10 +1349,63 @@ export const REDATE_NOTE = "Re-dating moves only the stages you haven't started.
 
 // ─── Keys-only drafts (F-R4-17 to F-R4-21) ───
 
-/** The v3 draft header (replaces GEMINI_LEAD_LINE for a keys-only Gemini draft). */
+/** What a v4 reply decided (roadmap-ui-model GeminiV4Parts; structural, so lib-free callers can pass it). */
+export interface GeminiV4PartsWords {
+  needs: boolean;
+  order: "MOVED" | "KEPT" | null;
+  picks: number;
+  picked: boolean;
+  field: boolean;
+}
+
+/**
+ * The v4 draft header (contracts §20; a keys-only Gemini draft from
+ * PROGRESSION_PROMPT_VERSION on), naming only the parts the run asked and
+ * the reply used (roadmap-ui-model geminiV4PartsOf): the Domains it
+ * suggested, the outline's order (moved, or yours kept), the practices
+ * still marked as its choice; then the app's part (every practice, step and
+ * checkpoint, each stage building on the one before; "chose every practice"
+ * when Gemini picked none), and where the names come from (the aim, plus the
+ * outline and Domains on a Field Area).
+ */
+export function geminiV4LeadLine(p: GeminiV4PartsWords): string {
+  const did = [
+    ...(p.needs ? ["suggested which of your other Domains the aim may need"] : []),
+    ...(p.order === "MOVED" ? ["put your outline lines in order"] : p.order === "KEPT" ? ["kept your outline lines in your order"] : []),
+    ...(p.picks > 0
+      ? [`chose ${p.picks === 1 ? "the practice" : "each practice"} marked as Gemini's choice, among the app's options`]
+      : p.picked
+        ? ["chose practices among the app's options that you have since changed"]
+        : []),
+  ];
+  const gemini = did.length > 0 ? `Gemini ${clauses(did)}.` : "Gemini's reply left every choice to the app.";
+  const app = p.picked
+    ? "The app placed every practice, step and checkpoint, each stage building on the one before."
+    : "The app chose every practice and placed every step and checkpoint, each stage building on the one before.";
+  const from = !p.field ? "your aim" : p.order != null ? "your aim, outline and Domains" : "your aim and Domains";
+  return `${gemini} ${app} Gemini wrote none of the words: every name here is the app's or comes from ${from}, and every number is worked out by the app.`;
+}
+/** The v4 header with every part used: Domains suggested, the outline moved, practices picked (a Field Area). */
+export const GEMINI_V4_LEAD_LINE = geminiV4LeadLine({ needs: true, order: "MOVED", picks: 2, picked: true, field: true });
+/** A keys-only draft from before the progression (promptVersion 3): that reply chose every type itself, from the app's whole list. */
 export const GEMINI_V3_LEAD_LINE =
-  "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.";
-/** The arrangement line, on a Gemini run only. */
+  "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and chose the practice, step and checkpoint types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.";
+/**
+ * The arrangement line on a v4 Gemini run (contracts §20), naming only what
+ * Gemini arranged that still stands: the outline's order when it moved your
+ * lines, and the practices still marked as its choice. null when neither (the
+ * order is yours, every practice the app's or yours): no arrangement line.
+ */
+export function arrangementV4Line(p: Pick<GeminiV4PartsWords, "order" | "picks">): string | null {
+  const moved = p.order === "MOVED";
+  if (moved && p.picks > 0) return "The order of your outline lines is Gemini's suggestion, and so is each practice marked as Gemini's choice. Move a line or change a practice if it doesn't fit.";
+  if (moved) return "The order of your outline lines is Gemini's suggestion. Move a line if it doesn't fit.";
+  if (p.picks > 0) return `${p.picks === 1 ? "The practice" : "Each practice"} marked as Gemini's choice is its suggestion; the app's default is named under it. Change it if it doesn't fit.`;
+  return null;
+}
+/** The v4 arrangement line with both parts (the outline moved, practices picked). */
+export const ARRANGEMENT_V4_LINE = arrangementV4Line({ order: "MOVED", picks: 2 }) as string;
+/** The arrangement line, on a v3 Gemini run only. */
 export const ARRANGEMENT_LINE = "Which outline lines and practice types sit in which milestone is Gemini's suggestion. Move a line or change a practice if it doesn't fit.";
 /** A REJECTED reply's banner (F-R4-20). */
 export const RUN_REJECTED_LINE = "Gemini's reply didn't keep to the app's format, so none of it is used. Here is a plan from your numbers; every check still runs.";
@@ -1381,12 +1483,85 @@ export const KIND_NAME: Readonly<Record<CatalogKey, string>> = {
 /** A type's "How" lines (F-R4-18): the catalog's plain procedure (roadmap-catalog catalogHowOf); METHOD_HOW stays the fallback. */
 export const KIND_HOW: Readonly<Record<CatalogKey, readonly string[]>> = Object.fromEntries(CATALOG.map((e) => [e.key, catalogHowOf(e.key)])) as Record<CatalogKey, readonly string[]>;
 
-/** Who chose a code-worded type, beside its How (F-R4-18): Gemini's pick from the app's list, the app, or you. */
-export function catalogProvenanceWords(slot: "PRACTICE" | "STEP" | "CHECKPOINT", by: "GEMINI" | "APP" | "YOU"): string {
+/**
+ * Who chose a code-worded type, beside its How (F-R4-18): Gemini's pick from
+ * the app's list, the app, or you. A v4 pick (`choice`, roadmap-ui-model
+ * geminiChoiceOf: one of its stage's options) reads GEMINI_CHOICE_WORDS.
+ */
+export function catalogProvenanceWords(slot: "PRACTICE" | "STEP" | "CHECKPOINT", by: "GEMINI" | "APP" | "YOU", choice = false): string {
   const what = slot === "PRACTICE" ? "practice type" : slot === "STEP" ? "step type" : "checkpoint type";
-  if (by === "GEMINI") return `${what} picked by Gemini from the app's list`;
+  if (by === "GEMINI") return choice ? GEMINI_CHOICE_WORDS : `${what} picked by Gemini from the app's list`;
   if (by === "APP") return "added by the app";
   return "you chose this";
+}
+
+// ─── The practice progression, as the plan shows it (contracts §20) ───
+
+/** Gemini's pick on a v4 plan: its choice among the stage's options (the chip on the row). */
+export const GEMINI_CHOICE_WORDS = "Gemini's choice among the app's options";
+
+/**
+ * The line under Gemini's choice: how many options the stage offered and the
+ * app's default. "4 options for this stage; the app's default is Problem
+ * sets." / "… this is the app's default too." / "The app's only option for
+ * this stage."
+ */
+export function geminiChoiceLine(c: { options: readonly CatalogKey[]; isDefault: boolean }): string {
+  const n = c.options.length;
+  if (n <= 1) return "The app's only option for this stage.";
+  if (c.isDefault) return `${n} options for this stage; this is the app's default too.`;
+  return `${n} options for this stage; the app's default is ${KIND_NAME[c.options[0]] ?? c.options[0]}.`;
+}
+
+/**
+ * What a stage's practice is for, by how demanding its focus is on the track
+ * (roadmap-catalog PROGRESSION's rungs: 1 taking in, 2 retrieving and
+ * drilling the parts, 3 producing, 4 putting it together). Code's words only.
+ * A routine (CARE, DUTY) holds rather than climbs; timed practice is never a
+ * focus, so no line names its rung.
+ */
+export const STAGE_WHY_WORD: Readonly<Record<CatalogTrack, Readonly<Partial<Record<1 | 2 | 3 | 4, string>>>>> = {
+  FIELD: { 1: "Take it in first", 2: "Recall first", 3: "Put it to use", 4: "Put it together" },
+  BODY: { 1: "Build the base", 2: "Work on technique", 3: "Build up", 4: "Push harder" },
+  CRAFT: { 1: "Technique first", 2: "Drill the hard parts slowly", 3: "Put it together" },
+  CARE: { 1: "Plan it first", 2: "Make it a routine" },
+  DUTY: { 1: "Plan it first", 2: "Make it a routine" },
+};
+/** A Field plan's slow drills drill the parts rather than recall them. */
+const FIELD_SLOW_DRILLS_WHY = "Drill the parts first";
+
+/** What closes a stage, when it is one of the plan's ends (roadmap-ui-model stageWhysOf reads it from the stage's rows). */
+export type StageEnd = "EXAM_DAY" | "MOCK_TEST" | "FULL_ATTEMPT" | "PERFORMANCE_CHECK";
+
+/** What closes a stage, as the end of its why line. */
+export const STAGE_END_WORD: Readonly<Record<StageEnd, string>> = {
+  EXAM_DAY: "your exam in this stage",
+  MOCK_TEST: "mock test at the end",
+  FULL_ATTEMPT: "full attempt at the end",
+  PERFORMANCE_CHECK: "performance check at the end",
+};
+
+/**
+ * A stage's "why this stage" line, in parts (the first is shown bold):
+ * what its focus is for, what it builds on from the stage before, and what
+ * closes it. "Put it to use" · "builds on Recall drills from milestone 2" ·
+ * "full attempt at the end". [] when there is nothing to say (no practice,
+ * no end).
+ */
+export function stageWhyPartsOf(w: { focus: CatalogKey | null; rung: number | null; carry: { kind: CatalogKey; ord: number; same: boolean } | null; end: StageEnd | null }, track: CatalogTrack): string[] {
+  const parts: string[] = [];
+  const word = w.focus === "SLOW_DRILLS" && track === "FIELD" ? FIELD_SLOW_DRILLS_WHY : w.rung != null ? STAGE_WHY_WORD[track][w.rung as 1 | 2 | 3 | 4] : undefined;
+  if (word) parts.push(word);
+  if (w.carry) parts.push(w.carry.same ? `goes on from milestone ${w.carry.ord}` : `builds on ${KIND_NAME[w.carry.kind] ?? w.carry.kind} from milestone ${w.carry.ord}`);
+  if (w.end) parts.push(STAGE_END_WORD[w.end]);
+  if (parts.length > 0) parts[0] = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  return parts;
+}
+
+/** The why line as one string ("Put it to use · builds on Recall drills from milestone 2"); null with nothing to say. */
+export function stageWhyLine(w: Parameters<typeof stageWhyPartsOf>[0], track: CatalogTrack): string | null {
+  const parts = stageWhyPartsOf(w, track);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** "Left out because of your constraints: Harder session ('running'), Strength session ('lifting')." */

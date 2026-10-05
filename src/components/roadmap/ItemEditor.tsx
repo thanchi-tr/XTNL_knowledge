@@ -14,6 +14,11 @@
  *   Drop            → resolveDomain DROP
  *   Change the type → a code-worded practice, step or checkpoint swapped for
  *                     another from the app's list (revision 4, F-R4-21): EDITED
+ *   Use the app's default → Gemini's choice that isn't the app's default
+ *                     (contracts §20, geminiChoiceOf) swapped for the stage's
+ *                     default in one tap: editItem with that type, EDITED;
+ *                     when the stage already holds the default, the pick is
+ *                     removed instead (decideItem REMOVED), never doubled
  *
  * The milestone's title is decided through its milestone id (decideItem and
  * editItem take it in place of an item id; R4's cores read either).
@@ -22,10 +27,10 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
 import type { Track } from "@/lib/life-types";
-import type { ItemDraft, MilestoneDraft } from "@/lib/roadmap-types";
+import type { ItemDraft, ItemEdit, MilestoneDraft, PracticeFamily } from "@/lib/roadmap-types";
 import type { CatalogKey } from "@/lib/roadmap-catalog";
 import { useRoadmapAction } from "./roadmap-runtime";
-import { ITEM_ACTION_WORD, itemClassOf, type EditorRow, type ItemAction, type LibraryDomain } from "./roadmap-ui-model";
+import { ITEM_ACTION_WORD, geminiChoiceOf, itemClassOf, stageRunOf, type EditorRow, type ItemAction, type LibraryDomain } from "./roadmap-ui-model";
 import { labelWithClass } from "./roadmap-copy";
 import { EditItemSheet } from "./EditItemSheet";
 import { CreateDomainSheet, MapDomainSheet } from "./DomainSheets";
@@ -51,6 +56,15 @@ export interface ItemEditorScope {
   allowed?: readonly CatalogKey[];
   /** Constraint safety (contracts §19): the kinds waiting on the user's answer (PENDING rows); the picker names them as not offered yet. */
   held?: readonly CatalogKey[];
+  /**
+   * The practice progression (contracts §20): Gemini's picks on these rows
+   * are choices among each stage's options (roadmap-ui-model
+   * picksAreChoicesOf over the run that wrote them). Absent or false: a pick
+   * reads as before, "picked by Gemini from the app's list".
+   */
+  choices?: boolean;
+  /** A Field plan's practice family when the view carries the user's answer (contracts §20.11); null: the aim's prefill (stageRunOf). */
+  practiceFamily?: PracticeFamily | null;
 }
 
 /** The row an action is about, with its item (null for the title) and its milestone. */
@@ -114,9 +128,23 @@ export function ItemEditor({ scope, children }: { scope: ItemEditorScope; childr
         case "TYPE":
           setType(target);
           return;
+        case "DEFAULT": {
+          // The stage's default under the plan's gate (the options Gemini was offered, the first being code's default).
+          const choice = target.item ? geminiChoiceOf(target.item, target.milestone, { ...stageRunOf(scope), choices: scope.choices === true }) : null;
+          const fallback = choice && !choice.isDefault ? choice.options[0] : null;
+          if (!fallback) return;
+          // The stage already holds the default beside the pick (the progression placed both): the pick goes, never a second row of it.
+          if (target.milestone.items.some((it) => it.id !== id && it.decision !== "REMOVED" && it.catalogKey === fallback)) {
+            run((a) => a.decideItem(id, "REMOVED"));
+            return;
+          }
+          const edit: ItemEdit = { catalogKey: fallback };
+          run((a) => a.editItem(id, edit));
+          return;
+        }
       }
     },
-    [run]
+    [run, scope]
   );
 
   const value = useMemo<EditorContextValue>(

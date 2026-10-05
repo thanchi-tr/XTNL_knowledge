@@ -36,6 +36,30 @@
  *   runExclusionsOf · AimConflictQuote · unresolvedAimConflictOf, and the
  *   rules constraint.generic, constraint.limit, constraint.gentle and
  *   constraint.field-body
+ *   The practice progression (contracts §20, ROADMAP_PROMPT_VERSION 4; item R3):
+ *   keysOnlySchemaOf (v4) · keysOnlySchemaV3Of (legacy) · isV3Schema ·
+ *   runPickKindsOf · PackRun.pickKinds · KeysOnlyContext.progression ·
+ *   KeysOnlyDraft (picks, order) · keysOnlyProgressionInputOf · replyV4OfV3,
+ *   and the rules keys.pick, keys.pick-default, keys.pick-reshaped and
+ *   keys.order-appended
+ *   The fix round (r3): `order` optional (absent: the user's own order,
+ *   keys.order-kept; KeysOnlyDraft.reordered) · the gap slot's items
+ *   without maxLength · schemaAsksNothing · packAsksNothing (a schema with
+ *   no property is never sent)
+ *
+ * The practice progression (contracts §20, the lead's decision after the
+ * probe's no-go): code owns the practice progression on every plan path,
+ * and the v4 reply holds only `needs`, the outline's `order` and at most one
+ * pick per stage among code's candidates (`picks`; the per-slot enums are
+ * roadmap-catalog progressionPickEnumsOf over the run, stored on the pack as
+ * PackRun.pickKinds). validateKeysOnly merges the valid picks into code's
+ * progression (progressionOf): every practice, step and checkpoint is
+ * code's, GEMINI_PICK sits only on a valid pick placed as its stage's focus,
+ * and an invalid pick is logged and keeps code's default, never shown as
+ * Gemini's. The integrity walk is unchanged: an out-of-enum value is still
+ * ENUM, so REJECTED. A v3 schema passed as KeysOnlyContext.schema keeps the
+ * v3 reading (legacy: the probe's blessed v3 replies, the hostile bar's v3
+ * corpus); no run issues one.
  *
  * Fix round (Lens 3): only the label's very first word is exempt from
  * PROPER_NOUN; a capitalised word after a colon or full stop is a name unless
@@ -48,9 +72,9 @@
  * flagged item's reasons.
  *
  * Revision 4 (roadmap-rev4.md F-R4-17, F-R4-19, F-R4-20, F-R4-21; lane R3):
- * Gemini returns keys only. The v3 path is
+ * Gemini returns keys only. The v3 path was (v4, below, keeps its walk)
  *   keysOnlySchemaOf (the run's schema, one definition; roadmap-model's
- *   buildResponseSchema returns it) → integrityOf (the reply against that
+ *   buildResponseSchema returns it; keysOnlySchemaV3Of since v4) → integrityOf (the reply against that
  *   exact schema: CLEAN, SALVAGED or REJECTED, own-property lookups only,
  *   paths that never carry the model's words) → validateKeysOnly (exact key
  *   resolution: SYLLABUS topics with the user's own line and Domain, CODE
@@ -131,9 +155,15 @@ import {
   TOPIC_LABEL_MAX,
   TOPICS_PER_MILESTONE,
   UNVERIFIED_ALARM,
+  REPLY_V4_PROPERTIES,
   constraintCuesOf,
   integrityVerdictOf,
   isCredentialAim,
+  isPracticeFamily,
+  outlineOrderOf,
+  outlineStagesOf,
+  type OutlineOrder,
+  type PracticeFamily,
   type ActivityGate,
   type AimConflict,
   type CueClass,
@@ -168,6 +198,7 @@ import {
 import type { DomainName, YoursText } from "./roadmap-types";
 import {
   CATALOG,
+  CATALOG_TRACKS,
   activityGateOf,
   catalogEntryOf,
   catalogLabelOf,
@@ -175,8 +206,17 @@ import {
   catalogTemplateOf,
   catalogTrackOf,
   isSessionPickKind,
+  practiceFamilyOf,
+  progressionCandidatesOf,
+  progressionNotesOf,
+  progressionOf,
+  progressionPickEnumsOf,
   type CatalogKey,
   type CatalogTrack,
+  type PracticeKind,
+  type Progression,
+  type ProgressionInput,
+  type ProgressionItem,
 } from "./roadmap-catalog";
 
 // ═══ Shapes ══════════════════════════════════════════════════════════════════
@@ -2120,9 +2160,71 @@ export interface PackRun {
   exclusions: ConstraintExclusion[];
   /** The aim itself meets a negated constraint term (aimConflictOf; `quote` since the safety-gaps round). */
   aimConflict: (AimConflict & { quote?: string }) | null;
+  /**
+   * The run's practice family on a Field Area (contracts §20.11;
+   * roadmap-catalog practiceFamilyOf over the intake: the user's answer,
+   * else code's reading of the aim); null on a track Area, which has none.
+   * The pick enums (pickKinds) and the progression the validator places
+   * from read it. Optional in the shape (a pack written before the family
+   * leaves it out: packRunOf reads it as null, the default family).
+   */
+  family?: PracticeFamily | null;
+  /**
+   * The v4 pick enums (contracts §20.5; runPickKindsOf, roadmap-catalog
+   * progressionPickEnumsOf): each slot → its focus candidates on this run,
+   * code's default first, the gate's blocked kinds left out; a slot with none
+   * is left out, so practices off gives {}. The v4 schema's `picks` and the
+   * pack's per-stage lists are built from it. Optional in the shape (a run
+   * built by hand, or a pack written before v4, may leave it out); packRunOf
+   * always fills it, from the run's own facts when it is absent.
+   */
+  pickKinds?: Record<string, PracticeKind[]>;
 }
 
 const stringList = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === "string") ? [...(v as string[])] : null);
+
+/**
+ * A run's v4 pick enums (contracts §20.5), one definition: roadmap-catalog
+ * progressionPickEnumsOf over the run's slots, its track, its practice
+ * family (a Field Area's; contracts §20.11), the exam answer, the practices
+ * switch and the gate's blocked kinds. buildEvidencePack stores it on the
+ * pack (PackRun.pickKinds); packRunOf recomputes it for a pack written
+ * before v4. {} on a track that isn't a catalog track.
+ */
+export function runPickKindsOf(run: {
+  track: CatalogTrack | string;
+  slots: readonly string[];
+  exam: boolean;
+  practicesAllowed: boolean;
+  blocked?: readonly string[] | null;
+  family?: PracticeFamily | null;
+}): Record<string, PracticeKind[]> {
+  if (!(CATALOG_TRACKS as readonly string[]).includes(run.track)) return {};
+  return progressionPickEnumsOf({
+    track: run.track as CatalogTrack,
+    slots: run.slots,
+    exam: run.exam === true,
+    practicesAllowed: run.practicesAllowed === true,
+    family: isPracticeFamily(run.family) ? run.family : null,
+    gate: { blocked: (run.blocked ?? []).filter((k): k is CatalogKey => catalogEntryOf(k) != null) },
+  });
+}
+
+/** Stored pick enums, read defensively: own properties of the issued slots, each a list of practice kinds on the track (never empty). */
+function storedPickKindsOf(v: unknown, slots: readonly string[], track: string): Record<string, PracticeKind[]> | null {
+  if (!isRec(v)) return null;
+  const out: Record<string, PracticeKind[]> = {};
+  for (const slot of slots) {
+    const list = stringList(own(v, slot));
+    if (!list) continue;
+    const kinds = list.filter((k) => {
+      const e = catalogEntryOf(k);
+      return !!e && e.slot === "PRACTICE" && (e.tracks as readonly string[]).includes(track);
+    }) as PracticeKind[];
+    if (kinds.length > 0 && !hasOwn(out, slot)) out[slot] = kinds;
+  }
+  return out;
+}
 
 /** The pack's run facts, read defensively; null on a pack written before revision 4 (or a malformed one). */
 export function packRunOf(pack: unknown): PackRun | null {
@@ -2142,7 +2244,12 @@ export function packRunOf(pack: unknown): PackRun | null {
   const conflict = own(run, "aimConflict");
   const word = own(conflict, "word");
   const quote = own(conflict, "quote");
-  const blocked = stringList(own(run, "blocked"));
+  const blocked = (stringList(own(run, "blocked")) ?? exclusions.map((x) => x.kind)) as CatalogKey[];
+  const exam = own(run, "exam") === true;
+  const storedFamily = own(run, "family");
+  const family: PracticeFamily | null = track === "FIELD" && isPracticeFamily(storedFamily) ? storedFamily : null;
+  // A pack written before v4 holds no pick enums: they are worked out from the run's own facts (the practices switch is the pack's).
+  const pickKinds = storedPickKindsOf(own(run, "pickKinds"), slots, track) ?? runPickKindsOf({ track, slots, exam, practicesAllowed: own(pack, "practicesAllowed") !== false, blocked, family });
   return {
     track: track as CatalogTrack,
     slots,
@@ -2151,30 +2258,121 @@ export function packRunOf(pack: unknown): PackRun | null {
     practiceKinds: practiceKinds as CatalogKey[],
     stepKinds: stepKinds as CatalogKey[],
     checkpointKinds: checkpointKinds as CatalogKey[],
-    exam: own(run, "exam") === true,
+    exam,
     gaps: own(run, "gaps") === true,
-    blocked: (blocked ?? exclusions.map((x) => x.kind)) as CatalogKey[],
+    blocked,
     exclusions,
     aimConflict: typeof word === "string" ? (typeof quote === "string" ? { word, quote } : { word }) : null,
+    family,
+    pickKinds,
   };
 }
 
 // ─── The schema (one definition; roadmap-model's buildResponseSchema returns it) ──
 
 /**
- * The v3 response schema for a run (F-R4-17; the @google/genai OpenAPI
+ * The v4 response schema for a run (ROADMAP_PROMPT_VERSION 4, contracts
+ * §20.5: code owns the practice progression; the @google/genai OpenAPI
  * subset: maxItems and maxLength are strings; no INTEGER or NUMBER
  * anywhere). Every STRING node is an enum of keys issued for this run except
  * `gaps.items`, which exists only when pack.run.gaps. No enum is ever empty:
  * a property whose enum would be empty is omitted, and so is `required`'s
- * entry for it.
+ * entry for it. Properties in REPLY_V4_PROPERTIES order:
+ *   needs   the listed Domains not chosen (omitted on a track Area or with
+ *           none), at most DEPTH_DOMAINS_MAX; optional, as in v3
+ *   order   the outline's S-keys in the order to learn them (a Field Area
+ *           with an outline), at most SYLLABUS_MAX_LINES; OPTIONAL (the fix
+ *           round, r3: an absent order is the user's own order, the default
+ *           a pick has too, so a reply without one is never REJECTED and
+ *           keeps its `needs`; KeysOnlyDraft.reordered says whether Gemini
+ *           moved a line); a line it leaves out is appended by code
+ *           (outlineOrderOf), never lost
+ *   picks   an OBJECT: per slot with candidates (runPickKindsOf, via
+ *           progressionPickEnumsOf: the stage's focus candidates on this
+ *           run, code's default first; only the slots the plan's own ladder
+ *           reads a pick for when the pack was built with them,
+ *           EvidenceInput.pickStages), one STRING enum; no slot is required
+ *           (a slot left out keeps code's default), and `picks` itself is
+ *           optional; omitted when no slot has a candidate (practices off,
+ *           or every candidate blocked)
+ *   gaps    as v3 (ROADMAP_GAPS_LIVE and the user's switch, a Field Area),
+ *           except that its items carry no maxLength (the fix round, r3: both
+ *           5 Oct calls with string bounds were refused by the API, 400
+ *           INVALID_ARGUMENT; the shape rule's "length" clause drops an
+ *           over-long name, and the walk never read maxLength)
+ * There is no `stages`, no practice, step or checkpoint list and no `on`:
+ * Gemini places no step and no checkpoint, and every kind it may name is a
+ * focus code's own progression offers that stage. Nothing is ever required,
+ * so the schema can have no property at all (a Field Area with practices
+ * off, no outline and every listed Domain chosen): such a run asks Gemini
+ * nothing and is never sent (schemaAsksNothing; draftSamples refuses it).
+ */
+export function keysOnlySchemaOf(pack: EvidencePack): Record<string, unknown> {
+  const run = packRunOf(pack);
+  const field = run?.track === "FIELD";
+  const dKeys = field ? (Array.isArray(pack?.domains) ? pack.domains.map((d) => d.key).filter((k) => typeof k === "string") : []) : [];
+  const listed = new Set(dKeys);
+  const other = field ? (run?.otherKeys ?? []).filter((k) => listed.has(k)) : [];
+  const sKeys = field && Array.isArray(pack?.syllabusKeys) ? [...pack.syllabusKeys] : [];
+  const enums = run?.pickKinds ?? {};
+  const pickSlots = (run?.slots ?? []).filter((s, i, all) => all.indexOf(s) === i && hasOwn(enums, s) && (enums[s] ?? []).length > 0);
+  const props: Rec = {};
+  if (other.length > 0) props.needs = { type: ARRAY, maxItems: String(DEPTH_DOMAINS_MAX), items: { type: STRING, enum: other } };
+  if (sKeys.length > 0) props.order = { type: ARRAY, maxItems: String(SYLLABUS_MAX_LINES), items: { type: STRING, enum: sKeys } };
+  if (pickSlots.length > 0) props.picks = { type: OBJECT, propertyOrdering: [...pickSlots], properties: Object.fromEntries(pickSlots.map((s) => [s, { type: STRING, enum: [...(enums[s] ?? [])] }])) };
+  if (field && run?.gaps === true) props.gaps = { type: ARRAY, maxItems: String(GAPS_MAX), items: { type: STRING } };
+  return {
+    type: OBJECT,
+    propertyOrdering: REPLY_V4_PROPERTIES.filter((k) => k in props),
+    properties: props,
+  };
+}
+
+/**
+ * Whether a response schema asks Gemini nothing (the fix round, r3): an
+ * OBJECT root with no property at all, the shape keysOnlySchemaOf gives a
+ * Field run with practices off, no outline and every listed Domain chosen.
+ * The API refuses such a schema (400 INVALID_ARGUMENT: properties should be
+ * non-empty), and a reply could decide nothing, so such a run is never sent:
+ * roadmap-model draftSamples refuses it without a call (NOTHING_TO_ASK), and
+ * R4's claim refuses before a run row or the day's cap is touched
+ * (packAsksNothing). A v3 schema (with `stages`) always asks something; a
+ * value that is no schema at all reads as asking nothing. Never throws.
+ */
+export function schemaAsksNothing(schema: unknown): boolean {
+  const props = own(schema, "properties");
+  return !isRec(props) || Object.keys(props).length === 0;
+}
+
+/** Whether a run's pack asks Gemini nothing: its v4 schema (keysOnlySchemaOf) has no property (schemaAsksNothing). R4's claim and runDraftCore guard; the form's "Draft with Gemini" reads the same. */
+export function packAsksNothing(pack: EvidencePack): boolean {
+  try {
+    return schemaAsksNothing(keysOnlySchemaOf(pack));
+  } catch {
+    return true;
+  }
+}
+
+/** A v3 schema (keysOnlySchemaV3Of: one with a `stages` object): validateKeysOnly gives it the v3 reading. */
+export function isV3Schema(schema: unknown): boolean {
+  return isRec(own(own(schema, "properties"), "stages"));
+}
+
+/**
+ * LEGACY: the v3 response schema for a run (ROADMAP_PROMPT_VERSION 3,
+ * F-R4-17; no run issues it since v4). Kept only so a v3 reply can be read
+ * as it was checked: the probe's blessed v3 replies (roadmap-model-check's
+ * regression) and the hostile bar's v3 corpus, which pass it as
+ * KeysOnlyContext.schema, so validateKeysOnly gives them the v3 reading.
+ * Every STRING node is an enum of keys issued for the run except
+ * `gaps.items`; no enum is ever empty.
  *   needs   the listed Domains not chosen (omitted on a track Area or with none)
  *   stages  one STAGE per slot, all required
  *   STAGE   lines (S-keys; a Field Area with an outline), practices and steps
  *           ([{kind, on?}], ≤ 3 each; `on` a listed D-key), checkpoint (a
  *           nullable enum). A line carries no Domain: a line's Domain is the user's.
  */
-export function keysOnlySchemaOf(pack: EvidencePack): Record<string, unknown> {
+export function keysOnlySchemaV3Of(pack: EvidencePack): Record<string, unknown> {
   const run = packRunOf(pack);
   const field = run?.track === "FIELD";
   const slots = run?.slots ?? [];
@@ -3989,13 +4187,13 @@ export function gapNamesOf(gaps: unknown, ctx: GapNamesContext, opts?: RuleOpts)
   return out;
 }
 
-// ─── The v3 validator (F-R4-17, F-R4-21) ────────────────────────────────────
+// ─── The keys-only validator (F-R4-17, F-R4-21; v4: contracts §20) ─────────
 
 /**
  * The fill a CODE item's label takes, branded by the caller (R4:
  * yoursText(origin, decision, aim), domainName(row)); this module never makes
  * a brand. Without it a label whose template needs a fill can't be written,
- * and that pick is dropped (BAD_SHAPE, "the app couldn't write its name").
+ * and that item is dropped (BAD_SHAPE, "the app couldn't write its name").
  */
 export interface KeysOnlyFill {
   aim: YoursText | null;
@@ -4017,14 +4215,65 @@ export interface KeysOnlyContext {
   version: number;
   makeId: () => string;
   // ── R3 additions (optional) ──
-  /** The labels' fill (see KeysOnlyFill). R4 passes it on every v3 draft. */
+  /** The labels' fill (see KeysOnlyFill). R4 passes it on every keys-only draft. */
   fill?: KeysOnlyFill;
   /** The Area's name (a grounding source). */
   areaName?: string;
   /** Domain ids created from a GAP in any roadmap (FROM_SUGGESTION): never a grounding source. */
   gapSourceExclude?: readonly string[];
-  /** The exact schema issued for the run; default keysOnlySchemaOf(pack). On a reuse, the CURRENT run's. */
+  /**
+   * The exact schema issued for the run; default keysOnlySchemaOf(pack) (v4).
+   * On a reuse, the CURRENT run's. A v3 schema (keysOnlySchemaV3Of, legacy)
+   * gives the v3 reading.
+   */
   schema?: unknown;
+  /**
+   * v4 (contracts §20): what the progression reads that only a dated plan
+   * knows. `examStage`: the index in `slots` of the stage whose window holds
+   * the exam's day (R2's; absent or null: the exam has no day, and the last
+   * slot holds it). `examPrepStage`: a dated exam's run-up stage (R2's
+   * examStagesOf; absent: the progression's own default). `maxPractices`:
+   * each slot's room (R2's practicesThatFitOf over its budget; default
+   * PRACTICES_PER_MILESTONE).
+   */
+  progression?: Pick<ProgressionInput, "examStage" | "examPrepStage" | "maxPractices">;
+}
+
+/**
+ * validateKeysOnly's answer. The v4 reading adds what the plan path needs
+ * to rebuild the same plan on a dated ladder (contracts §20.8: R2's
+ * StageLadderOpts.picks and .order, or progressionOf itself): Gemini's valid
+ * picks and the outline's order. Both are optional in the shape, so a
+ * plain ValidatedDraft (R4's fakes) is one too, and the v3 reading leaves
+ * them out.
+ */
+export interface KeysOnlyDraft extends ValidatedDraft {
+  /**
+   * v4: Gemini's valid picks, slot → kind. Each is one of that slot's
+   * candidates on this run (progressionCandidatesOf, the gate's blocked kinds
+   * left out) and is placed as its stage's focus with GEMINI_PICK. A slot
+   * left out, or a pick logged as invalid, keeps code's default and is not
+   * here. {} when the reply gave none.
+   */
+  picks?: Record<string, PracticeKind>;
+  /**
+   * v4: the outline's order (roadmap-types outlineOrderOf over the lines the
+   * run issued): the reply's order, each line once, then every line it left
+   * out (`appended`), in the user's order. No line is ever lost, so
+   * uncoveredSyllabus is []. A reply with no `order` (it is optional since
+   * the fix round, r3) keeps the user's own order: every issued line in the
+   * user's order, nothing dropped or appended. null without an outline.
+   */
+  order?: OutlineOrder | null;
+  /**
+   * v4 (the fix round, r3): Gemini's order moved at least one outline line
+   * from the user's own order. false with no `order` in the reply, with an
+   * order that is the user's, and without an outline. R4 and R5 show a
+   * reordered outline as Gemini's suggestion beside the user's order, with
+   * one tap to keep the user's own (which needs no reply: the user's order
+   * is the plan's default, as code's default is a pick's).
+   */
+  reordered?: boolean;
 }
 
 /** Every reason validateKeysOnly writes (code's words; the hostile bar's taint check counts them as code's, not the model's). */
@@ -4042,44 +4291,76 @@ export const KEYS_ONLY_REASONS = {
   gapShown: "(see the suggestions panel)",
   gapHidden: "(not shown)",
   gapLink: "(not shown: it contained a link)",
+  pickDefault: "not one of this stage's practice types, so the app's own type is used",
+  pickReshaped: "this stage has no room beside the app's own practice types, so they are used",
+  duplicateOrder: "listed twice in the order: its first place is kept",
 } as const;
 
 /**
- * The v3 validator (F-R4-17), after the integrity walk (it runs integrityOf
+ * The keys-only validator, after the integrity walk (it runs integrityOf
  * itself, against ctx.schema or keysOnlySchemaOf(pack), and stores the
  * result in report.integrity): a REJECTED reply gives no milestone and
  * nothing from it. Otherwise (CLEAN, or SALVAGED with arrays cut to their
  * maxItems), every key is resolved exactly (own-property lookups on
  * null-prototype maps; no trim, case fold or NFKC, so 'Ｄ１', 'Д1', 'd1',
- * 'D01' and 'D1 ' never resolve):
+ * 'D01', 'D1 ' and '__proto__' never resolve). The schema decides the
+ * reading: the keys a reply may hold are that exact schema's.
+ *
+ * v4 (keysOnlySchemaOf, the schema every run issues; contracts §20): code
+ * owns the practice progression, and the reply holds only
  *   needs       a pending DOMAIN item per unchosen listed Domain (origin
  *               GEMINI, ItemNote NOT_CHOSEN, its row's name), on the first
  *               milestone; ValidatedDraft.needs lists them (R4 puts them on
  *               every unstarted milestone). A Domain already in R is ignored.
- *   lines       a TOPIC per line: origin SYLLABUS, the user's line exactly,
- *               syllabusRef its index, domainId the user's lineDomains entry
- *               whatever the reply; a line placed twice stays in its first
- *               stage (DUPLICATE); uncoveredSyllabus lists the lines placed nowhere.
- *   practices, steps, checkpoint
- *               CODE items (origin catalogOriginOf(), catalogKey, ItemNote
- *               GEMINI_PICK) labelled catalogLabelOf(key, fill): the `on`
- *               Domain when it is in R, else all of R (an `on` outside R
- *               never widens the scope). Dropped with their reason: a
- *               lastStageOnly kind before the last stage, an examOnly kind
- *               without an exam, a kind the constraint filter excluded, a
- *               repeat in one stage.
+ *   order       the outline's order (outlineOrderOf): each line once in the
+ *               reply's order, then every line it left out, in the user's
+ *               order; an unknown key is UNKNOWN_KEY and a repeat DUPLICATE
+ *               (labelled with the user's own line). No `order` at all (it is
+ *               optional): the user's own order (keys.order-kept), nothing
+ *               appended; `reordered` says whether Gemini moved a line. Code splits the order
+ *               across the slots (outlineStagesOf): a TOPIC per line, origin
+ *               SYLLABUS, the user's line exactly, syllabusRef its index,
+ *               domainId the user's lineDomains entry whatever the reply. No
+ *               line goes uncovered.
+ *   picks       per slot, at most one kind: valid only when it is in the
+ *               slot's issued enum AND one of the slot's candidates on this
+ *               run (progressionCandidatesOf). Anything else (an unknown slot,
+ *               a non-string, another kind, a kind the gate holds) is logged
+ *               (UNKNOWN_KEY, or CONSTRAINT for a held kind, label '') and
+ *               the slot keeps code's default; it is never shown as Gemini's.
  *   gaps        gapNamesOf (only when the run's schema has the slot).
- * One milestone per slot (ord 1…n, stage = the slot, title '' for R2's
+ * Every practice, step and checkpoint is the progression's (roadmap-catalog
+ * progressionOf over the slots, with the valid picks, the exam answer, the
+ * practices switch and the gate's blocked kinds; ctx.progression's
+ * examStage and maxPractices when the caller knows them): CODE items
+ * (origin catalogOriginOf(), catalogKey, domainId null) labelled
+ * catalogLabelOf(key, fill) over all of R, with progressionNotesOf's notes
+ * (GEMINI_PICK only on a valid pick placed as its stage's focus;
+ * STUDY_ADDED or PRODUCTION_ADDED on every other practice). A valid pick
+ * the progression didn't keep as the focus (room for one, reshaped) is
+ * logged (BAD_SHAPE) and left out of `picks`. KeysOnlyDraft.picks and
+ * .order carry what the plan path re-reads. sessionPicks is PENDING on a
+ * BODY or CARE plan with constraints when Gemini's picks hold a session
+ * pick (the same GEMINI_PICK rows R4's sessionPicksOf reads).
+ *
+ * v3 (LEGACY; keysOnlySchemaV3Of, a schema with `stages`, passed as
+ * ctx.schema: the probe's blessed v3 replies and the hostile bar's v3
+ * corpus): the reading F-R4-17 gave, unchanged: `stages` with lines, and
+ * practices, steps and a checkpoint Gemini picked (GEMINI_PICK), the `on`
+ * Domain when it is in R, dropped with their reason (a lastStageOnly kind
+ * before the last stage, an examOnly kind without an exam, a kind the
+ * constraint filter excluded, a repeat in one stage); uncoveredSyllabus the
+ * lines placed nowhere; sessionPicks over every session pick.
+ *
+ * Both: one milestone per slot (ord 1…n, stage = the slot, title '' for R2's
  * ladder to name, arrangedBy GEMINI); measures are PRACTICE_KEPT per
  * practice and CHECKPOINT context only (the stage's card measures are R2's
- * stageLadderOf). A BODY plan's milestones carry HEALTH_LINE. sessionPicks is
- * PENDING on a BODY or CARE plan with constraints and a session pick
- * (isSessionPickKind: any practice, FULL_ATTEMPT or PERFORMANCE_CHECK). No
- * flag and no alarm: there are no model words. Report entries carry code's
- * words, a code key, the user's line or a Domain row's name as their label,
- * and '' for anything a gap returned. `opts`: the hostile bar's H6. Never throws.
+ * stageLadderOf). A BODY plan's milestones carry HEALTH_LINE. No flag and no
+ * alarm: there are no model words. Report entries carry code's words, a
+ * code key, the user's line or a Domain row's name as their label, and ''
+ * for anything a gap returned. `opts`: the hostile bar's H6. Never throws.
  */
-export function validateKeysOnly(parsed: unknown, ctx: KeysOnlyContext, opts?: RuleOpts): ValidatedDraft {
+export function validateKeysOnly(parsed: unknown, ctx: KeysOnlyContext, opts?: RuleOpts): KeysOnlyDraft {
   const report: ValidationReport = { dropped: [], flagged: [], notes: [] };
   try {
     return keysOnlyInner(parsed, ctx, report, opts);
@@ -4103,12 +4384,9 @@ export function validateKeysOnly(parsed: unknown, ctx: KeysOnlyContext, opts?: R
   }
 }
 
-/** What a schema issued: read from the exact schema the reply was checked against, so the keys a reply may hold are that schema's, whatever the pack says. */
+/** What a v3 schema issued: read from the exact schema the reply was checked against, so the keys a reply may hold are that schema's, whatever the pack says. */
 interface Issued {
   slots: string[];
-  needs: Set<string>;
-  needsMax: number;
-  gaps: boolean;
   stage: (slot: string) => IssuedStage;
 }
 interface IssuedStage {
@@ -4126,7 +4404,6 @@ const enumOf = (node: unknown): Set<string> => {
 };
 function issuedOf(schema: unknown): Issued {
   const props = own(schema, "properties");
-  const needs = own(props, "needs");
   const stages = own(props, "stages");
   const stageProps = own(stages, "properties");
   const order = own(stages, "propertyOrdering");
@@ -4134,9 +4411,6 @@ function issuedOf(schema: unknown): Issued {
   const cache = new Map<unknown, IssuedStage>();
   return {
     slots,
-    needs: enumOf(own(needs, "items")),
-    needsMax: intOf(own(needs, "maxItems")) ?? DEPTH_DOMAINS_MAX,
-    gaps: isRec(own(props, "gaps")),
     stage: (slot) => {
       const node = own(stageProps, slot);
       const hit = cache.get(node);
@@ -4160,13 +4434,44 @@ function issuedOf(schema: unknown): Issued {
   };
 }
 
-function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: ValidationReport, opts?: RuleOpts): ValidatedDraft {
+/** What both readings share: the run's facts, the user's own lines and Domains, and the report's helpers. */
+interface KeysOnlyBase {
+  R: Rules;
+  pack: EvidencePack;
+  intake: Intake;
+  run: PackRun | null;
+  track: CatalogTrack;
+  schema: unknown;
+  integrity: ValidationIntegrity;
+  exam: boolean;
+  lines: readonly string[];
+  lineDomains: readonly (string | null | undefined)[];
+  required: Set<string>;
+  requiredInOrder: string[];
+  sIndex: Record<string, number>;
+  dIndex: Record<string, string>;
+  issuedLines: number[];
+  exclusions: ConstraintExclusion[];
+  excluded: Set<string>;
+  /** The kinds the progression never places: the gate's (PENDING and AVOID) and the exclusions. */
+  blocked: CatalogKey[];
+  codeOrigin: Origin;
+  needIds: string[];
+  needItems: ItemDraft[];
+  report: ValidationReport;
+  nameOf: (id: string) => string | null;
+  draft: (milestones: MilestoneDraft[], extra: Partial<KeysOnlyDraft>, placed: ReadonlySet<number>) => KeysOnlyDraft;
+  drop: (ord: number, kind: ReportEntry["kind"], label: string, code: ReportEntry["code"], reason: string, rule: RuleName) => void;
+  blank: (p: Partial<ItemDraft> & Pick<ItemDraft, "kind" | "label" | "origin">) => ItemDraft;
+  labelOf: (key: CatalogKey, domainIds: readonly string[]) => string | null;
+  addNeed: (id: string, via: "needs" | "gap") => void;
+}
+
+function keysOnlyBaseOf(parsed: unknown, ctx: KeysOnlyContext, report: ValidationReport, schema: unknown, opts?: RuleOpts): KeysOnlyBase {
   const R = rulesOf(opts);
   const { pack, intake } = ctx;
   const run = packRunOf(pack);
   const track: CatalogTrack = run?.track ?? catalogTrackOf({ fieldId: intake.fieldId, track: intake.track });
-  const schema = ctx.schema ?? keysOnlySchemaOf(pack);
-  const issued = issuedOf(schema);
   const integrity = integrityOf(parsed, schema, opts);
   report.integrity = integrity;
   const exam = examAnswerOf(intake);
@@ -4184,6 +4489,7 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
   const unassignedLines = issuedLines.filter((i) => !(typeof lineDomains[i] === "string" && required.has(lineDomains[i] as string)));
   // A pack with no run facts (written before revision 4): the gate's reading of the intake, as buildEvidencePack's
   // (contracts §19.5: what the user's words name and the gate blocks; a suggestion alone never drops a pick).
+  let gateBlocked: CatalogKey[] | null = run?.blocked ?? null;
   const exclusions =
     run?.exclusions ??
     (() => {
@@ -4193,10 +4499,13 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
         { track, domains: Array.from(required, (id) => nameOf(id) ?? ""), aim: intake.aim, exam: exam ? intake.examLabel : null },
         opts
       );
-      return runExclusionsOf(suggestions, activityGateOf(intake, suggestions));
+      const gate = activityGateOf(intake, suggestions);
+      gateBlocked = [...gate.blocked];
+      return runExclusionsOf(suggestions, gate);
     })();
   const excluded = new Set(exclusions.map((e) => e.kind as string));
-  const draft = (milestones: MilestoneDraft[], extra: Partial<ValidatedDraft>, placed: ReadonlySet<number>): ValidatedDraft => ({
+  const blocked = Array.from(new Set<CatalogKey>([...(gateBlocked ?? []), ...exclusions.map((e) => e.kind)]));
+  const draft = (milestones: MilestoneDraft[], extra: Partial<KeysOnlyDraft>, placed: ReadonlySet<number>): KeysOnlyDraft => ({
     milestones,
     report,
     bulkKeepOff: exam || nonEnglish,
@@ -4212,15 +4521,6 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
     unassignedLines,
     ...extra,
   });
-  if (integrity.verdict === "REJECTED") {
-    R.fire("keys.rejected");
-    report.dropped.push({ milestoneOrd: 0, kind: "DRAFT", label: "", code: "REJECTED", reason: KEYS_ONLY_REASONS.rejected });
-    return draft([], {}, new Set());
-  }
-
-  const slots = (Array.isArray(ctx.slots) && ctx.slots.length > 0 ? ctx.slots : issued.slots).filter((s) => typeof s === "string");
-  const lastSlot = slots.length - 1;
-  const stagesObj = own(parsed, "stages");
   const drop = (ord: number, kind: ReportEntry["kind"], label: string, code: ReportEntry["code"], reason: string, rule: RuleName) => {
     R.fire(rule);
     report.dropped.push({ milestoneOrd: ord, kind, label, code, reason });
@@ -4257,10 +4557,6 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
       return null;
     }
   };
-  const codeOrigin = catalogOriginOf();
-  const requiredInOrder = Array.from(required);
-
-  // ── needs ──
   const needIds: string[] = [];
   const needItems: ItemDraft[] = [];
   const addNeed = (id: string, via: "needs" | "gap") => {
@@ -4272,23 +4568,326 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
     report.notes.push({ milestoneOrd: 1, kind: "DOMAIN", label: name, code: "NOT_CHOSEN", reason: KEYS_ONLY_REASONS.needs });
     R.fire(via === "needs" ? "keys.need" : "keys.gap-domain");
   };
+  return {
+    R,
+    pack,
+    intake,
+    run,
+    track,
+    schema,
+    integrity,
+    exam,
+    lines,
+    lineDomains,
+    required,
+    requiredInOrder: Array.from(required),
+    sIndex,
+    dIndex,
+    issuedLines,
+    exclusions,
+    excluded,
+    blocked,
+    codeOrigin: catalogOriginOf(),
+    needIds,
+    needItems,
+    report,
+    nameOf,
+    draft,
+    drop,
+    blank,
+    labelOf,
+    addNeed,
+  };
+}
+
+function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: ValidationReport, opts?: RuleOpts): KeysOnlyDraft {
+  const schema = ctx.schema ?? keysOnlySchemaOf(ctx.pack);
+  const b = keysOnlyBaseOf(parsed, ctx, report, schema, opts);
+  if (b.integrity.verdict === "REJECTED") {
+    b.R.fire("keys.rejected");
+    report.dropped.push({ milestoneOrd: 0, kind: "DRAFT", label: "", code: "REJECTED", reason: KEYS_ONLY_REASONS.rejected });
+    return b.draft([], {}, new Set());
+  }
+
+  // ── needs (both readings) ──
+  const needsNode = own(own(schema, "properties"), "needs");
+  const needsIssued = enumOf(own(needsNode, "items"));
+  const needsMax = intOf(own(needsNode, "maxItems")) ?? DEPTH_DOMAINS_MAX;
   const needs = own(parsed, "needs");
   if (Array.isArray(needs)) {
-    if (needs.length > issued.needsMax) drop(1, "DOMAIN", "", "OVER_CAP", KEYS_ONLY_REASONS.overCap, "keys.over-cap");
-    for (const key of needs.slice(0, issued.needsMax)) {
-      const id = ownLookup(dIndex, key);
-      if (id == null || !issued.needs.has(key as string)) {
-        if (id != null && required.has(id)) R.fire("keys.chosen-need");
-        else drop(1, "DOMAIN", "", "UNKNOWN_KEY", KEYS_ONLY_REASONS.unknownKey, "keys.unknown");
+    if (needs.length > needsMax) b.drop(1, "DOMAIN", "", "OVER_CAP", KEYS_ONLY_REASONS.overCap, "keys.over-cap");
+    for (const key of needs.slice(0, needsMax)) {
+      const id = ownLookup(b.dIndex, key);
+      if (id == null || !needsIssued.has(key as string)) {
+        if (id != null && b.required.has(id)) b.R.fire("keys.chosen-need");
+        else b.drop(1, "DOMAIN", "", "UNKNOWN_KEY", KEYS_ONLY_REASONS.unknownKey, "keys.unknown");
         continue;
       }
-      if (required.has(id)) {
-        R.fire("keys.chosen-need");
+      if (b.required.has(id)) {
+        b.R.fire("keys.chosen-need");
         continue;
       }
-      addNeed(id, "needs");
+      b.addNeed(id, "needs");
     }
   }
+
+  return isV3Schema(schema) ? keysOnlyV3(parsed, ctx, b, opts) : keysOnlyV4(parsed, ctx, b, opts);
+}
+
+/** One milestone per slot, with its measures (PRACTICE_KEPT per practice, the checkpoint as context) and, on BODY, HEALTH_LINE. */
+function milestoneOf(b: KeysOnlyBase, ctx: KeysOnlyContext, slot: string, ord: number, lineageId: string, items: ItemDraft[]): MilestoneDraft {
+  const measures: MeasureSpec[] = [];
+  const measure = (p: Pick<MeasureSpec, "kind" | "role" | "scope" | "unit" | "itemLineageId">): MeasureSpec => ({
+    id: null,
+    minLevel: null,
+    target: 0,
+    targetSource: "WORKED_OUT",
+    fittedTarget: null,
+    rateSource: null,
+    baseline: null,
+    baselineDay: null,
+    measureKey: null,
+    ...p,
+  });
+  for (const it of items) {
+    if (it.kind === "PRACTICE") measures.push(measure({ kind: "PRACTICE_KEPT", role: "PAYS", scope: { itemLineageIds: [it.lineageId] }, unit: "sessions", itemLineageId: it.lineageId }));
+    if (it.kind === "CHECKPOINT") measures.push(measure({ kind: "CHECKPOINT", role: "CONTEXT", scope: { itemLineageIds: [it.lineageId] }, unit: "score", itemLineageId: it.lineageId }));
+  }
+  const notes: MilestoneNote[] = b.track === "BODY" ? ["HEALTH_LINE"] : [];
+  return {
+    id: null,
+    lineageId,
+    version: Number.isInteger(ctx.version) ? ctx.version : 0,
+    ord,
+    title: "",
+    titleOrigin: b.codeOrigin,
+    titleDecision: "PENDING",
+    windowStart: null,
+    dueDay: null,
+    status: "DRAFT",
+    rankIndex: null,
+    overAccepted: false,
+    items,
+    measures,
+    notes,
+    titleFlags: [],
+    stage: slot as StageKey,
+    arrangedBy: "GEMINI",
+  };
+}
+
+/** The gap slot (only when the run's schema had it): gapNamesOf, the shown names as GAP rows on the first milestone, the rest counted. */
+function applyGaps(parsed: unknown, ctx: KeysOnlyContext, b: KeysOnlyBase, milestones: MilestoneDraft[], opts?: RuleOpts): { gapViews: GapView[]; gapsHidden: number } {
+  if (!isRec(own(own(b.schema, "properties"), "gaps")) || milestones.length === 0) return { gapViews: [], gapsHidden: 0 };
+  const { intake, report } = b;
+  const listedIds = Object.values(b.dIndex);
+  const listed = listedIds.map((id) => ({ id, name: b.nameOf(id) ?? "" })).filter((d) => d.name);
+  // "The names of the Domains chosen in this intake": the intake's own list, not R (a confirmed addition grounds nothing).
+  const chosen = (intake.domainIds ?? []).map((id) => ({ id, name: b.nameOf(id) ?? "" })).filter((d) => d.name);
+  const sources = groundingSourcesOf(intake, ctx.areaName ?? "", chosen, ctx.gapSourceExclude ?? []);
+  const g = gapNamesOf(
+    own(parsed, "gaps"),
+    {
+      listed,
+      required: b.required,
+      sources,
+      label: labelBaseFor(intake, ctx.areaName ?? "", chosen.map((d) => d.name)),
+      makeId: ctx.makeId,
+    },
+    opts
+  );
+  for (const id of g.domains) b.addNeed(id, "gap");
+  const first = milestones[0];
+  first.items = [...b.needItems, ...g.shown.map((s) => s.item), ...first.items.filter((it) => !(it.kind === "DOMAIN" && it.notes.includes("NOT_CHOSEN")))];
+  for (let i = 0; i < g.shown.length; i++) report.notes.push({ milestoneOrd: 1, kind: "GAP", label: "", code: "GEMINI_PICK", reason: KEYS_ONLY_REASONS.gapShown });
+  for (let i = 0; i < g.hidden; i++) report.dropped.push({ milestoneOrd: 1, kind: "GAP", label: "", code: "NOT_IN_YOUR_WORDS", reason: KEYS_ONLY_REASONS.gapHidden });
+  for (const [clause, n] of Object.entries(g.byClause)) {
+    for (let i = 0; i < n; i++) {
+      report.dropped.push(
+        clause === "link"
+          ? { milestoneOrd: 1, kind: "GAP", label: "", code: "CONTAINED_LINK", reason: KEYS_ONLY_REASONS.gapLink }
+          : { milestoneOrd: 1, kind: "GAP", label: "", code: "NOT_A_NAME", reason: KEYS_ONLY_REASONS.gapHidden }
+      );
+    }
+  }
+  report.integrity = { ...b.integrity, modelChars: g.modelChars, gapsKept: g.shown.length, gapsHidden: g.hidden, gapsDropped: g.dropped, notANameByClause: { ...g.byClause } };
+  return { gapViews: g.shown.map((s) => s.view), gapsHidden: g.hidden + g.dropped };
+}
+
+/**
+ * The progression's input for a v4 run (contracts §20), one definition: one
+ * ProgressionStageInput per slot, the run's track and practice family (a
+ * Field Area's; §20.11), the practices switch and the exam answer, the kinds
+ * never placed (the gate's blocked kinds and the exclusions), the picks, and
+ * the caller's examStage, examPrepStage and maxPractices. The validator places every
+ * practice, step and checkpoint from it; the probe reads practice fit from
+ * the same plan (progressionOf over it).
+ */
+export function keysOnlyProgressionInputOf(
+  run: { track: CatalogTrack; slots: readonly string[]; practicesAllowed: boolean; exam: boolean; blocked?: readonly CatalogKey[] | null; family?: PracticeFamily | null },
+  picks: unknown,
+  opts: Pick<ProgressionInput, "examStage" | "examPrepStage" | "maxPractices"> = {}
+): ProgressionInput {
+  return {
+    track: run.track,
+    ...(run.track === "FIELD" && isPracticeFamily(run.family) ? { family: run.family } : {}),
+    stages: run.slots.map((s) => ({ stage: s as StageKey })),
+    practicesAllowed: run.practicesAllowed === true,
+    exam: run.exam === true,
+    examStage: opts.examStage ?? null,
+    ...(opts.examPrepStage != null ? { examPrepStage: opts.examPrepStage } : {}),
+    gate: { blocked: [...(run.blocked ?? [])] },
+    picks,
+    maxPractices: opts.maxPractices ?? null,
+  };
+}
+
+/** A progression item as a CODE item: labelled over all of R, with progressionNotesOf's notes; null (and a BAD_SHAPE drop) when its label can't be written. */
+function progressionItemOf(b: KeysOnlyBase, item: ProgressionItem, ord: number): ItemDraft | null {
+  const entry = catalogEntryOf(item.kind);
+  if (!entry) return null;
+  const usesDomains = catalogTemplateOf(entry, b.track).includes("{domains}");
+  const label = b.labelOf(entry.key, usesDomains ? b.requiredInOrder : []);
+  if (!label) {
+    b.drop(ord, entry.slot, "", "BAD_SHAPE", KEYS_ONLY_REASONS.unnamed, "keys.unnamed");
+    return null;
+  }
+  if (item.picked) b.R.fire("keys.pick");
+  return b.blank({
+    kind: entry.slot,
+    label,
+    origin: b.codeOrigin,
+    catalogKey: entry.key,
+    domainId: null,
+    method: entry.slot === "PRACTICE" ? entry.method : null,
+    checkpointKind: entry.slot === "CHECKPOINT" ? (entry.key as CheckpointKind) : null,
+    notes: progressionNotesOf(item),
+  });
+}
+
+/** The v4 reading (contracts §20): the order, the picks merged into code's progression, and the gaps. */
+function keysOnlyV4(parsed: unknown, ctx: KeysOnlyContext, b: KeysOnlyBase, opts?: RuleOpts): KeysOnlyDraft {
+  const { R, track, exam, lines, lineDomains } = b;
+  const props = own(b.schema, "properties");
+  const orderNode = own(props, "order");
+  const orderIssued = enumOf(own(orderNode, "items"));
+  const orderMax = intOf(own(orderNode, "maxItems")) ?? SYLLABUS_MAX_LINES;
+  const picksProps = own(own(props, "picks"), "properties");
+  const slots = (Array.isArray(ctx.slots) && ctx.slots.length > 0 ? ctx.slots : (b.run?.slots ?? (isRec(picksProps) ? Object.keys(picksProps) : []))).filter((s): s is string => typeof s === "string");
+  const practicesAllowed = b.pack?.practicesAllowed !== false;
+
+  // ── order: the reply's, each line once, then every line it left out (outlineOrderOf); code splits it across the slots.
+  // No `order` (optional since the fix round, r3): the user's own order, nothing dropped or appended ──
+  const placed = new Set<number>();
+  let order: OutlineOrder | null = null;
+  let reordered = false;
+  if (b.issuedLines.length > 0 && !hasOwn(isRec(parsed) ? parsed : {}, "order")) {
+    R.fire("keys.order-kept");
+    order = { order: [...b.issuedLines], dropped: 0, appended: [] };
+  } else if (b.issuedLines.length > 0) {
+    const raw = own(parsed, "order");
+    const list = Array.isArray(raw) ? raw : [];
+    if (list.length > orderMax) b.drop(0, "TOPIC", "", "OVER_CAP", KEYS_ONLY_REASONS.overCap, "keys.over-cap");
+    const kept = list.slice(0, orderMax);
+    // Only a key this schema issued resolves, and only to a line the user wrote (exact own-property lookups).
+    const keymap = nullProtoMap(Object.entries(b.sIndex).filter(([k, i]) => orderIssued.has(k) && typeof lines[i] === "string"));
+    const seen = new Set<number>();
+    for (const key of kept) {
+      const idx = ownLookup(keymap, key);
+      if (idx == null) b.drop(0, "TOPIC", "", "UNKNOWN_KEY", KEYS_ONLY_REASONS.unknownKey, "keys.unknown");
+      else if (seen.has(idx)) b.drop(0, "TOPIC", lines[idx], "DUPLICATE", KEYS_ONLY_REASONS.duplicateOrder, "keys.duplicate-line");
+      else seen.add(idx);
+    }
+    const issued = new Set(b.issuedLines);
+    const o = outlineOrderOf(kept, keymap, lines.length);
+    order = { order: o.order.filter((i) => issued.has(i)), dropped: o.dropped, appended: o.appended.filter((i) => issued.has(i)) };
+    if (order.appended.length > 0) R.fire("keys.order-appended");
+    reordered = order.order.some((idx, k) => idx !== b.issuedLines[k]);
+  }
+  const perSlot = outlineStagesOf(order?.order ?? [], slots.length);
+
+  // ── picks: valid only in the slot's issued enum AND among its candidates on this run; anything else keeps code's default ──
+  const blockedSet = new Set<string>(b.blocked);
+  // The run's practice family (§20.11): the pack's; a pack written before it, the intake's (practiceFamilyOf).
+  const family: PracticeFamily | null = track === "FIELD" ? (b.run?.family ?? practiceFamilyOf(b.intake)) : null;
+  const run = { track, slots, practicesAllowed, exam, blocked: b.blocked, family };
+  const valid = Object.create(null) as Record<string, PracticeKind>;
+  const rawPicks = own(parsed, "picks");
+  if (isRec(rawPicks)) {
+    for (const slot of Object.keys(rawPicks)) {
+      const value = own(rawPicks, slot);
+      const si = slots.indexOf(slot);
+      const slotNode = isRec(picksProps) && hasOwn(picksProps, slot) ? own(picksProps, slot) : undefined;
+      if (si < 0 || !isRec(slotNode)) {
+        b.drop(0, "PRACTICE", "", "UNKNOWN_KEY", KEYS_ONLY_REASONS.pickDefault, "keys.pick-default");
+        continue;
+      }
+      if (typeof value !== "string" || !enumOf(slotNode).has(value)) {
+        b.drop(si + 1, "PRACTICE", "", "UNKNOWN_KEY", KEYS_ONLY_REASONS.pickDefault, "keys.pick-default");
+        continue;
+      }
+      const candidates = progressionCandidatesOf(track, { stage: slot as StageKey }, { exam, practicesAllowed, family, gate: { blocked: b.blocked } }) as string[];
+      if (!candidates.includes(value)) {
+        const held = blockedSet.has(value);
+        b.drop(si + 1, "PRACTICE", "", held ? "CONSTRAINT" : "UNKNOWN_KEY", held ? KEYS_ONLY_REASONS.constraint : KEYS_ONLY_REASONS.pickDefault, held ? "keys.constraint" : "keys.pick-default");
+        continue;
+      }
+      valid[slot] = value as PracticeKind;
+    }
+  }
+  const progression: Progression = progressionOf(keysOnlyProgressionInputOf(run, valid, ctx.progression ?? {}));
+  // A valid pick the progression didn't place as Gemini's (contracts §20.11: a pick is added beside code's default, never
+  // over the exam's practices): when code places that kind in the stage itself (its default, the exam's core, a carry),
+  // the stage trains it either way and nothing is lost (keys.pick-code: not shown as Gemini's); otherwise (no room left
+  // beside code's own, room for one) it is logged, and the app's types stand.
+  for (const slot of Object.keys(valid)) {
+    const si = slots.indexOf(slot);
+    const sp = progression.stages[si];
+    if (sp?.practices.some((x) => x.picked && x.kind === valid[slot])) continue;
+    if (sp?.practices.some((x) => x.kind === valid[slot])) R.fire("keys.pick-code");
+    else b.drop(si + 1, "PRACTICE", "", "BAD_SHAPE", KEYS_ONLY_REASONS.pickReshaped, "keys.pick-reshaped");
+    delete valid[slot];
+  }
+
+  // ── milestones: the user's lines in the order, and the progression's practices, steps and checkpoint ──
+  const sessionKinds: CatalogKey[] = [];
+  const milestones: MilestoneDraft[] = slots.map((slot, si) => {
+    const ord = si + 1;
+    const lineageId = ctx.makeId();
+    const topics: ItemDraft[] = [];
+    for (const idx of perSlot[si] ?? []) {
+      placed.add(idx);
+      const lineDomain = lineDomains[idx];
+      topics.push(b.blank({ kind: "TOPIC", label: lines[idx], origin: "SYLLABUS", syllabusRef: idx, domainId: typeof lineDomain === "string" ? lineDomain : null }));
+    }
+    const sp = progression.stages[si];
+    const placedKinds: ItemDraft[] = [];
+    for (const item of sp ? [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])] : []) {
+      const it = progressionItemOf(b, item, ord);
+      if (!it) continue;
+      if (item.picked && isSessionPickKind(item.kind)) sessionKinds.push(item.kind);
+      placedKinds.push(it);
+    }
+    return milestoneOf(b, ctx, slot, ord, lineageId, [...(si === 0 ? b.needItems : []), ...topics, ...placedKinds]);
+  });
+
+  const { gapViews, gapsHidden } = applyGaps(parsed, ctx, b, milestones, opts);
+  for (const m of milestones) m.items = m.items.map((it, i) => ({ ...it, ord: i }));
+  // The session-picks confirm (F-R4-17) holds Gemini's picks, the rows R4's sessionPicksOf reads (GEMINI_PICK); code's own
+  // placements are the gate's (contracts §19), as the starter's are.
+  const sessionPicks: SessionPicks | null =
+    sessionConfirmNeeded(track, b.intake.constraints) && sessionKinds.length > 0 ? { kinds: Array.from(new Set(sessionKinds)), constraints: (b.intake.constraints ?? "").trim(), decision: "PENDING" } : null;
+  return b.draft(milestones, { needs: b.needIds, sessionPicks, gaps: gapViews, gapsHidden, picks: { ...valid }, order, reordered }, placed);
+}
+
+/** The v3 reading (LEGACY: a v3 schema passed as ctx.schema), as F-R4-17 gave it: Gemini's own practices, steps and checkpoint per stage. */
+function keysOnlyV3(parsed: unknown, ctx: KeysOnlyContext, b: KeysOnlyBase, opts?: RuleOpts): KeysOnlyDraft {
+  const { R, track, exam, lines, lineDomains, sIndex, dIndex, required, excluded, requiredInOrder, codeOrigin } = b;
+  const issued = issuedOf(b.schema);
+  const slots = (Array.isArray(ctx.slots) && ctx.slots.length > 0 ? ctx.slots : issued.slots).filter((s) => typeof s === "string");
+  const lastSlot = slots.length - 1;
+  const stagesObj = own(parsed, "stages");
+  const { drop, blank, labelOf } = b;
 
   // ── stages ──
   const placed = new Set<number>();
@@ -4376,90 +4975,65 @@ function keysOnlyInner(parsed: unknown, ctx: KeysOnlyContext, report: Validation
     const cp = own(st, "checkpoint");
     if (cp !== undefined && cp !== null) pick("CHECKPOINT", cp, undefined, checkpoints);
 
-    const items = [...(si === 0 ? needItems : []), ...topics, ...practices, ...steps, ...checkpoints];
-    const measures: MeasureSpec[] = [];
-    const measure = (p: Pick<MeasureSpec, "kind" | "role" | "scope" | "unit" | "itemLineageId">): MeasureSpec => ({
-      id: null,
-      minLevel: null,
-      target: 0,
-      targetSource: "WORKED_OUT",
-      fittedTarget: null,
-      rateSource: null,
-      baseline: null,
-      baselineDay: null,
-      measureKey: null,
-      ...p,
-    });
-    for (const it of items) {
-      if (it.kind === "PRACTICE") measures.push(measure({ kind: "PRACTICE_KEPT", role: "PAYS", scope: { itemLineageIds: [it.lineageId] }, unit: "sessions", itemLineageId: it.lineageId }));
-      if (it.kind === "CHECKPOINT") measures.push(measure({ kind: "CHECKPOINT", role: "CONTEXT", scope: { itemLineageIds: [it.lineageId] }, unit: "score", itemLineageId: it.lineageId }));
-    }
-    const notes: MilestoneNote[] = track === "BODY" ? ["HEALTH_LINE"] : [];
-    return {
-      id: null,
-      lineageId,
-      version: Number.isInteger(ctx.version) ? ctx.version : 0,
-      ord,
-      title: "",
-      titleOrigin: codeOrigin,
-      titleDecision: "PENDING",
-      windowStart: null,
-      dueDay: null,
-      status: "DRAFT",
-      rankIndex: null,
-      overAccepted: false,
-      items,
-      measures,
-      notes,
-      titleFlags: [],
-      stage: slot as StageKey,
-      arrangedBy: "GEMINI",
-    };
+    return milestoneOf(b, ctx, slot, ord, lineageId, [...(si === 0 ? b.needItems : []), ...topics, ...practices, ...steps, ...checkpoints]);
   });
 
-  // ── gaps (only when the run's schema had the slot) ──
-  let gapViews: GapView[] = [];
-  let gapsHidden = 0;
-  if (issued.gaps && milestones.length > 0) {
-    const listedIds = Object.values(dIndex);
-    const listed = listedIds.map((id) => ({ id, name: nameOf(id) ?? "" })).filter((d) => d.name);
-    // "The names of the Domains chosen in this intake": the intake's own list, not R (a confirmed addition grounds nothing).
-    const chosen = (intake.domainIds ?? []).map((id) => ({ id, name: nameOf(id) ?? "" })).filter((d) => d.name);
-    const sources = groundingSourcesOf(intake, ctx.areaName ?? "", chosen, ctx.gapSourceExclude ?? []);
-    const g = gapNamesOf(
-      own(parsed, "gaps"),
-      {
-        listed,
-        required,
-        sources,
-        label: labelBaseFor(intake, ctx.areaName ?? "", chosen.map((d) => d.name)),
-        makeId: ctx.makeId,
-      },
-      opts
-    );
-    for (const id of g.domains) addNeed(id, "gap");
-    const first = milestones[0];
-    first.items = [...needItems, ...g.shown.map((s) => s.item), ...first.items.filter((it) => !(it.kind === "DOMAIN" && it.notes.includes("NOT_CHOSEN")))];
-    for (let i = 0; i < g.shown.length; i++) report.notes.push({ milestoneOrd: 1, kind: "GAP", label: "", code: "GEMINI_PICK", reason: KEYS_ONLY_REASONS.gapShown });
-    for (let i = 0; i < g.hidden; i++) report.dropped.push({ milestoneOrd: 1, kind: "GAP", label: "", code: "NOT_IN_YOUR_WORDS", reason: KEYS_ONLY_REASONS.gapHidden });
-    for (const [clause, n] of Object.entries(g.byClause)) {
-      for (let i = 0; i < n; i++) {
-        report.dropped.push(
-          clause === "link"
-            ? { milestoneOrd: 1, kind: "GAP", label: "", code: "CONTAINED_LINK", reason: KEYS_ONLY_REASONS.gapLink }
-            : { milestoneOrd: 1, kind: "GAP", label: "", code: "NOT_A_NAME", reason: KEYS_ONLY_REASONS.gapHidden }
-        );
-      }
-    }
-    gapViews = g.shown.map((s) => s.view);
-    gapsHidden = g.hidden + g.dropped;
-    report.integrity = { ...integrity, modelChars: g.modelChars, gapsKept: g.shown.length, gapsHidden: g.hidden, gapsDropped: g.dropped, notANameByClause: { ...g.byClause } };
-  }
+  const { gapViews, gapsHidden } = applyGaps(parsed, ctx, b, milestones, opts);
   for (const m of milestones) m.items = m.items.map((it, i) => ({ ...it, ord: i }));
 
   const sessionPicks: SessionPicks | null =
-    sessionConfirmNeeded(track, intake.constraints) && picks.length > 0 ? { kinds: Array.from(new Set(picks)), constraints: (intake.constraints ?? "").trim(), decision: "PENDING" } : null;
-  return draft(milestones, { needs: needIds, sessionPicks, gaps: gapViews, gapsHidden }, placed);
+    sessionConfirmNeeded(track, b.intake.constraints) && picks.length > 0 ? { kinds: Array.from(new Set(picks)), constraints: (b.intake.constraints ?? "").trim(), decision: "PENDING" } : null;
+  return b.draft(milestones, { needs: b.needIds, sessionPicks, gaps: gapViews, gapsHidden }, placed);
+}
+
+// ─── The v4 reply from a v3 one (the probe's offline re-validation; contracts §20) ──
+
+/**
+ * A v3 reply read as a v4 one (pure; the probe's offline re-validation of
+ * the blessed v3 replies, and roadmap-model-check's): `needs` and `gaps` as
+ * they were; `order` the v3 stages' lines in stage order (each line where it
+ * first appears; the rest are appended by outlineOrderOf); `picks` per slot,
+ * the first of that stage's practice kinds that the v4 schema's enum for the
+ * slot holds (a stage whose practices hold none, or have none, takes code's
+ * default). Only keys the v4 schema issued are carried (`order` and `picks`
+ * are left out when it has no such property), so the result is CLEAN under
+ * it whenever the v3 reply's `needs` and `gaps` are. Reads own properties
+ * only; never throws on garbage (it gives {}).
+ */
+export function replyV4OfV3(parsed: unknown, schemaV4: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!isRec(parsed)) return out;
+  const props = own(schemaV4, "properties");
+  const stages = own(parsed, "stages");
+  const slots = isRec(stages) ? Object.keys(stages) : [];
+  const needs = own(parsed, "needs");
+  if (Array.isArray(needs) && isRec(own(props, "needs"))) out.needs = [...needs];
+  const orderNode = own(props, "order");
+  if (isRec(orderNode)) {
+    const issued = enumOf(own(orderNode, "items"));
+    const order: string[] = [];
+    for (const slot of slots) {
+      const lines = own(own(stages, slot), "lines");
+      if (Array.isArray(lines)) for (const k of lines) if (typeof k === "string" && issued.has(k) && !order.includes(k)) order.push(k);
+    }
+    out.order = order;
+  }
+  const picksProps = own(own(props, "picks"), "properties");
+  if (isRec(picksProps)) {
+    const picks: Record<string, string> = {};
+    for (const slot of slots) {
+      const node = own(picksProps, slot);
+      if (!isRec(node)) continue;
+      const allowed = enumOf(node);
+      const practices = own(own(stages, slot), "practices");
+      const kind = Array.isArray(practices) ? practices.map((p) => own(p, "kind")).find((k): k is string => typeof k === "string" && allowed.has(k)) : undefined;
+      if (kind) picks[slot] = kind;
+    }
+    out.picks = picks;
+  }
+  const gaps = own(parsed, "gaps");
+  if (Array.isArray(gaps) && isRec(own(props, "gaps"))) out.gaps = [...gaps];
+  return out;
 }
 
 // ─── The rules, named (the hostile bar's H6) ────────────────────────────────
@@ -4524,6 +5098,16 @@ export const RULE_NAMES: readonly RuleName[] = Array.from(
     "keys.constraint",
     "keys.unnamed",
     "keys.over-cap",
+    // v4 (contracts §20): a valid pick placed as its stage's focus, an invalid one (code's default), one the progression
+    // reshaped (room for one), and outline lines the reply left out (appended in the user's order).
+    "keys.pick",
+    "keys.pick-default",
+    "keys.pick-reshaped",
+    "keys.order-appended",
+    // The fix round (r3): a reply with no `order` keeps the user's own order; a valid pick of a kind code places in that
+    // stage itself (its default, the exam's core, a carry) is code's, not Gemini's.
+    "keys.order-kept",
+    "keys.pick-code",
     "integrity.TYPE",
     "integrity.ENUM",
     "integrity.EXTRA_PROPERTY",

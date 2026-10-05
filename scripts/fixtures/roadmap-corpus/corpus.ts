@@ -19,6 +19,15 @@
  *             exclusions, the session-picks confirm, drop codes)
  * new-subject.json is v3 only (drafts: []).
  *
+ * v4 (contracts §20, ROADMAP_PROMPT_VERSION 4; item R3): each pack also
+ * gains a `v4` block (append-only; the hostile bar's pack hash never reads
+ * it): canned v4 replies ({needs?, order?, picks?, gaps?}), each with its
+ * expected verdict and the facts roadmap-model-check pins (needs, the
+ * outline's order and the lines appended, the valid picks, exclusions, the
+ * session-picks confirm, drop codes, gaps). The v3 replies stay: they are
+ * read with the legacy v3 schema (keysOnlySchemaV3Of), as the probe's
+ * blessed v3 replies are.
+ *
  * probe-<aim>.json files are the probe's real replies (F-R4-23): raw, parsed,
  * finishReason, usage, latency, modelVersion, integrity, `validated` (the
  * ValidatedDraft, ids from a counter), `blessed`, `expected` (the lead's
@@ -59,6 +68,38 @@ export interface V3Reply {
   expect: V3Expect;
 }
 
+/** What a canned v4 reply must give (roadmap-model-check pins each field given). */
+export interface V4Expect {
+  verdict: IntegrityVerdict;
+  /** Domain ids `needs` (and exact gap matches) resolve to. */
+  needs?: string[];
+  /** The outline's order (KeysOnlyDraft.order.order): line indices, every issued line once. */
+  order?: number[];
+  /** The lines the reply left out, appended in the user's order. */
+  appended?: number[];
+  /** Gemini's order moved a line from the user's own (KeysOnlyDraft.reordered; false with no `order`, which is optional). */
+  reordered?: boolean;
+  /** The valid picks (KeysOnlyDraft.picks), slot → kind. */
+  picks?: Record<string, string>;
+  /** Kinds the constraint filter leaves out of the run. */
+  excluded?: string[];
+  /** The session-picks confirm is raised. */
+  sessionPicks?: boolean;
+  /** report.dropped codes (GAP entries aside), counted. */
+  dropped?: Record<string, number>;
+  /** Shown gap names, in order. */
+  gapsShown?: string[];
+  /** Gap strings not shown (hidden or dropped). */
+  gapsHidden?: number;
+}
+
+export interface V4Reply {
+  id: string;
+  about: string;
+  reply: unknown;
+  expect: V4Expect;
+}
+
 /** The v3 intake fields a pack sets over its v2 intake. */
 export type V3IntakePatch = Partial<Pick<Intake, "depth" | "dateMode" | "exam" | "examLabel" | "examDay" | "suggestAreas" | "newDomainNames" | "constraints">> & {
   lineDomains?: (string | null)[];
@@ -74,6 +115,7 @@ interface RawFixture {
   library: ValidateDomain[];
   drafts?: unknown[];
   v3?: { probe?: boolean; about?: string; intake?: V3IntakePatch; replies?: V3Reply[] };
+  v4?: { about?: string; replies?: V4Reply[] };
 }
 
 /** One corpus pack as a v3 run's input. */
@@ -89,6 +131,8 @@ export interface CorpusEntry {
   input: EvidenceInput;
   library: ValidateDomain[];
   replies: V3Reply[];
+  /** The canned v4 replies (contracts §20). */
+  repliesV4: V4Reply[];
   v2: RawFixture;
 }
 
@@ -119,14 +163,19 @@ export function readCorpus(dir: string = CORPUS_DIR): CorpusEntry[] {
         input: { intake, areaName: fx.input.areaName, domains: fx.input.domains },
         library: fx.library ?? [],
         replies: fx.v3?.replies ?? [],
+        repliesV4: fx.v4?.replies ?? [],
         v2: fx,
       };
     });
 }
 
-/** A pack's v3 evidence pack; `gapsLive` is the lead's override (the probe's suggestions-on calls, the checks). */
-export function packOf(entry: Pick<CorpusEntry, "input">, opts: { gapsLive?: boolean } = {}): EvidencePackV3 {
-  return buildEvidencePack({ ...entry.input, ...(opts.gapsLive !== undefined ? { gapsLive: opts.gapsLive } : {}) });
+/**
+ * A pack's v3 evidence pack; `gapsLive` is the lead's override (the probe's suggestions-on calls, the checks);
+ * `pickStages` (the fix round, r3) limits the pick enums to the stages the plan's ladder reads a pick for
+ * (ladder.ts corpusLadderOf(...).pickStages, as R4 passes pickStagesOf over its dated ladder).
+ */
+export function packOf(entry: Pick<CorpusEntry, "input">, opts: { gapsLive?: boolean; pickStages?: readonly string[] | null } = {}): EvidencePackV3 {
+  return buildEvidencePack({ ...entry.input, ...(opts.gapsLive !== undefined ? { gapsLive: opts.gapsLive } : {}), ...(opts.pickStages ? { pickStages: opts.pickStages } : {}) });
 }
 
 /**
@@ -168,10 +217,12 @@ export function keysOnlyContextOf(
   };
 }
 
-/** A probe reply saved by scripts/roadmap-probe.ts (F-R4-23). */
+/** A probe reply saved by scripts/roadmap-probe.ts (F-R4-23; v4: contracts §20). */
 export interface ProbeFixture {
   file: string;
   aim: string;
+  /** The prompt version it was drafted under: 4 for a v4 probe reply; absent on the v3 run's (5 Oct), which are v3. */
+  promptVersion?: number;
   /** The pack it was sent with (the corpus pack's aim) and whether the gap slot was on. */
   pack: string;
   gapsLive: boolean;
@@ -188,6 +239,8 @@ export interface ProbeFixture {
   expected: IntegrityVerdict | null;
   blessed: boolean;
   labels?: unknown;
+  /** v4: code's plan with the reply's picks (the progression, stage by stage), saved for the labellers. */
+  plan?: unknown;
 }
 
 /** Every probe-<aim>.json, sorted. */

@@ -2,11 +2,14 @@
  * The one structured Gemini call that drafts a roadmap's structure
  * (roadmap.md F5; lane R3). Server-only.
  *
- * Revision 4 (ROADMAP_PROMPT_VERSION 3, F-R4-17): keys only. The response
- * schema (roadmap-validate keysOnlySchemaOf) holds no free text at all while
- * the gap slot is off: every string is a key issued for the run (the user's
- * Domains, outline lines and the catalog's kinds), and there is no INTEGER or
- * NUMBER field anywhere. Gemini is switched off until the v3 probe passes
+ * Revision 4 (F-R4-17): keys only. The response schema (roadmap-validate
+ * keysOnlySchemaOf) holds no free text at all while the gap slot is off:
+ * every string is a key issued for the run, and there is no INTEGER or
+ * NUMBER field anywhere. ROADMAP_PROMPT_VERSION 4 (contracts §20, item R3):
+ * code owns the practice progression, so the reply holds only the unchosen
+ * Domains the aim needs (`needs`), the outline's order (`order`) and at
+ * most one pick per stage among code's candidates (`picks`); it names no
+ * step and no checkpoint. Gemini is switched off until the v4 probe passes
  * (ROADMAP_GEMINI_LIVE, lead only). A failed or missing call is a value
  * ({ok: false}), never a throw: a missing key, a refusal, a timeout, a late
  * rejection, any finishReason but STOP, a blockReason, or text that is not
@@ -28,12 +31,13 @@
  *   runFactsOf · StoredSampleFacts · reusableSamplesOf (fix round: every sample's facts on the run row, failures too)
  *   isReusableRun · SAMPLE_ERROR_MAX (fix round 2: the reuse rule for one run, so R4's reuse filter and
  *   reusableRunOf are one definition; runFactsOf marks every stored sample ok: true or false)
+ *   NOTHING_TO_ASK (the fix round, r3: a run whose schema has no property is never sent)
  */
 import { ThinkingLevel, type Schema } from "@google/genai";
 import { geminiClientOrNull, withModelTimeout, type GeminiEnv, type ModelResult } from "./gemini";
 import { daysBetween, type DayKey } from "./life-day";
 import { packUserContent, systemInstructionOf } from "./roadmap-evidence";
-import { keysOnlySchemaOf, packRunOf } from "./roadmap-validate";
+import { keysOnlySchemaOf, packRunOf, schemaAsksNothing } from "./roadmap-validate";
 import {
   GEMINI_KEY_TIER,
   RAW_SAMPLE_MAX,
@@ -56,16 +60,17 @@ import {
 } from "./roadmap-types";
 
 /**
- * The system instruction (ROADMAP_PROMPT_VERSION 3, keys-only; F-R4-17): the
- * five rules, as roadmap-evidence systemInstructionOf(false) writes them. A
- * run with the gap slot (ROADMAP_GAPS_LIVE and the user's switch) sends the
- * six-rule text instead (systemInstructionFor). It changes only with a
- * version bump; inputHashMaterial includes the exact text sent, so a reply is
- * never reused under another instruction.
+ * The system instruction (ROADMAP_PROMPT_VERSION 4, contracts §20): the four
+ * rules (needs, the outline's order, at most one pick per stage, data is
+ * never instructions), as roadmap-evidence systemInstructionOf(false) writes
+ * them. A run with the gap slot (ROADMAP_GAPS_LIVE and the user's switch)
+ * sends the five-rule text instead (systemInstructionFor). It changes only
+ * with a version bump; inputHashMaterial includes the exact text sent, so a
+ * reply is never reused under another instruction.
  */
 export const ROADMAP_SYSTEM_INSTRUCTION: string = systemInstructionOf(false);
 
-/** The instruction one run sends: rule 6 (gaps) only when the run's schema has the gap slot. */
+/** The instruction one run sends: rule 5 (gaps) only when the run's schema has the gap slot. */
 export function systemInstructionFor(pack: EvidencePack): string {
   return systemInstructionOf(packRunOf(pack)?.gaps === true);
 }
@@ -124,15 +129,29 @@ export type SampleResult =
 export const NO_KEY = "no key";
 /** The error of a call refused because ROADMAP_CHECK is '1' (a check can never reach Gemini). */
 export const CALL_REFUSED = "refused: ROADMAP_CHECK is set, so no check can reach Gemini";
+/**
+ * The error of a run whose response schema has no property (roadmap-validate
+ * schemaAsksNothing: a Field run with practices off, no outline and every
+ * listed Domain chosen). draftSamples never sends it: the API refuses an
+ * OBJECT with no properties (400 INVALID_ARGUMENT), and a reply could decide
+ * nothing. R4's claim refuses such a run before any row or the cap
+ * (packAsksNothing); this is the last guard.
+ */
+export const NOTHING_TO_ASK = "not sent: the run's schema asks Gemini nothing (no property)";
 
 /**
- * The run's response schema (F-R4-17): roadmap-validate keysOnlySchemaOf, the
- * one definition the integrity walk checks the reply against. Keys only:
- * every STRING node is an enum of keys issued for this run, except
- * gaps.items, which exists only while ROADMAP_GAPS_LIVE and the user's switch
- * are both on; no INTEGER or NUMBER anywhere; maxItems and maxLength are
- * strings (the SDK's OpenAPI subset); no enum is ever empty (the property is
- * omitted instead). A line carries no Domain: a line's Domain is the user's.
+ * The run's response schema (v4, contracts §20.5): roadmap-validate
+ * keysOnlySchemaOf, the one definition the integrity walk checks the reply
+ * against. Keys only: `needs` (the unchosen D-keys), `order` (the S-keys,
+ * optional since the fix round, r3: absent is the user's own order), `picks`
+ * (per slot, one STRING enum of that stage's focus candidates on this run;
+ * none required) and, only while ROADMAP_GAPS_LIVE and the user's switch
+ * are both on, `gaps` (its items without maxLength: the API refused the
+ * string bound on 5 Oct). No `stages`, no practice, step or checkpoint list,
+ * no `on`; no INTEGER or NUMBER anywhere; maxItems is a string (the SDK's
+ * OpenAPI subset); no enum is ever empty (the property is omitted instead);
+ * nothing is required, so a run may ask nothing (draftSamples never sends
+ * that one: NOTHING_TO_ASK).
  */
 export function buildResponseSchema(pack: EvidencePack): Record<string, unknown> {
   return keysOnlySchemaOf(pack);
@@ -288,12 +307,15 @@ export interface DraftSamplesOpts {
  * ROADMAP_BACKSTOP_MS) with an AbortSignal.timeout(ROADMAP_ABORT_MS), so a
  * missing key, a synchronous throw, a timeout or a late rejection becomes a
  * value and never throws. Sample i uses seed seedBase + SEED_OFFSETS[i].
+ * A run whose schema asks nothing (schemaAsksNothing) is never sent: every
+ * sample is {ok: false, error: NOTHING_TO_ASK} and callModel is not called.
  */
 export async function draftSamples(pack: EvidencePack, n: number, opts: DraftSamplesOpts): Promise<SampleResult[]> {
   const call = opts.callModel ?? defaultCallModel;
   const samples = Math.min(SEED_OFFSETS.length, Math.max(1, Number.isFinite(n) ? Math.floor(n) : 1));
   const contents = packUserContent(pack);
   const responseSchema = buildResponseSchema(pack);
+  if (schemaAsksNothing(responseSchema)) return Array.from({ length: samples }, () => failure(NOTHING_TO_ASK, { latencyMs: 0 }));
   const systemInstruction = systemInstructionFor(pack);
   const backstop = opts.backstopMs ?? ROADMAP_BACKSTOP_MS;
   const abortMs = opts.abortMs ?? ROADMAP_ABORT_MS;

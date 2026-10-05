@@ -144,5 +144,29 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a DUTY routine: two picks.",
+    "replies": [
+      {
+        "id": "tax-admin-v4-a",
+        "about": "Planning the week first, the admin session at stage 4.",
+        "reply": {
+          "picks": {
+            "STAGE_1": "PLAN_AHEAD",
+            "STAGE_4": "ADMIN_SESSION"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "picks": {
+            "STAGE_1": "PLAN_AHEAD",
+            "STAGE_4": "ADMIN_SESSION"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
   }
 }

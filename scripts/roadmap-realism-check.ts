@@ -54,7 +54,23 @@ import { join } from "node:path";
 import { addDays, daysBetween, weekStartKeyOf, weekdayOf, type DayKey } from "../src/lib/life-day";
 import { WEEKDAY_SHORT } from "../src/lib/recurrence";
 import * as RT from "../src/lib/roadmap-types";
-import { answerActivityCard, catalogLabelOf, constraintsStateOfIntake, type CatalogKey } from "../src/lib/roadmap-catalog";
+import {
+  BUILD_UP_RULE,
+  CATALOG,
+  PROGRESSION,
+  activityAsksOn,
+  answerActivityCard,
+  catalogEntryOf,
+  catalogLabelOf,
+  constraintsStateOfIntake,
+  cueGatedKindsOf,
+  progressionViolationsOf,
+  type CatalogKey,
+  type CatalogTrack,
+  type PracticeKind,
+  type Progression,
+} from "../src/lib/roadmap-catalog";
+import type { Track } from "../src/lib/life-types";
 import {
   applyRemedy,
   availableFor,
@@ -71,6 +87,7 @@ import {
   lowerDepthPlanOf,
   manualLadder,
   motivationTimelineOf,
+  planProgressionOf,
   productionPlannedFromFluentOf,
   refit,
   refitForStart,
@@ -82,6 +99,7 @@ import {
   syncStagePractices,
   syncTrackStarter,
   thresholdFor,
+  trackStagePlacesOf,
   trackStarterKindsOf,
   writingPlanOf,
   type StageLadderResult,
@@ -1805,14 +1823,16 @@ console.log("— rev 4: keep the depth, move the date (F-R4-11) —");
   const examIk = ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(180) });
   const exam = ladder4("exam", stageLadderOf(examIk, learnerIn({ examDay: at4(180) }), names4, mk4));
   const checkpoints = exam.plan.map((m) => m.items.filter((i) => i.kind === "CHECKPOINT").map((i) => i.catalogKey).join(""));
+  // The practice progression (contracts §20): checkpoints escalate (self-tests, then the exam itself on its stage; none between a
+  // dated exam and the last stage but the last's performance check), BOOK_EXAM on the first stage.
   eq(
-    "an exam on day 180: the depth stays Mastered; EXAM_DAY sits in the stage holding it (Fluent, due 244), MOCK_TEST in the stage before; BOOK_EXAM in the first; reachByExam level 8",
+    "an exam on day 180: the depth stays Mastered; EXAM_DAY sits in the stage holding it (Fluent, due 244), a self-test before, the mock test on the stage before the exam's (its run-up, contracts §20.11), nothing after the exam; BOOK_EXAM in the first; reachByExam level 8",
     [cardMeasures(finalOf(exam.plan))[0].measureKey, checkpoints, exam.plan[0].items.some((i) => i.catalogKey === "BOOK_EXAM"), exam.dateCheck!.reachByExam, exam.dateCheck!.verdict],
-    ["CARDS_AT_LEVEL|d:a|L12|rc", ["", "", "MOCK_TEST", "EXAM_DAY", "", ""], true, 8, "FITS"]
+    ["CARDS_AT_LEVEL|d:a|L12|rc", ["", "SELF_TEST", "MOCK_TEST", "EXAM_DAY", "", ""], true, 8, "FITS"]
   );
   check(
-    "… timed practice in the stages up to the exam (practices allowed, a slot free), never after it; the exam line stays on the plan",
-    exam.plan.every((m, i) => m.items.some((x) => x.catalogKey === "TIMED_PRACTICE") === i <= 3) && exam.dateCheck!.basis.some((b) => b.startsWith("By your exam (") && b.endsWith("the plan reaches Retained (level 8). The depth goes on past it."))
+    "… timed practice on the exam's stage alone (its rehearsal, contracts §20.3), never another; the exam line stays on the plan",
+    exam.plan.every((m, i) => m.items.some((x) => x.catalogKey === "TIMED_PRACTICE") === (i === 3)) && exam.dateCheck!.basis.some((b) => b.startsWith("By your exam (") && b.endsWith("the plan reaches Retained (level 8). The depth goes on past it."))
   );
   eq("the exam leaves the verdict on the aim's own date as it was", [exam.dateCheck!.D_real, exam.dateCheck!.verdict], [dc.D_real, dc.verdict]);
   const late = ladder4("exam after D_real", stageLadderOf(ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(700) }), learnerIn({ examDay: at4(700) }), names4, mk4));
@@ -1887,27 +1907,49 @@ console.log("— rev 4: keep the depth, move the date (F-R4-11) —");
 console.log("— rev 4: stage practices and the band floors (F-R4-13) —");
 {
   const real = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  // The practice progression (contracts §20): each stage's focus climbs (retrieval, then production, then putting it
+  // together), the stage before's focus is carried, recall drills are the spaced review throughout; every one the app's.
   eq(
-    "the starter's kinds follow the stage: recall drills before Retained, explain-it from Retained on (each added by the app)",
+    "the starter's kinds are the practice progression's: the count gate copies Familiar's (recall drills, then the partner), problem sets from Retained (going over mistakes as the spaced review there, recall drills already carried), explaining from Fluent, building from Toward Mastered, each carrying the one before and keeping recall drills (each added by the app)",
     real.plan.map((m) => m.items.filter((i) => i.kind === "PRACTICE").map((i) => `${i.catalogKey}:${i.notes.join("")}`).join(",")),
-    ["RECALL_DRILLS:STUDY_ADDED", "RECALL_DRILLS:STUDY_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED", "EXPLAIN_IT:PRODUCTION_ADDED"]
+    [
+      "RECALL_DRILLS:STUDY_ADDED,READ_AND_CARD:STUDY_ADDED",
+      "RECALL_DRILLS:STUDY_ADDED,READ_AND_CARD:STUDY_ADDED",
+      "PROBLEM_SETS:PRODUCTION_ADDED,RECALL_DRILLS:STUDY_ADDED,MISTAKE_REVIEW:PRODUCTION_ADDED",
+      "EXPLAIN_IT:PRODUCTION_ADDED,PROBLEM_SETS:PRODUCTION_ADDED,RECALL_DRILLS:STUDY_ADDED",
+      "BUILD_SOMETHING:PRODUCTION_ADDED,EXPLAIN_IT:PRODUCTION_ADDED,RECALL_DRILLS:STUDY_ADDED",
+      "BUILD_SOMETHING:PRODUCTION_ADDED,EXPLAIN_IT:PRODUCTION_ADDED,RECALL_DRILLS:STUDY_ADDED",
+    ]
   );
-  eq("no step drops under its band floor: Retained D30, Fluent, Toward Mastered and Mastered D45", real.plan.map((m) => m.items.find((i) => i.kind === "PRACTICE")!.durationBand), ["D30", "D30", "D30", "D45", "D45", "D45"]);
+  const floorOf = (m: RT.MilestoneDraft) => RT.PRACTICE_BANDS.indexOf(m.stage === "FLUENT" || m.stage === "MASTERED" || m.stage === "BETWEEN" ? "D45" : m.stage === "RETAINED" ? "D30" : "D15");
+  check(
+    "no practice drops under its band floor: Retained D30, Fluent, Toward Mastered and Mastered D45 (a building session keeps its own D60)",
+    real.plan.every((m) => m.items.filter((i) => i.kind === "PRACTICE").every((i) => RT.PRACTICE_BANDS.indexOf(i.durationBand!) >= floorOf(m))) &&
+      json(real.plan.map((m) => m.items.find((i) => i.kind === "PRACTICE")!.durationBand)) === json(["D30", "D30", "D30", "D45", "D60", "D60"]),
+    json(real.plan.map((m) => m.items.filter((i) => i.kind === "PRACTICE").map((i) => i.durationBand)))
+  );
   check("productionPlannedFromFluentOf: true with the starter's practices", productionPlannedFromFluentOf(real.plan));
   const fluent = real.plan[3];
   const userRead: RT.ItemDraft = { ...fluent.items.find((i) => i.kind === "PRACTICE")!, lineageId: "u-read", catalogKey: "READ_AND_CARD", label: "Study Alpha, Beta", origin: "USER", decision: "EDITED", method: "READING", notes: [] };
   const onlyRead = { ...fluent, items: [...fluent.items.filter((i) => i.kind !== "PRACTICE"), userRead] };
-  const synced = syncStagePractices(onlyRead, learnerIn(), names4, mk4);
-  const added = synced.items.find((i) => i.notes.includes("PRODUCTION_ADDED"));
-  check("a Fluent stage with only READ_AND_CARD gets a PRODUCTION_ADDED practice when a slot is free", added?.catalogKey === "EXPLAIN_IT" && added.origin === "CODE" && onlyRead.items.length + 1 === synced.items.length, json(synced.items.map((i) => i.catalogKey)));
-  const fitted = fitPlan(real.plan.map((m, i) => (i === 3 ? synced : m)), judgeIn(learnerIn(), real.plan));
+  // syncStagePractices reads the stage within its plan (the carry and its place in the chain are the plan's).
+  const inPlan = { plan: real.plan };
+  const realIn = judgeIn(learnerIn(), real.plan);
+  const synced = syncStagePractices(onlyRead, realIn, names4, mk4, [], inPlan);
+  const added = synced.items.filter((i) => i.notes.includes("PRODUCTION_ADDED"));
+  check(
+    "a Fluent stage with only the user's READ_AND_CARD gets the progression's production practices (its focus, explain it, and the carry, problem sets: PRODUCTION_ADDED) in the room the user's leaves; the user's stays",
+    json(added.map((i) => i.catalogKey)) === json(["EXPLAIN_IT", "PROBLEM_SETS"]) && added.every((i) => i.origin === "CODE") && synced.items.some((i) => i.lineageId === "u-read" && i.decision === "EDITED") && synced.items.filter((i) => i.kind === "PRACTICE").length === 3,
+    json(synced.items.map((i) => i.catalogKey))
+  );
+  const fitted = fitPlan(real.plan.map((m, i) => (i === 3 ? synced : m)), realIn);
   check("… at D45 or more once fitted", ["D45", "D60", "D90", "D120"].includes(fitted[3].items.find((i) => i.notes.includes("PRODUCTION_ADDED"))!.durationBand ?? ""));
   const full = { ...onlyRead, items: [...onlyRead.items, { ...userRead, lineageId: "u-2" }, { ...userRead, lineageId: "u-3" }] };
-  const noSlot = syncStagePractices(full, learnerIn(), names4, mk4);
+  const noSlot = syncStagePractices(full, realIn, names4, mk4, [], inPlan);
   check("… and the note when no slot is free (NO_PRODUCTION_SLOT)", noSlot.notes.includes("NO_PRODUCTION_SLOT") && !noSlot.items.some((i) => i.notes.includes("PRODUCTION_ADDED")));
   const found = real.plan[1];
   const build: RT.ItemDraft = { ...userRead, lineageId: "u-build", catalogKey: "BUILD_SOMETHING", label: "Build something with Alpha, Beta", method: "PROJECT_WORK" };
-  const onlyBuild = syncStagePractices({ ...found, items: [...found.items.filter((i) => i.kind !== "PRACTICE"), build] }, learnerIn(), names4, mk4);
+  const onlyBuild = syncStagePractices({ ...found, items: [...found.items.filter((i) => i.kind !== "PRACTICE"), build] }, realIn, names4, mk4, [], inPlan);
   check("a Familiar stage with only BUILD_SOMETHING gets a retrieval practice (STUDY_ADDED)", onlyBuild.items.some((i) => i.catalogKey === "RECALL_DRILLS" && i.notes.includes("STUDY_ADDED")), json(onlyBuild.items.map((i) => i.catalogKey)));
   // One definition of retrieval or production practice (contracts §15.9): roadmap-catalog's practiceRoleOf, catalog type first,
   // then the method. A "Write it myself" practice typed WRITING (no catalog type) is production in R2, R4's top rank and R1 alike.
@@ -1917,7 +1959,7 @@ console.log("— rev 4: stage practices and the band floors (F-R4-13) —");
     !/function\s+practiceRoleOf\b/.test(realismSrc) && /import\s*\{[^}]*\bpracticeRoleOf\b[^}]*\}\s*from\s*"\.\/roadmap-catalog"/.test(realismSrc)
   );
   const typedWriting: RT.ItemDraft = { ...userRead, lineageId: "u-write", catalogKey: null, label: "Write up a worked example", method: "WRITING" };
-  const typedFluent = syncStagePractices({ ...fluent, items: [...fluent.items.filter((i) => i.kind !== "PRACTICE"), typedWriting] }, learnerIn(), names4, mk4);
+  const typedFluent = syncStagePractices({ ...fluent, items: [...fluent.items.filter((i) => i.kind !== "PRACTICE"), typedWriting] }, realIn, names4, mk4, [], inPlan);
   const typedPlan = real.plan.map((m) =>
     (rowLevel(m) >= 10 ? { ...m, items: [...m.items.filter((i) => i.kind !== "PRACTICE"), { ...typedWriting, lineageId: `u-write-${m.lineageId}` }] } : m)
   );
@@ -1925,8 +1967,12 @@ console.log("— rev 4: stage practices and the band floors (F-R4-13) —");
     (rowLevel(m) >= 10 ? { ...m, items: [...m.items.filter((i) => i.kind !== "PRACTICE"), { ...userRead, lineageId: `u-easy-${m.lineageId}`, catalogKey: "EASY_SESSION" as RT.ItemDraft["catalogKey"], method: "WRITING" as RT.PracticeMethod }] } : m)
   );
   check(
-    "a typed WRITING practice with no catalog type is production: a Fluent stage holding it gets no PRODUCTION_ADDED, and a plan whose stages from Fluent on hold it keeps Paragon open; a catalog type outside both lists (EASY_SESSION) is neither, whatever its method",
-    !typedFluent.items.some((i) => i.notes.includes("PRODUCTION_ADDED")) && productionPlannedFromFluentOf(typedPlan) && !productionPlannedFromFluentOf(easyPlan),
+    "a typed WRITING practice with no catalog type is production: a Fluent stage keeps it beside the progression's, in the room it leaves, and a plan whose stages from Fluent on hold it keeps Paragon open; a catalog type outside both lists (EASY_SESSION) is neither, whatever its method",
+    typedFluent.items.some((i) => i.lineageId === "u-write") &&
+      typedFluent.items.filter((i) => i.kind === "PRACTICE").length === 3 &&
+      !typedFluent.notes.includes("NO_PRODUCTION_SLOT") &&
+      productionPlannedFromFluentOf(typedPlan) &&
+      !productionPlannedFromFluentOf(easyPlan),
     json(typedFluent.items.map((i) => [i.catalogKey, i.method, i.notes]))
   );
   const off = ladder4("practices off", stageLadderOf(ik4({ practicesAllowed: false }), learnerIn({ practicesAllowed: false }), names4, mk4));
@@ -1967,7 +2013,7 @@ console.log("— rev 4: stage practices and the band floors (F-R4-13) —");
   const refitted = fitPlan(renamed, judgeIn(learnerIn(), real.plan));
   check(
     "… and re-renders after a Domain rename (titles too)",
-    refitted[2].items.find((i) => i.catalogKey === "EXPLAIN_IT")!.label === "Explain it in your own words: Algebra, Beta" && refitted[2].title === "Retained: Algebra, Beta to level 8+",
+    refitted[2].items.find((i) => i.catalogKey === "PROBLEM_SETS")?.label === "Problem sets: Algebra, Beta" && refitted[3].items.find((i) => i.catalogKey === "EXPLAIN_IT")?.label === "Explain it in your own words: Algebra, Beta" && refitted[2].title === "Retained: Algebra, Beta to level 8+",
     json([refitted[2].title, refitted[2].items.map((i) => i.label)])
   );
 }
@@ -2029,11 +2075,11 @@ console.log("— rev 4: judging a depth plan, Start and the snapshot —");
   const partPractice = (m: RT.MilestoneDraft) => m.items.filter((i) => i.kind === "PRACTICE").map((i) => `${i.catalogKey}:${i.origin}:${i.notes.join("")}`);
   const learnerMt = motivationTimelineOf(real.plan, inp);
   check(
-    "a count gate holds the app's retrieval practice (RECALL_DRILLS, origin CODE, STUDY_ADDED) on the starter and on a fitted skeleton, and the timeline counts its ⬡6 on day 55",
+    "a count gate holds the app's retrieval practices (its gate's: recall drills and the partner, origin CODE, STUDY_ADDED; contracts §20) on the starter and on a fitted skeleton, and the timeline counts its ⬡6 on day 55",
     real.plan[0].stage === "PART" &&
-      json(partPractice(real.plan[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED"]) &&
+      json(partPractice(real.plan[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED", "READ_AND_CARD:CODE:STUDY_ADDED"]) &&
       skeleton.plan[0].items.every((i) => i.kind !== "PRACTICE") &&
-      json(partPractice(fittedSkeleton[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED"]) &&
+      json(partPractice(fittedSkeleton[0])) === json(["RECALL_DRILLS:CODE:STUDY_ADDED", "READ_AND_CARD:CODE:STUDY_ADDED"]) &&
       learnerMt.payDays[0] === 55,
     json([partPractice(real.plan[0]), partPractice(fittedSkeleton[0]), learnerMt.payDays])
   );
@@ -2063,13 +2109,22 @@ console.log("— rev 4: track plans (F-R4-10) —");
     ]
   );
   check(
-    "with constraints the starter places only easy, mobility and technique sessions, no performance check, and HEALTH_LINE on every stage",
-    body.plan.every((m) => m.notes.includes("HEALTH_LINE") && m.items.every((i) => i.kind === "PRACTICE" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(i.catalogKey ?? ""))),
+    "with constraints the starter places only easy, mobility and technique sessions (and the progression's setting up on the first stage), no full attempt or performance check, and HEALTH_LINE on every stage",
+    body.plan.every(
+      (m, i) =>
+        m.notes.includes("HEALTH_LINE") &&
+        m.items.some((x) => x.kind === "PRACTICE") &&
+        m.items.every((x) => (x.kind === "PRACTICE" && ["EASY_SESSION", "MOBILITY_SESSION", "TECHNIQUE_SESSION"].includes(x.catalogKey ?? "")) || (i === 0 && x.catalogKey === "SET_UP"))
+    ),
     json(body.plan.map((m) => m.items.map((i) => i.catalogKey)))
   );
   // A CARE plan asks whatever its words (contracts §19, decision 1): the user's "Nothing to avoid" lets the performance check in.
   const short = ladder4("125 days", stageLadderOf(answeredIntake(ik4({ aim: "Keep the house running", fieldId: null, track: "CARE", domainIds: [], targetDay: at4(125), dateMode: "CHOSEN" })), in4({ trackArea: true, depth: null, targetDay: at4(125) }, []), names4, mk4));
-  eq("the merge rule on a 125-day track plan keeps two stages (third and fifth), the last with its performance check (the card answered)", [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")], [["STAGE_3@76", "STAGE_5@125"], true]);
+  eq(
+    "the merge rule on a 125-day track plan keeps two rows, which stand at the first and the last stage by position (the base is never skipped), the last with its performance check (the card answered)",
+    [shape(short.plan), finalOf(short.plan).items.some((i) => i.catalogKey === "PERFORMANCE_CHECK")],
+    [["STAGE_1@76", "STAGE_5@125"], true]
+  );
   const mt = motivationTimelineOf(short.plan, in4({ trackArea: true, depth: null, targetDay: at4(125) }, []));
   eq("… a track plan ranks its k-th kept stage k, and can't give Paragon in 125 days", [mt.rankDays, mt.paragonDay], [[76, 125], null]);
   const tiny = ladder4("40 days", stageLadderOf(ik4({ aim: "Play a piece", fieldId: null, track: "CRAFT", domainIds: [], targetDay: at4(40), dateMode: "CHOSEN" }), in4({ trackArea: true, depth: null, targetDay: at4(40) }, []), names4, mk4));
@@ -2087,7 +2142,13 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
   const control = ladder4("exam", stageLadderOf(examIk, examIn, names4, mk4));
   const noTimed = ladder4("no timed", stageLadderOf(examIk, examIn, names4, mk4, { excluded: ["TIMED_PRACTICE"] }));
   const roleOk = (rows: string[][]) => rows.every((r, i) => control.plan[i].items.every((x) => x.kind !== "PRACTICE") || r.some((k) => ["RECALL_DRILLS", "READ_AND_CARD", "LISTEN_AND_REPEAT", "EXPLAIN_IT", "PROBLEM_SETS", "WRITING_PRACTICE", "MISTAKE_REVIEW", "SAY_IT_ALOUD", "BUILD_SOMETHING", "RUN_THROUGHS"].includes(k)));
-  check("control: the exam ladder places Timed practice and a Mock test", kindsOf(control.plan).flat().includes("TIMED_PRACTICE") && kindsOf(control.plan).flat().includes("MOCK_TEST"), json(kindsOf(control.plan)));
+  // A dated exam's stage holds the exam itself and its rehearsal (contracts §20.10, point 1); an undated one, the mock test.
+  const undated = ladder4("undated exam", stageLadderOf(ik4({ examLabel: "JLPT N2", exam: true }), learnerIn(), names4, mk4));
+  check(
+    "control: the exam ladder places Timed practice and the exam (EXAM_DAY); with no day, a Mock test on the last stage",
+    kindsOf(control.plan).flat().includes("TIMED_PRACTICE") && kindsOf(control.plan).flat().includes("EXAM_DAY") && kindsOf(undated.plan)[undated.plan.length - 1].includes("MOCK_TEST"),
+    json([kindsOf(control.plan), kindsOf(undated.plan)])
+  );
   check(
     "stageLadderOf with excluded TIMED_PRACTICE: no row holds it, and every stage still holds its retrieval or production practice",
     !kindsOf(noTimed.plan).flat().includes("TIMED_PRACTICE") && roleOk(kindsOf(noTimed.plan)),
@@ -2127,11 +2188,20 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
   const trackIn = in4({ trackArea: true, depth: null, dateMode: "CHOSEN" }, []);
   const body = (o: Partial<RT.Intake>) => ik4({ aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], dateMode: "CHOSEN", depth: null, ...o });
   const plain = ladder4("body plain", stageLadderOf(body({}), trackIn, {}, mk4));
-  const SAFE_ROWS = [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION"]];
-  const UNLOCKED = [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "LONGER_SESSION", "PERFORMANCE_CHECK"]];
-  eq("decision 1: a BODY plan with no constraints and no cue asks too — only the safe sessions, Mobility in Longer's place, no performance check", kindsOf(plain.plan), SAFE_ROWS);
-  eq("…after the user's “Nothing to avoid”: Easy, Longer from the third stage, and the performance check", kindsOf(ladder4("body plain answered", stageLadderOf(answeredIntake(body({})), trackIn, {}, mk4)).plan), UNLOCKED);
-  eq("a cue the parser reads nothing from ('Running causes me knee pain.'): only the safe sessions, Mobility in Longer's place, no performance check", kindsOf(ladder4("cue", stageLadderOf(body({ constraints: "Running causes me knee pain." }), trackIn, {}, mk4)).plan), SAFE_ROWS);
+  // The practice progression (contracts §20, §20.11) through the gate: while the card waits, each stage's focus gives way
+  // to the stage before's placeable candidate at or above its rung (Technique for Longer and Harder), else a safe stand-in;
+  // the easy session is kept, setting up opens the plan.
+  const SAFE_ROWS = [["EASY_SESSION", "MOBILITY_SESSION", "SET_UP"], ["TECHNIQUE_SESSION", "EASY_SESSION"], ["TECHNIQUE_SESSION", "EASY_SESSION"], ["TECHNIQUE_SESSION", "EASY_SESSION"], ["TECHNIQUE_SESSION", "EASY_SESSION"]];
+  const UNLOCKED = [
+    ["EASY_SESSION", "MOBILITY_SESSION", "SET_UP"],
+    ["TECHNIQUE_SESSION", "EASY_SESSION"],
+    ["LONGER_SESSION", "TECHNIQUE_SESSION", "EASY_SESSION"],
+    ["HARDER_SESSION", "LONGER_SESSION", "EASY_SESSION"],
+    ["HARDER_SESSION", "LONGER_SESSION", "EASY_SESSION", "FULL_ATTEMPT", "PERFORMANCE_CHECK"],
+  ];
+  eq("decision 1: a BODY plan with no constraints and no cue asks too — only the safe sessions (each stage's focus stood in for), no full attempt or performance check", kindsOf(plain.plan), SAFE_ROWS);
+  eq("…after the user's “Nothing to avoid”: the climb (Longer from the third stage, Harder from the fourth, each carrying the one before, the easy session kept), the full attempt and the performance check", kindsOf(ladder4("body plain answered", stageLadderOf(answeredIntake(body({})), trackIn, {}, mk4)).plan), UNLOCKED);
+  eq("a cue the parser reads nothing from ('Running causes me knee pain.'): only the safe sessions, no performance check", kindsOf(ladder4("cue", stageLadderOf(body({ constraints: "Running causes me knee pain." }), trackIn, {}, mk4)).plan), SAFE_ROWS);
   eq("a cue in the aim alone ('Run again after knee surgery', no constraints) gates the same", kindsOf(ladder4("aim cue", stageLadderOf(body({ aim: "Run again after knee surgery" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
   eq("words the app can't read ('Đau đầu gối khi chạy') gate the same", kindsOf(ladder4("vi", stageLadderOf(body({ constraints: "Đau đầu gối khi chạy" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
   eq("cue-less constraints ('Evenings only') gate the same", kindsOf(ladder4("evenings", stageLadderOf(body({ constraints: "Evenings only" }), trackIn, {}, mk4)).plan), SAFE_ROWS);
@@ -2156,19 +2226,19 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
   eq(
     "an AVOID on a safe kind (Easy) is honoured too: the next safe kind takes its place",
     kindsOf(ladder4("avoid easy", stageLadderOf(avoidedOnly(["EASY_SESSION"]), trackIn, {}, mk4)).plan),
-    [["MOBILITY_SESSION"], ["MOBILITY_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"]]
+    [["MOBILITY_SESSION", "TECHNIQUE_SESSION", "SET_UP"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION"]]
   );
   const care = ik4({ aim: "Support Mum's care at home", fieldId: null, track: "CARE", domainIds: [], dateMode: "CHOSEN", depth: null, constraints: "No visits on weekdays, phone calls only." });
   eq(
-    "decision 2: CARE places its own safe kinds while the card waits — planning the week, keeping a log from the third stage; no care session and no performance check",
+    "decision 2: CARE places its own safe kinds while the card waits — planning the week and keeping a log on every stage; no care session and no performance check",
     kindsOf(ladder4("care", stageLadderOf(care, trackIn, {}, mk4)).plan),
-    [["PLAN_AHEAD"], ["PLAN_AHEAD"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"]]
+    [["PLAN_AHEAD", "KEEP_A_LOG", "SET_UP"], ["KEEP_A_LOG", "PLAN_AHEAD"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["PLAN_AHEAD", "KEEP_A_LOG"]]
   );
   eq("…a CARE plan with no constraints at all asks the same", kindsOf(ladder4("care plain", stageLadderOf({ ...care, constraints: null }, trackIn, {}, mk4)).plan), kindsOf(ladder4("care again", stageLadderOf(care, trackIn, {}, mk4)).plan));
   eq(
-    "…after the user's answer leaving Check-in ticked (the parser pre-ticked it): Set time is placed, Check-in never (planning the week in its place), the performance check on the last stage",
+    "…after the user's answer leaving Check-in ticked (the parser pre-ticked it): Set time is placed on every stage, Check-in never (Set time, the stage's next type, in its place), the admin session from the fourth with the log kept, the performance check on the last stage",
     kindsOf(ladder4("care answered", stageLadderOf(answeredIntake(care, ["CHECK_IN"]), trackIn, {}, mk4)).plan),
-    [["SET_TIME"], ["SET_TIME"], ["SET_TIME", "PLAN_AHEAD"], ["SET_TIME", "PLAN_AHEAD"], ["SET_TIME", "PLAN_AHEAD", "PERFORMANCE_CHECK"]]
+    [["SET_TIME", "KEEP_A_LOG", "SET_UP"], ["SET_TIME", "KEEP_A_LOG"], ["SET_TIME", "KEEP_A_LOG"], ["ADMIN_SESSION", "SET_TIME", "KEEP_A_LOG"], ["SET_TIME", "ADMIN_SESSION", "KEEP_A_LOG", "PERFORMANCE_CHECK"]]
   );
   eq(
     "decision 1: a CRAFT plan asks only on a cue — a plain one is built as before; 'Wrist tendinitis, can't play more than 20 minutes.' places the technique session alone, with no performance check",
@@ -2177,14 +2247,34 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
       kindsOf(ladder4("craft cue", stageLadderOf(ik4({ aim: "Play a piece on the piano", fieldId: null, track: "CRAFT", domainIds: [], dateMode: "CHOSEN", depth: null, constraints: "Wrist tendinitis, can't play more than 20 minutes." }), trackIn, {}, mk4)).plan),
     ],
     [
-      [["SLOW_DRILLS"], ["SLOW_DRILLS"], ["SLOW_DRILLS", "RUN_THROUGHS"], ["SLOW_DRILLS", "RUN_THROUGHS"], ["SLOW_DRILLS", "RUN_THROUGHS", "PERFORMANCE_CHECK"]],
-      [["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"]],
+      [
+        ["SLOW_DRILLS", "TECHNIQUE_SESSION", "SET_UP"],
+        ["SLOW_DRILLS", "TECHNIQUE_SESSION"],
+        ["RUN_THROUGHS", "SLOW_DRILLS", "TECHNIQUE_SESSION"],
+        ["WITH_A_PARTNER", "RUN_THROUGHS", "SLOW_DRILLS"],
+        ["RUN_THROUGHS", "WITH_A_PARTNER", "SLOW_DRILLS", "FULL_ATTEMPT", "PERFORMANCE_CHECK"],
+      ],
+      [["TECHNIQUE_SESSION", "SET_UP"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"], ["TECHNIQUE_SESSION"]],
     ]
   );
   eq(
-    "trackStarterKindsOf: a blocked kind gives way to the first safe kind on its track not blocked and not placed (CARE's: planning the week, keeping a log)",
-    [trackStarterKindsOf("BODY", 3, new Set(["LONGER_SESSION"])), trackStarterKindsOf("BODY", 3, new Set(["EASY_SESSION", "LONGER_SESSION"])), trackStarterKindsOf("CARE", 3, new Set(["SET_TIME", "CHECK_IN"])), trackStarterKindsOf("BODY", 1, new Set())],
-    [["EASY_SESSION", "MOBILITY_SESSION"], ["MOBILITY_SESSION", "TECHNIQUE_SESSION"], ["PLAN_AHEAD", "KEEP_A_LOG"], ["EASY_SESSION"]]
+    "trackStarterKindsOf is the progression's practices on that stage: a blocked focus takes the stage's next placeable type (Strength for Longer; CARE's admin for set time), then the stage before's at or above its rung (Technique), then the track's safe stand-in (planning the week and the log)",
+    [
+      trackStarterKindsOf("BODY", 3, new Set(["LONGER_SESSION"])),
+      trackStarterKindsOf("BODY", 3, new Set(["EASY_SESSION", "LONGER_SESSION"])),
+      trackStarterKindsOf("CARE", 3, new Set(["SET_TIME", "CHECK_IN"])),
+      trackStarterKindsOf("BODY", 1, new Set()),
+      trackStarterKindsOf("BODY", 3, new Set(["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION"])),
+      trackStarterKindsOf("CARE", 3, new Set(["SET_TIME", "CHECK_IN", "ADMIN_SESSION"])),
+    ],
+    [
+      ["STRENGTH_SESSION", "TECHNIQUE_SESSION", "EASY_SESSION"],
+      ["STRENGTH_SESSION", "TECHNIQUE_SESSION"],
+      ["ADMIN_SESSION", "PLAN_AHEAD", "KEEP_A_LOG"],
+      ["EASY_SESSION", "MOBILITY_SESSION"],
+      ["TECHNIQUE_SESSION", "EASY_SESSION"],
+      ["PLAN_AHEAD", "KEEP_A_LOG"],
+    ]
   );
   check(
     "blockedKindsOf: the caller's gate and `excluded` together; without a gate, the intake's own (a BODY plan waits on its card, whatever its words; after “Nothing to avoid” only the Mock test the card never listed, with no exam, still waits)",
@@ -2197,16 +2287,418 @@ console.log("— confirm to unlock (contracts §19): the code-built plan honours
   // syncTrackStarter (R4's re-sync after the answer): only what the answer changed is added; nothing the user removed comes back.
   const gated = ladder4("gated", stageLadderOf(cued, trackIn, {}, mk4)).plan;
   const since = [...blockedKindsOf(cued)];
-  const synced = syncTrackStarter(gated, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since });
-  eq(
-    "syncTrackStarter after the answer released Longer and the check: Longer added from the third stage, the check on the last; the safe sessions stay",
-    kindsOf(synced),
-    [["EASY_SESSION"], ["EASY_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION"], ["EASY_SESSION", "MOBILITY_SESSION", "LONGER_SESSION", "PERFORMANCE_CHECK"]]
+  const synced = syncTrackStarter(gated, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since, input: trackIn });
+  const sortedRows = (rows: string[][]) => json(rows.map((r) => [...r].sort()));
+  check(
+    "syncTrackStarter after the answer released the climb and the check: each stage holds what a fresh build of the answered plan places (Longer from the third, Harder from the fourth, the full attempt and the check on the last); the stand-ins leave",
+    sortedRows(kindsOf(synced)) === sortedRows(UNLOCKED) && synced.every((m) => m.items.filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED").length <= RT.PRACTICES_PER_MILESTONE),
+    json(kindsOf(synced))
   );
   const removed = gated.map((m, i) => (i === 2 ? { ...m, items: [...m.items, { ...m.items[0], lineageId: "gone", catalogKey: "LONGER_SESSION" as const, decision: "REMOVED" as const }] } : m));
-  check("…a stage where the user removed Longer gets none back; an unchanged gate adds nothing", !kindsOf(syncTrackStarter(removed, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since }))[2].includes("LONGER_SESSION") && json(kindsOf(syncTrackStarter(gated, cued, mk4, { since }))) === json(kindsOf(gated)));
+  check(
+    "…a stage where the user removed Longer gets none back; an unchanged gate adds nothing",
+    !kindsOf(syncTrackStarter(removed, answeredIntake(cued, ["STRENGTH_SESSION"]), mk4, { since, input: trackIn }))[2].includes("LONGER_SESSION") && json(kindsOf(syncTrackStarter(gated, cued, mk4, { since, input: trackIn }))) === json(kindsOf(gated))
+  );
   check("…a Field plan comes back as it was", json(syncTrackStarter(gated, { ...cued, fieldId: "f1" }, mk4, {})) === json(gated));
   check("the realism file has no bodySafeOf left (the gate holds F-R4-17's rule)", !/const bodySafeOf\b/.test(readFileSync(join(__dirname, "../src/lib/roadmap-realism.ts"), "utf8")));
+}
+
+console.log("— the practice progression on every built plan (contracts §20; R2) —");
+{
+  // Code owns the practice progression on every plan path. A plan R2 builds or re-syncs holds, on every DRAFT stage, exactly
+  // what roadmap-catalog's progressionOf places there (planProgressionOf reads the plan's chain: held rows held, accepted and
+  // started rows carried, the exam's stage, Gemini's picks), and that progression keeps every rule progressionViolationsOf
+  // checks (the carry and the climb, the escalation, the exam and last-stage placement, the gate, the caps). Read here at
+  // each stage's own room (its live practices), so the comparison is exact; the room itself is the budget's (checked below).
+  const live = (m: RT.MilestoneDraft) => m.items.filter((i) => i.decision !== "REMOVED" && !!i.catalogKey);
+  const livePractices = (m: RT.MilestoneDraft) => live(m).filter((i) => i.kind === "PRACTICE");
+  const kindsOfRow = (m: RT.MilestoneDraft) => live(m).map((i) => i.catalogKey as string).sort();
+  const wantOf = (sp: Progression["stages"][number]) => [...sp.practices, ...sp.steps, ...(sp.checkpoint ? [sp.checkpoint] : [])].map((x) => x.kind as string).sort();
+  const trackOf = (intake: RT.Intake): CatalogTrack => (intake.fieldId != null ? "FIELD" : intake.track);
+  /** Whether the gate leaves the track a practice to place (it always does on a track: its safe kinds; on a Field plan unless every kind is held). */
+  const placeableLeft = (intake: RT.Intake, blocked: ReadonlySet<string>) =>
+    CATALOG.some((e) => e.slot === "PRACTICE" && e.tracks.includes(trackOf(intake)) && !e.codeOnly && !e.examOnly && !blocked.has(e.key));
+  /** Every breach of a plan: a DRAFT stage whose kinds aren't its progression's, one with no practice the gate leaves, a placed kind the gate holds, a lastStageOnly kind early, and every progressionViolationsOf line. */
+  const breachesOf = (plan: readonly RT.MilestoneDraft[], intake: RT.Intake, input: RT.RealismInput, gate?: { blocked: CatalogKey[] }, picks?: unknown): string[] => {
+    const pp = planProgressionOf(plan, intake, input, { gate, picks, room: (m) => livePractices(m).length || null });
+    const blocked = blockedKindsOf(intake, { gate });
+    const out: string[] = [];
+    const lastLive = pp.rows.map((m, k) => (pp.progression.stages[k].held ? -1 : k)).filter((k) => k >= 0).pop();
+    pp.rows.forEach((m, k) => {
+      const sp = pp.progression.stages[k];
+      if (sp.held) {
+        if (live(m).length) out.push(`HELD ${m.stage} holds ${kindsOfRow(m)}`);
+        return;
+      }
+      for (const i of live(m)) {
+        if (m.status === "DRAFT" && blocked.has(i.catalogKey as CatalogKey)) out.push(`GATE ${m.stage}: ${i.catalogKey}`);
+        if (catalogEntryOf(i.catalogKey)?.lastStageOnly && k !== lastLive) out.push(`LAST ${m.stage}: ${i.catalogKey}`);
+      }
+      if (m.status !== "DRAFT") return;
+      if (json(kindsOfRow(m)) !== json(wantOf(sp))) out.push(`ROWS ${m.stage}@${k}: ${kindsOfRow(m).join(" ")} ≠ ${wantOf(sp).join(" ")}`);
+      if (input.practicesAllowed && placeableLeft(intake, blocked) && livePractices(m).length === 0) out.push(`EMPTY ${m.stage}@${k}`);
+    });
+    out.push(...progressionViolationsOf(pp.input, pp.progression));
+    return out;
+  };
+
+  // Field plans: the shapes (a count gate and a split; an exam with and without its day; a lower depth; practices off; few
+  // hours; a held Foundation) × the gate (nothing, each practice kind avoided alone, every retrieval kind, every production
+  // kind but one, every Mastered candidate).
+  const FIELD_PRACTICES = CATALOG.filter((e) => e.slot === "PRACTICE" && e.tracks.includes("FIELD")).map((e) => e.key);
+  const fieldGates: CatalogKey[][] = [
+    [],
+    ...FIELD_PRACTICES.map((k) => [k]),
+    ["RECALL_DRILLS", "READ_AND_CARD", "LISTEN_AND_REPEAT"],
+    ["EXPLAIN_IT", "PROBLEM_SETS", "WRITING_PRACTICE", "MISTAKE_REVIEW", "SAY_IT_ALOUD", "BUILD_SOMETHING"],
+    ["BUILD_SOMETHING", "WITH_A_PARTNER", "RUN_THROUGHS"],
+  ];
+  const fieldCases: { label: string; intake: RT.Intake; input: RT.RealismInput }[] = [
+    { label: "learner", intake: ik4({}), input: learnerIn() },
+    { label: "pack (held stages)", intake: packIk, input: packIn },
+    { label: "exam on day 180", intake: ik4({ examLabel: "JLPT N2", exam: true, examDay: at4(180) }), input: learnerIn({ examDay: at4(180) }) },
+    { label: "exam with no day", intake: ik4({ examLabel: "JLPT N2", exam: true }), input: learnerIn() },
+    { label: "depth 8", intake: ik4({ depth: 8 }), input: learnerIn({ depth: 8 }) },
+    { label: "depth 10, a CHOSEN date", intake: ik4({ depth: 10, dateMode: "CHOSEN", targetDay: at4(400) }), input: learnerIn({ depth: 10, dateMode: "CHOSEN", userDate: at4(400), targetDay: at4(400) }) },
+    { label: "practices off", intake: ik4({ practicesAllowed: false }), input: learnerIn({ practicesAllowed: false }) },
+    { label: "3 hours a week", intake: ik4({ hoursPerWeek: 3 }), input: learnerIn({ hoursPerWeek: 3 }) },
+    { label: "1.5 hours a week", intake: ik4({ hoursPerWeek: 1.5 }), input: learnerIn({ hoursPerWeek: 1.5 }) },
+    // The practice families (contracts §20.11): the plan reads the user's answer (Intake.practiceFamily) through R2.
+    { label: "a language", intake: ik4({ practiceFamily: "LANGUAGE" }), input: learnerIn() },
+    { label: "a performance, an exam on day 180", intake: ik4({ practiceFamily: "PERFORM", examLabel: "ABRSM Grade 5", exam: true, examDay: at4(180) }), input: learnerIn({ examDay: at4(180) }) },
+    { label: "building", intake: ik4({ practiceFamily: "BUILD" }), input: learnerIn() },
+  ];
+  let fieldPlans = 0;
+  const fieldBreaches: string[] = [];
+  const fieldStable: string[] = [];
+  let emptyStages = 0;
+  for (const c of fieldCases) {
+    for (const blocked of fieldGates) {
+      const gate = { blocked };
+      const r = stageLadderOf(c.intake, c.input, names4, mk4, { gate });
+      if (!r.ok) {
+        fieldBreaches.push(`${c.label}: refused ${r.error}`);
+        continue;
+      }
+      fieldPlans += 1;
+      const judge = judgeIn(c.input, r.plan);
+      for (const b of breachesOf(r.plan, c.intake, judge, gate)) fieldBreaches.push(`${c.label} [${blocked.join(",")}] ${b}`);
+      emptyStages += r.plan.filter((m) => !m.notes.includes("HELD_AT_START") && c.input.practicesAllowed && livePractices(m).length === 0).length;
+      // The re-sync is stable: a re-fit of the built plan (R4's path on every edit) keeps every stage's kinds.
+      if (blocked.length <= 1) {
+        const again = fitPlan(r.plan, judge, { intake: c.intake, excluded: blocked });
+        if (json(again.map(kindsOfRow)) !== json(r.plan.map(kindsOfRow))) fieldStable.push(`${c.label} [${blocked.join(",")}]`);
+      }
+    }
+  }
+  check(
+    `every Field plan built (${fieldPlans}: ${fieldCases.length} shapes × ${fieldGates.length} gates) holds the practice progression on every stage, which keeps every rule (carry, climb, escalation, exam and last-stage placement, the gate, the caps)`,
+    fieldPlans === fieldCases.length * fieldGates.length && fieldBreaches.length === 0,
+    fieldBreaches.slice(0, 6).join(" | ")
+  );
+  check("…every stage of every one of them carries practice while practices are allowed (the gate always leaves one here)", emptyStages === 0, String(emptyStages));
+  // R2 passes the family: a language plan trains listening and speaking, a performance full run-throughs, building builds.
+  const famPlan = (family: RT.PracticeFamily) => ladder4(family, stageLadderOf(ik4({ practiceFamily: family }), learnerIn(), names4, mk4)).plan.flatMap((m) => livePractices(m).map((i) => i.catalogKey as string));
+  const lang = famPlan("LANGUAGE");
+  const perform = famPlan("PERFORM");
+  check(
+    "the plan's family reaches the progression (planProgressionOf reads it): a language plan says it aloud and works with a partner, a performance plan runs it through",
+    ["SAY_IT_ALOUD", "WITH_A_PARTNER"].every((k) => lang.includes(k)) &&
+      perform.includes("RUN_THROUGHS") &&
+      planProgressionOf(ladder4("language", stageLadderOf(ik4({ practiceFamily: "LANGUAGE" }), learnerIn(), names4, mk4)).plan, ik4({ practiceFamily: "LANGUAGE" }), learnerIn()).input.family === "LANGUAGE",
+    json({ lang, perform })
+  );
+  check("…and a re-fit of each (R4's path on every edit) keeps every stage's kinds (the re-sync is stable)", fieldStable.length === 0, fieldStable.join(" | "));
+
+  // Track plans: five, two (merged) and one stage × the gate as the intake's own words and answers hold it (waiting, “Nothing
+  // to avoid”, each gated kind avoided alone, every gated kind avoided, a safe kind avoided).
+  const trackIn = (days: number) => in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(days) }, []);
+  const trackIk = (track: Track, o: Partial<RT.Intake> = {}) => ik4({ aim: "Get there", fieldId: null, track, domainIds: [], dateMode: "CHOSEN", depth: null, ...o });
+  const trackCases: { label: string; intake: RT.Intake }[] = [
+    { label: "BODY", intake: trackIk("BODY", { aim: "Run a sub-50 10K" }) },
+    { label: "BODY with a cue", intake: trackIk("BODY", { aim: "Run a sub-50 10K", constraints: "Running causes me knee pain." }) },
+    { label: "CARE", intake: trackIk("CARE", { aim: "Support Mum's care at home", constraints: "No visits on weekdays, phone calls only." }) },
+    { label: "CRAFT", intake: trackIk("CRAFT", { aim: "Play a piece on the piano" }) },
+    { label: "CRAFT with a cue", intake: trackIk("CRAFT", { aim: "Play a piece on the piano", constraints: "Wrist tendinitis, can't play more than 20 minutes." }) },
+    { label: "DUTY with an exam", intake: trackIk("DUTY", { aim: "Pass the driving test", examLabel: "the driving test", exam: true }) },
+  ];
+  let trackPlans = 0;
+  const trackBreaches: string[] = [];
+  const trackStable: string[] = [];
+  let trackEmpty = 0;
+  for (const c of trackCases) {
+    const gated = cueGatedKindsOf(c.intake.track);
+    const safe = CATALOG.filter((e) => e.safe && e.slot === "PRACTICE" && e.tracks.includes(c.intake.track)).map((e) => e.key);
+    const asked = activityAsksOn(constraintsStateOfIntake(c.intake));
+    const answers: (RT.Intake | null)[] = [c.intake, ...(asked ? [answeredIntake(c.intake), ...gated.map((k) => answeredIntake(c.intake, [k])), answeredIntake(c.intake, gated), answeredIntake(c.intake, [safe[0]])] : [])];
+    for (const intake of answers) {
+      if (!intake) continue;
+      for (const days of [300, 125, 40]) {
+        const input = trackIn(days);
+        const r = stageLadderOf({ ...intake, targetDay: at4(days) }, input, {}, mk4);
+        if (!r.ok) {
+          trackBreaches.push(`${c.label} ${days}: refused ${r.error}`);
+          continue;
+        }
+        trackPlans += 1;
+        const ik = { ...intake, targetDay: at4(days) };
+        for (const b of breachesOf(r.plan, ik, input)) trackBreaches.push(`${c.label} ${days} [${json(intake.activities?.kinds ?? null)}] ${b}`);
+        trackEmpty += r.plan.filter((m) => livePractices(m).length === 0).length;
+        const again = fitPlan(r.plan, input, { intake: ik });
+        if (json(again.map(kindsOfRow)) !== json(r.plan.map(kindsOfRow))) trackStable.push(`${c.label} ${days}`);
+      }
+    }
+  }
+  check(
+    `every track plan built (${trackPlans}: BODY, CARE, CRAFT and DUTY; five, two and one stage; every gate state its card can hold) holds the practice progression on every stage, which keeps every rule`,
+    trackPlans >= 90 && trackBreaches.length === 0,
+    `${trackPlans} plans; ${trackBreaches.slice(0, 6).join(" | ")}`
+  );
+  check("…every stage of every one of them carries practice (while the card waits, the track's safe kinds)", trackEmpty === 0, String(trackEmpty));
+  console.log(`  the progression's property: ${fieldPlans} Field plans and ${trackPlans} track plans built, every DRAFT stage compared`);
+  check("…and a re-fit of each with its intake keeps every stage's kinds", trackStable.length === 0, trackStable.join(" | "));
+
+  // The room is the stage's budget's (practicesThatFitOf at its band floor): read without an override, each plan's
+  // progression is its rows. At 10 h a week every stage has room for three (the progression places two or three); at
+  // 1.5 h the budget binds, so a stage holds fewer, never under one, each at its band floor or above.
+  const fromBudget = (plan: readonly RT.MilestoneDraft[], intake: RT.Intake, input: RT.RealismInput) => {
+    const pp = planProgressionOf(plan, intake, input);
+    const rooms = (pp.input.maxPractices as (number | null)[]).filter((x): x is number => x != null);
+    const same = pp.rows.every((m, k) => pp.progression.stages[k].held || json(kindsOfRow(m)) === json(wantOf(pp.progression.stages[k])));
+    return { rooms, same, counts: plan.filter((m) => !m.notes.includes("HELD_AT_START")).map((m) => livePractices(m).length) };
+  };
+  const learner = ladder4("learner", stageLadderOf(ik4({}), learnerIn(), names4, mk4));
+  const learnerIn0 = judgeIn(learnerIn(), learner.plan);
+  const roomy = fromBudget(learner.plan, ik4({}), learnerIn0);
+  const fewIn = learnerIn({ hoursPerWeek: 1.5 });
+  const few = ladder4("1.5 h", stageLadderOf(ik4({ hoursPerWeek: 1.5 }), fewIn, names4, mk4));
+  const tight = fromBudget(few.plan, ik4({ hoursPerWeek: 1.5 }), judgeIn(fewIn, few.plan));
+  check(
+    "each stage's room is what its weekly practice budget holds (practicesThatFitOf): read from the budget, the progression is the built plan's; 10 h a week leaves room for three on every stage",
+    roomy.same && roomy.rooms.every((r) => r === 3) && roomy.counts.every((c, k) => c <= roomy.rooms[k]),
+    json(roomy)
+  );
+  check(
+    "…at 1.5 h a week the budget binds: some stage's room is under three, every stage holds as many as its room allows and at least one, and every practice sits at its band floor or above",
+    tight.same &&
+      tight.rooms.some((r) => r < 3) &&
+      tight.counts.every((c, k) => c >= 1 && c <= tight.rooms[k]) &&
+      few.plan.every((m) => livePractices(m).every((i) => RT.PRACTICE_BANDS.indexOf(i.durationBand!) >= RT.PRACTICE_BANDS.indexOf(m.stage === "FLUENT" || m.stage === "MASTERED" || m.stage === "BETWEEN" ? "D45" : m.stage === "RETAINED" ? "D30" : "D15"))),
+    json(tight)
+  );
+
+  // The build-up rule, named and read off the plan: each later gate stage holds the kind the stage before trained, and its
+  // focus is never less demanding (BUILD_UP_RULE, "carry and climb").
+  const chain = learner.plan.filter((m) => m.stage !== "PART" && m.stage !== "BETWEEN");
+  const focusOf = (m: RT.MilestoneDraft) => livePractices(m)[0]?.catalogKey as string;
+  check(
+    `the learner's plan builds up (${BUILD_UP_RULE}): each later stage keeps the one before's focus, and the foci climb (recall drills → problem sets → explaining → building)`,
+    BUILD_UP_RULE === "carry and climb" &&
+      chain.every((m, k) => k === 0 || livePractices(m).some((i) => i.catalogKey === focusOf(chain[k - 1]))) &&
+      json(chain.map(focusOf)) === json(["RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "BUILD_SOMETHING"]) &&
+      chain.every((m, k) => k === 0 || (PROGRESSION.FIELD.rung[focusOf(m) as PracticeKind] ?? 0) >= (PROGRESSION.FIELD.rung[focusOf(chain[k - 1]) as PracticeKind] ?? 0)),
+    json(chain.map((m) => livePractices(m).map((i) => i.catalogKey)))
+  );
+
+  // A re-plan (refit) and an "Edit by hand" re-plan's re-sync carry the started stages: the progression reads them, never changes them.
+  const started = learner.plan.map((m, k) => (k <= 1 ? { ...m, status: "STARTED" as RT.MilestoneStatus } : { ...m, status: "PLANNED" as RT.MilestoneStatus }));
+  const replanned = refit(
+    started.map((m) => (m.status === "PLANNED" ? { ...m, status: "DRAFT" as RT.MilestoneStatus } : m)),
+    learnerIn0,
+    { intake: ik4({}) }
+  );
+  const firstDraft = replanned.find((m) => m.status === "DRAFT")!;
+  check(
+    "a re-plan with the first two stages started: the DRAFT stages are the progression with those carried (no opening step again, the first DRAFT stage carries the last started stage's focus), and the started ones are untouched",
+    breachesOf(replanned, ik4({}), learnerIn0).length === 0 &&
+      !live(firstDraft).some((i) => i.catalogKey === "CHOOSE_MATERIAL") &&
+      livePractices(firstDraft).some((i) => i.catalogKey === focusOf(started[1])) &&
+      json(replanned.slice(0, 2).map((m) => m.items)) === json(started.slice(0, 2).map((m) => m.items)),
+    json([breachesOf(replanned, ik4({}), learnerIn0), replanned.map((m) => [m.status, kindsOfRow(m)])])
+  );
+  const synced = syncStagePractices({ ...firstDraft, items: firstDraft.items.filter((i) => i.kind !== "PRACTICE") }, learnerIn0, names4, mk4, [], { plan: replanned, intake: ik4({}) });
+  check("…syncStagePractices within that plan gives the stage back its progression", json(kindsOfRow(synced)) === json(kindsOfRow(firstDraft)), json([kindsOfRow(synced), kindsOfRow(firstDraft)]));
+
+  // The re-sync rules (every re-fit, contracts §20.8): code's rows follow the plan (a stage that becomes first gains the
+  // opening and the partner, and loses them when it no longer is), the user's rows stay, a kind the user removed on a
+  // stage never comes back, and a practice whose sessions the user set keeps its plan.
+  const learnerIk = ik4({});
+  const asLater = learner.plan.map((m, k) => (k === 0 ? { ...m, status: "LATER" as RT.MilestoneStatus, windowStart: null, dueDay: null } : m));
+  const firstNow = fitPlan(asLater, learnerIn0, { intake: learnerIk });
+  const backAgain = fitPlan(firstNow.map((m, k) => (k === 0 ? learner.plan[0] : m)), learnerIn0, { intake: learnerIk });
+  check(
+    "a stage that becomes the chain's first gains the opening step and the partner (Familiar once the count gate is set aside), and loses them when it no longer is (code's rows the progression stops wanting leave)",
+    kindsOfRow(firstNow[1]).includes("CHOOSE_MATERIAL") &&
+      json(kindsOfRow(firstNow[1])) === json(kindsOfRow(learner.plan[0]).filter((k) => k !== "CHOOSE_MATERIAL").concat("CHOOSE_MATERIAL", "OUTLINE").sort()) &&
+      json(backAgain.map(kindsOfRow)) === json(learner.plan.map(kindsOfRow)),
+    json([kindsOfRow(firstNow[1]), backAgain.map(kindsOfRow)])
+  );
+  const fam = learner.plan[1];
+  const removedFocus = fam.items.map((i) => (i.catalogKey === "RECALL_DRILLS" ? { ...i, decision: "REMOVED" as RT.Decision } : i.catalogKey === "READ_AND_CARD" ? { ...i, planSource: "YOURS" as const, sessionsPerWeek: 2, rule: "TARGET:2/W" } : i));
+  const userRow: RT.ItemDraft = { ...fam.items.find((i) => i.kind === "PRACTICE")!, lineageId: "u-mine", catalogKey: null, label: "My own flashcard game", origin: "USER", decision: "EDITED", method: "DELIBERATE_PRACTICE", notes: [] };
+  const edited = fitPlan(learner.plan.map((m, k) => (k === 1 ? { ...m, items: [...removedFocus, userRow] } : m)), learnerIn0, { intake: learnerIk })[1];
+  check(
+    "the user's own row stays, a kind they removed on the stage never comes back (recall drills stay out), and a practice whose sessions they set keeps them; the stage holds at most three",
+    edited.items.some((i) => i.lineageId === "u-mine" && i.decision === "EDITED") &&
+      !livePractices(edited).some((i) => i.catalogKey === "RECALL_DRILLS") &&
+      edited.items.filter((i) => i.catalogKey === "RECALL_DRILLS").every((i) => i.decision === "REMOVED") &&
+      edited.items.some((i) => i.catalogKey === "READ_AND_CARD" && i.planSource === "YOURS" && i.sessionsPerWeek === 2) &&
+      edited.items.filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED").length <= RT.PRACTICES_PER_MILESTONE,
+    json(edited.items.map((i) => [i.catalogKey ?? i.label, i.decision, i.planSource, i.sessionsPerWeek]))
+  );
+
+  // The user's type change (roadmap-server catalogPickOf: the row re-typed in place, EDITED, its notes cleared) covers the
+  // kind it replaced: a re-fit never adds that kind back beside it, and the room counts it in that kind's place, so no
+  // other code row leaves for it. Read for the focus, a carry and Gemini's pick, each re-fitted twice.
+  const retype = (row: RT.ItemDraft, to: CatalogKey): RT.ItemDraft => ({
+    ...row,
+    catalogKey: to,
+    label: catalogLabelOf(to, { track: "FIELD", domains: ["Alpha", "Beta"] as unknown as RT.DomainName[] }),
+    decision: "EDITED",
+    notes: row.notes.filter((n) => n !== "GEMINI_PICK" && n !== "STUDY_ADDED" && n !== "PRODUCTION_ADDED"),
+  });
+  const swapCase = (plan: readonly RT.MilestoneDraft[], at: number, from: CatalogKey, to: CatalogKey, picks?: unknown) => {
+    const before = plan[at];
+    const row = before.items.find((i) => i.catalogKey === from && i.decision !== "REMOVED")!;
+    const swappedPlan = plan.map((m, k) => (k === at ? { ...m, items: m.items.map((i) => (i === row ? retype(i, to) : i)) } : m));
+    const judge = judgeIn(learnerIn(), plan);
+    const once = fitPlan(swappedPlan, judge, { intake: learnerIk, picks });
+    const twice = fitPlan(once, judge, { intake: learnerIk, picks });
+    const others = (m: RT.MilestoneDraft) => kindsOfRow(m).filter((k) => k !== from && k !== to);
+    return {
+      gone: [once, twice].every((p) => !live(p[at]).some((i) => i.catalogKey === from)),
+      kept: [once, twice].every((p) => p[at].items.some((i) => i.lineageId === row.lineageId && i.catalogKey === to && i.decision === "EDITED")),
+      room: [once, twice].every((p) => livePractices(p[at]).length === livePractices(before).length),
+      rest: [once, twice].every((p) => json(others(p[at])) === json(others(before))),
+      stable: json(twice.map(kindsOfRow)) === json(once.map(kindsOfRow)),
+      rows: twice.map(kindsOfRow)[at],
+    };
+  };
+  const retained = learner.plan.findIndex((m) => m.stage === "RETAINED");
+  const fluent = learner.plan.findIndex((m) => m.stage === "FLUENT");
+  const swaps = [
+    { what: "the focus to another candidate (Retained: problem sets → writing)", r: swapCase(learner.plan, retained, "PROBLEM_SETS", "WRITING_PRACTICE") },
+    { what: "the focus to a kind the stage doesn't list (Retained: problem sets → a teacher or partner)", r: swapCase(learner.plan, retained, "PROBLEM_SETS", "WITH_A_PARTNER") },
+    { what: "the carry (Fluent: problem sets → saying it aloud)", r: swapCase(learner.plan, fluent, "PROBLEM_SETS", "SAY_IT_ALOUD") },
+  ];
+  const pickedPlan = ladder4("picked for a swap", stageLadderOf(ik4({}), learnerIn(), names4, mk4, { picks: { RETAINED: "WRITING_PRACTICE" } }));
+  swaps.push({ what: "Gemini's pick (Retained: writing, picked beside code's default → explaining)", r: swapCase(pickedPlan.plan, retained, "WRITING_PRACTICE", "EXPLAIN_IT") });
+  check(
+    "a type the user changed on a stage is the user's: re-fitted twice, the kind they replaced never comes back, their row stays (EDITED), the stage holds as many practices as before and every other code row stays (the focus, a carry, Gemini's pick)",
+    swaps.every((x) => x.r.gone && x.r.kept && x.r.room && x.r.rest && x.r.stable),
+    json(swaps.map((x) => [x.what, x.r]))
+  );
+
+  // Gemini's picks (a v4 reply's `picks`, contracts §20.11): added beside the stage's focus (code's default) when the pick is
+  // one of its candidates (GEMINI_PICK, left for the user to decide; never copied); anything else adds nothing. Read back
+  // off the rows by a re-sync.
+  const picks = { FAMILIAR: "SLOW_DRILLS", RETAINED: "WRITING_PRACTICE", FLUENT: "BUILD_SOMETHING", MASTERED: "TIMED_PRACTICE", FOUNDATION: "__proto__" };
+  const picked = ladder4("picked", stageLadderOf(ik4({}), learnerIn(), names4, mk4, { picks }));
+  const pickRows = picked.plan.map((m) => livePractices(m).filter((i) => i.notes.includes("GEMINI_PICK")).map((i) => `${i.catalogKey}:${i.decision}`));
+  eq(
+    "picks (contracts §20.11): Familiar's slow drills, Retained's writing and Fluent's building are added beside code's default on those stages (GEMINI_PICK, PENDING), never in its place (each stage's focus stays code's default) and never copied into the count gate or Toward Mastered; Mastered's timed practice (no exam, not a candidate) and a prototype key give nothing",
+    [pickRows, picked.plan.map((m) => focusOf(m))],
+    [
+      [[], ["SLOW_DRILLS:PENDING"], ["WRITING_PRACTICE:PENDING"], ["BUILD_SOMETHING:PENDING"], [], []],
+      ["RECALL_DRILLS", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "BUILD_SOMETHING", "BUILD_SOMETHING"],
+    ]
+  );
+  check(
+    "…the picked plan keeps every rule (the climb holds: no pick steps a focus back), and a re-fit reads the picks back off the rows (stable)",
+    breachesOf(picked.plan, ik4({}), judgeIn(learnerIn(), picked.plan)).length === 0 &&
+      json(fitPlan(picked.plan, judgeIn(learnerIn(), picked.plan), { intake: ik4({}) }).map(kindsOfRow)) === json(picked.plan.map(kindsOfRow)),
+    json(breachesOf(picked.plan, ik4({}), judgeIn(learnerIn(), picked.plan)))
+  );
+
+  const samePick = fitPlan(learner.plan, learnerIn0, { intake: learnerIk, picks: { RETAINED: "PROBLEM_SETS" } })[2];
+  check(
+    "…a pick of the kind code had placed (Retained's problem sets, its default) turns that row into Gemini's choice (GEMINI_PICK, PENDING), the row kept",
+    livePractices(samePick).some((i) => i.catalogKey === "PROBLEM_SETS" && i.notes.includes("GEMINI_PICK") && i.decision === "PENDING" && i.lineageId === learner.plan[2].items.find((x) => x.catalogKey === "PROBLEM_SETS")?.lineageId),
+    json(samePick.items.map((i) => [i.catalogKey, i.decision, i.notes]))
+  );
+
+  // A short track plan keeps its base (the stages by position, never the later merged key): the first row is STAGE_1
+  // (STAGE_2 from a working or strong start), the last STAGE_5, the ones between spread evenly; five rows are 1..5.
+  eq(
+    "trackStagePlacesOf: n rows → stages by position (a new start, then a working one)",
+    [[1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "NEW")), [1, 2, 3, 4, 5].map((n) => trackStagePlacesOf(n, "WORKING")), trackStagePlacesOf(2, "STRONG"), trackStagePlacesOf(0, "NEW")],
+    [[[1], [1, 5], [1, 3, 5], [1, 2, 4, 5], [1, 2, 3, 4, 5]], [[2], [2, 5], [2, 4, 5], [2, 3, 4, 5], [1, 2, 3, 4, 5]], [2, 5], []]
+  );
+  const runIk = (days: number, startPoint: RT.StartPoint) => answeredIntake(ik4({ aim: "Run a sub-50 10K", fieldId: null, track: "BODY", domainIds: [], targetDay: at4(days), dateMode: "CHOSEN", depth: null, startPoint }));
+  const runIn = (days: number, startPoint: RT.StartPoint) => in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(days), startPoint }, []);
+  const run4 = ladder4("a 4-month 10K", stageLadderOf(runIk(120, "NEW"), runIn(120, "NEW"), {}, mk4));
+  const run4w = ladder4("a 4-month 10K, working", stageLadderOf(runIk(120, "WORKING"), runIn(120, "WORKING"), {}, mk4));
+  const kinds0 = (r: Ok) => livePractices(r.plan[0]).map((i) => i.catalogKey);
+  eq(
+    "a 4-month 10K for a new runner (“Nothing to avoid”) opens on the base (STAGE_1: easy and mobility), never longer sessions from week 1, and still closes on STAGE_5; from a working start it opens on technique",
+    [shape(run4.plan), kinds0(run4), shape(run4w.plan), kinds0(run4w)],
+    [["STAGE_1@76", "STAGE_5@120"], ["EASY_SESSION", "MOBILITY_SESSION"], ["STAGE_2@76", "STAGE_5@120"], ["TECHNIQUE_SESSION", "MOBILITY_SESSION", "EASY_SESSION"]]
+  );
+  check(
+    "…every short track plan keeps every rule of the progression, and each stage key's slot goes to the row that holds it",
+    breachesOf(run4.plan, runIk(120, "NEW"), runIn(120, "NEW")).length === 0 &&
+      json(["STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5"].map((k) => run4.plan.findIndex((m) => m.lineageId === run4.slotTo?.[k as RT.StageKey]))) === json([0, 1, 1, 1, 1]),
+    json([breachesOf(run4.plan, runIk(120, "NEW"), runIn(120, "NEW")), run4.slotTo])
+  );
+  // Gemini's pick for a stage key merged into a row reaches that row when it is one of the row's own candidates.
+  const craftIk = ik4({ aim: "Play a piece", fieldId: null, track: "CRAFT", domainIds: [], targetDay: at4(120), dateMode: "CHOSEN", depth: null });
+  const craftIn = in4({ trackArea: true, depth: null, dateMode: "CHOSEN", targetDay: at4(120) }, []);
+  const merged = ladder4("a merged CRAFT plan with picks", stageLadderOf(craftIk, craftIn, {}, mk4, { picks: { STAGE_3: "WITH_A_PARTNER", STAGE_2: "TECHNIQUE_SESSION" } }));
+  eq(
+    "a pick made for a merged stage key (STAGE_3: a teacher or partner) reaches the row that holds it (STAGE_5, where it is a candidate), GEMINI_PICK; one that isn't a candidate there (technique) is left out",
+    [shape(merged.plan), merged.plan.map((m) => livePractices(m).filter((i) => i.notes.includes("GEMINI_PICK")).map((i) => i.catalogKey))],
+    [["STAGE_1@76", "STAGE_5@120"], [[], ["WITH_A_PARTNER"]]]
+  );
+
+  // The allocation weighs the focus (contracts §20.6; the third practice never thins it to the others' size): on every
+  // stage of the learner's plan at 10 h the focus trains at least as long a week as any other practice, every week of
+  // the plan still FITS, and on a body plan a harder or longer session is at most twice a week and the longer one sits a
+  // band above the easy one.
+  const minutesOf = (i: RT.ItemDraft) => (i.sessionsPerWeek ?? 0) * RT.practiceBandMinutes(i.durationBand!);
+  const weighed = learner.plan.filter((m) => livePractices(m).length >= 2).every((m) => {
+    const ps = livePractices(m);
+    const f = ps.find((i) => i.catalogKey === focusOf(m)) ?? ps[0];
+    return ps.every((i) => minutesOf(f) >= minutesOf(i));
+  });
+  const learnerFe = feasibilityOf(learner.plan, learnerIn0);
+  const fullRun = ladder4("a 300-day 10K", stageLadderOf(runIk(300, "NEW"), runIn(300, "NEW"), {}, mk4));
+  const bandIx = (i: RT.ItemDraft) => RT.PRACTICE_BANDS.indexOf(i.durationBand!);
+  const bodyOk = fullRun.plan.every((m) => {
+    const ps = livePractices(m);
+    const easy = ps.find((i) => i.catalogKey === "EASY_SESSION");
+    const longer = ps.find((i) => i.catalogKey === "LONGER_SESSION");
+    return ps.every((i) => !(i.catalogKey === "HARDER_SESSION" || i.catalogKey === "LONGER_SESSION") || (i.sessionsPerWeek ?? 0) <= 2) && (!easy || !longer || bandIx(longer) > bandIx(easy));
+  });
+  check(
+    "the focus is weighed: on every stage of the learner's plan it trains at least as long a week as any other practice, and every stage's time still FITS",
+    weighed && learnerFe.milestones.every((m) => m.time.verdict === "FITS"),
+    json([learner.plan.map((m) => livePractices(m).map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`)), learnerFe.milestones.map((m) => m.time.verdict)])
+  );
+  // Start re-sizes the stage it starts as the plan sized it: its focus (its first catalog practice) still weighed.
+  const startedAt = learner.plan.findIndex((m) => m.stage === "FLUENT");
+  const startRefit = refitForStart({ ...learner.plan[startedAt], status: "PLANNED" }, learner.plan.map((m) => ({ ...m, status: "PLANNED" as RT.MilestoneStatus })), learnerIn0);
+  const startPs = startRefit.milestone.items.filter((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED");
+  check(
+    "…and Start's re-fit keeps the focus weighed (Fluent's explaining still trains at least as long a week as each other practice)",
+    startPs.length >= 2 && startPs[0].catalogKey === focusOf(learner.plan[startedAt]) && startPs.every((i) => minutesOf(startPs[0]) >= minutesOf(i)),
+    json(startPs.map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`))
+  );
+  check(
+    "…on a 300-day 10K (“Nothing to avoid”), harder and longer sessions are at most twice a week, and a longer session is a band above the easy one",
+    bodyOk && fullRun.plan.some((m) => livePractices(m).some((i) => i.catalogKey === "LONGER_SESSION")),
+    json(fullRun.plan.map((m) => livePractices(m).map((i) => `${i.catalogKey} ${i.sessionsPerWeek}x${i.durationBand}`)))
+  );
+
+  // The outline in Gemini's order (a v4 reply's `order`, as line indices): split across the kept stages in that order.
+  const outline = { lines: ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7"], source: null } as RT.Intake["syllabus"];
+  const ordered = ladder4("ordered", stageLadderOf(ik4({ syllabus: outline }), learnerIn(), names4, mk4, { order: [7, 6, 5, 4, 3, 2, 1, 0, 9, 7] }));
+  const plain = ladder4("plain order", stageLadderOf(ik4({ syllabus: outline }), learnerIn(), names4, mk4));
+  const linesOf = (plan: readonly RT.MilestoneDraft[]) => plan.map((m) => m.items.filter((i) => i.kind === "TOPIC").map((i) => i.syllabusRef));
+  eq(
+    "order: the outline split across the six kept stages in the reply's order (each line once; an unknown or repeated entry left out), every label the user's line; without one, the user's order",
+    [linesOf(ordered.plan), ordered.plan.flatMap((m) => m.items.filter((i) => i.kind === "TOPIC").map((i) => i.label === outline!.lines[i.syllabusRef!])).every(Boolean), linesOf(plain.plan)],
+    [[[7, 6], [5, 4], [3], [2], [1], [0]], true, [[0, 1], [2, 3], [4], [5], [6], [7]]]
+  );
 }
 
 if (failed > 0) {

@@ -241,5 +241,54 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: the user's \"No teacher\" ticked on the activity card (their AVOID): WITH_A_PARTNER is in no stage's list, so a pick of it is ENUM.",
+    "replies": [
+      {
+        "id": "guitar-v4-a",
+        "about": "Rhythm needed; slow drills picked twice, run-throughs at Fluent.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "picks": {
+            "FOUNDATION": "SLOW_DRILLS",
+            "FAMILIAR": "SLOW_DRILLS",
+            "FLUENT": "RUN_THROUGHS"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_mu_rhythm"
+          ],
+          "picks": {
+            "FOUNDATION": "SLOW_DRILLS",
+            "FAMILIAR": "SLOW_DRILLS",
+            "FLUENT": "RUN_THROUGHS"
+          },
+          "excluded": [
+            "WITH_A_PARTNER"
+          ],
+          "sessionPicks": false
+        }
+      },
+      {
+        "id": "guitar-v4-b",
+        "about": "A teacher picked for Fluent although the user avoids one: the kind is in no enum of this run, so ENUM, REJECTED whole.",
+        "reply": {
+          "picks": {
+            "FLUENT": "WITH_A_PARTNER"
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

@@ -24,6 +24,12 @@
  * app's list says who chose it and can be changed, Gemini's Domain
  * additions are decided once in the plan-level row (never here), and a stage
  * held when you began is a one-line card that gives no rank.
+ *
+ * The practice progression (contracts §20): code owns every stage's
+ * practice, so each card's header says why the stage holds what it does, in
+ * code's words (StageWhyLine: "Put it to use · builds on Recall drills from
+ * milestone 2 · full attempt at the end"), and Gemini's pick reads as its
+ * choice among the stage's options.
  */
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -42,6 +48,7 @@ import {
   type MilestoneFeasibility,
   type Throughput,
 } from "@/lib/roadmap-types";
+import type { CatalogTrack } from "@/lib/roadmap-catalog";
 import {
   CHECKPOINT_KIND_WORD,
   HEALTH_LINE,
@@ -54,6 +61,7 @@ import {
   rankLineParts,
   plural,
   spanLabel,
+  stageWhyPartsOf,
   stageWords,
 } from "./roadmap-copy";
 import {
@@ -67,6 +75,7 @@ import {
   titleItemOf,
   type LibraryDomain,
   type RankPlanEntry,
+  type StageWhy,
 } from "./roadmap-ui-model";
 import { useRoadmapAction } from "./roadmap-runtime";
 import { ItemRow, MilestoneTitleText, useDisplayLabel } from "./ItemRow";
@@ -115,6 +124,29 @@ export interface MilestoneCardContext {
    * under What to practise; null otherwise.
    */
   practiceOnly?: string | null;
+  /**
+   * The practice progression (contracts §20): each stage's why by lineage
+   * (roadmap-ui-model stageWhysOf over the plan's milestones) and the plan's
+   * catalog track that words it. Absent: no why line (a rev-3 draft).
+   */
+  whys?: ReadonlyMap<string, StageWhy> | null;
+  catalogTrack?: CatalogTrack;
+}
+
+/**
+ * A stage's "why this stage" line under its title (contracts §20): what its
+ * practice is for, in bold, then what it builds on and what closes it. Code's
+ * words only (roadmap-copy stageWhyPartsOf); nothing with nothing to say.
+ */
+export function StageWhyLine({ why, track }: { why: StageWhy | null | undefined; track: CatalogTrack | null | undefined }) {
+  const parts = why && track ? stageWhyPartsOf(why, track) : [];
+  if (parts.length === 0) return null;
+  return (
+    <div className="rm-ms-w rm-ms-why">
+      <b>{parts[0]}</b>
+      {parts.slice(1).map((p) => ` · ${p}`).join("")}
+    </div>
+  );
 }
 
 const KIND_ORDER = ["DOMAIN", "TOPIC", "PRACTICE", "STEP", "CHECKPOINT"] as const;
@@ -386,6 +418,7 @@ function MilestoneBody({
           </>
         )}
         {stageWords(m.stage, gateOf(m)) && <div className="rm-ms-w rm-ms-stage">{stageWords(m.stage, gateOf(m))}</div>}
+        <StageWhyLine why={ctx.whys?.get(m.lineageId)} track={ctx.catalogTrack} />
         <div className="rm-ms-w">{windowLine}</div>
         <RankLines rank={rank} />
       </div>

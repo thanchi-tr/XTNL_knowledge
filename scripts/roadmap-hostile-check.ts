@@ -1190,17 +1190,27 @@ async function main(): Promise<number> {
   }
 
   // ── Schema drift (information: R3's model-check owns the schema) ────────
+  // The fix round (r3): a V4 run's spec (specSchemaV4Of) is compared with R3's buildResponseSchema, the schema every run
+  // issues since v4, and a v3 run's (F-R4-17) with the legacy keysOnlySchemaV3Of, so drift in either is counted.
   {
-    let compared = 0;
+    const tally = { v3: { compared: 0, drift: 0 }, v4: { compared: 0, drift: 0 } };
     const drift: string[] = [];
     for (const run of corpus.runs) {
       const theirs = seam.schemaOf(run);
       if (!theirs) continue;
-      compared++;
+      const t = run.picks !== undefined ? tally.v4 : tally.v3;
+      t.compared++;
       const d = schemaDiff(run.schema, theirs, "");
-      if (d.length) drift.push(`${run.id}: ${d.slice(0, 3).join("; ")}`);
+      if (d.length) {
+        t.drift++;
+        drift.push(`${run.picks !== undefined ? "v4" : "v3 (legacy, never issued)"} ${run.id}: ${d.slice(0, 3).join("; ")}`);
+      }
     }
-    console.log(`— schema drift (information: R3's buildResponseSchema against F-R4-17 as the corpus builds it) — ${compared ? `${drift.length} of ${compared} runs differ` : "buildResponseSchema is still v2: not compared"}`);
+    drift.sort((x, y) => Number(!x.startsWith("v4")) - Number(!y.startsWith("v4")));
+    const compared = tally.v3.compared + tally.v4.compared;
+    console.log(
+      `— schema drift (information: R3's schemas against the corpus's specs: v4 buildResponseSchema against specSchemaV4Of, v3 keysOnlySchemaV3Of against F-R4-17) — ${compared ? `v4: ${tally.v4.drift} of ${tally.v4.compared} runs differ · v3: ${tally.v3.drift} of ${tally.v3.compared} runs differ` : "R3 exports neither schema: not compared"}`
+    );
     for (const d of drift.slice(0, 8)) console.log(`  ${d}`);
   }
 

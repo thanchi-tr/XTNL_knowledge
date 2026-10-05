@@ -42,6 +42,7 @@ import { statedForMilestone } from "../src/lib/roadmap-economy";
 import * as CAT from "../src/lib/roadmap-catalog";
 import * as LX from "../src/lib/roadmap-lexicon";
 import * as V from "../src/lib/roadmap-validate";
+import { packOf, readCorpus } from "./fixtures/roadmap-corpus/corpus";
 import { reviewMarkOf } from "../src/lib/review-facts";
 import { outcomeOf as libraryOutcomeOf } from "../src/components/library/library-model";
 
@@ -77,6 +78,28 @@ function pending(name: string, ok: boolean, owner: string, detail = "") {
   }
   pendingCount++;
   console.log(`  PENDING (${owner}): ${name}${detail ? ` — ${detail}` : ""}`);
+}
+/**
+ * A handoff of the practice-progression round (contracts §20.8): another
+ * item's adoption of a lane-0 definition, landing in the same round. A pass
+ * once it holds; until then a HANDOFF line naming the owner, which --strict
+ * (and with it life:check) does not fail while the round runs, so each
+ * item's own checks stay readable; --handoffs (the lead, at the round's
+ * integration) fails every one still open.
+ */
+const HANDOFFS_DUE = process.argv.includes("--handoffs");
+let handoffCount = 0;
+function handoff(name: string, ok: boolean, owner: string, detail = "") {
+  if (ok) {
+    passed++;
+    return;
+  }
+  if (HANDOFFS_DUE) {
+    check(`${name} (${owner})`, false, detail);
+    return;
+  }
+  handoffCount++;
+  console.log(`  HANDOFF (${owner}): ${name}${detail ? ` — ${detail}` : ""}`);
 }
 const throws = (fn: () => unknown): boolean => {
   try {
@@ -285,9 +308,9 @@ console.log("— constants —");
     [14, 0.5, 4, 8, 14, 104, 600_000, 28]
   );
   eq(
-    "model: flash-lite, prompt v3 (keys only; revision 4), 1 sample, seeds 11 + 100 × redrafts, offsets 0/12/26",
+    "model: flash-lite, prompt v4 (keys only; code owns the practice progression, contracts §20), 1 sample, seeds 11 + 100 × redrafts, offsets 0/12/26",
     [RT.ROADMAP_MODEL, RT.ROADMAP_PROMPT_VERSION, RT.ROADMAP_SAMPLES, RT.SEED_BASE, RT.SEED_REDRAFT_STEP, RT.SEED_OFFSETS],
-    ["gemini-3.5-flash-lite", 3, 1, 11, 100, [0, 12, 26]]
+    ["gemini-3.5-flash-lite", 4, 1, 11, 100, [0, 12, 26]]
   );
   eq(
     "model: abort 35 s, backstop 37 s, claim guard 60 s, stale 90 s, 6000 tokens, thinking off until the probe",
@@ -3072,6 +3095,978 @@ console.log("— confirm to unlock (§19): the gate —");
   );
 }
 
+// ═══ The practice progression (contracts §20; the lead's decision after the probe's no-go) ═══
+//
+// Code owns the practice progression on every plan path; Gemini picks at most one kind per stage among code's
+// candidates. The tables, the goldens, the rule checker (each breach it names, injected), a property over every corpus
+// pack × catalog track × gate state, the sizing (R2's allocation, one definition), the v4 reply's shapes, and the
+// round's handoffs (HANDOFF lines: --strict passes them while the round runs; --handoffs fails them).
+
+console.log("— the practice progression (§20) —");
+{
+  const DAYP = "2026-10-05" as DayKey;
+  const G = (keys: readonly RT.StageKey[]): CAT.ProgressionStageInput[] => keys.map((stage) => ({ stage }));
+  const GATES12 = G(RT.STAGE_KEYS);
+  const TRACK5 = G(RT.TRACK_STAGE_KEYS);
+  const fmt = (p: CAT.Progression): string[] =>
+    p.stages.map((s) => {
+      const name = `${s.stage}${s.copy && s.level != null ? s.level : ""}${s.held ? " held" : ""}${s.afterExam ? " after" : ""}`;
+      const pr = s.practices.map((x) => `${x.kind}${x.why === "FOCUS" ? "" : `/${x.why}`}${x.standsIn ? `<${x.standsIn}` : ""}${x.picked ? "*" : ""}`).join(" + ") || "—";
+      const st = s.steps.map((x) => x.kind).join(" + ") || "—";
+      const cp = s.checkpoint ? `${s.checkpoint.kind}${s.checkpoint.standsIn ? `<${s.checkpoint.standsIn}` : ""}` : "—";
+      return `${name}: ${pr} | ${st} | ${cp}`;
+    });
+  const run = (input: CAT.ProgressionInput) => {
+    const p = CAT.progressionOf(input);
+    return { p, lines: fmt(p), broke: CAT.progressionViolationsOf(input, p) };
+  };
+  const gateOf = (track: CAT.CatalogTrack, constraints: string | null, aim: string, conf: RT.ActivityConfirm | null = null) =>
+    CAT.allowedKindsFor(CAT.constraintsStateOf({ track, texts: { constraints, aim }, exam: true }), conf);
+
+  // ── The tables (every track, every Field family, with and without the exam's stages) ──
+  {
+    const problems: string[] = [];
+    const tables: [string, CAT.CatalogTrack, CAT.ProgressionTrackRule][] = [];
+    for (const track of CAT.CATALOG_TRACKS)
+      if (track === "FIELD") for (const family of RT.PRACTICE_FAMILIES) for (const exam of [false, true]) tables.push([`FIELD/${family}${exam ? "+exam" : ""}`, track, CAT.progressionRuleFor(track, { family, exam })]);
+      else for (const exam of [false, true]) tables.push([`${track}${exam ? "+exam" : ""}`, track, CAT.progressionRuleFor(track, { exam })]);
+    for (const [name, track, r] of tables) {
+      const keys = CAT.progressionStageKeysOf(track);
+      if (json(Object.keys(r.stages)) !== json(keys)) problems.push(`${name}: stage keys ${Object.keys(r.stages).join(",")}`);
+      const practice = (k: string) => {
+        const e = CAT.catalogEntryOf(k);
+        return !!e && e.slot === "PRACTICE" && e.tracks.includes(track) && !e.codeOnly && !e.examOnly;
+      };
+      for (const key of keys) {
+        const st = r.stages[key];
+        if (!st || st.focus.length === 0) {
+          problems.push(`${name} ${key}: no candidate`);
+          continue;
+        }
+        if (new Set(st.focus).size !== st.focus.length) problems.push(`${name} ${key}: a candidate twice`);
+        for (const k of st.focus) if (!practice(k) || r.rung[k] == null) problems.push(`${name} ${key}: ${k} is not a rung-ed, non-exam practice on the track`);
+        if (st.step) {
+          const e = CAT.catalogEntryOf(st.step);
+          if (!e || e.slot !== "STEP" || !e.tracks.includes(track) || e.examOnly || e.lastStageOnly) problems.push(`${name} ${key}: role step ${st.step}`);
+        }
+      }
+      for (let i = 1; i < keys.length; i++) {
+        const lo = Math.min(...(r.stages[keys[i]]?.focus ?? []).map((k) => r.rung[k] ?? 0));
+        const hi = Math.max(...(r.stages[keys[i - 1]]?.focus ?? []).map((k) => r.rung[k] ?? 0));
+        if (lo < hi) problems.push(`${name}: a ${keys[i]} candidate (rung ${lo}) can fall below a ${keys[i - 1]} one (rung ${hi})`);
+      }
+      for (const k of [...r.partner, ...r.base]) if (!practice(k)) problems.push(`${name}: partner or base ${k}`);
+      const op = CAT.catalogEntryOf(r.opening);
+      if (!op || op.slot !== "STEP" || !op.tracks.includes(track) || op.examOnly || op.lastStageOnly) problems.push(`${name}: opening ${r.opening}`);
+      const cl = r.closing ? CAT.catalogEntryOf(r.closing) : null;
+      if (r.closing && (!cl || cl.slot !== "STEP" || !cl.tracks.includes(track) || !cl.lastStageOnly)) problems.push(`${name}: closing ${r.closing} is not a lastStageOnly step on the track`);
+      for (const [from, to] of Object.entries(r.standIn)) {
+        if (!practice(from) || CAT.isCueSafeKind(from)) problems.push(`${name}: a stand-in for ${from}, not a held-able practice`);
+        if (!to || !CAT.cueSafeKindsOf(track).includes(to)) problems.push(`${name}: ${from} → ${to} is not a safe kind on the track`);
+      }
+      const unranked = CAT.CATALOG.filter((e) => e.slot === "PRACTICE" && e.tracks.includes(track) && r.rung[e.key as CAT.PracticeKind] == null).map((e) => e.key);
+      if (unranked.length) problems.push(`${name}: no rung for ${unranked.join(", ")}`);
+    }
+    check(
+      `PROGRESSION and FIELD_FAMILY_PROGRESSION (${tables.length} tables: every track, every Field family, with and without the exam's stages): each table's stage keys are its slots; every candidate, partner and base is a rung-ed practice on the track (never examOnly or codeOnly); every role and opening step is a step on the track (never examOnly or lastStageOnly); every stand-in is safe on its track; and no stage's candidate can fall below the stage before's (the climb holds for every pick)`,
+      problems.length === 0,
+      problems.slice(0, 4).join("; ")
+    );
+    eq("the stage keys per track", [CAT.progressionStageKeysOf("FIELD"), CAT.progressionStageKeysOf("BODY")], [RT.STAGE_KEYS, RT.TRACK_STAGE_KEYS]);
+    eq(
+      "code's defaults (each stage's first candidate): KNOW study → recall drills → problem sets → explain it → build something (with an exam, Mastered goes over mistakes); LANGUAGE listen and repeat → recall → say it aloud → a partner → a partner; PERFORM study → slow drills → run-throughs → run-throughs → a partner; BUILD study → recall → problem sets → building → building; BODY easy → technique → longer → harder → harder; CRAFT slow drills → slow drills → run-throughs → a teacher → run-throughs",
+      [
+        ...RT.PRACTICE_FAMILIES.map((family) => CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { family }).stages[k]?.focus[0])),
+        CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { exam: true }).stages[k]?.focus[0]),
+        ...(["BODY", "CRAFT", "CARE", "DUTY"] as const).map((t) => CAT.progressionStageKeysOf(t).map((k) => CAT.PROGRESSION[t].stages[k]?.focus[0])),
+      ],
+      [
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "BUILD_SOMETHING"],
+        ["LISTEN_AND_REPEAT", "RECALL_DRILLS", "SAY_IT_ALOUD", "WITH_A_PARTNER", "WITH_A_PARTNER"],
+        ["READ_AND_CARD", "SLOW_DRILLS", "RUN_THROUGHS", "RUN_THROUGHS", "WITH_A_PARTNER"],
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "BUILD_SOMETHING", "BUILD_SOMETHING"],
+        ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT", "MISTAKE_REVIEW"],
+        ["EASY_SESSION", "TECHNIQUE_SESSION", "LONGER_SESSION", "HARDER_SESSION", "HARDER_SESSION"],
+        ["SLOW_DRILLS", "SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER", "RUN_THROUGHS"],
+        ["SET_TIME", "CHECK_IN", "SET_TIME", "ADMIN_SESSION", "SET_TIME"],
+        ["ADMIN_SESSION", "SET_TIME", "ADMIN_SESSION", "CHECK_IN", "ADMIN_SESSION"],
+      ]
+    );
+    // Each family trains its aim's skill (the lead's review: one Field table never trained speaking, listening or performing).
+    const offered = (family: RT.PracticeFamily, exam = false) => new Set(CAT.progressionStageKeysOf("FIELD").flatMap((k) => CAT.progressionRuleFor("FIELD", { family, exam }).stages[k]?.focus ?? []));
+    const defaults = (family: RT.PracticeFamily) => new Set(CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { family }).stages[k]?.focus[0]));
+    check(
+      "the families: LANGUAGE's defaults listen, speak and practise with a partner (and keep listening as the spaced review); PERFORM's drill slowly, run it through and play it for a teacher or partner; BUILD's build from Fluent; KNOW never offers listening, saying it aloud or full run-throughs (a maths aim), and with an exam never building",
+      ["LISTEN_AND_REPEAT", "SAY_IT_ALOUD", "WITH_A_PARTNER"].every((k) => defaults("LANGUAGE").has(k as CAT.PracticeKind)) &&
+        CAT.FIELD_FAMILY_PROGRESSION.LANGUAGE.base[0] === "LISTEN_AND_REPEAT" &&
+        ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER"].every((k) => defaults("PERFORM").has(k as CAT.PracticeKind)) &&
+        CAT.FIELD_FAMILY_PROGRESSION.BUILD.stages.FLUENT?.focus[0] === "BUILD_SOMETHING" &&
+        ["LISTEN_AND_REPEAT", "SAY_IT_ALOUD", "RUN_THROUGHS"].every((k) => !offered("KNOW").has(k as CAT.PracticeKind)) &&
+        !offered("KNOW", true).has("BUILD_SOMETHING") &&
+        CAT.FIELD_FAMILY_PROGRESSION.KNOW === CAT.PROGRESSION.FIELD
+    );
+    eq(
+      "progressionRuleFor: a Field plan's family table (an absent or unknown family is KNOW), a track's own (a family is ignored there), the exam's stages over the table's with an exam",
+      [
+        CAT.progressionRuleFor("FIELD", { family: "LANGUAGE" }) === CAT.FIELD_FAMILY_PROGRESSION.LANGUAGE,
+        CAT.progressionRuleFor("FIELD", { family: "__proto__" }) === CAT.PROGRESSION.FIELD,
+        CAT.progressionRuleFor("FIELD") === CAT.PROGRESSION.FIELD,
+        CAT.progressionRuleFor("BODY", { family: "LANGUAGE", exam: true }) === CAT.PROGRESSION.BODY,
+        CAT.progressionRuleFor("FIELD", { exam: true }).stages.MASTERED?.focus[0],
+        CAT.progressionFamilyOf("FIELD", "nope"),
+        CAT.progressionFamilyOf("CARE", "LANGUAGE"),
+      ],
+      [true, true, true, true, "MISTAKE_REVIEW", "KNOW", null]
+    );
+    eq("CHECKPOINT_RUNG: a self-test 1 → a mock test 2 → the exam or the performance check 3; BUILD_UP_RULE is 'carry and climb'", [CAT.CHECKPOINT_RUNG, CAT.BUILD_UP_RULE], [{ SELF_TEST: 1, MOCK_TEST: 2, EXAM_DAY: 3, PERFORMANCE_CHECK: 3 }, "carry and climb"]);
+    check("every checkpoint kind has a rung", RT.STORED_CHECKPOINT_KINDS.every((k) => typeof CAT.CHECKPOINT_RUNG[k] === "number"));
+  }
+
+  // ── The family: the prefill, the answer and its place in Roadmap.coverage (§20.11) ──
+  {
+    eq(
+      "practiceFamilyPrefillOf (code's reading of the aim, the form's prefill): the corpus's language aims (IELTS, Japanese at work, in Vietnamese) LANGUAGE; the guitar and the dinghy PERFORM; the Python certificate, the trader and the actuarial exam KNOW; an app BUILD; 'French history' KNOW, 'Learn Spanish' LANGUAGE; a speech and public speaking PERFORM; 日本語 LANGUAGE; nothing KNOW",
+      [
+        "Reach IELTS 7 in the academic test",
+        "Speak Japanese confidently at work",
+        "Nói tiếng Nhật trôi chảy trong công việc",
+        "Play 20 songs on guitar from memory",
+        "Sail a dinghy solo",
+        "Earn an entry-level Python programming certificate",
+        "Become a consistently profitable systematic EUR/USD trader",
+        "Pass the actuarial probability exam",
+        "Build a budgeting app",
+        "Learn French history",
+        "Learn Spanish",
+        "Give a best man speech",
+        "Improve at public speaking",
+        "日本語を話す",
+        "",
+      ].map((aim) => RT.practiceFamilyPrefillOf(aim)),
+      ["LANGUAGE", "LANGUAGE", "LANGUAGE", "PERFORM", "PERFORM", "KNOW", "KNOW", "KNOW", "BUILD", "KNOW", "LANGUAGE", "PERFORM", "PERFORM", "LANGUAGE", "KNOW"]
+    );
+    check(
+      "…a credential aim never reads as BUILD (an app certificate is a body of knowledge examined); the exam label is read too (an IELTS label makes it LANGUAGE)",
+      RT.practiceFamilyPrefillOf("Build apps", "AWS Developer exam") === "KNOW" && RT.practiceFamilyPrefillOf("Pass my test", "IELTS Academic") === "LANGUAGE" && RT.practiceFamilyPrefillOf(null) === "KNOW"
+    );
+    eq(
+      "practiceFamilyOf: the user's answer wins; an absent or unknown one is the prefill over the aim and exam label",
+      [
+        CAT.practiceFamilyOf({ aim: "Speak Japanese", examLabel: null, practiceFamily: "BUILD" }),
+        CAT.practiceFamilyOf({ aim: "Speak Japanese", examLabel: null }),
+        CAT.practiceFamilyOf({ aim: "Speak Japanese", examLabel: null, practiceFamily: "__proto__" }),
+        CAT.practiceFamilyOf({ aim: "Pass my test", examLabel: "JLPT N2", practiceFamily: null }),
+      ],
+      ["BUILD", "LANGUAGE", "LANGUAGE", "LANGUAGE"]
+    );
+    const conf: RT.ActivityConfirm = { key: "k2-00000000", kinds: {}, answered: { day: "2026-10-05" as DayKey, asked: ["EASY_SESSION"], none: true } };
+    const written = CAT.coverageJsonOf({ d1: 120 }, conf, "LANGUAGE");
+    eq(
+      "coverageJsonOf writes the family under PRACTICE_FAMILY_KEY beside the figures and the answers (an unknown one is never written); practiceFamilyOfCoverage reads it back, and null for anything else",
+      [
+        written,
+        CAT.practiceFamilyOfCoverage(written),
+        CAT.coverageJsonOf(null, null, "nope" as RT.PracticeFamily),
+        CAT.coverageJsonOf({ d1: 120, [RT.PRACTICE_FAMILY_KEY]: 3 } as Record<string, number>, null),
+        CAT.practiceFamilyOfCoverage({ [RT.PRACTICE_FAMILY_KEY]: "__proto__" }),
+        CAT.practiceFamilyOfCoverage(JSON.parse('{"__proto__":{"$practiceFamily":"PERFORM"}}')),
+        CAT.practiceFamilyOfCoverage([RT.PRACTICE_FAMILY_KEY]),
+        CAT.activityConfirmOf(written) != null,
+        RT.PRACTICE_FAMILY_KEY,
+      ],
+      [{ d1: 120, [RT.ACTIVITY_CONFIRM_KEY]: conf, [RT.PRACTICE_FAMILY_KEY]: "LANGUAGE" }, "LANGUAGE", null, { d1: 120 }, null, null, null, true, "$practiceFamily"]
+    );
+  }
+
+  // ── Goldens ──
+  {
+    const field = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false });
+    eq(
+      "a KNOW plan to Mastered, no exam: study then recall drills early, problem sets and explaining later, building at the top; each stage carries what the stage before trained; the spaced review is the first base kind not yet placed (going over mistakes from Retained, never on a retrieval stage); outline → gaps → explain once → a small project; self-tests climbing to the performance check, the full attempt on the last stage only",
+      field.lines,
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL | —",
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY | OUTLINE | SELF_TEST",
+        "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | SELF_TEST",
+        "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CARRY + RECALL_DRILLS/BASE | EXPLAIN_ONCE | SELF_TEST",
+        "MASTERED: BUILD_SOMETHING + EXPLAIN_IT/CARRY + RECALL_DRILLS/BASE | SMALL_PROJECT + FULL_ATTEMPT | PERFORMANCE_CHECK",
+      ]
+    );
+    check("…and it keeps every rule (progressionViolationsOf is empty)", field.broke.length === 0, field.broke.join("; "));
+    const lang = run({ track: "FIELD", family: "LANGUAGE", stages: GATES12, practicesAllowed: true, exam: false });
+    eq(
+      "a LANGUAGE plan (§20.11): listen and repeat with recall drills, then saying it aloud, then a teacher or partner, each carrying the last, listening kept as the spaced review; the gaps, explaining it once aloud, a small project",
+      lang.lines,
+      [
+        "FOUNDATION: LISTEN_AND_REPEAT + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL | —",
+        "FAMILIAR: RECALL_DRILLS + LISTEN_AND_REPEAT/CARRY | LIST_GAPS | SELF_TEST",
+        "RETAINED: SAY_IT_ALOUD + RECALL_DRILLS/CARRY + LISTEN_AND_REPEAT/BASE | EXPLAIN_ONCE | SELF_TEST",
+        "FLUENT: WITH_A_PARTNER + SAY_IT_ALOUD/CARRY + LISTEN_AND_REPEAT/BASE | SMALL_PROJECT | SELF_TEST",
+        "MASTERED: WITH_A_PARTNER + SAY_IT_ALOUD/CARRY + LISTEN_AND_REPEAT/BASE | FULL_ATTEMPT | PERFORMANCE_CHECK",
+      ]
+    );
+    const perform = run({ track: "FIELD", family: "PERFORM", stages: GATES12, practicesAllowed: true, exam: false });
+    eq(
+      "a PERFORM plan: study with slow drills, slow drills, full run-throughs, then a teacher or partner, slow drills kept throughout",
+      perform.lines,
+      [
+        "FOUNDATION: READ_AND_CARD + SLOW_DRILLS/PARTNER + RECALL_DRILLS/BASE | CHOOSE_MATERIAL | —",
+        "FAMILIAR: SLOW_DRILLS + READ_AND_CARD/CARRY + RECALL_DRILLS/BASE | LIST_GAPS | SELF_TEST",
+        "RETAINED: RUN_THROUGHS + SLOW_DRILLS/CARRY + RECALL_DRILLS/BASE | — | SELF_TEST",
+        "FLUENT: RUN_THROUGHS + SLOW_DRILLS/CARRY + RECALL_DRILLS/BASE | SMALL_PROJECT | SELF_TEST",
+        "MASTERED: WITH_A_PARTNER + RUN_THROUGHS/CARRY + SLOW_DRILLS/BASE | FULL_ATTEMPT | PERFORMANCE_CHECK",
+      ]
+    );
+    const build = run({ track: "FIELD", family: "BUILD", stages: GATES12, practicesAllowed: true, exam: false });
+    eq(
+      "a BUILD plan: study, recall, problem sets, then building from Fluent with the problem sets kept",
+      build.lines.map((l) => l.split(" | ")[0]),
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER",
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY",
+        "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE",
+        "FLUENT: BUILD_SOMETHING + PROBLEM_SETS/CARRY + RECALL_DRILLS/BASE",
+        "MASTERED: BUILD_SOMETHING + PROBLEM_SETS/CARRY + RECALL_DRILLS/BASE",
+      ]
+    );
+    check("…and each family's plan keeps every rule", [lang, perform, build].every((r) => r.broke.length === 0), [lang, perform, build].flatMap((r) => r.broke).join("; "));
+    const undated = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true });
+    eq(
+      "an exam with no day: booked on the first stage; the problem sets built at Retained stay to the exam (CORE); the last stage holds it: going over mistakes, timed practice and the problem sets, the gaps listed, the mock test (no full attempt)",
+      undated.lines,
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | —",
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY | OUTLINE | SELF_TEST",
+        "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | SELF_TEST",
+        "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE + RECALL_DRILLS/CARRY | EXPLAIN_ONCE | SELF_TEST",
+        "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE | LIST_GAPS | MOCK_TEST",
+      ]
+    );
+    check("…and it keeps every rule", undated.broke.length === 0, undated.broke.join("; "));
+    const early = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 1 });
+    eq(
+      "an exam with its day in Familiar (no run-up given: the stage before is it): timed practice from Foundation, the mock test there, timed practice and the exam in Familiar; after the exam nothing climbs and nothing is checked: each stage keeps what the exam's stage trained (no full attempt, no performance check)",
+      early.lines,
+      [
+        "FOUNDATION: READ_AND_CARD + TIMED_PRACTICE/EXAM + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | MOCK_TEST",
+        "FAMILIAR: RECALL_DRILLS + TIMED_PRACTICE/EXAM + READ_AND_CARD/CARRY | OUTLINE | EXAM_DAY",
+        "RETAINED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "FLUENT after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "MASTERED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+      ]
+    );
+    check("…and it keeps every rule (the exam's run-up, nothing after it)", early.broke.length === 0 && early.p.examPrepStage === 0 && early.p.mockStage === 0, early.broke.join("; "));
+    eq(
+      "an exam with its day in Fluent, well into its window (examPrepStage = the exam's stage): the mock test on Retained, timed practice and the exam in Fluent with the problem sets kept, Mastered after it",
+      run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 3 }).lines,
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | —",
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY | OUTLINE | SELF_TEST",
+        "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS | MOCK_TEST",
+        "FLUENT: EXPLAIN_IT + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE | EXPLAIN_ONCE | EXAM_DAY",
+        "MASTERED after: EXPLAIN_IT/COPY + PROBLEM_SETS/COPY + RECALL_DRILLS/BASE | — | —",
+      ]
+    );
+    eq(
+      "depth 8 with the exam's day in the last stage, early in it (the run-up is Familiar): timed practice and the mock test in Familiar, timed practice and the exam in Retained",
+      run({ track: "FIELD", stages: G(["FOUNDATION", "FAMILIAR", "RETAINED"]), practicesAllowed: true, exam: true, examStage: 2 }).lines,
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM | —",
+        "FAMILIAR: RECALL_DRILLS + TIMED_PRACTICE/EXAM + READ_AND_CARD/CARRY | OUTLINE | MOCK_TEST",
+        "RETAINED: PROBLEM_SETS + TIMED_PRACTICE/EXAM + RECALL_DRILLS/CARRY | LIST_GAPS | EXAM_DAY",
+      ]
+    );
+    const ielts = run({ track: "FIELD", family: "LANGUAGE", stages: [...G(["FAMILIAR", "RETAINED", "FLUENT"]), { stage: "BETWEEN", level: 11 }, { stage: "MASTERED" }], practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 2 });
+    eq(
+      "IELTS (the review's case): a LANGUAGE plan whose exam falls six days into Toward Mastered (BETWEEN 11; the run-up is Fluent): Fluent trains with a partner, timed practice and saying it aloud (kept from Retained) and closes on the mock test; BETWEEN copies Fluent (the gate after it comes after the exam) and holds timed practice and the exam; Mastered, after it, keeps what was trained",
+      ielts.lines,
+      [
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/PARTNER + LISTEN_AND_REPEAT/BASE | CHOOSE_MATERIAL + BOOK_EXAM + LIST_GAPS | —",
+        "RETAINED: SAY_IT_ALOUD + RECALL_DRILLS/CARRY + LISTEN_AND_REPEAT/BASE | EXPLAIN_ONCE | SELF_TEST",
+        "FLUENT: WITH_A_PARTNER + TIMED_PRACTICE/EXAM + SAY_IT_ALOUD/CORE | SMALL_PROJECT | MOCK_TEST",
+        "BETWEEN11: WITH_A_PARTNER/COPY + SAY_IT_ALOUD/COPY + TIMED_PRACTICE/EXAM | — | EXAM_DAY",
+        "MASTERED after: WITH_A_PARTNER/COPY + SAY_IT_ALOUD/COPY + LISTEN_AND_REPEAT/BASE | — | —",
+      ]
+    );
+    check("…and it keeps every rule", ielts.broke.length === 0, ielts.broke.join("; "));
+    eq(
+      "room for two practices (practicesThatFitOf): the focus first, then the exam's timed practice and the core before the carry; the spaced review waits for room",
+      run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, maxPractices: 2 }).lines.map((l) => l.split(" | ")[0]),
+      ["FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER", "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY", "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY", "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE", "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM"]
+    );
+    const one = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false, maxPractices: 1, picks: { FOUNDATION: "RECALL_DRILLS", FAMILIAR: "SLOW_DRILLS", RETAINED: "WRITING_PRACTICE", FLUENT: "WITH_A_PARTNER", MASTERED: "WITH_A_PARTNER" } });
+    eq("room for one: code's default stays, Gemini's picks wait for room", one.lines.map((l) => l.split(" | ")[0]), ["FOUNDATION: READ_AND_CARD", "FAMILIAR: RECALL_DRILLS", "RETAINED: PROBLEM_SETS", "FLUENT: EXPLAIN_IT", "MASTERED: BUILD_SOMETHING"]);
+    check("…and it keeps every rule", one.broke.length === 0, one.broke.join("; "));
+    const picked = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false, picks: { FOUNDATION: "RECALL_DRILLS", FAMILIAR: "RECALL_DRILLS", RETAINED: "WRITING_PRACTICE", FLUENT: "WITH_A_PARTNER", MASTERED: "WITH_A_PARTNER" } });
+    eq(
+      "Gemini's picks are ADDED beside code's default (*), never in its place: a pick of the default itself marks it; the next stage carries code's default, not the pick",
+      picked.lines.map((l) => l.split(" | ")[0]),
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PICK*",
+        "FAMILIAR: RECALL_DRILLS* + READ_AND_CARD/CARRY",
+        "RETAINED: PROBLEM_SETS + WRITING_PRACTICE/PICK* + RECALL_DRILLS/CARRY",
+        "FLUENT: EXPLAIN_IT + WITH_A_PARTNER/PICK* + PROBLEM_SETS/CARRY",
+        "MASTERED: BUILD_SOMETHING + WITH_A_PARTNER/PICK* + EXPLAIN_IT/CARRY",
+      ]
+    );
+    check("…and it keeps every rule", picked.broke.length === 0, picked.broke.join("; "));
+    const examPicks = run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, picks: { RETAINED: "WRITING_PRACTICE", FLUENT: "WRITING_PRACTICE", MASTERED: "WITH_A_PARTNER" } });
+    eq(
+      "on an exam plan a pick never displaces the problem sets (CORE) or timed practice: on the exam's stage it waits for room",
+      examPicks.lines.map((l) => l.split(" | ")[0]),
+      [
+        "FOUNDATION: READ_AND_CARD + RECALL_DRILLS/PARTNER",
+        "FAMILIAR: RECALL_DRILLS + READ_AND_CARD/CARRY",
+        "RETAINED: PROBLEM_SETS + WRITING_PRACTICE/PICK* + RECALL_DRILLS/CARRY",
+        "FLUENT: EXPLAIN_IT + PROBLEM_SETS/CORE + WRITING_PRACTICE/PICK*",
+        "MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + PROBLEM_SETS/CORE",
+      ]
+    );
+    const defaults = field.lines;
+    const junk: unknown[] = [
+      { FOUNDATION: "SLOW_DRILLS", FAMILIAR: "TIMED_PRACTICE", RETAINED: "problem_sets", FLUENT: 3, MASTERED: "BUILD_SOMETHING ", STAGE_1: "EASY_SESSION" },
+      JSON.parse('{"__proto__":{"FOUNDATION":"RECALL_DRILLS"},"constructor":"RECALL_DRILLS"}'),
+      ["RECALL_DRILLS"],
+      "RECALL_DRILLS",
+      null,
+      Object.assign(Object.create({ FOUNDATION: "RECALL_DRILLS" }) as object, {}),
+    ];
+    check(
+      "an invalid pick is ignored: another stage's kind (or another family's), timed practice (never a candidate), a case-folded or padded key, a number, a track slot, a prototype key or an inherited one, an array, a string, null",
+      junk.every((picks) => json(run({ track: "FIELD", stages: GATES12, practicesAllowed: true, exam: false, picks }).lines) === json(defaults))
+    );
+    eq(
+      "a held Foundation, a count gate first, the gates between, the exam's day in BETWEEN 7: the held stage gets nothing; PART copies Familiar; Familiar (the run-up) takes timed practice and the mock test; BETWEEN 7 copies Familiar and holds timed practice and the exam; every stage after it keeps what was trained, unchecked",
+      run({
+        track: "FIELD",
+        stages: [{ stage: "FOUNDATION", held: true }, { stage: "PART", level: 6 }, { stage: "FAMILIAR" }, { stage: "BETWEEN", level: 7 }, { stage: "RETAINED" }, { stage: "BETWEEN", level: 9 }, { stage: "FLUENT" }],
+        practicesAllowed: true,
+        exam: true,
+        examStage: 3,
+      }).lines,
+      [
+        "FOUNDATION held: — | — | —",
+        "PART6: RECALL_DRILLS/COPY + READ_AND_CARD/COPY | CHOOSE_MATERIAL + BOOK_EXAM | —",
+        "FAMILIAR: RECALL_DRILLS + TIMED_PRACTICE/EXAM + READ_AND_CARD/PARTNER | OUTLINE | MOCK_TEST",
+        "BETWEEN7: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + TIMED_PRACTICE/EXAM | — | EXAM_DAY",
+        "RETAINED after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "BETWEEN9 after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+        "FLUENT after: RECALL_DRILLS/COPY + READ_AND_CARD/COPY + MISTAKE_REVIEW/BASE | — | —",
+      ]
+    );
+    eq(
+      "a BETWEEN stage between two gates (no exam) copies the gate after it and takes its own self-test (escalation allowing): no long stage goes unmeasured",
+      run({ track: "FIELD", stages: [...G(["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT"]), { stage: "BETWEEN", level: 11 }, { stage: "MASTERED" }], practicesAllowed: true, exam: false }).lines.slice(4),
+      ["BETWEEN11: BUILD_SOMETHING/COPY + EXPLAIN_IT/COPY + RECALL_DRILLS/COPY | — | SELF_TEST", "MASTERED: BUILD_SOMETHING + EXPLAIN_IT/CARRY + RECALL_DRILLS/BASE | SMALL_PROJECT + FULL_ATTEMPT | PERFORMANCE_CHECK"]
+    );
+    eq(
+      "the user's AVOIDs on a Field plan (study, recall drills, the performance check): a kind of the same role stands in; the performance check gives way to a self-test (escalation still holds)",
+      run({ track: "FIELD", stages: G(["FOUNDATION", "FAMILIAR", "RETAINED"]), practicesAllowed: true, exam: false, gate: { blocked: ["READ_AND_CARD", "RECALL_DRILLS", "PERFORMANCE_CHECK"] } }).lines,
+      [
+        "FOUNDATION: LISTEN_AND_REPEAT<READ_AND_CARD | CHOOSE_MATERIAL | —",
+        "FAMILIAR: SLOW_DRILLS<RECALL_DRILLS + LISTEN_AND_REPEAT/CARRY | OUTLINE | SELF_TEST",
+        "RETAINED: PROBLEM_SETS + SLOW_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS + FULL_ATTEMPT | SELF_TEST<PERFORMANCE_CHECK",
+      ]
+    );
+    eq(
+      "practices off: no practice anywhere; the steps and checkpoints stand",
+      run({ track: "FIELD", stages: G(["FOUNDATION", "FAMILIAR", "RETAINED"]), practicesAllowed: false, exam: true }).lines,
+      ["FOUNDATION: — | CHOOSE_MATERIAL + BOOK_EXAM | —", "FAMILIAR: — | OUTLINE | SELF_TEST", "RETAINED: — | LIST_GAPS | MOCK_TEST"]
+    );
+    eq(
+      "a re-plan with the first stage under way (carried): it is kept as it is, and the next stage carries its focus (listen and repeat); no second opening",
+      run({ track: "FIELD", stages: [{ stage: "FOUNDATION", carried: ["LISTEN_AND_REPEAT", "RECALL_DRILLS", "CHOOSE_MATERIAL", "HARDER_SESSION", "NOPE"] }, { stage: "FAMILIAR" }, { stage: "RETAINED" }], practicesAllowed: true, exam: false }).lines,
+      [
+        "FOUNDATION: LISTEN_AND_REPEAT/KEPT + RECALL_DRILLS/KEPT | CHOOSE_MATERIAL | —",
+        "FAMILIAR: RECALL_DRILLS + LISTEN_AND_REPEAT/CARRY | OUTLINE | SELF_TEST",
+        "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK",
+      ]
+    );
+    const partStages = (carried: boolean): CAT.ProgressionStageInput[] => [{ stage: "PART", level: 6, ...(carried ? { carried: ["RECALL_DRILLS", "READ_AND_CARD", "CHOOSE_MATERIAL"] } : {}) }, ...G(["FAMILIAR", "RETAINED"])];
+    const partFresh = run({ track: "FIELD", stages: partStages(false), practicesAllowed: true, exam: false });
+    const partCarried = run({ track: "FIELD", stages: partStages(true), practicesAllowed: true, exam: false });
+    eq(
+      "Start, then a re-plan (the review's A'): a started count gate (PART, carried with its own kinds) leaves Familiar as a fresh plan builds it — recall drills with study as its partner, not recall drills alone",
+      [partFresh.lines.slice(1), partCarried.lines.slice(1)],
+      [
+        ["FAMILIAR: RECALL_DRILLS + READ_AND_CARD/PARTNER | OUTLINE | SELF_TEST", "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK"],
+        ["FAMILIAR: RECALL_DRILLS + READ_AND_CARD/PARTNER | OUTLINE | SELF_TEST", "RETAINED: PROBLEM_SETS + RECALL_DRILLS/CARRY + MISTAKE_REVIEW/BASE | LIST_GAPS + FULL_ATTEMPT | PERFORMANCE_CHECK"],
+      ]
+    );
+    const bodyWait = gateOf("BODY", "knee injury, no running", "Lose 8 kg without hurting my knee");
+    eq(
+      "BODY while the card waits (lose-8kg): safe kinds only; the technique session the stage before trained stands in for longer and harder (never an easier one while a safe kind holds the rung), the easy session carried; no full attempt and no performance check (they wait on the card)",
+      run({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, gate: bodyWait }).lines,
+      [
+        "STAGE_1: EASY_SESSION + MOBILITY_SESSION/PARTNER | SET_UP | —",
+        "STAGE_2: TECHNIQUE_SESSION + EASY_SESSION/CARRY | — | —",
+        "STAGE_3: TECHNIQUE_SESSION<LONGER_SESSION + EASY_SESSION/CARRY | — | —",
+        "STAGE_4: TECHNIQUE_SESSION<HARDER_SESSION + EASY_SESSION/CARRY | — | —",
+        "STAGE_5: TECHNIQUE_SESSION<HARDER_SESSION + EASY_SESSION/CARRY | — | —",
+      ]
+    );
+    const s10k = CAT.constraintsStateOf({ track: "BODY", texts: { constraints: null, aim: "Run a sub-50 10K" }, exam: true });
+    const none = CAT.answerActivityCard(null, s10k, { key: s10k.key, avoid: [], nothingToAvoid: true }, DAYP);
+    eq(
+      "BODY answered “Nothing to avoid” (run-10k): easy → technique → longer → harder, each stage carrying the last, an easy session kept throughout; the full attempt and the performance check on the last stage",
+      run({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, gate: CAT.allowedKindsFor(s10k, none.ok ? none.value : null) }).lines,
+      [
+        "STAGE_1: EASY_SESSION + MOBILITY_SESSION/PARTNER | SET_UP | —",
+        "STAGE_2: TECHNIQUE_SESSION + EASY_SESSION/CARRY | — | —",
+        "STAGE_3: LONGER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE | — | —",
+        "STAGE_4: HARDER_SESSION + LONGER_SESSION/CARRY + EASY_SESSION/BASE | — | —",
+        "STAGE_5: HARDER_SESSION + LONGER_SESSION/CARRY + EASY_SESSION/BASE | FULL_ATTEMPT | PERFORMANCE_CHECK",
+      ]
+    );
+    eq(
+      "BODY with the harder session avoided, then the longer one too: the last stage keeps what the stage before trained (longer, then strength) and its three practices; it never falls back to the easy session",
+      [
+        run({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, gate: { blocked: ["HARDER_SESSION"] } }).lines.slice(3).map((l) => l.split(" | ")[0]),
+        run({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, gate: { blocked: ["HARDER_SESSION", "LONGER_SESSION"] } }).lines.slice(3).map((l) => l.split(" | ")[0]),
+      ],
+      [
+        ["STAGE_4: LONGER_SESSION<HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE", "STAGE_5: LONGER_SESSION<HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE"],
+        ["STAGE_4: STRENGTH_SESSION<HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE", "STAGE_5: STRENGTH_SESSION<HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE"],
+      ]
+    );
+    eq(
+      "CARE while the card waits (care-routine): planning the week and the log in every stage, so the routine is never empty and both habits stay",
+      run({ track: "CARE", stages: TRACK5, practicesAllowed: true, exam: false, gate: gateOf("CARE", "I work full time, so weekends only", "Keep a steady weekly care routine for my mum") }).lines.map((l) => l.split(" | ")[0]),
+      ["STAGE_1: PLAN_AHEAD<SET_TIME + KEEP_A_LOG/PARTNER", "STAGE_2: KEEP_A_LOG<CHECK_IN + PLAN_AHEAD/CARRY", "STAGE_3: PLAN_AHEAD<SET_TIME + KEEP_A_LOG/CARRY", "STAGE_4: PLAN_AHEAD<ADMIN_SESSION + KEEP_A_LOG/CARRY", "STAGE_5: PLAN_AHEAD<SET_TIME + KEEP_A_LOG/CARRY"]
+    );
+    eq(
+      "CARE answered: the time set for it is in every stage (as the focus or the carry), the log kept beside it; a routine closes on the performance check, with no 'full attempt'",
+      run({ track: "CARE", stages: TRACK5, practicesAllowed: true, exam: false }).lines,
+      [
+        "STAGE_1: SET_TIME + KEEP_A_LOG/PARTNER | SET_UP | —",
+        "STAGE_2: CHECK_IN + SET_TIME/CARRY + KEEP_A_LOG/BASE | — | —",
+        "STAGE_3: SET_TIME + CHECK_IN/CARRY + KEEP_A_LOG/BASE | — | —",
+        "STAGE_4: ADMIN_SESSION + SET_TIME/CARRY + KEEP_A_LOG/BASE | — | —",
+        "STAGE_5: SET_TIME + ADMIN_SESSION/CARRY + KEEP_A_LOG/BASE | — | PERFORMANCE_CHECK",
+      ]
+    );
+    eq(
+      "the closing step per track: a full attempt on a Field (every family), BODY or CRAFT plan; none on a CARE or DUTY routine",
+      [...CAT.CATALOG_TRACKS.map((t) => CAT.PROGRESSION[t].closing), ...RT.PRACTICE_FAMILIES.map((f) => CAT.FIELD_FAMILY_PROGRESSION[f].closing)],
+      ["FULL_ATTEMPT", "FULL_ATTEMPT", "FULL_ATTEMPT", null, null, "FULL_ATTEMPT", "FULL_ATTEMPT", "FULL_ATTEMPT", "FULL_ATTEMPT"]
+    );
+    eq(
+      "CRAFT with a cue, unanswered: the technique session in every stage",
+      run({ track: "CRAFT", stages: TRACK5, practicesAllowed: true, exam: false, gate: gateOf("CRAFT", "Wrist RSI, can't play long", "Play Clair de Lune") }).lines.map((l) => l.split(" | ")[0]),
+      ["STAGE_1: TECHNIQUE_SESSION<SLOW_DRILLS", "STAGE_2: TECHNIQUE_SESSION<SLOW_DRILLS", "STAGE_3: TECHNIQUE_SESSION<RUN_THROUGHS", "STAGE_4: TECHNIQUE_SESSION<WITH_A_PARTNER", "STAGE_5: TECHNIQUE_SESSION<RUN_THROUGHS"]
+    );
+    eq(
+      "CRAFT with no cue: slow drills, then run-throughs and a teacher, slow drills kept",
+      run({ track: "CRAFT", stages: TRACK5, practicesAllowed: true, exam: false, gate: gateOf("CRAFT", null, "Play Clair de Lune") }).lines.map((l) => l.split(" | ")[0]),
+      ["STAGE_1: SLOW_DRILLS + TECHNIQUE_SESSION/PARTNER", "STAGE_2: SLOW_DRILLS + TECHNIQUE_SESSION/CARRY", "STAGE_3: RUN_THROUGHS + SLOW_DRILLS/CARRY + TECHNIQUE_SESSION/BASE", "STAGE_4: WITH_A_PARTNER + RUN_THROUGHS/CARRY + SLOW_DRILLS/BASE", "STAGE_5: RUN_THROUGHS + WITH_A_PARTNER/CARRY + SLOW_DRILLS/BASE"]
+    );
+    eq(
+      "CRAFT with a graded exam on Stage 4 (the review's ABRSM case): the mock test on Stage 3, the run-throughs kept to the exam, Stage 5 after it (no full attempt, no performance check)",
+      run({ track: "CRAFT", stages: TRACK5, practicesAllowed: true, exam: true, examStage: 3, examPrepStage: 3 }).lines,
+      [
+        "STAGE_1: SLOW_DRILLS + TECHNIQUE_SESSION/PARTNER | SET_UP + BOOK_EXAM | —",
+        "STAGE_2: SLOW_DRILLS + TECHNIQUE_SESSION/CARRY | — | —",
+        "STAGE_3: RUN_THROUGHS + SLOW_DRILLS/CARRY + TECHNIQUE_SESSION/BASE | — | MOCK_TEST",
+        "STAGE_4: WITH_A_PARTNER + RUN_THROUGHS/CORE + SLOW_DRILLS/CARRY | — | EXAM_DAY",
+        "STAGE_5 after: WITH_A_PARTNER/COPY + RUN_THROUGHS/COPY + SLOW_DRILLS/COPY | — | —",
+      ]
+    );
+    eq(
+      "merged track stages (STAGE_2, STAGE_4, STAGE_5): the first kept stage opens (its partner, the setup), roles stay by stage key",
+      run({ track: "BODY", stages: G(["STAGE_2", "STAGE_4", "STAGE_5"]), practicesAllowed: true, exam: false }).lines,
+      ["STAGE_2: TECHNIQUE_SESSION + MOBILITY_SESSION/PARTNER + EASY_SESSION/BASE | SET_UP | —", "STAGE_4: HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE | — | —", "STAGE_5: HARDER_SESSION + TECHNIQUE_SESSION/CARRY + EASY_SESSION/BASE | FULL_ATTEMPT | PERFORMANCE_CHECK"]
+    );
+    eq(
+      "DUTY with an exam and no day, room for two: the admin session leads, the last stage holds the mock test (no full attempt)",
+      run({ track: "DUTY", stages: TRACK5, practicesAllowed: true, exam: true, maxPractices: 2 }).lines,
+      [
+        "STAGE_1: ADMIN_SESSION + PLAN_AHEAD/PARTNER | SET_UP + BOOK_EXAM | —",
+        "STAGE_2: SET_TIME + ADMIN_SESSION/CARRY | — | —",
+        "STAGE_3: ADMIN_SESSION + SET_TIME/CARRY | — | —",
+        "STAGE_4: CHECK_IN + ADMIN_SESSION/CARRY | — | —",
+        "STAGE_5: ADMIN_SESSION + CHECK_IN/CARRY | — | MOCK_TEST",
+      ]
+    );
+    check(
+      "a single stage is first and last: it opens, books the exam and holds it (going over mistakes, timed practice)",
+      json(run({ track: "FIELD", stages: G(["MASTERED"]), practicesAllowed: true, exam: true }).lines) === json(["MASTERED: MISTAKE_REVIEW + TIMED_PRACTICE/EXAM + RECALL_DRILLS/PARTNER | CHOOSE_MATERIAL + BOOK_EXAM + LIST_GAPS | MOCK_TEST"])
+    );
+    const frozen = Object.freeze({ track: "FIELD" as const, family: "LANGUAGE" as const, stages: Object.freeze(GATES12.map((s) => Object.freeze({ ...s }))), practicesAllowed: true, exam: true, picks: Object.freeze({ RETAINED: "WRITING_PRACTICE" }) });
+    check("pure and deterministic: a frozen input is read, never written, and the same input gives the same plan", json(CAT.progressionOf(frozen)) === json(CAT.progressionOf(frozen)));
+    check(
+      "no stage at all: an empty progression (first and last -1, no exam stage, run-up or mock stage; the family read)",
+      json(CAT.progressionOf({ track: "FIELD", stages: [], practicesAllowed: true, exam: true })) ===
+        json({ track: "FIELD", family: "KNOW", stages: [], first: -1, last: -1, examStage: null, examDated: false, examPrepStage: null, mockStage: null })
+    );
+  }
+
+  // ── A dated exam's stages (examStagesOf, one definition for R2 and R4) ──
+  {
+    const rows = [
+      { start: "2026-10-05", due: "2026-12-20" },
+      { start: "2026-12-21", due: "2027-02-28" },
+      { start: "2027-03-01", due: "2027-05-16" },
+    ] as { start: DayKey; due: DayKey; held?: boolean }[];
+    eq(
+      `examStagesOf: the first stage not held due on or after the day (else the last); its run-up is that stage when the exam falls ${CAT.EXAM_PREP_MIN_DAYS} days or more into it, else the stage before; held stages skipped; no day, a bad day or no stage: none`,
+      [
+        CAT.examStagesOf(rows, "2027-03-05" as DayKey),
+        CAT.examStagesOf(rows, "2027-04-05" as DayKey),
+        CAT.examStagesOf(rows, "2027-03-22" as DayKey),
+        CAT.examStagesOf(rows, "2026-10-10" as DayKey),
+        CAT.examStagesOf(rows, "2028-01-01" as DayKey),
+        CAT.examStagesOf([{ ...rows[0], held: true }, rows[1], rows[2]], "2026-11-01" as DayKey),
+        CAT.examStagesOf(rows, null),
+        CAT.examStagesOf(rows, "05/04/2027" as DayKey),
+        CAT.examStagesOf([], "2027-03-05" as DayKey),
+      ],
+      [
+        { examStage: 2, examPrepStage: 1 },
+        { examStage: 2, examPrepStage: 2 },
+        { examStage: 2, examPrepStage: 2 },
+        { examStage: 0, examPrepStage: 0 },
+        { examStage: 2, examPrepStage: 2 },
+        { examStage: 1, examPrepStage: 1 },
+        { examStage: null, examPrepStage: null },
+        { examStage: null, examPrepStage: null },
+        { examStage: null, examPrepStage: null },
+      ]
+    );
+  }
+
+  // ── The picks' enums (the v4 schema), the pick and the notes ──
+  {
+    const slots = ["FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED"];
+    eq(
+      "progressionPickEnumsOf on a KNOW exam run: every slot's candidates (the exam's stages: no building), code's default first; timed practice is never offered (the exam's, code places it)",
+      CAT.progressionPickEnumsOf({ track: "FIELD", slots, exam: true, practicesAllowed: true }),
+      {
+        FOUNDATION: ["READ_AND_CARD", "RECALL_DRILLS"],
+        FAMILIAR: ["RECALL_DRILLS", "SLOW_DRILLS"],
+        RETAINED: ["PROBLEM_SETS", "EXPLAIN_IT", "WRITING_PRACTICE"],
+        FLUENT: ["EXPLAIN_IT", "PROBLEM_SETS", "MISTAKE_REVIEW", "WRITING_PRACTICE"],
+        MASTERED: ["MISTAKE_REVIEW", "PROBLEM_SETS", "EXPLAIN_IT", "WITH_A_PARTNER"],
+      }
+    );
+    eq(
+      "…per family (the run's family): LANGUAGE offers listening, saying it aloud, writing and a partner; PERFORM slow drills, run-throughs and a partner; never a kind that doesn't suit the aim",
+      [CAT.progressionPickEnumsOf({ track: "FIELD", family: "LANGUAGE", slots, exam: false, practicesAllowed: true }), CAT.progressionPickEnumsOf({ track: "FIELD", family: "PERFORM", slots, exam: false, practicesAllowed: true })],
+      [
+        {
+          FOUNDATION: ["LISTEN_AND_REPEAT", "READ_AND_CARD"],
+          FAMILIAR: ["RECALL_DRILLS", "SLOW_DRILLS"],
+          RETAINED: ["SAY_IT_ALOUD", "WRITING_PRACTICE", "EXPLAIN_IT"],
+          FLUENT: ["WITH_A_PARTNER", "SAY_IT_ALOUD", "WRITING_PRACTICE", "MISTAKE_REVIEW"],
+          MASTERED: ["WITH_A_PARTNER", "RUN_THROUGHS"],
+        },
+        {
+          FOUNDATION: ["READ_AND_CARD", "LISTEN_AND_REPEAT", "SLOW_DRILLS"],
+          FAMILIAR: ["SLOW_DRILLS", "RECALL_DRILLS"],
+          RETAINED: ["RUN_THROUGHS", "SAY_IT_ALOUD", "MISTAKE_REVIEW"],
+          FLUENT: ["RUN_THROUGHS", "WITH_A_PARTNER"],
+          MASTERED: ["WITH_A_PARTNER", "RUN_THROUGHS"],
+        },
+      ]
+    );
+    eq(
+      "…on BODY while the card waits: only the slots with a placeable candidate (no enum is ever empty); practices off: none; a slot of another track or a prototype name: none",
+      [
+        CAT.progressionPickEnumsOf({ track: "BODY", slots: RT.TRACK_STAGE_KEYS, exam: false, practicesAllowed: true, gate: gateOf("BODY", null, "Run a sub-50 10K") }),
+        CAT.progressionPickEnumsOf({ track: "FIELD", slots: ["FOUNDATION"], exam: false, practicesAllowed: false }),
+        CAT.progressionPickEnumsOf({ track: "FIELD", slots: ["STAGE_1", "__proto__", "constructor", "BETWEEN"], exam: false, practicesAllowed: true }),
+      ],
+      [{ STAGE_1: ["EASY_SESSION", "MOBILITY_SESSION"], STAGE_2: ["TECHNIQUE_SESSION"] }, {}, {}]
+    );
+    const sizes = [
+      ...CAT.CATALOG_TRACKS.flatMap((t) => CAT.progressionStageKeysOf(t).map((k) => CAT.progressionRuleFor(t, { exam: true }).stages[k]?.focus.length ?? 0)),
+      ...RT.PRACTICE_FAMILIES.flatMap((f) => CAT.progressionStageKeysOf("FIELD").map((k) => CAT.progressionRuleFor("FIELD", { family: f }).stages[k]?.focus.length ?? 0)),
+    ];
+    check(`every pick enum holds at most ${CAT.CATALOG_ENUM_MAX} values (the largest: ${Math.max(...sizes)})`, Math.max(...sizes) <= CAT.CATALOG_ENUM_MAX);
+    eq(
+      "progressionPickOf: a candidate is picked; anything else (another kind, a padded or case-folded key, a number) is code's default; no candidate gives null",
+      [CAT.progressionPickOf(["PROBLEM_SETS", "EXPLAIN_IT"], "EXPLAIN_IT"), CAT.progressionPickOf(["PROBLEM_SETS", "EXPLAIN_IT"], "BUILD_SOMETHING"), CAT.progressionPickOf(["PROBLEM_SETS"], " PROBLEM_SETS"), CAT.progressionPickOf(["PROBLEM_SETS"], 7), CAT.progressionPickOf([], "PROBLEM_SETS")],
+      [{ kind: "EXPLAIN_IT", picked: true }, { kind: "PROBLEM_SETS", picked: false }, { kind: "PROBLEM_SETS", picked: false }, { kind: "PROBLEM_SETS", picked: false }, { kind: null, picked: false }]
+    );
+    eq(
+      "progressionNotesOf: Gemini's pick GEMINI_PICK (beside the default, or the default it picked); the app's retrieval practice STUDY_ADDED, production PRODUCTION_ADDED (pay honesty reads them; the exam's timed practice and the core too); a practice of neither role, a step, a checkpoint and a carried kind none",
+      [
+        CAT.progressionNotesOf({ kind: "SAY_IT_ALOUD", slot: "PRACTICE", why: "PICK", picked: true }),
+        CAT.progressionNotesOf({ kind: "RECALL_DRILLS", slot: "PRACTICE", why: "FOCUS", picked: true }),
+        CAT.progressionNotesOf({ kind: "READ_AND_CARD", slot: "PRACTICE", why: "FOCUS", picked: false }),
+        CAT.progressionNotesOf({ kind: "PROBLEM_SETS", slot: "PRACTICE", why: "CORE", picked: false }),
+        CAT.progressionNotesOf({ kind: "TIMED_PRACTICE", slot: "PRACTICE", why: "EXAM", picked: false }),
+        CAT.progressionNotesOf({ kind: "SLOW_DRILLS", slot: "PRACTICE", why: "FOCUS", picked: false }),
+        CAT.progressionNotesOf({ kind: "OUTLINE", slot: "STEP", why: "ROLE", picked: false }),
+        CAT.progressionNotesOf({ kind: "SELF_TEST", slot: "CHECKPOINT", why: "CHECK", picked: false }),
+        CAT.progressionNotesOf({ kind: "RECALL_DRILLS", slot: "PRACTICE", why: "KEPT", picked: false }),
+      ],
+      [["GEMINI_PICK"], ["GEMINI_PICK"], ["STUDY_ADDED"], ["PRODUCTION_ADDED"], ["PRODUCTION_ADDED"], [], [], [], []]
+    );
+    eq(
+      "progressionShapeOf: retrieval below Retained, production from it (BETWEEN at 9 and 11 included, at 5 and 7 not); none on a track",
+      [CAT.progressionShapeOf("FIELD", { stage: "FAMILIAR" }), CAT.progressionShapeOf("FIELD", { stage: "BETWEEN", level: 7 }), CAT.progressionShapeOf("FIELD", { stage: "BETWEEN", level: 9 }), CAT.progressionShapeOf("FIELD", { stage: "RETAINED" }), CAT.progressionShapeOf("BODY", { stage: "STAGE_3" })],
+      ["RETRIEVAL", "RETRIEVAL", "PRODUCTION", "PRODUCTION", null]
+    );
+  }
+
+  // ── The rule checker catches each breach (so the property below tests something) ──
+  {
+    // A Field exam plan with its day in Fluent (index 3): the run-up and the mock test on Retained, Mastered after the exam.
+    const input: CAT.ProgressionInput = { track: "FIELD", stages: GATES12, practicesAllowed: true, exam: true, examStage: 3 };
+    const clean = CAT.progressionOf(input);
+    const cleanBroke = CAT.progressionViolationsOf(input, clean);
+    const breach = (name: string, code: string, mutate: (p: CAT.Progression) => void, inp: CAT.ProgressionInput = input) => {
+      const p = JSON.parse(JSON.stringify(clean)) as CAT.Progression;
+      mutate(p);
+      const v = CAT.progressionViolationsOf(inp, p);
+      return v.some((l) => l.startsWith(`${code} `)) ? null : `${name}: ${json(v)}`;
+    };
+    const item = (kind: CAT.CatalogKey, why: CAT.ProgressionWhy = "FOCUS"): CAT.ProgressionItem => ({ kind, slot: CAT.catalogEntryOf(kind)!.slot, why, standsIn: null, picked: false });
+    const drop = (p: CAT.Progression, i: number, kind: string) => (p.stages[i].practices = p.stages[i].practices.filter((x) => x.kind !== kind));
+    const missed = [
+      breach("a full attempt before the last stage", "LAST", (p) => p.stages[1].steps.push(item("FULL_ATTEMPT", "CLOSING"))),
+      breach("a performance check before the last stage", "LAST", (p) => (p.stages[1].checkpoint = item("PERFORMANCE_CHECK", "CHECK"))),
+      breach("a blocked kind placed", "BLOCKED", (p) => p.stages[0].practices.push(item("SLOW_DRILLS", "BASE")), { ...input, gate: { blocked: ["SLOW_DRILLS"] } }),
+      breach("a self-test after the mock test", "ESCALATE", (p) => (p.stages[3].checkpoint = item("SELF_TEST", "CHECK"))),
+      breach("a stage with no practice", "PRACTICE", (p) => (p.stages[1].practices = [])),
+      breach("the carry dropped", "CARRY", (p) => (p.stages[1].practices = p.stages[1].practices.filter((x) => x.why !== "CARRY"))),
+      breach("a focus that steps back", "CLIMB", (p) => {
+        p.stages[3].practices[0] = item("RECALL_DRILLS");
+        p.stages[3].focus = "RECALL_DRILLS";
+      }),
+      breach("Familiar without retrieval", "SHAPE", (p) => (p.stages[1].practices = p.stages[1].practices.filter((x) => CAT.practiceRoleOf({ catalogKey: x.kind }) !== "RETRIEVAL"))),
+      breach("timed practice off the run-up", "EXAM", (p) => p.stages[0].practices.push(item("TIMED_PRACTICE", "EXAM"))),
+      breach("a mock test off the stage before the exam's", "EXAM", (p) => (p.stages[1].checkpoint = item("MOCK_TEST", "CHECK"))),
+      breach("the exam day on another stage", "EXAM", (p) => (p.stages[1].checkpoint = item("EXAM_DAY", "CHECK"))),
+      breach("booking off the first stage", "EXAM", (p) => p.stages[2].steps.push(item("BOOK_EXAM", "BOOK"))),
+      breach("an examOnly kind without an exam", "EXAM", (p) => p.stages[1].practices.push(item("TIMED_PRACTICE", "EXAM")), { ...input, exam: false, examStage: null }),
+      breach("the run-up without timed practice", "EXAM_PREP", (p) => drop(p, 2, "TIMED_PRACTICE")),
+      breach("the exam's stage without timed practice", "EXAM_PREP", (p) => drop(p, 3, "TIMED_PRACTICE")),
+      breach("no mock test before a dated exam", "EXAM_PREP", (p) => (p.stages[2].checkpoint = item("SELF_TEST", "CHECK"))),
+      breach("a step after the exam", "AFTER_EXAM", (p) => p.stages[4].steps.push(item("SMALL_PROJECT", "ROLE"))),
+      breach("a checkpoint after the exam", "AFTER_EXAM", (p) => (p.stages[4].checkpoint = item("EXAM_DAY", "CHECK"))),
+      breach("code's default removed by a pick", "DEFAULT", (p) => (p.stages[2].practices[0] = { ...item("WRITING_PRACTICE"), picked: true })),
+      breach("the core dropped before the exam", "CORE", (p) => drop(p, 3, "PROBLEM_SETS")),
+      breach("a held stage holding a kind", "HELD", (p) => (p.stages[0].held = true), { ...input, stages: [{ stage: "FOUNDATION", held: true }, ...GATES12.slice(1)] }),
+      breach("a kind twice", "CAP", (p) => p.stages[2].steps.push(item("LIST_GAPS", "ROLE"))),
+      breach("four practices", "CAP", (p) => p.stages[2].practices.push(item("WRITING_PRACTICE", "BASE"))),
+      breach("a body session on a Field plan", "TRACK", (p) => p.stages[2].practices.push(item("EASY_SESSION", "BASE"))),
+      breach("a valid pick left out while a slot was free", "PICK", () => undefined, { ...input, picks: { FAMILIAR: "SLOW_DRILLS" } }),
+      breach("a stand-in for a kind nothing held", "STANDIN", (p) => (p.stages[2].practices[0] = { ...p.stages[2].practices[0], standsIn: "EXPLAIN_IT" })),
+    ].filter((x): x is string => x != null);
+    check(
+      "progressionViolationsOf names each injected breach (LAST ×2, BLOCKED, ESCALATE, PRACTICE, CARRY, CLIMB, SHAPE, EXAM ×5, EXAM_PREP ×3, AFTER_EXAM ×2, DEFAULT, CORE, HELD, CAP ×2, TRACK, PICK, STANDIN), and the clean plan breaks nothing",
+      missed.length === 0 && cleanBroke.length === 0,
+      [...cleanBroke, ...missed].join(" | ")
+    );
+  }
+
+  // ── The property: every corpus pack × catalog track (× family on FIELD) × gate state ──
+  {
+    const LAST_ONLY = new Set<string>(CAT.CATALOG.filter((e) => e.lastStageOnly).map((e) => e.key));
+    const RUNG: Record<string, number> = { SELF_TEST: 1, MOCK_TEST: 2, EXAM_DAY: 3, PERFORMANCE_CHECK: 3 };
+    const broke: string[] = [];
+    const tally = { cases: 0, packs: 0, gates: 0, practice: 0, last: 0, escalate: 0, blocked: 0, after: 0, kept: 0, carried: 0, carriedSame: 0, rules: 0 };
+    const listsOf = (track: CAT.CatalogTrack, depth: RT.AimDepth): [string, CAT.ProgressionStageInput[]][] => {
+      if (track === "FIELD") {
+        const gates = RT.gateStagesTo(depth);
+        const between: CAT.ProgressionStageInput[] = gates.flatMap((g, i) => (i < gates.length - 1 ? [{ stage: g }, { stage: "BETWEEN" as const, level: RT.STAGE_LEVEL[g] + 1 }] : [{ stage: g }]));
+        return [
+          ["full", G(gates)],
+          ["with BETWEEN", between],
+          ["held first", [{ stage: gates[0], held: true }, ...G(gates.slice(1))]],
+          ["PART first", [{ stage: "PART", level: RT.STAGE_LEVEL[gates[1]] }, ...G(gates.slice(1))]],
+          ["merged", G(gates.filter((_, i) => i !== 1))],
+          ["carried first", [{ stage: gates[0], carried: ["READ_AND_CARD", "RECALL_DRILLS", "CHOOSE_MATERIAL"] }, ...G(gates.slice(1))]],
+        ];
+      }
+      const first = CAT.PROGRESSION[track].stages.STAGE_1?.focus[0] ?? null;
+      return [
+        ["full", TRACK5],
+        ["merged", G(["STAGE_2", "STAGE_4", "STAGE_5"])],
+        ["single", G(["STAGE_5"])],
+        ["carried first", [{ stage: "STAGE_1", carried: [first, "SET_UP"] }, ...G(RT.TRACK_STAGE_KEYS.slice(1))]],
+      ];
+    };
+    const picksOf = (rule: CAT.ProgressionTrackRule, stages: readonly CAT.ProgressionStageInput[], n: number): unknown => {
+      const variant = n % 4;
+      if (variant === 0) return undefined;
+      if (variant === 3) return { FOUNDATION: "NOPE", STAGE_1: 3, FAMILIAR: "TIMED_PRACTICE", STAGE_3: "EASY_SESSION ", MASTERED: ["BUILD_SOMETHING"] };
+      const out: Record<string, string> = {};
+      for (const s of stages) {
+        const focus = rule.stages[s.stage]?.focus ?? [];
+        if (focus.length) out[s.stage] = variant === 1 ? focus[focus.length - 1] : focus[Math.floor(focus.length / 2)];
+      }
+      return out;
+    };
+    const maxOf = (n: number, len: number): CAT.ProgressionInput["maxPractices"] => [undefined, 2, 1, Array.from({ length: len }, (_, i) => (i % 3) + 1)][Math.floor(n / 4) % 4];
+    const kindsAt = (s: CAT.StageProgression) => json([s.practices.map((x) => x.kind), s.steps.map((x) => x.kind), s.checkpoint?.kind ?? null]);
+    for (const entry of readCorpus()) {
+      tally.packs++;
+      const intake = entry.input.intake;
+      const texts = RT.cueTextsOf(intake);
+      const depth: RT.AimDepth = RT.isAimDepth(intake.depth) ? intake.depth : 12;
+      for (const track of CAT.CATALOG_TRACKS) {
+        const kinds = CAT.CATALOG.filter((e) => e.tracks.includes(track) && !e.codeOnly).map((e) => e.key);
+        let exclusions: RT.ConstraintExclusion[] = [];
+        try {
+          exclusions = V.constraintExclusionsOf(intake.constraints, kinds, { track, aim: intake.aim, exam: intake.examLabel, domains: (entry.input.domains ?? []).map((d) => d.name) });
+        } catch {
+          exclusions = [];
+        }
+        const state = CAT.constraintsStateOf({ track, texts, exam: true, practicesAllowed: true, exclusions });
+        const answer = (avoid: CAT.CatalogKey[], nothing = false): RT.ActivityConfirm | null => {
+          const a = CAT.answerActivityCard(null, state, { key: state.key, avoid, nothingToAvoid: nothing }, DAYP);
+          return a.ok ? a.value : null;
+        };
+        const practices = kinds.filter((k) => CAT.catalogEntryOf(k)!.slot === "PRACTICE");
+        const safe = CAT.cueSafeKindsOf(track);
+        const confs: [string, RT.ActivityConfirm | null][] = [
+          ["unanswered", null],
+          ["nothing to avoid", answer([], true)],
+          ["every practice avoided", answer(practices)],
+          ["the safe kinds avoided", answer(safe.length > 0 ? safe : practices.slice(0, 3))],
+          ["stale", { key: "k2-00000000", kinds: {}, answered: { day: DAYP, asked: kinds, none: true } }],
+          ...kinds.map((k): [string, RT.ActivityConfirm | null] => [`${k} avoided`, answer([k])]),
+        ];
+        // FIELD: the pack's own family (code's reading of its aim) and the other three by turn.
+        const prefill = CAT.practiceFamilyOf(intake);
+        for (const [gname, conf] of confs) {
+          const gate = CAT.allowedKindsFor(state, conf);
+          tally.gates++;
+          const blockedSet = new Set<string>(gate.blocked);
+          for (const [lname, stages] of listsOf(track, depth)) {
+            const exams: [boolean, number | null][] = [[false, null], [true, null], ...stages.map((_, i): [boolean, number] => [true, i])];
+            for (const [exam, examStage] of exams)
+              for (const practicesAllowed of [true, false]) {
+                const n = tally.cases++;
+                const family = track === "FIELD" ? (n % 3 === 0 ? prefill : RT.PRACTICE_FAMILIES[n % RT.PRACTICE_FAMILIES.length]) : undefined;
+                const rule = CAT.progressionRuleFor(track, { family, exam });
+                const examPrepStage = examStage == null ? null : [null, examStage, Math.max(0, examStage - 1)][n % 3];
+                const input: CAT.ProgressionInput = { track, family, stages, practicesAllowed, exam, examStage, examPrepStage, gate, picks: picksOf(rule, stages, n), maxPractices: maxOf(n, stages.length) };
+                const p = CAT.progressionOf(input);
+                const where = `${entry.file} ${track}${family ? `/${family}` : ""} ${gname} ${lname} exam=${exam ? (examStage ?? "undated") : "no"} practices=${practicesAllowed}`;
+                const v = CAT.progressionViolationsOf(input, p);
+                if (v.length) {
+                  tally.rules++;
+                  if (broke.length < 6) broke.push(`${where}: ${v[0]}`);
+                }
+                // The lead's four, and the review's, read here independently of the checker.
+                const liveIdx = stages.map((s, i) => (s.held ? -1 : i)).filter((i) => i >= 0);
+                const last = liveIdx.length ? liveIdx[liveIdx.length - 1] : -1;
+                const placeablePractice = CAT.CATALOG.some((e) => e.slot === "PRACTICE" && e.tracks.includes(track) && !e.codeOnly && (exam || !e.examOnly) && !blockedSet.has(e.key));
+                let top = 0;
+                for (const s of p.stages) {
+                  if (s.held || s.carried) continue;
+                  if (practicesAllowed && placeablePractice && s.practices.length === 0) {
+                    tally.practice++;
+                    if (broke.length < 6) broke.push(`${where}: stage ${s.index} has no practice`);
+                  }
+                  for (const x of [...s.practices, ...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])]) {
+                    if (LAST_ONLY.has(x.kind) && s.index !== last) {
+                      tally.last++;
+                      if (broke.length < 6) broke.push(`${where}: ${x.kind} at stage ${s.index}, the last is ${last}`);
+                    }
+                    if (blockedSet.has(x.kind)) {
+                      tally.blocked++;
+                      if (broke.length < 6) broke.push(`${where}: ${x.kind} placed though ${gate.pending.includes(x.kind) ? "pending" : "avoided"}`);
+                    }
+                  }
+                  if (exam && examStage != null && p.examStage != null && s.index > p.examStage && (s.steps.length > 0 || s.checkpoint)) {
+                    tally.after++;
+                    if (broke.length < 6) broke.push(`${where}: stage ${s.index} holds a step or a checkpoint after the exam`);
+                  }
+                  if (s.checkpoint) {
+                    const r = RUNG[s.checkpoint.kind] ?? 0;
+                    if (r < top) {
+                      tally.escalate++;
+                      if (broke.length < 6) broke.push(`${where}: ${s.checkpoint.kind} after rung ${top}`);
+                    }
+                    top = Math.max(top, r);
+                  }
+                }
+                // Gemini can't make the plan worse than code's default: every pick vector keeps each stage's focus, the exam's timed practice and the core.
+                if (input.picks !== undefined) {
+                  const base = CAT.progressionOf({ ...input, picks: undefined });
+                  for (const s of base.stages)
+                    for (const x of s.practices)
+                      if ((x.why === "FOCUS" || x.why === "EXAM" || x.why === "CORE") && !p.stages[s.index].practices.some((y) => y.kind === x.kind)) {
+                        tally.kept++;
+                        if (broke.length < 6) broke.push(`${where}: a pick removed code's ${x.why} ${x.kind} at stage ${s.index}`);
+                      }
+                }
+                // Start, then a re-plan: carrying a stage with exactly its fresh kinds leaves every other stage as built (no picks).
+                if (input.picks === undefined && n % 2 === 0)
+                  for (const s of p.stages) {
+                    if (s.held || s.carried) continue;
+                    tally.carried++;
+                    const carriedKinds = [...s.practices, ...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])].map((x) => x.kind);
+                    const q = CAT.progressionOf({ ...input, stages: stages.map((st, i) => (i === s.index ? { ...st, carried: carriedKinds } : st)) });
+                    const diff = q.stages.findIndex((t, i) => i !== s.index && kindsAt(t) !== kindsAt(p.stages[i]));
+                    if (diff >= 0) {
+                      tally.carriedSame++;
+                      if (broke.length < 6) broke.push(`${where}: carrying stage ${s.index} changed stage ${diff}: ${kindsAt(q.stages[diff])} ≠ ${kindsAt(p.stages[diff])}`);
+                    }
+                  }
+              }
+          }
+        }
+      }
+    }
+    check(
+      `property (${tally.packs} corpus packs × ${CAT.CATALOG_TRACKS.length} tracks (× the 4 families on FIELD) × ${tally.gates} gate states in all × stage lists × exam placements and run-ups × practices on/off, with picks and room varied: ${tally.cases} plans; ${tally.carried} stages re-planned as carried): every stage has practice when practices are allowed and the gate leaves one; no lastStageOnly kind before the last stage; checkpoint escalation never falls; no avoided or pending kind is placed; nothing after a dated exam; every pick vector keeps code's focus, the exam's timed practice and the core (a pick only ever adds); carrying a stage with its own kinds leaves every other stage as built; and progressionViolationsOf finds nothing`,
+      tally.packs >= 12 && tally.cases > 10_000 && tally.carried > 1_000 && broke.length === 0 && tally.rules + tally.practice + tally.last + tally.escalate + tally.blocked + tally.after + tally.kept + tally.carriedSame === 0,
+      `${json(tally)} ${broke.join(" | ")}`
+    );
+  }
+
+  // ── Sizing: R2's allocation, one definition ──
+  {
+    eq(
+      "stageBandFloorOf: Retained D30, Fluent and Mastered D45, none below; BETWEEN keeps the gate below's (9 → Retained, 11 → Fluent, 7 → none); a PART its gate's; a level alone; none on a track stage or with nothing",
+      [
+        CAT.stageBandFloorOf("FOUNDATION"),
+        CAT.stageBandFloorOf("FAMILIAR"),
+        CAT.stageBandFloorOf("RETAINED"),
+        CAT.stageBandFloorOf("FLUENT"),
+        CAT.stageBandFloorOf("MASTERED"),
+        CAT.stageBandFloorOf("BETWEEN", 9),
+        CAT.stageBandFloorOf("BETWEEN", 11),
+        CAT.stageBandFloorOf("BETWEEN", 7),
+        CAT.stageBandFloorOf("PART", 8),
+        CAT.stageBandFloorOf(null, 10),
+        CAT.stageBandFloorOf("STAGE_3"),
+        CAT.stageBandFloorOf(undefined),
+      ],
+      [null, null, "D30", "D45", "D45", "D30", "D45", null, "D30", "D45", null, null]
+    );
+    eq(
+      "practiceSizeOf (realism's bandFor and allocate): the method's band, never under the floor, stepped down while a session is more than the share (to D15), ⌊share ÷ band⌋ sessions clamped 1…7, DAILY at 7",
+      [
+        CAT.practiceSizeOf("READ_AND_CARD", 100),
+        CAT.practiceSizeOf("BUILD_SOMETHING", 100),
+        CAT.practiceSizeOf("PROBLEM_SETS", 100, "D45"),
+        CAT.practiceSizeOf("RECALL_DRILLS", 20),
+        CAT.practiceSizeOf("RECALL_DRILLS", 5),
+        CAT.practiceSizeOf("RECALL_DRILLS", 40, "D45"),
+        CAT.practiceSizeOf("EASY_SESSION", 500),
+        CAT.practiceSizeOf("WORKOUT", 90),
+        CAT.practiceSizeOf("OUTLINE", 60),
+        CAT.practiceSizeOf("RECALL_DRILLS", Number.NaN),
+      ],
+      [
+        { band: "D30", sessionsPerWeek: 3, rule: "TARGET:3/W" },
+        { band: "D60", sessionsPerWeek: 1, rule: "TARGET:1/W" },
+        { band: "D45", sessionsPerWeek: 2, rule: "TARGET:2/W" },
+        { band: "D20", sessionsPerWeek: 1, rule: "TARGET:1/W" },
+        { band: "D15", sessionsPerWeek: 1, rule: "TARGET:1/W" },
+        { band: "D45", sessionsPerWeek: 1, rule: "TARGET:1/W" },
+        { band: "D45", sessionsPerWeek: 7, rule: "DAILY" },
+        { band: "D45", sessionsPerWeek: 2, rule: "TARGET:2/W" },
+        { band: "D30", sessionsPerWeek: 2, rule: "TARGET:2/W" },
+        { band: "D15", sessionsPerWeek: 1, rule: "TARGET:1/W" },
+      ]
+    );
+    eq(
+      "practicesThatFitOf (§20.11): the most practices that still give the focus two sessions a week and each other one, at the stage's floor (D30 without one): ⌊budget ÷ unit⌋ − 1, 1…3; nothing or a bad figure still holds one",
+      [0, 59, 60, 90, 120, 1000, Number.NaN].map((b) => CAT.practicesThatFitOf(b)).concat([CAT.practicesThatFitOf(89, "D45"), CAT.practicesThatFitOf(90, "D45"), CAT.practicesThatFitOf(135, "D45"), CAT.practicesThatFitOf(180, "D45")]),
+      [1, 1, 1, 2, 3, 3, 1, 1, 1, 2, 3]
+    );
+    const mins = (s: CAT.PracticeSize[]) => s.reduce((sum, x) => sum + x.sessionsPerWeek * RT.practiceBandMinutes(x.band), 0);
+    const fluent = CAT.practiceSizesOf(["EXPLAIN_IT", "PROBLEM_SETS"], 135, "D45");
+    const three = CAT.practiceSizesOf(["PROBLEM_SETS", "RECALL_DRILLS", "EXPLAIN_IT"], 200, "D30");
+    const run10k = CAT.practiceSizesOf(["LONGER_SESSION", "TECHNIQUE_SESSION", "EASY_SESSION"], 240);
+    const harder = CAT.practiceSizesOf(["HARDER_SESSION", "LONGER_SESSION", "EASY_SESSION"], 240);
+    eq(
+      "practiceSizesOf (§20.11; R2's allocate, one definition): the focus two shares and the rest one, the rounding remainder to the focus (Fluent at 135 min: explain it 2 × D45, problem sets 1 × D45; three at 200 min: problem sets 4 × D30, the others 1 × D30); a BODY longer session one band above the easy one (run-10k: longer 2 × D60, technique and easy 1 × D45; harder 3 × D45, longer 1 × D60); one practice takes the budget; none gives []",
+      [fluent, three, run10k, harder, CAT.practiceSizesOf(["READ_AND_CARD"], 100), CAT.practiceSizesOf([], 100)].map((s) => s.map((x) => `${x.sessionsPerWeek}×${x.band}`)),
+      [["2×D45", "1×D45"], ["4×D30", "1×D30", "1×D30"], ["2×D60", "1×D45", "1×D45"], ["3×D45", "1×D60", "1×D45"], ["3×D30"], []]
+    );
+    check("…within the budget in each case (135, 200, 240, 240)", mins(fluent) <= 135 && mins(three) <= 200 && mins(run10k) <= 240 && mins(harder) <= 240, json([mins(fluent), mins(three), mins(run10k), mins(harder)]));
+  }
+
+  // ── The v4 reply (roadmap-types) ──
+  {
+    const reply: RT.DraftReplyV4 = { needs: ["D3"], order: ["S2", "S1"], picks: { RETAINED: "EXPLAIN_IT" } };
+    check("DraftReplyV4 holds needs, order and picks (keys only); REPLY_V4_PROPERTIES is the schema's property order", json(Object.keys(reply)) === json(["needs", "order", "picks"]) && json(RT.REPLY_V4_PROPERTIES) === json(["needs", "order", "picks", "gaps"]));
+    const km = { S1: 0, S2: 1, S3: 2, S4: 3 };
+    eq(
+      "outlineOrderOf: the reply's order, each line once; a repeat, an unknown, prototype-named, case-folded, padded or non-string key is dropped (counted); every line it left out follows in the user's order",
+      RT.outlineOrderOf(["S3", "S1", "S3", "X", "__proto__", 5, "s2", "S2 "], km, 4),
+      { order: [2, 0, 1, 3], dropped: 6, appended: [1, 3] }
+    );
+    eq(
+      "…no order (absent, or not a list) is the user's order; a key past the outline never resolves; an inherited key never resolves",
+      [RT.outlineOrderOf(undefined, km, 3), RT.outlineOrderOf("S1", km, 2), RT.outlineOrderOf(["S1"], { S1: 7 }, 2), RT.outlineOrderOf(["constructor", "toString"], JSON.parse('{"S1":0}') as Record<string, number>, 1)],
+      [
+        { order: [0, 1, 2], dropped: 0, appended: [0, 1, 2] },
+        { order: [0, 1], dropped: 0, appended: [0, 1] },
+        { order: [0, 1], dropped: 1, appended: [0, 1] },
+        { order: [0], dropped: 2, appended: [0] },
+      ]
+    );
+    eq("outlineStagesOf: the order split across the stages, the first ones taking one more; [] per empty stage; no stage, no split", [RT.outlineStagesOf([2, 0, 1, 3, 4], 3), RT.outlineStagesOf([], 2), RT.outlineStagesOf([1, 2], 0)], [[[2, 0], [1, 3], [4]], [[], []], []]);
+  }
+
+  // ── The rounds' handoffs (contracts §20.8, §20.11): each passes once its owner lands it ──
+  {
+    const has = (f: string, re: RegExp) => existsSync(join(ROOT, f)) && re.test(read(f));
+    const realism = "src/lib/roadmap-realism.ts";
+    handoff(
+      "roadmap-realism.ts places every stage's practices, steps and checkpoint with progressionOf (the depth starter, trackLadderOf, syncStagePractices and syncTrackStarter), not its own lists (requiredKindOf, trackKindsOf)",
+      has(realism, /\bprogressionOf\(/) && !has(realism, /function requiredKindOf\b|function trackKindsOf\b/),
+      "R2"
+    );
+    handoff(
+      "roadmap-realism.ts sizes with practiceSizeOf and stageBandFloorOf (no second bandFor or floorBandOf) and passes maxPractices from practicesThatFitOf",
+      has(realism, /\bpracticeSizeOf\(/) && has(realism, /\bstageBandFloorOf\(/) && has(realism, /\bpracticesThatFitOf\(/) && !has(realism, /function bandFor\b|function floorBandOf\b/),
+      "R2"
+    );
+    handoff("roadmap-realism.ts splits the outline in its order (outlineStagesOf) and writes each placed kind's notes with progressionNotesOf", has(realism, /\boutlineStagesOf\(/) && has(realism, /\bprogressionNotesOf\(/), "R2");
+    let schemaV4 = false;
+    let schemaDetail = "";
+    try {
+      const entry = readCorpus().find((e) => e.file === "actuarial-probability.json");
+      const schema = entry ? (V.keysOnlySchemaOf(packOf(entry)) as { properties?: Record<string, unknown> }) : null;
+      const props = schema?.properties ?? {};
+      schemaV4 = "picks" in props && "order" in props && !("stages" in props);
+      schemaDetail = Object.keys(props).join(", ");
+    } catch (err) {
+      schemaDetail = String(err);
+    }
+    handoff("the v4 response schema (keysOnlySchemaOf): needs, order and picks (progressionPickEnumsOf's per-slot enums); no stages, practices, steps or checkpoint", schemaV4 && has("src/lib/roadmap-validate.ts", /\bprogressionPickEnumsOf\(/), "R3", schemaDetail);
+    handoff("validateKeysOnly reads a v4 reply: the order through outlineOrderOf, the picks per slot (a slot left out is code's default), needs as before", has("src/lib/roadmap-validate.ts", /\boutlineOrderOf\(/), "R3");
+    handoff("the v4 system instruction asks only for needs, the outline's order and one pick per stage (no 'Pick practice, step and checkpoint kinds')", !has("src/lib/roadmap-evidence.ts", /Pick practice, step and checkpoint kinds/), "R3");
+    handoff("roadmap-server.ts materialises a v4 reply through the progression (the reply's picks and order into the ladder, or progressionOf itself), and re-plans carry the started stages (ProgressionStageInput.carried)", has("src/lib/roadmap-server.ts", /\bprogressionOf\(|\bpicks\s*:/) && has("src/lib/roadmap-server.ts", /\boutlineOrderOf\(|\border\s*:/), "R4");
+    handoff("the v4 draft header names Gemini's smaller part (no 'picked practice types from the app's list')", !has("src/components/roadmap/roadmap-copy.ts", /picked practice types from the app's list/), "R5");
+    handoff("scripts/roadmap-probe.ts sends the v4 schema and reads practice fit from the progression (progressionOf with the reply's picks)", has("scripts/roadmap-probe.ts", /\bprogressionOf\(/), "probe");
+    // The review round (contracts §20.11): the families, the exam's run-up and the sizing, adopted by their owners.
+    handoff(
+      "roadmap-realism.ts passes the plan's family (practiceFamilyOf(intake)) and a dated exam's run-up (examStagesOf over the rows' windows) to progressionOf",
+      has(realism, /\bpracticeFamilyOf\(/) && has(realism, /\bexamStagesOf\(/),
+      "R2"
+    );
+    handoff("roadmap-realism.ts sizes a stage's practices together with practiceSizesOf (the focus two shares and the remainder; a longer session above the easy one)", has(realism, /\bpracticeSizesOf\(/), "R2");
+    handoff(
+      "the v4 pick enums are the run's family's (progressionPickEnumsOf with the run's family)",
+      has("src/lib/roadmap-validate.ts", /\bpracticeFamilyOf\(|\bfamily\s*:/) || has("src/lib/roadmap-evidence.ts", /\bpracticeFamilyOf\(|\bfamily\s*:/),
+      "R3"
+    );
+    handoff(
+      "roadmap-server.ts keeps the user's family: intakeOf reads it (practiceFamilyOfCoverage) and intakeData writes it (coverageJsonOf's third argument)",
+      has("src/lib/roadmap-server.ts", /\bpracticeFamilyOfCoverage\(/) && has("src/lib/roadmap-server.ts", /coverageJsonOf\([^;]*practiceFamily/),
+      "R4"
+    );
+    handoff("the form asks the practice family, prefilled by practiceFamilyPrefillOf (the user's answer wins)", has("src/components/roadmap/RoadmapForm.tsx", /\bpracticeFamilyPrefillOf\(/), "R5");
+    handoff(
+      "stageOptionsOf reads the plan's family and gate (progressionCandidatesOf with family and gate), so Gemini's choice names the options it was offered",
+      /progressionCandidatesOf\([\s\S]{0,400}\bfamily\b/.test(existsSync(join(ROOT, "src/components/roadmap/roadmap-ui-model.ts")) ? read("src/components/roadmap/roadmap-ui-model.ts") : "") &&
+        /progressionCandidatesOf\([\s\S]{0,400}\bgate\b/.test(existsSync(join(ROOT, "src/components/roadmap/roadmap-ui-model.ts")) ? read("src/components/roadmap/roadmap-ui-model.ts") : ""),
+      "R5"
+    );
+  }
+}
+
 // ═══ Plan-born tasks: no model sizes or explains one (contracts §15.6, §16.4; the lead's half) ═══
 //
 // The Resize channel was: TaskDrawer's Resize → resizeTask → resizableCore → applySizing(force) → sizeLifeTask, whose
@@ -3439,8 +4434,10 @@ void planBornCases()
   .catch((err: unknown) => check("plan-born: the stubbed-Prisma cases ran to the end", false, err instanceof Error ? (err.stack ?? err.message) : String(err)))
   .then(() => {
     if (failed > 0) {
-      console.log(`\nroadmap-contract-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending` : ""}`);
+      console.log(`\nroadmap-contract-check: ${passed} passed, ${failed} FAILED${pendingCount ? `, ${pendingCount} pending` : ""}${handoffCount ? `, ${handoffCount} handoffs open` : ""}`);
       process.exit(1);
     }
-    console.log(`\nroadmap-contract-check: ${passed} passed, 0 failed${pendingCount ? `, ${pendingCount} pending (other lanes' adoption of a lane-0 definition; --strict fails them)` : ""}`);
+    console.log(
+      `\nroadmap-contract-check: ${passed} passed, 0 failed${pendingCount ? `, ${pendingCount} pending (other lanes' adoption of a lane-0 definition; --strict fails them)` : ""}${handoffCount ? `, ${handoffCount} handoffs open (the progression rounds' items, §20.8 and §20.11; --handoffs fails them)` : ""}`
+    );
   });

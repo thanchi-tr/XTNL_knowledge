@@ -47,6 +47,14 @@ import "./_no-model";
  * body, care, craft and Field draft, the living roadmap (asking again and
  * answered), the Start sheet and the intake, from the CONFIRM_STATES
  * fixtures built with the real gate.
+ *
+ * The practice progression (contracts §20, section 13): code owns every
+ * stage's practice, so each stage says why it holds what it does in code's
+ * words (stageWhysOf, stageWhyPartsOf: what its focus is for, what it builds
+ * on from the stage before, what closes it), and Gemini's pick on a v4 plan
+ * reads as its choice among the stage's options (geminiChoiceOf); the v4
+ * header and arrangement line; goldens and a property over plans the real
+ * progressionOf builds; draft-v4 and the starter's states, 344 px first.
  */
 import Module from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -57,6 +65,7 @@ import {
   AIM_RANKS,
   BLOCKING_FLAGS,
   ORIGINS,
+  PACK_MAX_DOMAINS,
   PACK_SECTIONS,
   PRACTICE_METHODS,
   SPAN_MAX_DAYS,
@@ -84,6 +93,7 @@ import {
   type StartPreview,
   type WeekQuestRow,
 } from "../src/lib/roadmap-types";
+import type { CatalogKey } from "../src/lib/roadmap-catalog";
 import { addDays } from "../src/lib/life-day";
 import { goalPercent } from "../src/lib/goals";
 import * as copy from "../src/components/roadmap/roadmap-copy";
@@ -357,6 +367,29 @@ async function main() {
   check("editor: a kept item offers I checked this and Edit (in ⋯ on the living roadmap)", model.itemActionsOf(rowOf({ decision: "KEPT" }), "active").narrow.more.join() === "CHECK,EDIT");
   check("editor: a YOURS item and an outline item offer nothing", model.itemActionsOf(rowOf({ decision: "CHECKED" }), "draft").wide.length === 0 && model.itemActionsOf(rowOf({}), "outline").wide.length === 0);
   check("editor: the title has no Remove", !model.itemActionsOf(model.titleItemOf(m1), "draft").wide.includes("REMOVE"));
+  {
+    // The practice progression (contracts §20): Gemini's choice that isn't the app's default leads with one tap back to it.
+    const pickRow = rowOf({ kind: "PRACTICE", label: "Explain it in your own words: Probability", origin: ORIGINS[1], catalogKey: "EXPLAIN_IT", notes: ["GEMINI_PICK"] } as Partial<ItemDraft>);
+    const off = model.itemActionsOf(pickRow, "draft", { choice: { isDefault: false } });
+    const same = model.itemActionsOf(pickRow, "draft", { choice: { isDefault: true } });
+    check(
+      "editor: Gemini's choice that isn't the app's default offers “Use the app's default” first (one tap; ⋯ keeps Change the type and Edit); the default itself, no choice, or a started stage don't",
+      off.wide.join() === "DEFAULT,TYPE,EDIT" &&
+        off.narrow.shown.join() === "DEFAULT" &&
+        off.narrow.more.join() === "TYPE,EDIT" &&
+        same.wide.join() === "TYPE,EDIT" &&
+        model.itemActionsOf(pickRow, "draft").wide.join() === "TYPE,EDIT" &&
+        model.itemActionsOf(pickRow, "start", { choice: { isDefault: false } }).wide.length === 0 &&
+        model.itemActionsOf(pickRow, "outline", { choice: { isDefault: false } }).wide.length === 0 &&
+        model.ITEM_ACTION_WORD.DEFAULT === "Use the app's default",
+      `${off.wide.join()} | ${same.wide.join()}`
+    );
+    const editorSrc = code(read("src/components/roadmap/ItemEditor.tsx"));
+    check(
+      "editor: “Use the app's default” changes the type to the stage's first option under the plan's gate (geminiChoiceOf over the scope: editItem with that catalogKey), never to a held kind; when the stage already holds the default, it removes the pick instead of doubling it",
+      /case "DEFAULT":[\s\S]*?geminiChoiceOf\(target\.item, target\.milestone, \{ \.\.\.stageRunOf\(scope\)[\s\S]*?choice\.options\[0\][\s\S]*?it\.catalogKey === fallback\)\) \{\s*run\(\(a\) => a\.decideItem\(id, "REMOVED"\)\);[\s\S]*?a\.editItem\(id, edit\)/.test(editorSrc)
+    );
+  }
   const bulk = model.bulkKeepRowsOf(m1);
   check("editor: bulk keep skips every flagged item", bulk.every((r) => r.flags.length === 0) && m1.items.some((it) => it.flags.length > 0));
   check("editor: bulk keep skips a proposed Domain", bulk.every((r) => !r.proposed));
@@ -1217,9 +1250,9 @@ async function main() {
     check("tap budget: deciding and accepting the keys-only draft-mixed-3 takes ≤ 4 taps at 344 px (additions apart)", v3Taps <= 4, `${v3Taps} taps`);
     const v3Html = pageOf("draft-v3");
     check(
-      "v3: the header golden",
+      "v3: the header golden (a v3 reply's draft: it chose every type itself; contracts §20 words a v4 draft's header apart)",
       flat(v3Html).includes(
-        "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and picked practice types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app."
+        "Gemini arranged your outline into milestones, suggested which of your other Domains the aim may need, and chose the practice, step and checkpoint types from the app's list. It wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app."
       ) && copy.GEMINI_V3_LEAD_LINE.startsWith("Gemini arranged your outline")
     );
     const { addableKinds: addable4 } = await import("../src/components/roadmap/AddItemSheet");
@@ -1406,7 +1439,123 @@ async function main() {
     check("empty library: 'Name the areas this needs' and the outline pointer, no suggestions and no Gemini", emptyLib.includes(copy.NAME_AREAS_LABEL) && emptyLib.includes(copy.NAME_AREAS_HINT) && !/Gemini|suggest/i.test(emptyLib));
     check("outline: the line-Domain groups, 'Not tied to a Domain' last, a 'Change' select per line", /class="rm-lgroups"/.test(intakeDepth) && intakeDepth.lastIndexOf(">Not tied to a Domain<") > intakeDepth.lastIndexOf(">Inference</span>") && (intakeDepth.match(/aria-label="Change the Domain of S\d+"/g) ?? []).length === 6);
     check("exam: 'Is there an exam or qualification at the end?' with its date, a waypoint", intakeDepthText.includes("Is there an exam or qualification at the end?") && intakeDepthText.includes("When is it? (optional)") && intakeDepthText.includes("Your exam date is a waypoint: the depth goes on past it."));
-    check("draft with Gemini: says what it will arrange", copy.geminiArrangesLine(9, 3) === "Gemini will arrange your 9 outline lines and pick practice types for your 3 Domains; the app writes every word.");
+    check(
+      "draft with Gemini: says what it will do — only what the run will ask (contracts §20.5, geminiAsksOf): the outline's order, the Domains, at most one practice per stage; the app builds the rest",
+      copy.geminiArrangesLine({ lines: 9, needs: true, picks: true }) ===
+        "Gemini will put your 9 outline lines in order, suggest which of your other Domains the aim may need, and choose at most one practice per stage from the app's options; the app builds the rest and writes every word." &&
+        copy.geminiArrangesLine({ lines: 0, needs: true, picks: true }) ===
+          "Gemini will suggest which of your other Domains the aim may need and choose at most one practice per stage from the app's options; the app builds the rest and writes every word." &&
+        copy.geminiArrangesLine({ lines: 0, needs: false, picks: true }) === "Gemini will choose at most one practice per stage from the app's options; the app builds the rest and writes every word." &&
+        copy.geminiArrangesLine({ lines: 1, needs: false, picks: false }) === "Gemini will put your 1 outline line in order; the app builds the rest and writes every word." &&
+        copy.geminiArrangesLine({ lines: 0, needs: false, picks: false }) === null &&
+        copy.geminiArrangesLine(null) === null,
+      String(copy.geminiArrangesLine({ lines: 9, needs: true, picks: true }))
+    );
+    check(
+      "draft with Gemini: geminiAsksOf — a track Area asks one practice per stage only (no order, no Domains); a Field Area its outline's order, a Domain not in the plan, and practices when on; nothing to ask is null",
+      JSON.stringify(model.geminiAsksOf({ fieldArea: false, lines: 5, otherDomains: 3, chosenDomains: 0, practicesAllowed: false })) === JSON.stringify({ lines: 0, needs: false, picks: true }) &&
+        JSON.stringify(model.geminiAsksOf({ fieldArea: true, lines: 6, otherDomains: 2, chosenDomains: 2, practicesAllowed: true })) === JSON.stringify({ lines: 6, needs: true, picks: true }) &&
+        JSON.stringify(model.geminiAsksOf({ fieldArea: true, lines: 3, otherDomains: 0, chosenDomains: 2, practicesAllowed: false })) === JSON.stringify({ lines: 3, needs: false, picks: false }) &&
+        JSON.stringify(model.geminiAsksOf({ fieldArea: true, lines: 0, otherDomains: 1, chosenDomains: 2, practicesAllowed: false })) === JSON.stringify({ lines: 0, needs: true, picks: false }) &&
+        model.geminiAsksOf({ fieldArea: true, lines: 0, otherDomains: 0, chosenDomains: 4, practicesAllowed: false }) === null &&
+        model.geminiAsksOf({ fieldArea: true, lines: 0, otherDomains: 2, chosenDomains: PACK_MAX_DOMAINS, practicesAllowed: false }) === null
+    );
+    {
+      // The form, with the lead's switch and a key: the Field draft asks all three; with practices off, no outline and every
+      // Domain of the Area chosen there is nothing to ask (the v4 schema would be empty), so only the app's build is offered.
+      const depthView = roadmapFixture("intake-depth").intake!;
+      const fieldOf = depthView.fields.find((f) => f.id === depthView.draft!.intake.fieldId)!;
+      const asking = R(createElement(RoadmapForm, { view: { ...depthView, hasKey: true }, gates: { gemini: true } }));
+      const nothing = R(
+        createElement(RoadmapForm, {
+          view: { ...depthView, hasKey: true, draft: { ...depthView.draft!, intake: { ...depthView.draft!.intake, practicesAllowed: false, syllabus: null, domainIds: fieldOf.domains.map((x) => x.id) } } },
+          gates: { gemini: true },
+        })
+      );
+      check(
+        "draft with Gemini: the Field form says all three parts it will ask (6 lines, the Domains, a practice per stage)",
+        /class="btn btn-primary lg"[^>]*>Draft with Gemini</.test(asking) &&
+          flat(asking).includes("Gemini will put your 6 outline lines in order, suggest which of your other Domains the aim may need, and choose at most one practice per stage from the app's options; the app builds the rest and writes every word.")
+      );
+      check(
+        "draft with Gemini: nothing to ask (practices off, no outline, every Domain chosen) — no Draft with Gemini, Build from my numbers is the submit, and the line says why",
+        !nothing.includes("Draft with Gemini") &&
+          /<button type="submit" class="btn btn-primary lg"[^>]*>Build from my numbers</.test(nothing) &&
+          flat(nothing).includes(copy.GEMINI_NOTHING_TO_ASK_LINE) &&
+          !flat(nothing).includes("Gemini will"),
+        flat(nothing).slice(Math.max(0, flat(nothing).indexOf("Build from my numbers") - 20), flat(nothing).indexOf("Build from my numbers") + 260)
+      );
+    }
+    {
+      // The practice family (contracts §20.11): a Field Area with practices on asks which kind of skill the aim trains, prefilled
+      // by code's reading of the aim; only the user's own answer is sent, and a track Area or practices off never asks.
+      const RTF = await import("../src/lib/roadmap-types");
+      const formMod = await import("../src/components/roadmap/RoadmapForm");
+      const depthView = roadmapFixture("intake-depth").intake!;
+      const withIntake = (p: Partial<Intake>) => ({ ...depthView, draft: { ...depthView.draft!, intake: { ...depthView.draft!.intake, ...p } } });
+      const famGroup = (html: string) => /<div class="segc rm-seg-fill rm-seg-2" role="group" aria-label="What kind of skill is it\?">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+      const pressedOf = (html: string) => /<button type="button" aria-pressed="true">([^<]*)<\/button>/.exec(famGroup(html))?.[1] ?? null;
+      const know = R(createElement(RoadmapForm, { view: depthView }));
+      const lang = R(createElement(RoadmapForm, { view: withIntake({ aim: "Speak Japanese confidently at work", examLabel: null, exam: false, examDay: null }) }));
+      const mine = R(createElement(RoadmapForm, { view: withIntake({ practiceFamily: "PERFORM" }) }));
+      const off = R(createElement(RoadmapForm, { view: withIntake({ practicesAllowed: false }) }));
+      const words = Object.values(copy.FAMILY_WORD).concat(Object.values(copy.FAMILY_HINT), [copy.FAMILY_QUESTION, copy.FAMILY_PREFILL_HINT]);
+      const wordsBad = words.filter((w) => /\p{Nd}|\b(gemini|rung|tier|master|mastery)\b/iu.test(w) || (w.toLowerCase().match(/[a-z]+/g) ?? []).some((x) => CLAIM.includes(x) || EFFICACY.includes(x)));
+      check(
+        "family: the question's words — one per family, code's plain words (no digit, no claim or efficacy word), each answer ≤ 18 characters so two fit a row at 344 px",
+        RTF.PRACTICE_FAMILIES.every((f) => copy.FAMILY_WORD[f] && copy.FAMILY_HINT[f]) && wordsBad.length === 0 && Object.values(copy.FAMILY_WORD).every((w) => w.length <= 18) && copy.FAMILY_QUESTION === "What kind of skill is it?",
+        wordsBad.join(" | ")
+      );
+      {
+        // Each answer's line names only practices its family's table trains (roadmap-catalog FIELD_FAMILY_PROGRESSION).
+        const CATF = await import("../src/lib/roadmap-catalog");
+        const NAMED: Record<string, CatalogKey[]> = {
+          KNOW: ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "EXPLAIN_IT"],
+          LANGUAGE: ["LISTEN_AND_REPEAT", "SAY_IT_ALOUD", "WRITING_PRACTICE", "WITH_A_PARTNER"],
+          PERFORM: ["SLOW_DRILLS", "RUN_THROUGHS", "WITH_A_PARTNER"],
+          BUILD: ["READ_AND_CARD", "RECALL_DRILLS", "PROBLEM_SETS", "BUILD_SOMETHING"],
+        };
+        const off = RTF.PRACTICE_FAMILIES.flatMap((f) => {
+          const trained = new Set<string>(Object.values(CATF.FIELD_FAMILY_PROGRESSION[f].stages).flatMap((r) => [...(r?.focus ?? [])]).concat(CATF.FIELD_FAMILY_PROGRESSION[f].base));
+          return (NAMED[f] ?? []).filter((k) => !trained.has(k)).map((k) => `${f}:${k}`);
+        });
+        check("family: each answer's line names only practices its family's table trains (FIELD_FAMILY_PROGRESSION)", off.length === 0 && RTF.PRACTICE_FAMILIES.every((f) => (NAMED[f] ?? []).length > 0), off.join(", "));
+      }
+      check(
+        "family: a Field form asks it with the four answers, prefilled from the aim (Exam P: Knowledge; “Speak Japanese…”: A language) with the prefill line, and its answer's line says what the practices go from and to",
+        (famGroup(know).match(/<button /g) ?? []).length === 4 &&
+          pressedOf(know) === "Knowledge" &&
+          flat(know).includes(`${copy.FAMILY_HINT.KNOW} ${copy.FAMILY_PREFILL_HINT}`) &&
+          pressedOf(lang) === "A language" &&
+          flat(lang).includes(copy.FAMILY_HINT.LANGUAGE),
+        `${pressedOf(know)} | ${pressedOf(lang)}`
+      );
+      check(
+        "family: the user's own answer wins and drops the prefill line; practices off, a track Area, or no Area ask nothing",
+        pressedOf(mine) === "Doing or playing" &&
+          flat(mine).includes(copy.FAMILY_HINT.PERFORM) &&
+          !flat(mine).includes(`${copy.FAMILY_HINT.PERFORM} ${copy.FAMILY_PREFILL_HINT}`) &&
+          !off.includes(copy.FAMILY_QUESTION) &&
+          !renders.get("intake")!.intake.includes(copy.FAMILY_QUESTION) &&
+          !R(createElement(RoadmapForm, { view: { ...depthView, draft: { ...depthView.draft!, intake: { ...depthView.draft!.intake, fieldId: null, track: "BODY", domainIds: [], depth: null, exam: null, syllabus: null } } } })).includes(copy.FAMILY_QUESTION)
+      );
+      const draftOf = formMod.draftOfIntake(depthView.draft!.intake);
+      const chosenOf = depthView.fields[0].domains.filter((x) => depthView.draft!.intake.domainIds.includes(x.id)).map((x) => ({ id: x.id, name: x.name }));
+      const sent = (p: Partial<typeof draftOf>) => intakeOf({ ...draftOf, ...p }, depthView.today, { chosen: chosenOf }).intake;
+      check(
+        "family: intakeOf sends only the user's answer (Intake.practiceFamily) on a Field Area; untouched, nothing (the server reads the same prefill); draftOfIntake reads it back; practiceFamilyAnswerOf is the answer in force",
+        draftOf.practiceFamily === null &&
+          sent({})?.practiceFamily === undefined &&
+          !("practiceFamily" in (sent({}) ?? {})) &&
+          sent({ practiceFamily: "LANGUAGE" })?.practiceFamily === "LANGUAGE" &&
+          formMod.draftOfIntake({ ...depthView.draft!.intake, practiceFamily: "BUILD" }).practiceFamily === "BUILD" &&
+          formMod.draftOfIntake({ ...depthView.draft!.intake, practiceFamily: "__proto__" as never }).practiceFamily === null &&
+          intakeOf({ ...emptyIntakeDraft(depthView.today, "TRACK"), aim: "Run 10 km", areaTrack: "BODY", practiceFamily: "PERFORM" }, depthView.today).intake?.practiceFamily === undefined &&
+          formMod.practiceFamilyAnswerOf({ practiceFamily: null, aim: "Play 20 songs from memory on guitar", exam: "", examAnswer: false }) === "PERFORM" &&
+          formMod.practiceFamilyAnswerOf({ practiceFamily: "KNOW", aim: "Play 20 songs from memory on guitar", exam: "", examAnswer: false }) === "KNOW" &&
+          formMod.practiceFamilyAnswerOf({ practiceFamily: null, aim: "Pass the band 7", exam: "IELTS Academic", examAnswer: true }) === "LANGUAGE"
+      );
+    }
 
     // The fix rounds' carry-overs.
     const fitted: KnowledgeCheck = {
@@ -2704,6 +2853,509 @@ async function main() {
     const allCards = CONFIRM_STATES.map((s) => cardOf(renders.get(s)!.page) + sectionOf(renders.get(s)!.intake, /id="rm-f-activities"/)).join("\n");
     check("names: no activity card says 'safe' or a bare 'quest'", allCards.length > 0 && !/\bquests?\b/i.test(textOf(allCards).replace(/\bweek quests?\b/gi, "")) && !/\bsafe(?:ly|r)?\b/i.test(textOf(allCards)));
     check("names: no activity card puts 'fine' in the user's mouth (no 'You said fine', no 'count as fine')", !/You said fine|count as fine|whether they're fine/i.test(textOf(allCards)));
+  }
+
+  // ── 13. The practice progression (contracts §20): code owns every stage's practice ──
+  // The page reads what each stage holds and says why, in code's words (stageWhysOf → stageWhyPartsOf): what its focus is for,
+  // what it builds on from the stage before (the build-up rule's carry), and what closes it. Gemini's pick on a v4 plan is
+  // labelled as its choice among the stage's options (geminiChoiceOf), with how many there were and the app's default. The
+  // goldens and the property run over plans the real progressionOf builds; draft-v4 (and the starter's states) render them.
+  console.log("— the practice progression (§20) —");
+  {
+    const CAT = await import("../src/lib/roadmap-catalog");
+    const RT = await import("../src/lib/roadmap-types");
+    const { draftLeadOf } = await import("../src/components/roadmap/DraftReview");
+    const flat = (html: string) => textOf(html).replace(/\s+/g, " ").trim();
+    const pageOf = (s: FixtureState) => renders.get(s)!.page;
+    const whyLinesOf = (html: string) => [...html.matchAll(/<div class="rm-ms-w rm-ms-why">([\s\S]*?)<\/div>/g)].map((m) => flat(m[1]));
+    type PInput = Parameters<typeof CAT.progressionOf>[0];
+    const eq = (name: string, got: unknown, want: unknown) => check(name, JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+
+    // A plan's milestones as the progression places them (the rows R2 and R4 write: each placed kind in the progression's
+    // order, noted by progressionNotesOf; a held stage HELD_AT_START with nothing; BETWEEN and PART with their level).
+    const planOf = (input: PInput): { p: ReturnType<typeof CAT.progressionOf>; ms: MilestoneDraft[] } => {
+      const p = CAT.progressionOf(input);
+      let n = 0;
+      const ms = p.stages.map((st, i) => {
+        const items = [...st.practices, ...st.steps, ...(st.checkpoint ? [st.checkpoint] : [])].map((x) => {
+          n += 1;
+          return { id: `pi${n}`, lineageId: `pl${n}`, ord: n, kind: x.slot, label: x.kind, origin: ORIGINS[1], decision: "PENDING", catalogKey: x.kind, checkpointKind: x.slot === "CHECKPOINT" ? x.kind : null, notes: CAT.progressionNotesOf(x), flags: [] } as unknown as ItemDraft;
+        });
+        const level = input.stages[i]?.level ?? (st.level != null && input.track === "FIELD" ? st.level : null);
+        return {
+          id: `pm${i}`,
+          lineageId: `pml${i}`,
+          ord: i + 1,
+          stage: st.stage,
+          status: "DRAFT",
+          items,
+          measures: level != null ? [{ kind: "CARDS_AT_LEVEL", role: "PAYS", minLevel: level, scope: { domainIds: [] } }] : [],
+          notes: st.held ? ["HELD_AT_START"] : [],
+        } as unknown as MilestoneDraft;
+      });
+      return { p, ms };
+    };
+    const linesOf = (input: PInput) => {
+      const { ms } = planOf(input);
+      const whys = model.stageWhysOf(ms, { track: input.track, exam: input.exam });
+      return ms.filter((m) => !model.isHeldMilestone(m)).map((m) => (whys.get(m.lineageId) ? copy.stageWhyLine(whys.get(m.lineageId)!, input.track) : null));
+    };
+    const st = (...keys: string[]) => keys.map((k) => (/^(BETWEEN|PART)@\d+$/.test(k) ? { stage: k.split("@")[0], level: Number(k.split("@")[1]) } : { stage: k })) as PInput["stages"];
+    const FIELD5 = st("FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "MASTERED");
+    const TRACK5 = st("STAGE_1", "STAGE_2", "STAGE_3", "STAGE_4", "STAGE_5");
+    const PACK = st("PART@6", "FAMILIAR", "RETAINED", "FLUENT", "BETWEEN@11", "MASTERED");
+
+    // The copy.
+    const WORDS_FIELD = "Gemini wrote none of the words: every name here is the app's or comes from your aim, outline and Domains, and every number is worked out by the app.";
+    const PLACED = "The app placed every practice, step and checkpoint, each stage building on the one before.";
+    const CHOSE_ALL = "The app chose every practice and placed every step and checkpoint, each stage building on the one before.";
+    check(
+      "§20 copy: the v4 draft header with every part used names Gemini's smaller part (the Domains, the outline's order, the practices marked as its choice) and the app's (every practice, step and checkpoint, each stage building on the one before)",
+      copy.GEMINI_V4_LEAD_LINE ===
+        `Gemini suggested which of your other Domains the aim may need, put your outline lines in order, and chose each practice marked as Gemini's choice, among the app's options. ${PLACED} ${WORDS_FIELD}`,
+      copy.GEMINI_V4_LEAD_LINE
+    );
+    eq(
+      "§20 copy: geminiV4LeadLine names only the parts the run asked and the reply used — a track run (picks only), a Field run with no outline, a reply with no pick, your order kept, every pick you changed, a reply that left everything to the app",
+      [
+        copy.geminiV4LeadLine({ needs: false, order: null, picks: 3, picked: true, field: false }),
+        copy.geminiV4LeadLine({ needs: true, order: null, picks: 1, picked: true, field: true }),
+        copy.geminiV4LeadLine({ needs: true, order: "MOVED", picks: 0, picked: false, field: true }),
+        copy.geminiV4LeadLine({ needs: false, order: "KEPT", picks: 2, picked: true, field: true }),
+        copy.geminiV4LeadLine({ needs: false, order: null, picks: 0, picked: true, field: false }),
+        copy.geminiV4LeadLine({ needs: false, order: null, picks: 0, picked: false, field: false }),
+      ],
+      [
+        `Gemini chose each practice marked as Gemini's choice, among the app's options. ${PLACED} Gemini wrote none of the words: every name here is the app's or comes from your aim, and every number is worked out by the app.`,
+        `Gemini suggested which of your other Domains the aim may need and chose the practice marked as Gemini's choice, among the app's options. ${PLACED} Gemini wrote none of the words: every name here is the app's or comes from your aim and Domains, and every number is worked out by the app.`,
+        `Gemini suggested which of your other Domains the aim may need and put your outline lines in order. ${CHOSE_ALL} ${WORDS_FIELD}`,
+        `Gemini kept your outline lines in your order and chose each practice marked as Gemini's choice, among the app's options. ${PLACED} ${WORDS_FIELD}`,
+        `Gemini chose practices among the app's options that you have since changed. ${PLACED} Gemini wrote none of the words: every name here is the app's or comes from your aim, and every number is worked out by the app.`,
+        `Gemini's reply left every choice to the app. ${CHOSE_ALL} Gemini wrote none of the words: every name here is the app's or comes from your aim, and every number is worked out by the app.`,
+      ]
+    );
+    check(
+      "§20 copy: roadmap-copy never says Gemini 'picked practice types from the app's list' (the contract's R5 handoff), and a v3 reply's header says what that reply did",
+      !/picked practice types from the app's list/.test(read("src/components/roadmap/roadmap-copy.ts")) && copy.GEMINI_V3_LEAD_LINE.includes("chose the practice, step and checkpoint types from the app's list")
+    );
+    check(
+      "§20 copy: draftLeadOf — a keys-only Gemini draft reads the v4 header from the progression on (choices), the v3 one for a v3 reply; nothing else moves",
+      draftLeadOf("GEMINI", "draft", false, false, true).lead === copy.GEMINI_V4_LEAD_LINE &&
+        draftLeadOf("GEMINI", "draft", false, false, true, true).lead === copy.GEMINI_V4_LEAD_LINE &&
+        draftLeadOf("GEMINI", "draft", false, false, true, false).lead === copy.GEMINI_V3_LEAD_LINE &&
+        draftLeadOf("GEMINI", "draft", false, false, false, true).lead === copy.GEMINI_LEAD_LINE &&
+        draftLeadOf("INHOUSE", "draft", false, false, true, true).lead === copy.BUILT_LEAD_LINE
+    );
+    {
+      const trackParts = { needs: false, order: null, picks: 2, picked: true, field: false } as const;
+      check(
+        "§20 copy: draftLeadOf with the draft's parts reads geminiV4LeadLine of them (a v4 Gemini draft only); a v3 reply and the app's drafts ignore them",
+        draftLeadOf("GEMINI", "draft", false, false, true, true, trackParts).lead === copy.geminiV4LeadLine(trackParts) &&
+          draftLeadOf("GEMINI", "draft", false, false, true, false, trackParts).lead === copy.GEMINI_V3_LEAD_LINE &&
+          draftLeadOf("INHOUSE", "draft", false, false, true, true, trackParts).lead === copy.BUILT_LEAD_LINE
+      );
+    }
+    check(
+      "§20 copy: the v4 arrangement line names only what Gemini arranged that still stands (the outline it moved, the practices marked as its choice); neither: no line",
+      copy.ARRANGEMENT_V4_LINE === "The order of your outline lines is Gemini's suggestion, and so is each practice marked as Gemini's choice. Move a line or change a practice if it doesn't fit." &&
+        copy.arrangementV4Line({ order: "MOVED", picks: 0 }) === "The order of your outline lines is Gemini's suggestion. Move a line if it doesn't fit." &&
+        copy.arrangementV4Line({ order: "KEPT", picks: 1 }) === "The practice marked as Gemini's choice is its suggestion; the app's default is named under it. Change it if it doesn't fit." &&
+        copy.arrangementV4Line({ order: null, picks: 4 }) === "Each practice marked as Gemini's choice is its suggestion; the app's default is named under it. Change it if it doesn't fit." &&
+        copy.arrangementV4Line({ order: "KEPT", picks: 0 }) === null &&
+        copy.arrangementV4Line({ order: null, picks: 0 }) === null
+    );
+    check(
+      "§20 copy: a v4 pick's chip reads “Gemini's choice among the app's options”; every other chooser's words are unchanged",
+      copy.GEMINI_CHOICE_WORDS === "Gemini's choice among the app's options" &&
+        copy.catalogProvenanceWords("PRACTICE", "GEMINI", true) === copy.GEMINI_CHOICE_WORDS &&
+        copy.catalogProvenanceWords("PRACTICE", "GEMINI") === "practice type picked by Gemini from the app's list" &&
+        copy.catalogProvenanceWords("STEP", "GEMINI") === "step type picked by Gemini from the app's list" &&
+        copy.catalogProvenanceWords("PRACTICE", "APP", true) === "added by the app" &&
+        copy.catalogProvenanceWords("PRACTICE", "YOU", true) === "you chose this"
+    );
+    check(
+      "§20 copy: the line under Gemini's choice — how many options the stage offered and the app's default",
+      copy.geminiChoiceLine({ options: ["PROBLEM_SETS", "EXPLAIN_IT", "WRITING_PRACTICE", "SAY_IT_ALOUD"], isDefault: false }) === "4 options for this stage; the app's default is Problem sets." &&
+        copy.geminiChoiceLine({ options: ["RECALL_DRILLS", "SLOW_DRILLS"], isDefault: true }) === "2 options for this stage; this is the app's default too." &&
+        copy.geminiChoiceLine({ options: ["HARDER_SESSION"], isDefault: true }) === "The app's only option for this stage."
+    );
+    const whyWords = Object.values(copy.STAGE_WHY_WORD).flatMap((r) => Object.values(r)).concat(Object.values(copy.STAGE_END_WORD));
+    const whyBad = whyWords.filter((w) => /\p{Nd}|\b(rung|ladder|tier|quest|gemini|master|mastery|safe)\b/iu.test(w) || (w.toLowerCase().match(/[a-z]+/g) ?? []).some((x) => CLAIM.includes(x) || EFFICACY.includes(x)));
+    check("§20 copy: the why words are code's plain words — no digit, no claim or efficacy word, no 'rung', 'Gemini', 'master' or 'safe'", whyWords.length >= 15 && whyBad.length === 0, whyBad.join(" | "));
+    const unworded = CAT.CATALOG_TRACKS.flatMap((t) =>
+      (Object.keys(CAT.PROGRESSION[t].rung) as CatalogKey[])
+        .filter((k) => !CAT.catalogEntryOf(k)?.examOnly)
+        .filter((k) => (copy.stageWhyPartsOf({ focus: k, rung: (CAT.PROGRESSION[t].rung as Partial<Record<string, number>>)[k] ?? null, carry: null, end: null }, t)[0] ?? "") === "")
+        .map((k) => `${t}:${k}`)
+    );
+    check("§20 copy: every kind a stage can train on every track has its why words (timed practice, the exam's extra, is never a focus)", unworded.length === 0, unworded.join(", "));
+
+    // The model.
+    check(
+      "§20 model: picksAreChoicesOf — a v3 reply's picks are not choices among a stage's options; v4, a later version, no version or no run are",
+      !model.picksAreChoicesOf({ promptVersion: 3 }) && !model.picksAreChoicesOf({ promptVersion: 2 }) && model.picksAreChoicesOf({ promptVersion: 4 }) && model.picksAreChoicesOf({ promptVersion: 5 }) && model.picksAreChoicesOf({ promptVersion: null }) && model.picksAreChoicesOf(null) && model.PROGRESSION_PROMPT_VERSION === 4 && RT.ROADMAP_PROMPT_VERSION >= model.PROGRESSION_PROMPT_VERSION
+    );
+    const v3RunFx = roadmapFixture("draft-v3").view!.run!;
+    check(
+      "§20 model: rowsAreProgressionOf — only a v3 reply's rows are not code's progression (the starter a rejected v3 reply left, a v4 reply's, the app's are)",
+      !model.rowsAreProgressionOf(v3RunFx) &&
+        model.rowsAreProgressionOf({ ...v3RunFx, wrote: "STARTER" }) &&
+        model.rowsAreProgressionOf({ ...v3RunFx, promptVersion: 4 }) &&
+        model.rowsAreProgressionOf({ ...v3RunFx, kind: "INHOUSE", wrote: "INHOUSE", promptVersion: null }) &&
+        model.rowsAreProgressionOf(null)
+    );
+    const fieldRun = { track: "FIELD" as const, exam: false };
+    const msAt = (stage: string, level: number | null) => ({ stage, measures: level != null ? [{ kind: "CARDS_AT_LEVEL", role: "PAYS", minLevel: level }] : [] }) as unknown as MilestoneDraft;
+    check(
+      "§20 model: stageOptionsOf — a stage's focus options, code's default first (progressionCandidatesOf): a gate's own (from the plan's family's table, §20.11), PART its gate's, BETWEEN the gate above's, a track stage's; none without a stage",
+      JSON.stringify(model.stageOptionsOf(msAt("RETAINED", 8), fieldRun)) === JSON.stringify(CAT.PROGRESSION.FIELD.stages.RETAINED!.focus) &&
+        JSON.stringify(model.stageOptionsOf(msAt("RETAINED", 8), { ...fieldRun, family: "LANGUAGE" })) === JSON.stringify(CAT.FIELD_FAMILY_PROGRESSION.LANGUAGE.stages.RETAINED!.focus) &&
+        JSON.stringify(model.stageOptionsOf(msAt("FLUENT", 10), { ...fieldRun, family: "PERFORM" })) === JSON.stringify(CAT.FIELD_FAMILY_PROGRESSION.PERFORM.stages.FLUENT!.focus) &&
+        JSON.stringify(model.stageOptionsOf(msAt("PART", 6), fieldRun)) === JSON.stringify(CAT.PROGRESSION.FIELD.stages.FAMILIAR!.focus) &&
+        JSON.stringify(model.stageOptionsOf(msAt("BETWEEN", 11), fieldRun)) === JSON.stringify(CAT.PROGRESSION.FIELD.stages.MASTERED!.focus) &&
+        JSON.stringify(model.stageOptionsOf(msAt("STAGE_4", null), { track: "BODY", exam: false })) === JSON.stringify(["HARDER_SESSION", "LONGER_SESSION", "STRENGTH_SESSION"]) &&
+        model.stageOptionsOf({ stage: null, measures: [] } as unknown as MilestoneDraft, fieldRun).length === 0 &&
+        model.stageLevelOf(msAt("BETWEEN", 11)) === 11
+    );
+    {
+      // Under the safety gate the options are the gate-filtered candidates (the enum Gemini was offered), and the default is the
+      // first placeable one: a kind the user avoided (or one waiting on the card) is never counted or named as the app's default.
+      const body = (blocked: CatalogKey[]) => ({ track: "BODY" as const, exam: false, blocked });
+      const s4 = msAt("STAGE_4", null);
+      const longer = { kind: "PRACTICE", catalogKey: "LONGER_SESSION", notes: ["GEMINI_PICK"], origin: ORIGINS[1], decision: "PENDING" } as unknown as ItemDraft;
+      const c = model.geminiChoiceOf(longer, s4, { ...body(["HARDER_SESSION"]), choices: true });
+      const enumS4 = CAT.progressionPickEnumsOf({ track: "BODY", slots: ["STAGE_4"], exam: false, practicesAllowed: true, gate: { blocked: ["HARDER_SESSION"] } }).STAGE_4;
+      check(
+        "§20 model: stageOptionsOf under the gate — HARDER avoided, Stage 4 offers Longer then Strength (the v4 enum), Longer is the app's default, and the line never names the avoided kind",
+        JSON.stringify(model.stageOptionsOf(s4, body(["HARDER_SESSION"]))) === JSON.stringify(["LONGER_SESSION", "STRENGTH_SESSION"]) &&
+          JSON.stringify(model.stageOptionsOf(s4, body(["HARDER_SESSION"]))) === JSON.stringify(enumS4) &&
+          c?.isDefault === true &&
+          copy.geminiChoiceLine(c!) === "2 options for this stage; this is the app's default too." &&
+          !copy.geminiChoiceLine(c!).includes("Harder") &&
+          model.geminiChoiceOf({ ...longer, catalogKey: "HARDER_SESSION" } as ItemDraft, s4, { ...body(["HARDER_SESSION"]), choices: true }) === null,
+        JSON.stringify(c)
+      );
+      check(
+        "§20 model: stageRunOf reads the gate from the editor's scope — what the type picker leaves out (excluded), less what you allowed back",
+        JSON.stringify(model.stageRunOf({ areaFieldId: null, track: "BODY", examLabel: null, excluded: ["HARDER_SESSION", "LONGER_SESSION"], allowed: ["LONGER_SESSION"] })) ===
+          JSON.stringify({ track: "BODY", exam: false, blocked: ["HARDER_SESSION"] }) &&
+          JSON.stringify(model.stageRunOf({ areaFieldId: "f", track: "CRAFT", examLabel: "Exam P" })) === JSON.stringify({ track: "FIELD", exam: true, family: "KNOW" })
+      );
+      check(
+        "§20 model: stageRunOf reads a Field plan's family as the catalog does (practiceFamilyOf): your answer when the view carries it, else the aim's prefill; a track plan has none",
+        model.stageRunOf({ areaFieldId: "f", track: "CRAFT", examLabel: null, aim: "Speak Japanese confidently at work" }).family === "LANGUAGE" &&
+          model.stageRunOf({ areaFieldId: "f", track: "CRAFT", examLabel: "IELTS Academic", aim: "Reach band 7" }).family === "LANGUAGE" &&
+          model.stageRunOf({ areaFieldId: "f", track: "CRAFT", examLabel: null, aim: "Speak Japanese confidently at work", practiceFamily: "PERFORM" }).family === "PERFORM" &&
+          model.stageRunOf({ areaFieldId: "f", track: "CRAFT", examLabel: null, aim: "Know probability", practiceFamily: "__proto__" }).family === "KNOW" &&
+          !("family" in model.stageRunOf({ areaFieldId: null, track: "BODY", examLabel: null, aim: "Play the guitar", practiceFamily: "PERFORM" }))
+      );
+    }
+    const pickRow = (key: string, p: Partial<ItemDraft> = {}) => ({ kind: "PRACTICE", catalogKey: key, notes: ["GEMINI_PICK"], origin: ORIGINS[1], decision: "PENDING", ...p }) as unknown as ItemDraft;
+    const ret = msAt("RETAINED", 8);
+    const choice = model.geminiChoiceOf(pickRow("EXPLAIN_IT"), ret, { ...fieldRun, choices: true });
+    check(
+      "§20 model: geminiChoiceOf — Gemini's pick of one of its stage's options on a v4 plan, with the options and whether it is the default; null for a v3 plan, a step, a type off the stage's list, a type you changed, or the app's",
+      JSON.stringify(choice) === JSON.stringify({ kind: "EXPLAIN_IT", options: CAT.PROGRESSION.FIELD.stages.RETAINED!.focus, isDefault: false }) &&
+        model.geminiChoiceOf(pickRow("PROBLEM_SETS"), ret, { ...fieldRun, choices: true })?.isDefault === true &&
+        model.geminiChoiceOf(pickRow("EXPLAIN_IT"), ret, { ...fieldRun, choices: false }) === null &&
+        model.geminiChoiceOf(pickRow("LIST_GAPS", { kind: "STEP" }), ret, { ...fieldRun, choices: true }) === null &&
+        model.geminiChoiceOf(pickRow("RECALL_DRILLS"), ret, { ...fieldRun, choices: true }) === null &&
+        model.geminiChoiceOf(pickRow("EXPLAIN_IT", { decision: "EDITED" }), ret, { ...fieldRun, choices: true }) === null &&
+        model.geminiChoiceOf(pickRow("EXPLAIN_IT", { notes: ["PRODUCTION_ADDED"] }), ret, { ...fieldRun, choices: true }) === null,
+      JSON.stringify(choice)
+    );
+
+    // The goldens: each plan as the real progression builds it, one why line per stage.
+    eq("§20 golden: a Field plan to Mastered, no exam — take it in, recall, put it to use twice, put it together; each stage builds on the one before; the full attempt at the end", linesOf({ track: "FIELD", stages: FIELD5, practicesAllowed: true, exam: false }), [
+      "Take it in first",
+      "Recall first · builds on Study and write cards from milestone 1",
+      "Put it to use · builds on Recall drills from milestone 2",
+      "Put it to use · builds on Problem sets from milestone 3",
+      "Put it together · builds on Explain it in your own words from milestone 4 · full attempt at the end",
+    ]);
+    eq("§20 golden: an exam with no day — the last stage puts it to use and holds the mock test", linesOf({ track: "FIELD", stages: FIELD5, practicesAllowed: true, exam: true }).slice(-1), ["Put it to use · mock test at the end"]);
+    const packInput: PInput = { track: "FIELD", stages: PACK, practicesAllowed: true, exam: true, examStage: 3, picks: { FAMILIAR: "RECALL_DRILLS", RETAINED: "EXPLAIN_IT", FLUENT: "MISTAKE_REVIEW", MASTERED: "RUN_THROUGHS" } };
+    const PACK_LINES = [
+      "Recall first",
+      "Recall first · goes on from milestone 1",
+      "Put it to use · mock test at the end",
+      "Put it to use · builds on Problem sets from milestone 3 · your exam in this stage",
+      "Put it to use · goes on from milestone 4",
+      "Put it to use · goes on from milestone 5",
+    ];
+    eq(
+      "§20 golden: the pack (a PART first, BETWEEN at 11, the exam's day in Fluent, Gemini's picks beside code's defaults) — the mock test closes the stage before the exam, the exam its own stage, and the stages after it go on from it with no new checkpoint",
+      linesOf(packInput),
+      PACK_LINES
+    );
+    eq("§20 golden: BODY — build the base, technique, build up, push harder; each keeps the one before; the full attempt at the end", linesOf({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false }), [
+      "Build the base",
+      "Work on technique · builds on Easy session from milestone 1",
+      "Build up · builds on Technique session from milestone 2",
+      "Push harder · builds on Longer session from milestone 3",
+      "Push harder · goes on from milestone 4 · full attempt at the end",
+    ]);
+    eq(
+      "§20 golden: BODY while the card waits — only the base and technique, no stage claims more (the gate's stand-ins)",
+      linesOf({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, gate: { blocked: CAT.cueGatedKindsOf("BODY") } }),
+      ["Build the base", "Work on technique · builds on Easy session from milestone 1", "Work on technique · goes on from milestone 2", "Work on technique · goes on from milestone 3", "Work on technique · goes on from milestone 4"]
+    );
+    eq("§20 golden: CRAFT — drill the hard parts slowly, then put it together; the full attempt at the end", linesOf({ track: "CRAFT", stages: TRACK5, practicesAllowed: true, exam: false }), [
+      "Drill the hard parts slowly",
+      "Drill the hard parts slowly · goes on from milestone 1",
+      "Put it together · builds on Slow, focused drills from milestone 2",
+      "Put it together · builds on Full run-throughs from milestone 3",
+      "Put it together · builds on Practise with a teacher or partner from milestone 4 · full attempt at the end",
+    ]);
+    eq("§20 golden: CARE — a routine holds rather than climbs; the performance check at the end, no full attempt", linesOf({ track: "CARE", stages: TRACK5, practicesAllowed: true, exam: false }), [
+      "Make it a routine",
+      "Make it a routine · builds on Set time from milestone 1",
+      "Make it a routine · builds on Check-in from milestone 2",
+      "Make it a routine · builds on Set time from milestone 3",
+      "Make it a routine · builds on Admin session from milestone 4 · performance check at the end",
+    ]);
+    eq("§20 golden: DUTY — the same routine words; planning stays as the base", linesOf({ track: "DUTY", stages: TRACK5, practicesAllowed: true, exam: false }).slice(0, 2), ["Make it a routine", "Make it a routine · builds on Admin session from milestone 1"]);
+    eq("§20 golden: practices off — no practice to explain; only the full attempt closes the last stage", linesOf({ track: "FIELD", stages: FIELD5, practicesAllowed: false, exam: false }), [null, null, null, null, "Full attempt at the end"]);
+    eq(
+      "§20 golden: a stage held when you began gets no line and is never the stage before (the chain starts at Familiar)",
+      linesOf({ track: "FIELD", stages: [{ stage: "FOUNDATION", held: true }, ...FIELD5.slice(1)], practicesAllowed: true, exam: false }).slice(0, 2),
+      ["Recall first", "Put it to use · builds on Recall drills from milestone 2"]
+    );
+    {
+      // A row the user changed or removed: the line says what the stage holds now.
+      const { ms } = planOf({ track: "FIELD", stages: FIELD5, practicesAllowed: true, exam: false });
+      const fluent = ms[3];
+      const removed = { ...fluent, items: fluent.items.map((it) => (it.catalogKey === "EXPLAIN_IT" ? { ...it, decision: "REMOVED" as const } : it)) };
+      const w = model.stageWhysOf([...ms.slice(0, 3), removed, ms[4]], fieldRun);
+      eq("§20 golden: the focus removed — the stage reads what is left (the carry it kept), and the next stage no longer builds on the removed kind", [copy.stageWhyLine(w.get(removed.lineageId)!, "FIELD"), copy.stageWhyLine(w.get(ms[4].lineageId)!, "FIELD")], [
+        "Put it to use · goes on from milestone 3",
+        "Put it together · full attempt at the end",
+      ]);
+    }
+
+    // The property: over plans the real progression builds (tracks × stage lists × exam placements × picks × gates × room ×
+    // practices on and off), the page's reading is the progression's: the focus it names is the stage's focus, the kind it
+    // builds on is the stage before's focus and on this stage, every end sits where the progression put it, every stage with
+    // practice has a line, and every Gemini pick is a choice among the options the v4 reply was offered.
+    {
+      const LISTS: Record<string, PInput["stages"][]> = {
+        FIELD: [FIELD5, st("FOUNDATION", "FAMILIAR", "RETAINED", "FLUENT", "BETWEEN@11", "MASTERED"), PACK, [{ stage: "FOUNDATION", held: true }, ...FIELD5.slice(1)] as PInput["stages"], st("RETAINED", "FLUENT", "MASTERED"), st("MASTERED"), st("FAMILIAR", "BETWEEN@7", "RETAINED")],
+        TRACK: [TRACK5, st("STAGE_1", "STAGE_3", "STAGE_5"), st("STAGE_5"), st("STAGE_1", "STAGE_2")],
+      };
+      let plans = 0;
+      let picksSeen = 0;
+      let comparedPicks = 0;
+      const bad: string[] = [];
+      for (const track of CAT.CATALOG_TRACKS) {
+        const practiceKinds = Object.keys(CAT.PROGRESSION[track].rung) as CatalogKey[];
+        const gates: { blocked: CatalogKey[] }[] = [{ blocked: [] }, ...practiceKinds.map((k) => ({ blocked: [k] })), { blocked: CAT.cueGatedKindsOf(track) }];
+        const families = track === "FIELD" ? RT.PRACTICE_FAMILIES : [null];
+        for (const family of families) {
+        for (const stages of track === "FIELD" ? LISTS.FIELD : LISTS.TRACK) {
+          const examAts: (number | null | undefined)[] = [undefined, null, ...stages.map((_, i) => i)];
+          for (const examAt of examAts) {
+            for (const gate of gates) {
+              for (const practicesAllowed of [true, false]) {
+                for (const k of family === null || family === "KNOW" ? [0, 1, 2, 7] : [0, 1]) {
+                  for (const room of [undefined, 1, 2]) {
+                    const keys = CAT.progressionStageKeysOf(track);
+                    const table = CAT.progressionRuleFor(track, { family, exam: examAt !== undefined });
+                    const picks = Object.fromEntries(keys.map((key) => [key, table.stages[key]?.focus[k]]).filter(([, v]) => v != null));
+                    const input: PInput = { track, stages, practicesAllowed, exam: examAt !== undefined, examStage: examAt ?? null, gate, picks, maxPractices: room, ...(family ? { family } : {}) };
+                    const { p, ms } = planOf(input);
+                    plans++;
+                    const run = { track, exam: input.exam, blocked: gate.blocked, ...(family ? { family } : {}) };
+                    const whys = model.stageWhysOf(ms, run);
+                    let prev: { kind: string; ord: number } | null = null;
+                    for (let i = 0; i < ms.length; i++) {
+                      const s = p.stages[i];
+                      const w = whys.get(ms[i].lineageId);
+                      const tag = `${track}${family ? `/${family}` : ""} ${stages.map((x) => x.stage).join(",")} exam=${String(examAt)} gate=${gate.blocked.join("+")} on=${practicesAllowed} k=${k} room=${String(room)} @${i}`;
+                      if (s.held) {
+                        if (w) bad.push(`${tag}: a held stage has a why`);
+                        continue;
+                      }
+                      if (!w) {
+                        bad.push(`${tag}: no why`);
+                        continue;
+                      }
+                      // The stage's focus is the progression's (code's default, listed first; Gemini's pick sits beside it); a copy
+                      // (BETWEEN, PART, or a stage after a dated exam's) that room for one reshaped to its role holds not the focus it
+                      // copied but the role's kind, and trains that.
+                      const live = s.practices.filter((x) => !CAT.catalogEntryOf(x.kind)?.examOnly);
+                      const wantFocus = live.length === 0 ? null : live.some((x) => x.kind === s.focus) ? s.focus : s.copy || s.afterExam ? live[0].kind : s.focus;
+                      if ((w.focus ?? null) !== wantFocus) bad.push(`${tag}: focus ${w.focus} ≠ the progression's ${s.focus}${s.copy ? " (a copy)" : ""}`);
+                      const line = copy.stageWhyLine(w, track);
+                      if (live.length > 0 && !line) bad.push(`${tag}: a stage with practice has no line`);
+                      const holds = new Set<string>(s.practices.map((x) => x.kind));
+                      const wantCarry = prev && w.focus && holds.has(prev.kind) ? { kind: prev.kind, ord: prev.ord, same: prev.kind === w.focus } : null;
+                      if (JSON.stringify(w.carry) !== JSON.stringify(wantCarry)) bad.push(`${tag}: carry ${JSON.stringify(w.carry)} ≠ ${JSON.stringify(wantCarry)}`);
+                      if (w.carry && !w.carry.same && !(line ?? "").includes(`builds on ${copy.KIND_NAME[w.carry.kind as CatalogKey]} from milestone ${w.carry.ord}`)) bad.push(`${tag}: the line doesn't name the carry`);
+                      const ends = new Set<string>([...s.steps, ...(s.checkpoint ? [s.checkpoint] : [])].map((x) => x.kind));
+                      if (w.end === "FULL_ATTEMPT" && i !== p.last) bad.push(`${tag}: a full attempt before the last stage`);
+                      if (w.end === "EXAM_DAY" && !(i === p.examStage && p.examDated)) bad.push(`${tag}: the exam off its day's stage`);
+                      if (w.end === "MOCK_TEST" && i !== (p.examDated ? p.mockStage : p.examStage)) bad.push(`${tag}: a mock test off the stage before a dated exam's (undated: the exam's stage)`);
+                      if (s.afterExam && (w.end != null || s.steps.length > 0)) bad.push(`${tag}: a step or an end after a dated exam's stage`);
+                      if (w.end && !ends.has(w.end)) bad.push(`${tag}: an end the stage doesn't hold (${w.end})`);
+                      if (!w.end && ["EXAM_DAY", "MOCK_TEST", "FULL_ATTEMPT", "PERFORMANCE_CHECK"].some((e) => ends.has(e))) bad.push(`${tag}: an end left unsaid`);
+                      if (line && /\b(rung|gemini)\b/i.test(line)) bad.push(`${tag}: '${line}'`);
+                      // Gemini's picks: each is a choice among exactly the options the v4 reply was offered for that slot under the
+                      // plan's gate (a copy's pick is its gate's slot's: BETWEEN the gate above, PART its gate), its default the first
+                      // placeable one; none reads as a choice on a v3 plan.
+                      const slot = (keys as readonly string[]).includes(s.stage)
+                        ? s.stage
+                        : s.level != null && s.stage === "BETWEEN"
+                          ? RT.stageOfLevel(s.level + 1)
+                          : s.level != null && s.stage === "PART"
+                            ? RT.stageOfLevel(s.level)
+                            : null;
+                      for (const it of ms[i].items.filter((x) => x.notes.includes("GEMINI_PICK"))) {
+                        picksSeen++;
+                        const c = model.geminiChoiceOf(it, ms[i], { ...run, choices: true });
+                        if (!c) bad.push(`${tag}: a pick (${it.catalogKey}) isn't a choice among the stage's options`);
+                        if (model.geminiChoiceOf(it, ms[i], { ...run, choices: false })) bad.push(`${tag}: a v3 pick reads as a choice`);
+                        if (c && gate.blocked.some((k) => c.options.includes(k as never))) bad.push(`${tag}: options name a kind the gate holds`);
+                        if (c && slot) {
+                          comparedPicks++;
+                          const offered = CAT.progressionPickEnumsOf({ track, slots: [slot], exam: input.exam, practicesAllowed, gate, ...(family ? { family } : {}) })[slot] ?? [];
+                          if (JSON.stringify(c.options) !== JSON.stringify(offered)) bad.push(`${tag}: options ${c.options.join(",")} ≠ the v4 enum ${offered.join(",")}`);
+                        }
+                      }
+                      if (w.focus) prev = { kind: w.focus, ord: ms[i].ord };
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        }
+      }
+      check(
+        `§20 property: over ${plans} plans the real progression builds (every track; on a Field plan every practice family's table), the page names each stage's own focus, carry and end, and every Gemini pick (${picksSeen}; ${comparedPicks} compared, gated runs and copies included) is a choice among exactly the options its v4 reply was offered under the plan's gate and family`,
+        plans > 2000 && picksSeen > 1000 && comparedPicks === picksSeen && bad.length === 0,
+        `${bad.length} breaches: ${bad.slice(0, 4).join(" | ")}`
+      );
+    }
+
+    // The fixtures: draft-v4 is built with the real progressionOf (fixtures packProgressionMilestones).
+    const v4Html = pageOf("draft-v4");
+    const v4 = roadmapFixture("draft-v4").view!;
+    const v4Parts = model.geminiV4PartsOf(v4.draft!.milestones, { field: true });
+    eq("§20 model: geminiV4PartsOf on draft-v4 — no Domain suggested (no additions), the outline moved (S4 before S3), its 2 placed picks still Gemini's choice", v4Parts, { needs: false, order: "MOVED", picks: 2, picked: true, field: true });
+    check(
+      "§20 render: draft-v4 reads the v4 header of the parts its reply used (the outline's order, the picks; no Domains claimed) and the v4 arrangement line, never the v3 ones",
+      flat(v4Html).includes(`Gemini put your outline lines in order and chose each practice marked as Gemini's choice, among the app's options. ${PLACED} ${WORDS_FIELD}`) &&
+        !flat(v4Html).includes("suggested which of your other Domains") &&
+        flat(v4Html).includes(copy.ARRANGEMENT_V4_LINE) &&
+        !flat(v4Html).includes(copy.GEMINI_V3_LEAD_LINE) &&
+        !flat(v4Html).includes(copy.ARRANGEMENT_LINE)
+    );
+    {
+      // The same draft with every pick left to the app and the user's order kept: the header claims neither, and no arrangement line.
+      const ms0 = v4.draft!.milestones.map((m) => ({ ...m, items: m.items.map((it) => ({ ...it, notes: it.notes.filter((n) => n !== "GEMINI_PICK") })) }));
+      const lines = ms0.flatMap((m) => m.items.filter((it) => it.kind === "TOPIC")).sort((a, b) => (a.syllabusRef ?? 0) - (b.syllabusRef ?? 0));
+      let at = 0;
+      const ms1 = ms0.map((m) => ({ ...m, items: m.items.map((it) => (it.kind === "TOPIC" ? { ...lines[at++], ord: it.ord } : it)) }));
+      const parts = model.geminiV4PartsOf(ms1, { field: true });
+      const plain = flat(R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, milestones: ms1 } } })));
+      check(
+        "§20 render: a v4 reply that left every pick to the app and kept your order — “kept your outline lines in your order”, “The app chose every practice”, no choice label and no arrangement line",
+        JSON.stringify(parts) === JSON.stringify({ needs: false, order: "KEPT", picks: 0, picked: false, field: true }) &&
+          plain.includes(`Gemini kept your outline lines in your order. ${CHOSE_ALL} ${WORDS_FIELD}`) &&
+          !plain.includes("Gemini's choice among") &&
+          !plain.includes("is Gemini's suggestion"),
+        JSON.stringify(parts)
+      );
+      // A track run's draft (a v4 reply on a BODY plan, as the real progression places it with its picks): picks only.
+      const body = planOf({ track: "BODY", stages: TRACK5, practicesAllowed: true, exam: false, picks: { STAGE_2: "STRENGTH_SESSION", STAGE_3: "STRENGTH_SESSION" } });
+      const bodyParts = model.geminiV4PartsOf(body.ms, { field: false });
+      check(
+        "§20 model: a track run's v4 draft names only Gemini's picks — no Domains, no outline order, the names from the aim alone",
+        bodyParts.needs === false &&
+          bodyParts.order === null &&
+          bodyParts.picks > 0 &&
+          copy.geminiV4LeadLine(bodyParts) ===
+            `Gemini chose each practice marked as Gemini's choice, among the app's options. ${PLACED} Gemini wrote none of the words: every name here is the app's or comes from your aim, and every number is worked out by the app.`,
+        JSON.stringify(bodyParts)
+      );
+    }
+    eq("§20 render: draft-v4's cards say why each stage holds what it does, in order (the pack's golden)", whyLinesOf(v4Html), PACK_LINES);
+    const v4Picks = v4.draft!.milestones.flatMap((m) => m.items.filter((it) => it.kind === "PRACTICE" && it.notes.includes("GEMINI_PICK")));
+    check(
+      "§20 render: every Gemini pick on draft-v4 reads “Gemini's choice among the app's options” (2: Familiar's, the default itself, and Retained's beside the default; Part and Between copy no pick, and no stage after the exam holds one), and no row says “picked by Gemini from the app's list”",
+      v4Picks.length === 2 &&
+        (v4Html.match(/>Gemini&#x27;s choice among the app&#x27;s options</g) ?? []).length === v4Picks.length &&
+        !v4Html.includes("picked by Gemini from the app&#x27;s list") &&
+        v4.draft!.milestones.filter((m) => m.stage === "PART" || m.stage === "BETWEEN").every((m) => !m.items.some((it) => it.notes.includes("GEMINI_PICK"))),
+      String((v4Html.match(/>Gemini&#x27;s choice among the app&#x27;s options</g) ?? []).length)
+    );
+    {
+      const ms = v4.draft!.milestones;
+      const fam = ms.find((m) => m.stage === "FAMILIAR")!;
+      const familiarNext = flat(R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: fam.lineageId } } })));
+      const famOptions = model.stageOptionsOf(fam, { track: "FIELD", exam: true }).length;
+      check(
+        "§20 render: Familiar's pick, the app's default itself, says how many options its stage offered and that it is the app's default too (no “Use the app's default”)",
+        familiarNext.includes(`Gemini's choice among the app's options ${famOptions} options for this stage; this is the app's default too.`) && !familiarNext.includes("Use the app's default"),
+        String(famOptions)
+      );
+      const retainedNext = R(createElement(RoadmapScreen, { view: { ...v4, draft: { ...v4.draft!, nextLineageId: ms[2].lineageId } } }));
+      const retOptions = model.stageOptionsOf(ms[2], { track: "FIELD", exam: true }).length;
+      check(
+        "§20 render: a pick that isn't the default sits beside it and names the app's default under it (Retained: Explain it, beside Problem sets, the app's default)",
+        flat(retainedNext).includes("Explain it in your own words: Probability, Inference") &&
+          flat(retainedNext).includes("Problem sets: Probability, Inference") &&
+          flat(retainedNext).includes(`Gemini's choice among the app's options ${retOptions} options for this stage; the app's default is Problem sets.`),
+        flat(retainedNext).slice(flat(retainedNext).indexOf("Explain it in your own words: Probability"), flat(retainedNext).indexOf("Explain it in your own words: Probability") + 400)
+      );
+      check(
+        "§20 render: that pick offers “Use the app's default” (one tap); the next card's pick, the app's default itself, doesn't",
+        retainedNext.includes(">Use the app&#x27;s default<") && !v4Html.includes(">Use the app&#x27;s default<")
+      );
+    }
+    const v3Page = pageOf("draft-v3");
+    check("§20 render: a v3 reply's draft gets no why line and no choice label (its types were Gemini's own) — its picks still read as before", whyLinesOf(v3Page).length === 0 && !v3Page.includes("Gemini&#x27;s choice among") && v3Page.includes("picked by Gemini from the app&#x27;s list"));
+    for (const s of ["count-gate", "draft-rejected", "draft-impossible"] as const) {
+      const lines = whyLinesOf(pageOf(s));
+      check(`§20 render: the app's own starter (${s}) is code's progression too — a why line on every stage, no Gemini choice`, lines.length === 6 && lines[0] === "Recall first" && lines.every(Boolean) && !pageOf(s).includes("Gemini&#x27;s choice among"), lines.join(" | "));
+    }
+    {
+      // The living roadmap's Now: a v4 plan's current stage says why (no "builds on": the stage before's rows aren't in the view);
+      // a v3 plan's doesn't.
+      const dr = roadmapFixture("depth-realistic").view!;
+      const v4Active = { ...dr, acceptedRun: dr.acceptedRun ? { ...dr.acceptedRun, promptVersion: 4 } : dr.acceptedRun };
+      const nowOf = (html: string) => html.slice(Math.max(0, html.indexOf('id="now"')));
+      const v4Now = nowOf(R(createElement(RoadmapScreen, { view: v4Active })));
+      const v3Now = nowOf(pageOf("depth-realistic"));
+      check(
+        "§20 render: Now on a v4 plan says why its stage holds what it does, and Gemini's pick there is its choice among the options; a v3 plan's Now says neither",
+        JSON.stringify(whyLinesOf(v4Now)) === JSON.stringify(["Put it to use · mock test at the end"]) &&
+          flat(v4Now).includes(`Gemini's choice among the app's options ${model.stageOptionsOf(dr.current!.milestone, { track: "FIELD", exam: true }).length} options for this stage; this is the app's default too.`) &&
+          whyLinesOf(v3Now).length === 0 &&
+          !v3Now.includes("Gemini&#x27;s choice among"),
+        `${JSON.stringify(whyLinesOf(v4Now))} ${JSON.stringify(whyLinesOf(v3Now))}`
+      );
+    }
+    // 344 px first: the why line sits in the header's text column (a 1fr column, under the title), wraps, never truncates.
+    {
+      const rmCss = read("src/components/roadmap/roadmap.css").replace(/\/\*[\s\S]*?\*\//g, "");
+      const whyRule = /\.rm-ms-why \{([^}]*)\}/.exec(rmCss)?.[1] ?? "";
+      const head = /<div class="rm-ms-h"><span class="rm-ms-n[^"]*">\d+<\/span><div>([\s\S]*?)<\/div><\/div>/.exec(v4Html)?.[1] ?? "";
+      check(
+        "§20 344 px: the why line is a 13 px header line in the title's column (rm-ms-w), wraps anywhere, never nowrap, ellipsis or a fixed width",
+        /overflow-wrap: anywhere;/.test(whyRule) &&
+          !/white-space|text-overflow|overflow:|width|font-size/.test(whyRule) &&
+          /\.rm-ms-w \{ font-size: 13px; line-height: 18px;/.test(rmCss) &&
+          /\.rm-ms-h \{ display: grid; grid-template-columns: 34px minmax\(0, 1fr\);/.test(rmCss) &&
+          head.indexOf("rm-ms-why") > head.indexOf("rm-ms-t") &&
+          head.indexOf("rm-ms-why") < head.indexOf("dates set by the app"),
+        whyRule
+      );
+      const longest = [...PACK_LINES, ...whyWords].reduce((a, b) => (b.length > a.length ? b : a), "");
+      check("§20 344 px: the chip's words fit one line in a 344 px card (≤ 40 characters at 12 px)", copy.GEMINI_CHOICE_WORDS.length <= 40, String(copy.GEMINI_CHOICE_WORDS.length));
+      check("§20 344 px: no why line is longer than three header lines at 344 px (≤ 120 characters)", PACK_LINES.every((l) => l.length <= 120), longest);
+    }
   }
 
   // ── 10. roadmap.css ─────────────────────────────────────────────────────────

@@ -9,7 +9,9 @@
  *   roadmap-evidence  buildEvidencePack({intake, areaName, domains, windows, gapsLive}) → the v3 pack
  *                     (gapsLive: the lead's override of ROADMAP_GAPS_LIVE, so the bar can test the slot
  *                     that ships off)
- *   roadmap-model     buildResponseSchema(pack) → the v3 schema (compared with F-R4-17 as information)
+ *   roadmap-model     buildResponseSchema(pack) → the v4 schema (contracts §20.5; compared with the V4
+ *                     family's specSchemaV4Of as information), and roadmap-validate keysOnlySchemaV3Of(pack)
+ *                     → the legacy v3 schema (compared with F-R4-17 for the v3 families; the fix round, r3)
  *   roadmap-validate  integrityOf(parsed, schema) · validateKeysOnly(parsed, ctx, opts) with ctx
  *                     {pack, intake, required, domainNames, slots, version, makeId, fill, areaName,
  *                     gapSourceExclude, schema} · checkLabel · labelContextFor · gapNameShape ·
@@ -282,14 +284,19 @@ export class BarSeam {
     return Array.isArray(r) ? r : [];
   }
 
-  /** R3's issued schema for the run (information: R3's model-check owns it); null while buildResponseSchema is still v2. */
+  /**
+   * R3's schema for the run, the one its spec schema is compared with (information: R3's model-check owns it; the fix
+   * round, r3): a V4 run's (`picks` set) is buildResponseSchema, the schema every run issues since v4; any other run's is
+   * the legacy keysOnlySchemaV3Of, the one its v3 replies are read with. null when R3 exports neither shape.
+   */
   schemaOf(run: HostileRun): Record<string, unknown> | null {
-    const f = fnOf(Model, "buildResponseSchema");
+    const v4 = run.picks !== undefined;
+    const f = v4 ? fnOf(Model, "buildResponseSchema") : fnOf(Validate, "keysOnlySchemaV3Of");
     if (!f) return null;
     try {
       const s = f(this.packOf(run)) as Record<string, unknown>;
       const props = (s?.properties ?? {}) as Record<string, unknown>;
-      return "stages" in props ? s : null;
+      return v4 ? (!("stages" in props) ? s : null) : "stages" in props ? s : null;
     } catch {
       return null;
     }
@@ -409,7 +416,7 @@ export class BarSeam {
     const names = this.ruleNames();
     out.push(names ? { name: "H6_RULE_NAMES", owner: "R3", state: "ready", detail: `${names.required.length} required of ${names.all.length} named rules` } : { name: "H6_RULE_NAMES", owner: "R3", state: "missing", detail: "roadmap-validate.ts exports no rule names (H6 needs them to name each link pattern and shape clause)" });
     out.push(probe("buildEvidencePack", "R3", () => this.packOf(sample)));
-    out.push(this.schemaOf(sample) ? { name: "buildResponseSchema (v3)", owner: "R3", state: "ready", detail: "" } : { name: "buildResponseSchema (v3)", owner: "R3", state: "shell", detail: "still the v2 schema (no `stages`)" });
+    out.push(this.schemaOf(sample) ? { name: "keysOnlySchemaV3Of (v3) and buildResponseSchema (v4)", owner: "R3", state: "ready", detail: "" } : { name: "keysOnlySchemaV3Of (v3) and buildResponseSchema (v4)", owner: "R3", state: "shell", detail: "R3 exports no v3 schema (no `stages`)" });
     if (!this.server) out.push({ name: "roadmap-server", owner: "R4", state: "error", detail: this.serverError || "not loaded" });
     else {
       out.push(has(this.server, "todayBoundRowsOf") ? { name: "todayBoundRowsOf", owner: "R4", state: "ready", detail: "" } : { name: "todayBoundRowsOf", owner: "R4", state: "missing", detail: "" });

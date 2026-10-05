@@ -244,5 +244,177 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4 (contracts §20): the word-rich exam pack keys-only with the gap slot on: needs, the outline's order (one line left out and appended), three picks, and a v3 reply that the v4 schema rejects whole.",
+    "replies": [
+      {
+        "id": "actuarial-probability-v4-a",
+        "about": "A clean v4 reply with the gap slot on: Calculus needed, S4 left out of the order (code appends it last), three picks among the stages' candidates (Mastered's on an exam plan: going over mistakes, code's default there, contracts §20.11), one grounded gap shown, one resource gap dropped, one ungrounded gap hidden, one exact Domain match.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "order": [
+            "S1",
+            "S2",
+            "S5",
+            "S3",
+            "S6"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "RETAINED": "PROBLEM_SETS",
+            "MASTERED": "MISTAKE_REVIEW"
+          },
+          "gaps": [
+            "Conditional expectation",
+            "Exam P syllabus",
+            "Kessler statistics",
+            "Calculus"
+          ]
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_st_calc"
+          ],
+          "order": [
+            0,
+            1,
+            4,
+            2,
+            5,
+            3
+          ],
+          "appended": [
+            3
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "RETAINED": "PROBLEM_SETS",
+            "MASTERED": "MISTAKE_REVIEW"
+          },
+          "excluded": [],
+          "sessionPicks": false,
+          "gapsShown": [
+            "Conditional expectation"
+          ],
+          "gapsHidden": 2
+        }
+      },
+      {
+        "id": "actuarial-probability-v4-b",
+        "about": "The v3 reply (Gemini's own stages, practices, steps and checkpoints) sent back under the v4 schema: `stages` is no property of it, so EXTRA_PROPERTY, REJECTED whole.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "stages": {
+            "FOUNDATION": {
+              "lines": [
+                "S1",
+                "S5"
+              ],
+              "practices": [
+                {
+                  "kind": "READ_AND_CARD",
+                  "on": "D1"
+                },
+                {
+                  "kind": "RECALL_DRILLS"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "CHOOSE_MATERIAL"
+                },
+                {
+                  "kind": "BOOK_EXAM"
+                }
+              ],
+              "checkpoint": "SELF_TEST"
+            },
+            "FAMILIAR": {
+              "lines": [
+                "S2",
+                "S6"
+              ],
+              "practices": [
+                {
+                  "kind": "PROBLEM_SETS",
+                  "on": "D1"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "OUTLINE",
+                  "on": "D2"
+                }
+              ],
+              "checkpoint": null
+            },
+            "RETAINED": {
+              "lines": [
+                "S3"
+              ],
+              "practices": [
+                {
+                  "kind": "PROBLEM_SETS"
+                },
+                {
+                  "kind": "MISTAKE_REVIEW"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "LIST_GAPS"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            },
+            "FLUENT": {
+              "lines": [],
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                },
+                {
+                  "kind": "EXPLAIN_IT",
+                  "on": "D2"
+                }
+              ],
+              "steps": [],
+              "checkpoint": "SELF_TEST"
+            },
+            "MASTERED": {
+              "practices": [
+                {
+                  "kind": "TIMED_PRACTICE"
+                }
+              ],
+              "steps": [
+                {
+                  "kind": "FULL_ATTEMPT"
+                }
+              ],
+              "checkpoint": "MOCK_TEST"
+            }
+          },
+          "gaps": [
+            "Conditional expectation",
+            "Exam P syllabus",
+            "Kessler statistics",
+            "Calculus"
+          ]
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

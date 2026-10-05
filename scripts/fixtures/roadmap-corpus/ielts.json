@@ -200,5 +200,56 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: an exam aim with no outline: needs, four picks, and an `order` the schema never issued.",
+    "replies": [
+      {
+        "id": "ielts-v4-a",
+        "about": "Listening needed; listen-and-repeat first, writing at Retained, saying it aloud at Fluent, a teacher at Mastered. Saying it aloud at Fluent is a kind code places there itself on this exam plan (its core, carried from Retained), so it stays code's: not shown as Gemini's pick (keys.pick-code).",
+        "reply": {
+          "needs": [
+            "D4"
+          ],
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "RETAINED": "WRITING_PRACTICE",
+            "FLUENT": "SAY_IT_ALOUD",
+            "MASTERED": "WITH_A_PARTNER"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_en_listen"
+          ],
+          "picks": {
+            "FOUNDATION": "LISTEN_AND_REPEAT",
+            "RETAINED": "WRITING_PRACTICE",
+            "MASTERED": "WITH_A_PARTNER"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      },
+      {
+        "id": "ielts-v4-b",
+        "about": "An `order` on a run with no outline: EXTRA_PROPERTY, REJECTED whole.",
+        "reply": {
+          "order": [
+            "S1"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD"
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

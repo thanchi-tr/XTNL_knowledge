@@ -156,5 +156,57 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a certificate aim with an exam: needs and four picks, and timed practice offered as a pick (code's exam extra, never a candidate).",
+    "replies": [
+      {
+        "id": "python-cert-v4-a",
+        "about": "Testing needed; problem sets at Retained, going over mistakes at Fluent and Mastered (an exam plan trains for the exam there, not building: contracts §20.11).",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "RETAINED": "PROBLEM_SETS",
+            "FLUENT": "MISTAKE_REVIEW",
+            "MASTERED": "MISTAKE_REVIEW"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_pr_test"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "RETAINED": "PROBLEM_SETS",
+            "FLUENT": "MISTAKE_REVIEW",
+            "MASTERED": "MISTAKE_REVIEW"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      },
+      {
+        "id": "python-cert-v4-b",
+        "about": "Timed practice picked for Foundation: in no stage's list (code places it on the exam's stage), so ENUM, REJECTED whole.",
+        "reply": {
+          "needs": [
+            "D3"
+          ],
+          "picks": {
+            "FOUNDATION": "TIMED_PRACTICE"
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

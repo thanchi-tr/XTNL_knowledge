@@ -227,5 +227,152 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a new subject with the gap slot on: an optional order (absent: the user's own), picks, and an order past its maxItems.",
+    "replies": [
+      {
+        "id": "new-subject-v4-a",
+        "about": "Every line once, two swaps; a slow-drill and a partner pick; two grounded gaps shown, two hidden.",
+        "reply": {
+          "order": [
+            "S2",
+            "S1",
+            "S3",
+            "S4",
+            "S6",
+            "S5"
+          ],
+          "picks": {
+            "FAMILIAR": "SLOW_DRILLS",
+            "FLUENT": "WITH_A_PARTNER"
+          },
+          "gaps": [
+            "Capsize recovery",
+            "Points of sail",
+            "RYA dinghy course",
+            "Racing tactics"
+          ]
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [],
+          "order": [
+            1,
+            0,
+            2,
+            3,
+            5,
+            4
+          ],
+          "appended": [],
+          "picks": {
+            "FAMILIAR": "SLOW_DRILLS",
+            "FLUENT": "WITH_A_PARTNER"
+          },
+          "excluded": [],
+          "sessionPicks": false,
+          "gapsShown": [
+            "Capsize recovery",
+            "Points of sail"
+          ],
+          "gapsHidden": 2,
+          "reordered": true
+        }
+      },
+      {
+        "id": "new-subject-v4-b",
+        "about": "Picks without an `order` (optional since the fix round, r3): the user's own order stands, nothing appended; CLEAN, the pick kept.",
+        "reply": {
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [],
+          "order": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "appended": [],
+          "reordered": false,
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD"
+          },
+          "dropped": {}
+        }
+      },
+      {
+        "id": "new-subject-v4-c",
+        "about": "An order of 41 valid keys (the lines over and over): OVER_MAX_ITEMS, SALVAGED; cut to 40, each line kept once in its first place, the 34 repeats DUPLICATE.",
+        "reply": {
+          "order": [
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5"
+          ]
+        },
+        "expect": {
+          "verdict": "SALVAGED",
+          "order": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "appended": [],
+          "picks": {},
+          "dropped": {
+            "OVER_CAP": 1,
+            "DUPLICATE": 34
+          }
+        }
+      }
+    ]
   }
 }

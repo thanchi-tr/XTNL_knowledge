@@ -230,5 +230,53 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a word-rich Field aim: a need named twice, three picks, and '__proto__' as a stage key.",
+    "replies": [
+      {
+        "id": "trading-v4-a",
+        "about": "Position sizing needed (named twice: one addition), study, going over mistakes at Fluent, building something at Mastered.",
+        "reply": {
+          "needs": [
+            "D6",
+            "D6"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "FLUENT": "MISTAKE_REVIEW",
+            "MASTERED": "BUILD_SOMETHING"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "needs": [
+            "d_tr_sizing"
+          ],
+          "picks": {
+            "FOUNDATION": "READ_AND_CARD",
+            "FLUENT": "MISTAKE_REVIEW",
+            "MASTERED": "BUILD_SOMETHING"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      },
+      {
+        "id": "trading-v4-b",
+        "about": "'__proto__' as a key of `picks`: an own property the schema lacks, EXTRA_PROPERTY, REJECTED (never a prototype hit).",
+        "reply": {
+          "picks": {
+            "__proto__": "READ_AND_CARD"
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

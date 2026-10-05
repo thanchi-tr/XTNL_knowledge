@@ -8,7 +8,10 @@
  * own lines, KIND_HOW; else METHOD_HOW), and once started what was kept
  * "from your ticks" with a link to the task on Today. A catalog type says who
  * chose it ("practice type picked by Gemini from the app's list", "added by
- * the app", "you chose this"). A body session always carries HEALTH_LINE.
+ * the app", "you chose this"); on a plan whose picks are choices (contracts
+ * §20), Gemini's pick reads "Gemini's choice among the app's options", with
+ * how many options its stage offered and the app's default under it. A body
+ * session always carries HEALTH_LINE.
  * A started practice an answer touched says how it stands (the lead's
  * ruling 3, roadmap-copy pauseRowLine): paused, in place of its link; still
  * on Today because its pause was refused, or back by Undo, with its link;
@@ -20,10 +23,10 @@ import { Chip } from "@/components/ui/Chip";
 import { Icon } from "@/components/ui/Icon";
 import { practiceBandMinutes } from "@/lib/roadmap-types";
 import type { CatalogKey } from "@/lib/roadmap-catalog";
-import { HEALTH_LINE, KIND_HOW, METHOD_HOW, METHOD_WORD, pauseRowLine, practicePlanLine } from "./roadmap-copy";
+import { HEALTH_LINE, KIND_HOW, METHOD_HOW, METHOD_WORD, geminiChoiceLine, pauseRowLine, practicePlanLine } from "./roadmap-copy";
 import { todayTaskHref } from "./roadmap-links";
 import type { PausedItem } from "./roadmap-ui-model";
-import { ItemRow } from "./ItemRow";
+import { ItemRow, useGeminiChoice } from "./ItemRow";
 import type { ActTarget } from "./ItemEditor";
 
 /** The "How" lines of a practice: its catalog type's own (F-R4-18), else its method's. */
@@ -95,8 +98,17 @@ export function PracticeRow({
   );
   const kindLabel = it?.method ? `Practice · ${METHOD_WORD[it.method]}` : "Practice";
   const how = it ? howLinesOf(it) : [];
+  // The practice progression (contracts §20): Gemini's choice among its stage's options says how many there were and the app's default.
+  const choice = useGeminiChoice(it, target.milestone);
   return (
-    <ItemRow target={target} stage={stage} kindLabel={kindLabel} meta={meta} chipsBefore={it?.method && stage !== "outline" ? <Chip>{METHOD_WORD[it.method]}</Chip> : null}>
+    <ItemRow
+      target={target}
+      stage={stage}
+      kindLabel={kindLabel}
+      meta={meta}
+      why={choice && stage !== "outline" ? geminiChoiceLine(choice) : null}
+      chipsBefore={it?.method && stage !== "outline" ? <Chip>{METHOD_WORD[it.method]}</Chip> : null}
+    >
       {stage === "active" && paused && <p className="t-meta rm-ink1">{pauseRowLine(paused, today)}</p>}
       {stage !== "outline" && <HowLines lines={how} />}
       {stage !== "outline" && it?.method === "WORKOUT" && <p className="rm-it-why">{HEALTH_LINE}</p>}

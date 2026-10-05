@@ -1,7 +1,7 @@
 {
-  "sha256": "4c4417efb77ed4719d08eff091fc60f702bbe071e73dd898e1a80ff382751c78",
+  "sha256": "73d65795291347819cdf76f91844134cebcd56c27a6d681f99a543cf3e5aa5aa",
   "counts": {
-    "runs": 169,
+    "runs": 194,
     "A": 5000,
     "B": 1000,
     "C": 2000,
@@ -20,7 +20,8 @@
     "K_suggest": 98,
     "K_overExclusion": 2103,
     "M": 2200,
-    "F": 707
+    "F": 707,
+    "V4": 120
   },
   "packs": {
     "actuarial-probability": "88245bd3a0bdeca6",

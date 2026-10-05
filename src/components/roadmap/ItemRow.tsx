@@ -19,7 +19,10 @@
  * Revision 4 (F-R4-18): a code-worded type from the app's list says who chose
  * it beside its How: "practice type picked by Gemini from the app's list",
  * "added by the app", or "you chose this" (CatalogChip), and offers "Change
- * the type" on a draft.
+ * the type" on a draft. The practice progression (contracts §20): on a plan
+ * whose picks are choices, Gemini's pick of one of its stage's options reads
+ * "Gemini's choice among the app's options" (useGeminiChoice), and one that
+ * isn't the app's default offers "Use the app's default" first (one tap).
  */
 import { useMemo, type ReactNode } from "react";
 import { ChipButton } from "@/components/ui/Chip";
@@ -40,12 +43,15 @@ import {
   catalogByOf,
   catalogSlotOf,
   displayLabelOf,
+  geminiChoiceOf,
   itemActionsOf,
   itemClassOf,
   needsRecheckOf,
   rowDomId,
+  stageRunOf,
   titleItemOf,
   type EditorRow,
+  type GeminiChoice,
   type ItemAction,
 } from "./roadmap-ui-model";
 import { catalogProvenanceWords } from "./roadmap-copy";
@@ -67,13 +73,27 @@ export function useDisplayLabel(
 /** The label with its struck NUMBER spans (its own module, so the Aim card can use it without the editor). */
 export { StruckLabel };
 
-/** Who chose a code-worded type, in words (never colour alone); null for any other row. */
-export function CatalogChip({ item }: { item: Pick<ItemDraft, "catalogKey" | "notes" | "origin" | "decision"> | null }) {
+/**
+ * A row's Gemini choice among its stage's options (contracts §20), from the
+ * editor's scope (the plan's track, exam, gate, and whether its picks are
+ * choices): the options are the ones the v4 enum offered Gemini, so a kind
+ * the gate holds is never counted or named as the app's default. null
+ * without a scope or for any other row.
+ */
+export function useGeminiChoice(item: Pick<ItemDraft, "kind" | "catalogKey" | "notes" | "origin" | "decision"> | null | undefined, milestone: Pick<MilestoneDraft, "stage" | "measures"> | null | undefined): GeminiChoice | null {
+  const scope = useItemEditor()?.scope;
+  if (!item || !milestone || !scope) return null;
+  return geminiChoiceOf(item, milestone, { ...stageRunOf(scope), choices: scope.choices === true });
+}
+
+/** Who chose a code-worded type, in words (never colour alone); null for any other row. A v4 pick reads "Gemini's choice among the app's options". */
+export function CatalogChip({ item, milestone }: { item: Pick<ItemDraft, "kind" | "catalogKey" | "notes" | "origin" | "decision"> | null; milestone?: Pick<MilestoneDraft, "stage" | "measures"> | null }) {
+  const choice = useGeminiChoice(item, milestone);
   if (!item) return null;
   const by = catalogByOf(item);
   const slot = catalogSlotOf(item.catalogKey);
   if (!by || !slot) return null;
-  return <span className={cx("rm-pv", by === "GEMINI" && "rm-pv-pick", by === "APP" && "rm-pv-app")}>{catalogProvenanceWords(slot, by)}</span>;
+  return <span className={cx("rm-pv", by === "GEMINI" && "rm-pv-pick", by === "APP" && "rm-pv-app")}>{catalogProvenanceWords(slot, by, choice != null)}</span>;
 }
 
 /** A milestone's title outside its editor row (a card's header, Now): as written, with its NUMBER spans struck. */
@@ -111,7 +131,9 @@ export function ItemRow({
   const editor = useItemEditor();
   const { row, item, milestone } = target;
   const cls = itemClassOf(row);
-  const actions = itemActionsOf(row, stage, { canMap: canMapOf(editor?.scope.library) });
+  // Gemini's choice that isn't the app's default (contracts §20) leads with one tap back to the default.
+  const choice = useGeminiChoice(item, milestone);
+  const actions = itemActionsOf(row, stage, { canMap: canMapOf(editor?.scope.library), choice });
   const removed = row.decision === "REMOVED";
   const error = editor?.errorFor(row.id) ?? null;
   const busy = editor?.busyFor(row.id) ?? false;
@@ -120,7 +142,7 @@ export function ItemRow({
   const shown = useDisplayLabel(row, milestone, editor?.scope, item?.method);
   const catalog = Boolean(item?.catalogKey && catalogByOf(item));
   const notes = catalog ? item?.notes.filter((n) => !CATALOG_PROVENANCE_NOTES.has(n)) : item?.notes;
-  const provenance = catalog ? <CatalogChip item={item} /> : <ProvenanceChip origin={row.origin} decision={row.decision} />;
+  const provenance = catalog ? <CatalogChip item={item} milestone={milestone} /> : <ProvenanceChip origin={row.origin} decision={row.decision} />;
 
   if (stage === "outline") {
     return (

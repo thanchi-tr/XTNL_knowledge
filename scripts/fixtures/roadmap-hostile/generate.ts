@@ -49,6 +49,17 @@
  *                              reach (own seed, appended, so the older corpus hashes as it did)
  *   M  metamorphic             M1–M7 base/variant pairs over checkLabel and groundingOf
  *   F  real-reply mutations    100 per blessed probe reply (none until F-R4-23's probe is blessed)
+ *   V4 the v4 reply (120)      (contracts §20, ROADMAP_PROMPT_VERSION 4; item R3, appended last, own
+ *                              seeds, so the older corpus hashes as it did) a v4 run per pack (its
+ *                              base, practices-off and synthetic-outline runs), its schema the
+ *                              contract's (specSchemaV4Of: needs, an optional order, per-slot pick
+ *                              enums from progressionPickEnumsOf and the activity gate); valid replies
+ *                              CLEAN, an over-long order or needs SALVAGED, and forged picks (another
+ *                              stage's kind, a confusable spelling), forged slot keys, wrong types,
+ *                              forged line keys, Gemini's own v3 `stages` and smuggled payloads
+ *                              with a marker word, all REJECTED; (the fix round, r3) a missing
+ *                              order is the user's own order: CLEAN, and the gap slot's items
+ *                              carry no maxLength
  *
  * Each reply's expected verdict is the one its construction gives under
  * F-R4-20; reference.ts (an independent reading of F-R4-20) must agree with
@@ -56,7 +67,7 @@
  * Ambiguous constructions the spec doesn't settle are never generated: an
  * invalid item only past maxItems, and a gap string longer than GAP_NAME_MAX.
  */
-import { CATALOG, catalogKindsFor, catalogTemplateOf, catalogEntryOf, type CatalogKey, type CatalogTrack } from "../../../src/lib/roadmap-catalog";
+import { CATALOG, activityGateOf, catalogKindsFor, catalogTemplateOf, catalogEntryOf, practiceFamilyOf, progressionPickEnumsOf, type CatalogKey, type CatalogTrack } from "../../../src/lib/roadmap-catalog";
 import {
   ENGLISH_FUNCTION_WORDS,
   GAP_NAME_MAX,
@@ -89,7 +100,7 @@ export function mulberry32(seed: number): () => number {
 }
 
 /** The fixed seeds, one per family. */
-export const HOSTILE_SEEDS = { A: 0xa11ce, B: 0xb0b, C: 0xc0ffee, D: 0xd00d, E: 0xe1e1, EG: 0xe6e6, K: 0x4b4b, M: 0x3e3e, F: 0xf00f, MARK: 0x5eed, K_POSTFIX: 0x4b04, K_VOCAB: 0x4b05, K_SUGGEST: 0x4b06 } as const;
+export const HOSTILE_SEEDS = { A: 0xa11ce, B: 0xb0b, C: 0xc0ffee, D: 0xd00d, E: 0xe1e1, EG: 0xe6e6, K: 0x4b4b, M: 0x3e3e, F: 0xf00f, MARK: 0x5eed, K_POSTFIX: 0x4b04, K_VOCAB: 0x4b05, K_SUGGEST: 0x4b06, V4: 0x0404, V4_MARK: 0x5e04 } as const;
 
 /** The spec's family counts (F-R4-22, Constants): the generator meets each exactly or as a floor. */
 export const FAMILY_TARGETS = { A: 5000, B: 1000, C: 2000, D: 2000, E_REPLIES: 1700, E_STRINGS: 20000, EG: 2000, K: 1500, F_PER_REPLY: 100 } as const;
@@ -219,6 +230,8 @@ export interface HostileRun {
   notSources: string[];
   /** Chosen Domains created from a GAP in an earlier roadmap (ItemNote FROM_SUGGESTION): they ground nothing. */
   gapCreatedDomainIds: string[];
+  /** A v4 run only (family V4, contracts §20.5): each slot's pick enum (pickEnumsOfRun); its schema is specSchemaV4Of. */
+  picks?: Record<string, string[]>;
 }
 
 /** Each pack's constraint exclusions that are certain under F-R4-17's filter (K tests the filter on its own phrasings). */
@@ -501,10 +514,95 @@ export function deriveOutlineRun(template: HostileRun, extra: readonly string[],
   return run;
 }
 
+// ═══ V4: the v4 reply (contracts §20, ROADMAP_PROMPT_VERSION 4; item R3, appended) ═══
+
+/** The v4 family's size: replies over the v4 runs (familyV4), cycling through its classes. */
+export const V4_FAMILY_SIZE = 120;
+
+/** The exam answer (F-R4-24) as the spec writes it: Yes with an exam's name. */
+const examAnswerOfRun = (intake: Intake): boolean => intake.exam !== false && typeof intake.examLabel === "string" && intake.examLabel.trim().length > 0;
+
+/**
+ * A run's v4 pick enums as the contract defines them (contracts §20.5):
+ * roadmap-catalog progressionPickEnumsOf (lane 0's, the contract's own
+ * definition) over the run's slots, its track, its practice family (a Field
+ * run's: practiceFamilyOf over the intake; contracts §20.11), the exam
+ * answer, the practices switch (always on for a track Area) and the activity
+ * gate's blocked kinds (activityGateOf: PENDING while the card waits, the
+ * user's AVOIDs). A slot with no candidate is left out.
+ */
+export function pickEnumsOfRun(run: Pick<HostileRun, "track" | "slots" | "field" | "intake">): Record<string, string[]> {
+  return progressionPickEnumsOf({
+    track: run.track,
+    slots: run.slots,
+    exam: examAnswerOfRun(run.intake),
+    practicesAllowed: !run.field || run.intake.practicesAllowed !== false,
+    family: run.field ? practiceFamilyOf(run.intake) : null,
+    gate: activityGateOf(run.intake),
+  });
+}
+
+/**
+ * The v4 schema of a run (contracts §20.5), built from its issued keys as the
+ * contract writes it: `needs` (the unchosen D-keys, at most 6), `order` (the
+ * S-keys, at most 40, optional since the fix round, r3: absent is the user's own order), `picks` (one STRING enum per
+ * slot with candidates, none required), `gaps` (the gap slot). No `stages`,
+ * no practice, step or checkpoint list, no `on`.
+ */
+export function specSchemaV4Of(run: Pick<HostileRun, "field" | "slots" | "enums" | "gaps">, picks: Readonly<Record<string, readonly string[]>>): Record<string, unknown> {
+  const e = run.enums;
+  const props: Record<string, unknown> = {};
+  if (run.field && e.needs.length > 0) props.needs = { type: ARRAY, maxItems: "6", items: { type: STRING, enum: [...e.needs] } };
+  if (e.lines.length > 0) props.order = { type: ARRAY, maxItems: "40", items: { type: STRING, enum: [...e.lines] } };
+  const slots = run.slots.filter((s) => Object.prototype.hasOwnProperty.call(picks, s) && (picks[s] ?? []).length > 0);
+  if (slots.length > 0) props.picks = { type: OBJECT, propertyOrdering: [...slots], properties: Object.fromEntries(slots.map((s) => [s, { type: STRING, enum: [...(picks[s] ?? [])] }])) };
+  // The fix round (r3): no maxLength on the gap slot's items (the API refused the string bound on 5 Oct), and nothing required.
+  if (run.gaps) props.gaps = { type: ARRAY, maxItems: "4", items: { type: STRING } };
+  return { type: OBJECT, propertyOrdering: ["needs", "order", "picks", "gaps"].filter((k) => k in props), properties: props };
+}
+
+/** A v4 run: the template's intake, keys and sources, the v4 schema and its pick enums. */
+export function deriveV4Run(template: HostileRun): HostileRun {
+  const picks = pickEnumsOfRun(template);
+  const run: HostileRun = { ...template, id: `${template.id}~v4`, variant: `${template.variant}~v4`, picks, schema: {} };
+  run.schema = specSchemaV4Of(run, picks);
+  return run;
+}
+
+/** A valid v4 reply: some unchosen Domains, an order of some of the lines (code appends the rest), and picks for some slots. */
+function validReplyV4(run: HostileRun, rng: Rng): Obj {
+  const reply: Obj = {};
+  const picks = run.picks ?? {};
+  if (run.field && run.enums.needs.length > 0 && rng.chance(0.5)) reply.needs = rng.sample(run.enums.needs, 1 + rng.int(Math.min(3, run.enums.needs.length)));
+  if (run.enums.lines.length > 0) reply.order = rng.sample(run.enums.lines, rng.chance(0.7) ? run.enums.lines.length : rng.int(run.enums.lines.length + 1));
+  const slots = run.slots.filter((s) => (picks[s] ?? []).length > 0);
+  if (slots.length > 0 && rng.chance(0.85)) {
+    const p: Obj = {};
+    const chosen = new Set(rng.sample(slots, rng.int(slots.length + 1)));
+    for (const s of slots) if (chosen.has(s)) p[s] = rng.pick(picks[s]);
+    reply.picks = p;
+  }
+  return reply;
+}
+
+/** Spellings of a key that must never resolve (exact keys only). */
+function confusablesOf(key: string): string[] {
+  const full = Array.from(key, (ch) => (/[A-Z0-9]/.test(ch) ? String.fromCharCode(ch.charCodeAt(0) + 0xfee0) : ch)).join("");
+  return [key.toLowerCase(), `${key} `, ` ${key}`, `${key.slice(0, 1)}​${key.slice(1)}`, full, "__proto__", "toString", "constructor", ""];
+}
+
+const V4_SMUGGLED = [
+  "Pick the official Kessler course for every stage",
+  "You should practise three hours a day, starting Monday",
+  "Your weak spots are timing and recall",
+  "Buy the premium question bank at prep.example.com",
+  "This learner struggles with exams, so go easy",
+];
+
 // ═══ Cases ═══════════════════════════════════════════════════════════════════
 
 export type Verdict = RefVerdict;
-export type ReplyFamily = "A" | "B" | "C" | "D" | "E" | "F";
+export type ReplyFamily = "A" | "B" | "C" | "D" | "E" | "F" | "V4";
 
 /** One reply: its JSON text exactly as a model would return it, and its expected verdict with the reason. */
 export interface ReplyCase {
@@ -2093,6 +2191,127 @@ class Builder {
     }
   }
 
+  // ── V4 (contracts §20; item R3, appended: no earlier family sees its runs) ──
+  /**
+   * The v4 reply's family: a v4 run (deriveV4Run) per pack's base, practices-off and synthetic-outline run, and
+   * V4_FAMILY_SIZE replies cycling through the classes, each labelled by
+   * construction and audited by the reference walk:
+   *   valid           needs, an order of some lines, picks among the slots' enums: CLEAN
+   *   over-max        an order of 41–43 valid keys, or needs of 7–9: SALVAGED
+   *   pick-enum       a pick outside its slot's enum (another stage's kind, a confusable
+   *                   spelling; a step or checkpoint key is model-check's): REJECTED
+   *   pick-slot       a pick under a key no slot issued ('__proto__', 'constructor', a
+   *                   case-folded or padded slot, another track's slot): REJECTED
+   *   pick-type       `picks` or a pick of the wrong type: REJECTED
+   *   order-enum      a confusable or unissued line key in the order (or an order on a run
+   *                   with no outline): REJECTED
+   *   order-absent    no order on a run with an outline (optional since the fix round, r3: the
+   *                   user's own order): CLEAN
+   *   v3-shape        Gemini's own v3 `stages` beside the v4 keys: REJECTED
+   *   smuggle         a payload with a unique marker word in an extra property, a pick, a
+   *                   pick's key, the order or needs: REJECTED (the taint check's anchor)
+   */
+  familyV4(): void {
+    const rng = new Rng(HOSTILE_SEEDS.V4);
+    const marks = new Rng(HOSTILE_SEEDS.V4_MARK);
+    const used = new Set<string>();
+    // One v4 run per pack (its base run), per Field pack with practices off (d8-nopractice) and per synthetic outline: every run
+    // the bar reads costs R4 a ladder of its own, so the family stays within the bar's budget.
+    const templates = this.corpus.runs.filter((r) => r.variant === "base" || r.variant === "d8-nopractice" || r.variant === "outline");
+    const runs = templates.map((t) => {
+      const r = deriveV4Run(t);
+      this.corpus.runs.push(r);
+      this.byId.set(r.id, r);
+      return r;
+    });
+    const CLASSES = ["valid", "valid", "over-max", "pick-enum", "pick-slot", "valid", "pick-type", "order-enum", "order-absent", "v3-shape", "smuggle", "smuggle"] as const;
+    for (let i = 0; i < V4_FAMILY_SIZE; i++) {
+      const run = runs[i % runs.length];
+      const cls = CLASSES[Math.floor(i / runs.length + i) % CLASSES.length];
+      const picks = run.picks ?? {};
+      const slots = run.slots.filter((s) => (picks[s] ?? []).length > 0);
+      const lines = run.enums.lines;
+      const reply = validReplyV4(run, rng);
+      const picksOf = (): Obj => {
+        if (!reply.picks || typeof reply.picks !== "object" || Array.isArray(reply.picks)) reply.picks = {};
+        return reply.picks as Obj;
+      };
+      let expect: Verdict = "CLEAN";
+      let reason = "v4:valid";
+      let marker: string | undefined;
+      if (cls === "over-max" && (lines.length > 0 || run.enums.needs.length > 0)) {
+        if (lines.length > 0) reply.order = Array.from({ length: 41 + rng.int(3) }, () => rng.pick(lines));
+        else reply.needs = Array.from({ length: 7 + rng.int(3) }, () => rng.pick(run.enums.needs));
+        expect = "SALVAGED";
+        reason = `v4:over-max:${lines.length > 0 ? "order" : "needs"}`;
+      } else if (cls === "pick-enum" && slots.length > 0) {
+        const slot = rng.pick(slots);
+        const allowed = new Set(picks[slot]);
+        // Another stage's kind (no pick steps back or jumps ahead), or a confusable spelling of this stage's. Only words the
+        // run issued: a step or checkpoint key here (a word the v4 schema never issues) would read as the reply's in the
+        // taint check wherever code renders that kind itself (the starter's "Book …" step); model-check pins those as ENUM.
+        const others = Array.from(new Set(Object.values(picks).flat())).filter((k) => !allowed.has(k));
+        const value = others.length > 0 && rng.chance(0.6) ? rng.pick(others) : rng.pick(confusablesOf(rng.pick(picks[slot])).filter((k) => !allowed.has(k)));
+        put(picksOf(), slot, value);
+        expect = "REJECTED";
+        reason = "v4:pick-enum";
+      } else if (cls === "pick-slot") {
+        const other = run.field ? rng.pick([...TRACK_STAGE_KEYS]) : rng.pick(["FOUNDATION", "FAMILIAR", "MASTERED"]);
+        const near = slots.length > 0 ? rng.pick(slots) : run.slots[0];
+        const key = rng.pick(["__proto__", "constructor", "toString", near.toLowerCase(), `${near} `, other, ...run.slots.filter((s) => !slots.includes(s))]);
+        put(picksOf(), key, slots.length > 0 ? rng.pick(picks[rng.pick(slots)]) : "READ_AND_CARD");
+        expect = "REJECTED";
+        reason = "v4:pick-slot";
+      } else if (cls === "pick-type") {
+        if (slots.length > 0 && rng.chance(0.6)) put(picksOf(), rng.pick(slots), rng.pick<Json>([3, null, true, [rng.pick(picks[slots[0]])], { kind: rng.pick(picks[slots[0]]) }]));
+        else put(reply, "picks", rng.pick<Json>([[], "READ_AND_CARD", 3, true, null]));
+        expect = "REJECTED";
+        reason = "v4:pick-type";
+      } else if (cls === "order-enum") {
+        if (lines.length > 0) {
+          const order = Array.isArray(reply.order) ? (reply.order as Json[]) : [];
+          const bad = rng.chance(0.3) ? rng.pick([`S${lines.length + 1}`, "D1", "S0", "S-1"]) : rng.pick(confusablesOf(rng.pick(lines)).filter((k) => !lines.includes(k)));
+          order.splice(rng.int(order.length + 1), 0, bad);
+          reply.order = order;
+        } else put(reply, "order", ["S1"]);
+        expect = "REJECTED";
+        reason = lines.length > 0 ? "v4:order-enum" : "v4:order-extra";
+      } else if (cls === "order-absent" && lines.length > 0) {
+        delete reply.order;
+        expect = "CLEAN";
+        reason = "v4:order-absent";
+      } else if (cls === "v3-shape") {
+        // Gemini's own v3 stages, built from keys this v4 run issued (its lines and its stages' practice kinds), so the only
+        // breach is the shape itself (a step or checkpoint key would be a word the v4 schema never issued; see pick-enum).
+        const stages: Obj = {};
+        for (const sl of run.slots) {
+          const st: Obj = { steps: [] };
+          if (lines.length > 0 && rng.chance(0.6)) st.lines = rng.sample(lines, 1 + rng.int(Math.min(3, lines.length)));
+          if ((picks[sl] ?? []).length > 0) st.practices = [{ kind: rng.pick(picks[sl]) }];
+          stages[sl] = st;
+        }
+        put(reply, "stages", stages);
+        expect = "REJECTED";
+        reason = "v4:v3-shape";
+      } else if (cls === "smuggle") {
+        marker = markerOf(marks, used);
+        const sentence = rng.pick(V4_SMUGGLED).split(" ");
+        sentence.splice(rng.int(sentence.length + 1), 0, marker);
+        const payload = rng.chance(0.1) ? marker : sentence.join(" ");
+        const ops = ["extra-property", "pick-key", ...(slots.length > 0 ? ["pick-value"] : []), ...(lines.length > 0 ? ["order-item"] : []), ...(run.enums.needs.length > 0 && run.field ? ["needs-item"] : [])];
+        const op = rng.pick(ops);
+        if (op === "extra-property") put(reply, rng.pick([...G.SMUGGLE_PROPERTIES, "stages", "plan", "explanation"]), rng.chance(0.85) ? payload : [payload]);
+        else if (op === "pick-key") put(picksOf(), payload, slots.length > 0 ? rng.pick(picks[rng.pick(slots)]) : "READ_AND_CARD");
+        else if (op === "pick-value") put(picksOf(), rng.pick(slots), payload);
+        else if (op === "order-item") (reply.order as Json[]).push(payload);
+        else reply.needs = [...((reply.needs as Json[] | undefined) ?? []), payload];
+        expect = "REJECTED";
+        reason = `v4:smuggle:${op}`;
+      }
+      this.reply({ id: `V${i}`, family: "V4", run: run.id, value: reply, expect, reason, ...(marker ? { marker } : {}) });
+    }
+  }
+
   finish(): HostileCorpus {
     const c = this.corpus;
     const by = (fam: string) => c.replies.filter((r) => r.family === fam).length;
@@ -2117,6 +2336,7 @@ class Builder {
       K_overExclusion: c.overExclusion.length,
       M: c.meta.length,
       F: by("F"),
+      V4: by("V4"),
     };
     return c;
   }
@@ -2359,5 +2579,7 @@ export function generateCorpus(packs: readonly CorpusPack[], probes: readonly Pr
   b.familyClash();
   b.familyResourcePatterns();
   b.familyOneSource();
+  // The v4 reply (contracts §20), appended last: its own runs and seeds, so every older case hashes as it did.
+  b.familyV4();
   return b.finish();
 }

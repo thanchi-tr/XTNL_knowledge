@@ -29,11 +29,20 @@
  * on the form are still those. Unconfirmed, or refused because the words
  * changed, the draft asks, and the plan keeps to the track's easy kinds until
  * it is answered.
+ * A Field Area with practices on asks FAMILY_QUESTION (contracts §20.11):
+ * which kind of skill the aim trains (knowledge, a language, doing or
+ * playing, making things), prefilled by code's reading of the aim
+ * (practiceFamilyPrefillOf); only the user's own answer is sent
+ * (Intake.practiceFamily), so an untouched one follows the aim.
  * A life-track Area keeps rev 3's: a chosen date (12 months by default),
  * Where you're starting, no depth.
  *
  * Gemini appears only while ROADMAP_GEMINI_LIVE and a key both hold (the
- * view's hasKey): [Draft with Gemini] says what it will arrange. Otherwise
+ * view's hasKey): [Draft with Gemini] says what it will arrange, naming only
+ * what the run will ask (geminiAsksOf). With nothing to ask (a Field Area
+ * with practices off, no outline and every Domain chosen: the v4 schema
+ * would be empty) only [Build from my numbers] is offered, with
+ * GEMINI_NOTHING_TO_ASK_LINE. Otherwise
  * [Build from my numbers] and [Write it myself] with NO_KEY_LINE. The area
  * suggestions switch shows only while ROADMAP_GAPS_LIVE.
  *
@@ -75,6 +84,7 @@ import {
   NEW_CARDS_PER_WEEK_MAX,
   NEW_CARDS_PER_WEEK_MIN,
   PACK_SECTIONS,
+  PRACTICE_FAMILIES,
   ROADMAP_GAPS_LIVE,
   ROADMAP_GEMINI_LIVE,
   ROADMAP_TRACKS,
@@ -89,7 +99,9 @@ import {
   cueTextsOf,
   examPrefillOf,
   floorBase,
+  isPracticeFamily,
   milestoneCountFor,
+  practiceFamilyPrefillOf,
   type ActivityCardAnswer,
   type CoverageBreakdown,
   type DateMode,
@@ -98,6 +110,7 @@ import {
   type IntakeFieldOption,
   type IntakeView,
   type Intensity,
+  type PracticeFamily,
   type StartPoint,
 } from "@/lib/roadmap-types";
 import { coverageOf, lineDomainDefaultOf } from "@/lib/roadmap-realism";
@@ -136,6 +149,11 @@ import {
   dayWithWeekday,
   depthHint,
   depthStage,
+  GEMINI_NOTHING_TO_ASK_LINE,
+  FAMILY_HINT,
+  FAMILY_PREFILL_HINT,
+  FAMILY_QUESTION,
+  FAMILY_WORD,
   geminiArrangesLine,
   handoffNote,
   hoursLabel,
@@ -153,7 +171,7 @@ import { useRoadmapRuntime } from "./roadmap-runtime";
 import { INTAKE_STORAGE_KEY, readStoredIntake, writeStoredIntake } from "./roadmap-autosave";
 import { GlyphButton, RoadmapGlyph } from "./RoadmapGlyph";
 import { IntakeActivities } from "./ActivityConfirm";
-import { intakeActivityOf } from "./roadmap-ui-model";
+import { geminiAsksOf, intakeActivityOf } from "./roadmap-ui-model";
 import type { LiveGates } from "./GapPanel";
 import "@/components/library/study.css";
 import "./roadmap.css";
@@ -199,6 +217,12 @@ export interface IntakeDraft {
   suggestAreas?: boolean;
   /** "Start again at a depth": the legacy roadmap saving this archives. */
   replaces?: string | null;
+  /**
+   * The practice family (contracts §20.11; a Field Area): the user's answer
+   * to FAMILY_QUESTION; null until answered (the aim prefills it,
+   * practiceFamilyPrefillOf, and the server reads that same prefill).
+   */
+  practiceFamily?: PracticeFamily | null;
 }
 
 /** The form's defaults. A Field Area dates the plan "When realistic"; a life-track Area takes a chosen date, 12 months out. */
@@ -230,6 +254,7 @@ export function emptyIntakeDraft(today: string, area: "FIELD" | "TRACK" = "FIELD
     newDomainNames: [],
     suggestAreas: false,
     replaces: null,
+    practiceFamily: null,
   };
 }
 
@@ -266,6 +291,7 @@ export function draftOfIntake(i: Intake): IntakeDraft {
     newDomainNames: [...(i.newDomainNames ?? [])],
     suggestAreas: i.suggestAreas === true,
     replaces: i.replaces ?? null,
+    practiceFamily: isPracticeFamily(i.practiceFamily) ? i.practiceFamily : null,
   };
 }
 
@@ -282,6 +308,12 @@ export function outlineLinesOf(text: string): string[] {
 /** The exam answer in force: the user's, else the aim's prefill (isCredentialAim over the aim; "EUR/USD" only prefills). */
 export function examAnswerOf(d: Pick<IntakeDraft, "examAnswer" | "aim">): boolean {
   return d.examAnswer ?? examPrefillOf(d.aim);
+}
+
+/** The practice family in force (contracts §20.11): the user's answer, else code's reading of the aim and the exam's name (practiceFamilyPrefillOf). */
+export function practiceFamilyAnswerOf(d: Pick<IntakeDraft, "practiceFamily" | "aim" | "exam" | "examAnswer">): PracticeFamily {
+  if (isPracticeFamily(d.practiceFamily)) return d.practiceFamily;
+  return practiceFamilyPrefillOf(d.aim, examAnswerOf(d) ? d.exam : null);
 }
 
 /** Each outline line's Domain: the user's (by its words), else the deterministic match among the chosen Domains (R2's lineDomainDefaultOf). */
@@ -379,6 +411,8 @@ export function intakeOf(d: IntakeDraft, today: string, opts: { chosen?: readonl
       ...(named.length > 0 ? { newDomainNames: named } : {}),
       replaces: d.replaces ?? null,
       suggestAreas: !trackArea && ROADMAP_GAPS_LIVE && d.suggestAreas === true,
+      // The practice family (contracts §20.11): the user's answer only; untouched, the server reads the same prefill over the aim.
+      ...(!trackArea && isPracticeFamily(d.practiceFamily) ? { practiceFamily: d.practiceFamily } : {}),
     },
     problems,
   };
@@ -919,6 +953,16 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const lines = useMemo(() => outlineLinesOf(d.syllabus), [d.syllabus]);
   const lineDomains = useMemo(() => lineDomainsOf(lines, d, chosen), [lines, d, chosen]);
   const named = useMemo(() => (fieldArea ? (d.newDomainNames ?? []) : []), [fieldArea, d.newDomainNames]);
+  // What "Draft with Gemini" would ask (contracts §20.5): the outline's order, other Domains, one practice per stage. Nothing to ask
+  // (practices off, no outline, every Domain of the Area chosen): the v4 schema would be empty, so only the app's build is offered.
+  const asks = geminiAsksOf({
+    fieldArea,
+    lines: lines.length,
+    otherDomains: field ? field.domains.filter((x) => !d.domainIds.includes(x.id)).length : 0,
+    chosenDomains: chosen.length + named.length,
+    practicesAllowed: trackArea || d.practicesAllowed,
+  });
+  const askGemini = geminiLive && asks != null;
   const coverage = useMemo(() => (fieldArea ? coveragePreviewOf(chosen, named, lineDomains, d.coverage) : []), [fieldArea, chosen, named, lineDomains, d.coverage]);
   const unassigned = lines.map((_, i) => i).filter((i) => lineDomains[i] == null);
   const paceMeasured = view.paceRate != null || !asksNewCards(field, d.domainIds);
@@ -926,6 +970,8 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
   const newCardsRequired = newCardsRequiredOf(realistic, coverage, paceMeasured);
   const askCards = fieldArea && (newCardsRequired || asksNewCards(field, d.domainIds));
   const exam = trackArea ? d.exam.trim().length > 0 : examAnswerOf(d);
+  // The practice family (contracts §20.11): the user's answer, else the aim's prefill.
+  const family = practiceFamilyAnswerOf(d);
   const emptyLibrary = fieldArea && field!.domains.length === 0;
   // Constraint safety (contracts §19): a body or care track Area asks which activities to avoid, from the words as typed; a craft one when its words carry a cue.
   const gatedTrack = trackArea && (d.areaTrack === "BODY" || d.areaTrack === "CARE" || d.areaTrack === "CRAFT") ? d.areaTrack : null;
@@ -1103,7 +1149,7 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
         className="rm-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void submit(geminiLive ? "GEMINI" : "STARTER");
+          void submit(askGemini ? "GEMINI" : "STARTER");
         }}
       >
         <section className="card rm-fs" aria-label="The aim">
@@ -1328,6 +1374,22 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               {problem("exam")}
             </div>
           )}
+          {fieldArea && d.practicesAllowed && (
+            <div className="rm-f" id="rm-f-family">
+              <span className="st-label">{FAMILY_QUESTION}</span>
+              <Segmented
+                className="rm-seg-fill rm-seg-2"
+                value={family}
+                label={FAMILY_QUESTION}
+                onChange={(v) => set("practiceFamily", v)}
+                options={PRACTICE_FAMILIES.map((f) => ({ value: f, label: FAMILY_WORD[f] }))}
+              />
+              <p className="st-hint">
+                {FAMILY_HINT[family]}
+                {d.practiceFamily == null ? ` ${FAMILY_PREFILL_HINT}` : ""}
+              </p>
+            </div>
+          )}
           <details className="rm-adv rm-adv-first" id="syllabus" open={outlineOpen || Boolean(d.syllabus) || Boolean(problems.syllabus) || (fieldArea && exam)}>
             <summary>
               <Icon name="chev" />
@@ -1461,7 +1523,7 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
         </section>
 
         <div className="rm-sticky" data-kb={inset > 0 ? "1" : undefined} style={inset > 0 ? ({ ["--kb" as string]: `${inset}px` } as CSSProperties) : undefined}>
-          {geminiLive ? (
+          {askGemini ? (
             <>
               <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
                 {busy === "GEMINI" ? "Saving…" : "Draft with Gemini"}
@@ -1469,7 +1531,15 @@ export function RoadmapForm({ view, gates }: { view: IntakeView; /** Fixtures on
               <Button size="lg" disabled={busy != null} onClick={() => void submit("STARTER")}>
                 {busy === "STARTER" ? "Building…" : "Build from my numbers"}
               </Button>
-              <p className="t-meta">{geminiArrangesLine(lines.length, chosen.length + named.length)}</p>
+              <p className="t-meta">{geminiArrangesLine(asks)}</p>
+            </>
+          ) : geminiLive ? (
+            <>
+              {/* Nothing for Gemini to decide (contracts §20.5: the schema would have no property): only the app's build, and why. */}
+              <Button type="submit" variant="primary" size="lg" disabled={busy != null}>
+                {busy === "STARTER" ? "Building…" : "Build from my numbers"}
+              </Button>
+              <p className="t-meta">{GEMINI_NOTHING_TO_ASK_LINE}</p>
             </>
           ) : (
             <>

@@ -34,6 +34,8 @@ State of the tree after lane 0:
 
 **Constraint safety, confirm to unlock** is §19, the lead's decision after the hardening round (roadmap-rev4.md decision 55, F-R4-25). On a BODY or CARE plan, safety rests on a broad cue detector and the user's per-kind answer, not on the parser: the parser's exclusions only pre-fill. Lane 0 wrote the contract and every pure part first and alone, with no schema change. Each plan path's adoption is a PENDING line (§19.5), so `--strict`, and with it life:check, failed until they landed; all have landed, and a fourth verifier's run of life:check exited 0 (roadmap-contract-check `--strict` 493 passed, 0 PENDING). After a third verifier, the lead's eight decisions (roadmap-rev4.md decision 56, "the safety-gaps round") rewrote §19 in place: every BODY or CARE plan asks once whatever the user wrote, CRAFT asks on a cue, answering is an explicit act that carries the key of the words it answers, CARE has two safe kinds, and the parser's reading is only a suggestion (§19.8). R3's vocabulary item in §19's first round re-blessed the hostile pin append-only to 6a7ed5cd…, and its suggest item in the safety-gaps round to **25b08ff54d41059d…**, the live pin (scripts/fixtures/roadmap-hostile/pin.json: K 3,007, 2,103 over-exclusion lines); §19.9 holds the pin's history, the bar's figures and the check chain's state. After the fourth verifier the lead ruled three follow-ups (roadmap-rev4.md decision 57): the release is per card (a Save with a tick answers every row the card listed, and "Nothing to avoid" stays hidden while any box is ticked); safety overrides the akrasia horizon (a pause caused by an "Avoid" is immediate even for a must, and the must's days before it keep their rules and debts); and a paused practice stops counting toward its started milestone's practice-kept target, said on the roadmap (as built, its whole practice-kept measure switches to context from the pause, so its sessions before the pause stop counting too). §19.11 records ruling (1) and the track's key (lane 0), §19.12 rulings (2) and (3) with the server's and the page's other follow-up items (R4, R5), §19.13 the lead's aim-conflict ruling (a limit is not an exclusion; roadmap-rev4.md 57.4), and §19.14 the probe run (7 of 7 production-configuration replies CLEAN; the gap schema and thinking LOW rejected by the API; once labelled, a no-go). After the follow-up round life:check was green again. Blessing the probe's 7 replies (42072fa) then moved the hostile pin, so roadmap-hostile-check's PIN item fails until the lead re-blesses pin.json (§19.9).
 
+**The practice progression** is §20, the lead's decision after the probe's no-go (practice fit 29% of stages against 80%; arrangement 1 of 7): code owns the practice progression on every plan path, and Gemini's reply shrinks to `needs`, the outline's order and at most one pick per stage among code's candidates (ROADMAP_PROMPT_VERSION 4). Lane 0 wrote the pure progression (`progressionOf` and its rule checker in roadmap-catalog.ts), the v4 reply's shapes (roadmap-types.ts) and the sizing as one definition, first and alone, with no schema change. Each item's adoption is a HANDOFF line in roadmap-contract-check (§20.8): unlike PENDING, `--strict` (and with it life:check) passes them while the round runs, and `--handoffs` fails every one still open.
+
 **Fix round 2.** The re-review's open items added a second, smaller set (§11: the run behind the accepted plan, the acceptance-day caption, struck title numbers off the review, the plan's position count, and one definition of "what a draft milestone still needs"), and §12 lists what every lane exported in the first fix round, read from the code. ui-audit now reads R5's FIXTURE_STATES from fixtures.ts (15 states), and roadmap-contract-check passes 200 checks.
 
 ## 0. Rules every lane keeps
@@ -2759,3 +2761,469 @@ This is the run F-R4-23 specifies, made once: `npx tsx --env-file=.env scripts/r
 - **The lead's next step** (after the minors round): code owns the practice progression on every plan path (retrieval early, production later, a full attempt or performance check only in the last stage, practice in every stage when practices are allowed, and the starter on the same rules). Gemini keeps only `needs` (confirmed by the user), the outline's order, and at most a pick among code's candidates per stage (prompt v4). Then the 2 approved calls, their labels and the gate.
 
 **What it changes elsewhere:** the run left the hostile pin, family F and every gate as they were. Blessing the 7 replies seeds family F (707) and moves the pin, so roadmap-hostile-check's PIN item fails until the lead re-blesses pin.json (§19.9).
+
+## 20. The practice progression: code owns it (lane 0, first and alone)
+
+**The lead's decision (fixed).** The approved probe (§19.14) failed the gate on practice fit (10 of 34 stages, 29%, against 80%) and on arrangement (1 of 7): the keys-only schema made practices optional on a Field run, and Gemini placed none, or cycled kinds with no build-up. The user's requirements are plans that lead to high mastery realistically, and no Gemini hallucination. So:
+- **Code owns the practice progression on every plan path**: the starter, Gemini's keys-only plan, every re-plan, Start and the week quests. It is pure and deterministic, per track and stage.
+- Every stage carries practice whenever practices are allowed. Retrieval and recognition come early, production and integration later, and spaced review runs throughout. Full attempts and performance checks sit in the last stage only, and mock tests only in the stage holding the exam. Checkpoints escalate (self-test → mock → performance). Each later stage builds on what earlier ones trained: the rule is named and tested ("carry and climb", §20.3). Sessions and durations are code's existing sizing, within the user's hours and the realism engine (§20.6).
+- It always respects the constraint-safety gate (§19): a pending or avoided kind is never placed; a practice gives way to the track's safe kinds (§20.4).
+- **Gemini's role shrinks** to three things: which of the user's Domains the aim needs (shown as Gemini's choice, confirmed by the user, as today), the order of the outline's lines, and at most one pick per stage among code's candidates (a per-stage enum; absent or invalid, code's default). It still writes no words. `ROADMAP_PROMPT_VERSION` is 4. `ROADMAP_GEMINI_LIVE` stays false.
+
+### 20.0 State of the tree after lane 0
+
+- **Files:**
+  - roadmap-catalog.ts: a new last section, "The practice progression" (the tables, `progressionOf`, the pick enums, the notes, the rule checker) and its sizing helpers; the header index.
+  - roadmap-types.ts: `ROADMAP_PROMPT_VERSION` 4 (its comment rewritten), `DraftReplyV4`, `REPLY_V4_PROPERTIES`, `OutlineOrder`, `outlineOrderOf`, `outlineStagesOf`; the header index.
+  - scripts/roadmap-contract-check.ts: the constant's pin (4), a new section "the practice progression (§20)", and the `handoff()` helper with its 9 HANDOFF lines (§20.8).
+  - scripts/roadmap-model-check.ts: the three cases that pin the constant itself (`prompt version 4`, `promptVersion` on the pack, the hashed material's `prompt:4`). Nothing else in R3's check moved; the v3 instruction text it pins is R3's to replace (§20.8).
+  - This section and the intro's pointer.
+- **No schema change and no migration.** `RoadmapItem.catalogKey` and the notes already carry everything the progression places.
+- **Nothing calls the progression yet**, so every plan path behaves as before, and no other check's golden moved. The version bump changes the hashed input material, so no v3 run is reused; drafting is off anyway.
+- **Gates** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key):
+  - `npx tsc --noEmit -p .` is clean, and eslint is clean on the four changed code files.
+  - roadmap-contract-check passes **564, 0 failed, 9 handoffs open**. `--strict` passes too, because HANDOFF lines don't fail it.
+  - `npm run life:check` and `npm run ui:check` both exit 0. The hostile pin is unchanged.
+
+### 20.1 What a stage holds (`progressionOf`)
+
+> **Superseded in part by §20.11 (the review round).** The priority is now FOCUS (code's default, never Gemini's pick), EXAM, CORE, PICK, PARTNER or CARRY, BASE, SHAPE; a dated exam gets a run-up (timed practice and the mock test before it) and nothing after it; a Field plan reads its family's table; BETWEEN and PART stages take a self-test. The table and goldens below are the first round's; §20.11 gives the current ones.
+
+Per stage that is neither held nor carried, in order:
+
+| Part | What | Notes |
+|---|---|---|
+| FOCUS | Gemini's pick among the stage's candidates, else code's default (the first) | A blocked default gives way to the next placeable candidate, then to a stand-in (§20.4). |
+| PARTNER | The chain's first stage only: the track's opening partner | A Field plan retrieves from day one (recall drills). |
+| CARRY | Every later stage: the kind the stage before trained (its focus) | When that is this stage's own focus, it carries what the stage before carried. The build-up rule's carry. |
+| EXAM | A Field plan's exam stage: timed practice | examOnly; never a candidate; never copied. |
+| BASE | The track's spaced review, when a slot is still free | Recall drills on a Field plan, an easy session on BODY, slow drills on CRAFT, setting time on CARE, planning the week on DUTY. |
+| SHAPE | F-R4-13's role on a Field stage when nothing above gave it | Retrieval below Retained, production from Retained (BETWEEN at L9 and L11 included). |
+
+- The practices are capped at `maxPractices` (default `PRACTICES_PER_MILESTONE`, 3), kept in that priority. With room for one, the shape wins over a pick without the stage's role.
+- A stage nothing filled, while the track still has a placeable practice (the user released only kinds this stage doesn't list), gets the least demanding one (the stage's role first). So every stage carries practice whenever practices are allowed and the gate leaves one.
+- **BETWEEN and PART** copy the next gate stage's practices (else the one before), without its exam extra, then add their own exam extra and shape. *This reverses rev 4's "a count gate copies no practices" (F-R4-13), so every stage carries practice; R2's motivation timeline already counts a PART as able to pay.*
+- **A held stage** gets nothing and is never first or last.
+- **A carried stage** (`ProgressionStageInput.carried`: one under way, or a re-plan's started row) keeps its kinds (KEPT) and gets nothing new; its first practice is what the next stage carries. It still counts as first or last, so a re-plan never opens twice.
+- **Steps**, at most `STEPS_PER_MILESTONE`, kept in the priority OPENING, BOOK, CLOSING, ROLE and listed OPENING, BOOK, ROLE, CLOSING:
+  - OPENING on the first stage: choosing material on a Field plan, setting up on a track.
+  - BOOK on the first stage with an exam (`BOOK_EXAM`, whether or not the exam has a day).
+  - ROLE, a Field gate stage's own step: outline at Familiar, list the gaps at Retained, explain it once at Fluent, a small project at Mastered.
+  - CLOSING on the last stage, unless the exam is held there: the track's, a full attempt on a Field, BODY or CRAFT plan, and none on a CARE or DUTY routine.
+- **The checkpoint:**
+  - the exam stage holds `EXAM_DAY` when the exam has a day, or `MOCK_TEST` when it has none (then the last stage holds the exam);
+  - else the last stage holds `PERFORMANCE_CHECK`;
+  - else a Field gate stage after the first and before the exam's stage (or the last) holds `SELF_TEST`.
+
+  Between a dated exam and the last stage there is none.
+
+The default plans (roadmap-contract-check's goldens):
+
+| Stage | A Field plan to Mastered, no exam | BODY, the card answered | CARE, the card answered |
+|---|---|---|---|
+| 1 | study + recall drills · choose material | easy + mobility · set up | set time + keep a log · set up |
+| 2 | recall drills + study · outline · self-test | technique + easy | check-in + set time |
+| 3 | problem sets + recall drills · list the gaps · self-test | longer + technique + easy | set time + check-in |
+| 4 | explain it + problem sets + recall drills · explain it once · self-test | harder + longer + easy | admin + set time |
+| 5 | build something + explain it + recall drills · a small project, a full attempt · performance check | harder + longer + easy · a full attempt · performance check | set time + admin · performance check |
+
+Two exam variants on the Field plan:
+- **An exam with no day:** the first stage books it, and the last stage holds build something, explain it and timed practice, a small project, and the mock test (no full attempt).
+- **The exam's day in Familiar:** Familiar holds timed practice and the exam, Retained and Fluent hold no checkpoint, and Mastered closes on the full attempt and the performance check.
+
+### 20.2 The tables (`PROGRESSION`, per track; the lead may tune any list)
+
+Rungs (`ProgressionRung`): 1 taking in, 2 retrieving and drilling the parts, 3 producing, 4 putting it together, 5 under exam conditions.
+
+| Track | Stage → candidates (default first) | Partner · base · opening · closing |
+|---|---|---|
+| FIELD | Foundation: study, listen and repeat, slow drills · Familiar: recall drills, slow drills · Retained: problem sets, explain it, writing, say it aloud · Fluent: explain it, problem sets, writing, say it aloud, go over your mistakes, a teacher or partner, build something, run-throughs · Mastered: build something, a teacher or partner, run-throughs | recall drills (else study) · recall drills (else mistakes) · choose material · full attempt |
+| BODY | 1: easy, mobility · 2: technique, strength · 3: longer, strength · 4: harder, longer, strength · 5: harder | mobility (else technique) · easy · set up · full attempt |
+| CRAFT | 1: slow drills, technique · 2: slow drills · 3: run-throughs, a teacher · 4: a teacher, run-throughs · 5: run-throughs, a teacher | technique (else slow drills) · slow drills (else technique) · set up · full attempt |
+| CARE | 1: set time, plan the week · 2: check-in, set time, admin · 3: set time, check-in, admin · 4: admin, set time, check-in · 5: set time, check-in, admin | keep a log (else plan) · set time (else the log) · set up · none |
+| DUTY | 1: admin, plan the week, set time · 2: set time, admin, check-in · 3: admin, set time, check-in · 4: check-in, admin, set time · 5: admin, check-in, set time | plan (else the log) · plan (else the log) · set up · none |
+
+- **Rungs per track:**
+  - Field: study and listen-and-repeat 1; recall and slow drills 2; problem sets, explaining, writing, saying it and mistakes 3; building, run-throughs and a teacher 4; timed practice 5.
+  - BODY: easy and mobility 1, technique 2, strength and longer 3, harder 4.
+  - CRAFT: technique 1, slow drills 2, run-throughs and a teacher 3.
+  - CARE and DUTY: planning and the log 1, the rest 2. A routine holds; it doesn't climb past that.
+- **Stand-ins** (`standIn`, then the track's safe kinds in CATALOG order):
+  - BODY: harder and longer → easy, strength → technique.
+  - CRAFT: every gated practice → technique.
+  - CARE and DUTY: set time and admin → plan the week, check-in → the log.
+  - A Field plan has no safe kinds, because only the user's AVOID holds a Field kind. It takes the next kind of the same role (F-R4-13), or of the stage's role for slow drills or a teacher.
+- **The table rules the check pins:**
+  - each track's keys are its slots;
+  - every candidate, partner and base is a rung-ed practice on the track, never examOnly or codeOnly;
+  - every role and opening step is a step on the track, never examOnly or lastStageOnly, and the closing step is a lastStageOnly step;
+  - every stand-in is safe;
+  - every candidate of a stage sits at or above every candidate of the stage before, so no pick can step back.
+
+### 20.3 The build-up rule, escalation and placement
+
+- **`BUILD_UP_RULE` = "carry and climb".**
+  - *Carry:* every gate or track stage after the chain's first keeps the kind the stage before trained, whenever the gate places it and a slot holds it.
+  - *Climb:* a stage's focus is never less demanding than the stage before's. A stand-in, and a carried stage's kinds, are exempt.
+- **`CHECKPOINT_RUNG`:** SELF_TEST 1, MOCK_TEST 2, EXAM_DAY 3, PERFORMANCE_CHECK 3. Over a plan's stages, in order, the rung never falls; a stand-in that would fall is not placed.
+- **lastStageOnly** (the full attempt, the performance check): the last stage only.
+- **examOnly**, only with the user's Yes:
+  - `BOOK_EXAM` on the first stage;
+  - `TIMED_PRACTICE` and `MOCK_TEST` on the exam stage only;
+  - `EXAM_DAY` (codeOnly; the progression is code) on a dated exam's stage only.
+- **`examStage`** (the caller's): the index of the stage whose window holds the exam's day. R2 gives the first kept stage due on or after it, else the last, and a held index moves to the next live stage. Absent or null means no day: the last stage holds the exam.
+
+### 20.4 The gate interplay
+
+- **Never placed:** every kind in `gate.blocked` (PENDING while the card waits, and the user's AVOIDs) or in `excluded`. So while the card waits on BODY, CARE or a cued CRAFT plan, only the safe kinds are placeable. The plan is then safe kinds only, never empty (CARE: planning the week and the log in every stage).
+- **Practices:**
+  - a blocked focus gives way to the stage's next placeable candidate (what the pick enum offers first), then to a stand-in (§20.2);
+  - a blocked partner gives way to a stand-in;
+  - the carry and the base are taken only when placeable.
+- **Steps and checkpoints:** a blocked step is left out. A blocked checkpoint gives way to a self-test on a Field plan only, while escalation allows it; otherwise it is left out (the performance check and the mock test wait on the card, as before).
+- Every `standsIn` names a kind something held (the rule checker's STANDIN).
+
+### 20.5 Gemini's part: the v4 reply (roadmap-types) and the pick enums (roadmap-catalog)
+
+```ts
+interface DraftReplyV4 { needs?: string[]; order?: string[]; picks?: Partial<Record<string, string>>; gaps?: string[] }
+REPLY_V4_PROPERTIES = ["needs", "order", "picks", "gaps"]          // the schema's propertyOrdering
+outlineOrderOf(order: unknown, keymap: S-key → index, lines): OutlineOrder   // {order, dropped, appended}
+outlineStagesOf(order: number[], stages): number[][]                // R2's even split, over the order
+progressionPickEnumsOf({track, slots, exam, practicesAllowed, gate?, excluded?}): Record<slot, PracticeKind[]>
+progressionCandidatesOf(track, stage, run) · progressionPickOf(candidates, pick)
+```
+
+- **The schema R3 builds** (keys only, no INTEGER or NUMBER; as shipped, read from `keysOnlySchemaOf` after the review round's fix items):
+  - `needs`: as v3 (unchosen D-keys, omitted on a track Area or with none), optional.
+  - `order`: an ARRAY of the run's S-keys (maxItems SYLLABUS_MAX_LINES), omitted without an outline. **Optional** (the review round, r3): an absent order is the user's own order, so a reply without one is never REJECTED and keeps its `needs`. `KeysOnlyDraft.reordered` says whether Gemini moved a line, so the page can show a reorder as Gemini's suggestion beside the user's order. *(The first round shipped it required; the second review flagged it.)*
+  - `picks`: an OBJECT whose properties are the slots `progressionPickEnumsOf` returns (the run's family's candidates, §20.11), each a STRING enum of that slot's candidates, none required, `picks` itself optional. Only the slots the plan's own ladder reads a pick for (`EvidenceInput.pickStages`, R4 passes `pickStagesOf` over the dated ladder), so no pick is issued for a stage the plan won't hold. Omitted when no slot has a candidate (practices off, or every candidate blocked). No enum is ever empty, and the largest holds 6 values (≤ CATALOG_ENUM_MAX).
+  - `gaps`: as v3, but its items carry **no maxLength** (both 5 Oct gap-slot calls with string bounds were refused, 400 INVALID_ARGUMENT; the shape rule drops an over-long name). `ROADMAP_GAPS_LIVE` stays false until an approved call accepts the new shape.
+  - No `stages`, no practice, step or checkpoint list, no `on`, and no `family` (the family is the user's answer, §20.11, never Gemini's).
+  - **The empty schema.** Nothing is required, so a Field Area with practices off, no outline and every listed Domain chosen gets an OBJECT with no property. The API refuses that shape and a reply could decide nothing, so such a run is never sent: `schemaAsksNothing` / `packAsksNothing` (R3) gate `draftSamples` (NOTHING_TO_ASK), R4's claim and `runDraftCore` (no run row, no cap use), and the form's "Draft with Gemini".
+- **`outlineOrderOf`:**
+  - It reads the reply's order with exact own-property lookups: no trim or case-fold, so `__proto__`, `S01` and `s1` never resolve.
+  - Each line is kept once, in the reply's order, then every line the reply left out follows in the user's order. No line is ever lost, so v3's "uncovered" lines are gone.
+  - A missing or non-array order gives the user's order.
+- **A valid pick is added beside code's default, never in its place** (§20.11): the stage's FOCUS is always code's default; Gemini's pick, when it differs, is a PICK placed after the exam's practices and the core, before the carry. With room for one it waits. The next stage carries code's default, not the pick, and a BETWEEN or PART copy never copies a pick.
+- **An invalid pick:**
+  - `progressionOf` reads any pick outside the slot's candidates as absent, so the slot takes its default. That covers another kind, timed practice, a padded or case-folded key, a number, a prototype or inherited key, and a non-object.
+  - The integrity walk (F-R4-20, unchanged) still REJECTs a reply holding an out-of-enum value, and the starter then renders: code's defaults throughout.
+  - Either way, an invalid pick ends as code's default. A rejected reply also loses its `needs` and `order` (§20.10, point 10).
+- **The notes** (`progressionNotesOf`, one definition for R2 and R4):
+  - a valid pick: GEMINI_PICK;
+  - any other practice the app placed: STUDY_ADDED (retrieval) or PRODUCTION_ADDED (production), so pay honesty reads it;
+  - a step, a checkpoint, a practice of neither role, or a carried kind: none.
+
+### 20.6 Sizing: code's existing allocation, one definition
+
+- **`practiceSizeOf(kindOrMethod, shareMinutes, floor?)`** is R2's `bandFor` and `allocate` exactly:
+  - the band is the method's, never under the floor (a method whose band is under it starts at it), stepped down while one session is more than the share, to D15 or the floor;
+  - sessions are ⌊share ÷ band⌋, clamped to 1…7;
+  - the rule is DAILY at 7, else `TARGET:n/W`.
+- **`stageBandFloorOf(stage, level?)`** is R2's `floorBandOf`: Retained D30, Fluent and Mastered D45; BETWEEN keeps the gate below's; a PART, or a level alone, its gate's; none on a track stage.
+- **`practicesThatFitOf(budgetMinutes, floor?)`** gives the stage's room: one session each at the floor (D30 without one), from 1 to 3. A budget of nothing still holds one, and R2's time verdict says OVER.
+- R2 passes the room as `maxPractices`, so the progression stays within the user's hours. The priority (focus, partner or carry, exam, base) decides what waits for room.
+
+### 20.7 Exports
+
+| Module | Export |
+|---|---|
+| roadmap-catalog | `ProgressionRung`, `ProgressionStageRule`, `ProgressionTrackRule`, `PROGRESSION`, `progressionStageKeysOf`, `CHECKPOINT_RUNG`, `BUILD_UP_RULE` |
+| | `ProgressionStageInput` (`stage`, `level?`, `held?`, `carried?`), `ProgressionInput` (`track`, `stages`, `practicesAllowed`, `exam`, `examStage?`, `gate?`, `excluded?`, `picks?`, `maxPractices?`) |
+| | `ProgressionWhy`, `ProgressionItem` (`kind`, `slot`, `why`, `standsIn`, `picked`), `StageProgression`, `Progression` (`stages`, `first`, `last`, `examStage`, `examDated`) |
+| | `progressionOf` (THE progression), `progressionShapeOf`, `progressionPickOf`, `progressionCandidatesOf`, `progressionPickEnumsOf`, `progressionNotesOf` |
+| | `progressionViolationsOf(input, p)`: one line per breach, codes HELD, CAP, TRACK, BLOCKED, EXAM, LAST, ESCALATE, PRACTICE, CARRY, CLIMB, SHAPE, STANDIN, PICK; [] when every rule holds. Other items' checks can run it over their plans. |
+| | `PracticeSize`, `stageBandFloorOf`, `practiceSizeOf`, `practicesThatFitOf` |
+| roadmap-types | `ROADMAP_PROMPT_VERSION` = 4, `DraftReplyV4`, `REPLY_V4_PROPERTIES`, `OutlineOrder`, `outlineOrderOf`, `outlineStagesOf` |
+| *the review round (§20.11)* | |
+| roadmap-catalog | `FIELD_FAMILY_PROGRESSION`, `ProgressionTrackRule.examStages`, `progressionFamilyOf`, `progressionRuleFor(track, {family?, exam?})`, `practiceFamilyOf(intake)`, `practiceFamilyOfCoverage`, `coverageJsonOf(coverage, confirm, family?)` (a third argument) |
+| | `EXAM_PREP_MIN_DAYS` (21), `examStagesOf(rows, examDay)` → `{examStage, examPrepStage}` |
+| | `ProgressionInput.family?`, `.examPrepStage?`; `Progression.family`, `.examPrepStage`, `.mockStage`; `StageProgression.afterExam`; `ProgressionWhy` `CORE`, `PICK`; `progressionCandidatesOf` and `progressionPickEnumsOf` take the run's `family` |
+| | `progressionViolationsOf` codes `EXAM_PREP`, `AFTER_EXAM`, `DEFAULT`, `CORE` (and PICK, CARRY and EXAM reworded) |
+| | `PRACTICE_FOCUS_SHARES` (2), `practiceSizesOf(kinds, budget, floor?)`; `practicesThatFitOf` now ⌊budget ÷ unit⌋ − 1 |
+| roadmap-types | `PracticeFamily`, `PRACTICE_FAMILIES`, `PRACTICE_FAMILY_DEFAULT`, `isPracticeFamily`, `practiceFamilyPrefillOf(aim, examLabel?)`, `Intake.practiceFamily?`, `PRACTICE_FAMILY_KEY` (`"$practiceFamily"`) |
+| *R3, as shipped (read from the code; the second review asked for them here)* | |
+| roadmap-validate | `KeysOnlyDraft.picks`, `.order`, `.reordered`; `KeysOnlyContext.progression` (`examStage`, `maxPractices`); `keysOnlySchemaV3Of`, `isV3Schema`, `runPickKindsOf`, `PackRun.pickKinds` (and `.family`), `keysOnlyProgressionInputOf`, `replyV4OfV3`, `schemaAsksNothing`, `packAsksNothing`; the rules `keys.pick`, `keys.pick-default`, `keys.pick-reshaped`, `keys.pick-code`, `keys.order-kept` and their `KEYS_ONLY_REASONS` |
+| roadmap-evidence | `EvidencePackV4`, `pickStagesOf`, `PickStageRow`, `EvidenceInput.pickStages` |
+| scripts/roadmap-probe.ts | `--offline` (the offline part only: no key, no network) |
+
+### 20.8 Handoffs, by item (each is a HANDOFF line in roadmap-contract-check)
+
+A HANDOFF line passes once its owner lands. Unlike PENDING, `--strict` (and with it life:check) passes the open ones while the round runs. For the lead at the round's integration, `npx tsx scripts/roadmap-contract-check.ts --strict --handoffs` fails every one still open.
+
+- **R2, roadmap-realism.ts** (3 lines):
+  - Place every stage's practices, steps and checkpoint with `progressionOf`: the depth starter (`depthMilestonesOf`), `trackLadderOf`, `syncStagePractices` and `syncTrackStarter`. `requiredKindOf` and `trackKindsOf` go.
+  - Build the `ProgressionStageInput`s from the ladder rows: held rows `held`, a STARTING or STARTED row `carried` with its live catalog kinds, BETWEEN and PART with their level, and `examStage` from the exam's day.
+  - Size with `practiceSizeOf` and `stageBandFloorOf` (no second `bandFor` or `floorBandOf`), and pass `maxPractices` from `practicesThatFitOf` over each stage's budget.
+  - Split the outline in Gemini's order with `outlineStagesOf`, through a new `StageLadderOpts.order`, with `StageLadderOpts.picks` for the reply's picks. Write each placed kind's notes with `progressionNotesOf`.
+  - Re-sync rules: keep the user's rows (YOURS, EDITED); never re-add a kind the user REMOVED on that stage; take out a code row the progression no longer wants (WORKED_OUT only).
+  - roadmap-realism-check's starter goldens move with it: the starter now holds steps, self-tests and two or three practices per stage. `progressionViolationsOf` over its plans is the recommended property.
+- **R3, roadmap-validate.ts, roadmap-evidence.ts and roadmap-model.ts** (3 lines):
+  - The v4 schema (§20.5), with `progressionPickEnumsOf` over the pack's run (the gate's `blocked` as before). The pack's run facts gain the per-slot enums.
+  - `validateKeysOnly` reads a v4 reply: `needs` as before; `order` through `outlineOrderOf`, so no line is dropped and none goes uncovered; `picks` per slot, handed to the plan path. It no longer makes practice, step or checkpoint items itself.
+  - The v4 system instruction asks only for the three things: the Domains the aim needs, the outline's order, and one practice type per stage from its list. There is no "Pick practice, step and checkpoint kinds", and the glossary lists only the offered kinds.
+  - roadmap-model-check's instruction golden and its v3 schema walk move to v4, and the canned corpus replies get v4 forms.
+- **R4, roadmap-server.ts** (1 line):
+  - Materialise a v4 reply through the progression: R2's ladder with the reply's picks and order, or `progressionOf` itself. GEMINI_PICK sits only on a picked focus (and its BETWEEN copy).
+  - Re-plan and Start rebuild the DRAFT stages with the started stages `carried`. The week quests keep reading the started milestone's practices through the gate (R6: no change).
+  - `draftFromReply` keeps the integrity walk, the REJECTED gate and the tripwire.
+  - In roadmap-server-check, "every TOPIC label equals its intake line" still holds, now in Gemini's order.
+- **R5, roadmap-copy.ts** (1 line):
+  - The v4 draft header names Gemini's smaller part: the Domains it suggested, the outline's order, and the one practice type per stage it picked from the app's list. It no longer says Gemini "picked practice types from the app's list" for every kind.
+  - A row still reads "practice type picked by Gemini from the app's list" (GEMINI_PICK) or "added by the app" (STUDY_ADDED, PRODUCTION_ADDED). Steps and checkpoints are always the app's.
+  - *As shipped (the second review):* the pick reads as "Gemini's choice among the app's options" (`geminiChoiceOf`, `geminiChoiceLine`: how many options the stage had and the app's default). The lead line and the button line should name only the parts the run issued and the reply used (needs, order, any pick), and say "the app chose every practice" with no pick; and the options must be the gate-filtered, family's candidates Gemini was offered (§20.11 handoffs).
+- **The probe item, scripts/roadmap-probe.ts** (1 line; updated, never run): send the v4 schema, and label practice fit and arrangement from the plan the progression builds with the reply's picks (`progressionOf`), so the gate reads code's plan, not the raw reply. The 2 approved calls (actuarial-probability and new-subject) wait for R3's v4 schema.
+- **R7, the hallucination bar** (no line): family F's blessed replies are v3. A v4 corpus of replies (picks and order, hostile picks among them) seeds the v4 views. When blessed fixtures or generators change, the pin moves and the lead re-blesses.
+- **R6, the week quests** (no line): practice quests come from the started milestone's practices, which are now the progression's, through the gate as before.
+- **Docs** (no line): roadmap-rev4.md's F-R4-13, F-R4-17, F-R4-18 and F-R4-23 record §20 (PROGRESSION, the v4 reply, the probe's gate read over code's plan). PROGRESS.md is the lead's.
+
+### 20.9 What roadmap-contract-check pins (the §20 section)
+
+- **The tables** (one check of every rule in §20.2), the stage keys, code's defaults per track, `CHECKPOINT_RUNG`, `BUILD_UP_RULE`, and the closing step per track.
+- **Goldens**, each as the whole plan, stage by stage:
+  - a Field plan to Mastered: no exam; an exam with no day; its day in Familiar; depth 8 with the day in its last stage;
+  - room for two, and room for one, the latter with picks the shape overrides and picks it keeps;
+  - a language's picks, with the carry of an equal focus;
+  - invalid picks of every kind, which give the defaults;
+  - a held Foundation, a PART first and BETWEEN stages, with the exam's day in BETWEEN 7;
+  - the user's Field AVOIDs;
+  - practices off;
+  - a re-plan with the first stage carried;
+  - BODY waiting (lose-8kg's real gate), answered "Nothing to avoid" (run-10k), and with only the harder session avoided;
+  - CARE waiting and answered; CRAFT with a cue and without; merged track stages; DUTY with an exam and room for two; a single stage;
+  - a frozen input (pure and deterministic), and no stage at all.
+- **The pick enums** (a Field exam run; BODY waiting; practices off; foreign slots), `progressionPickOf`, `progressionNotesOf` and `progressionShapeOf`.
+- **The checker catches each breach.** 18 injected breaches cover every code (EXAM four ways, CAP two), and `progressionViolationsOf` names each one.
+- **The property:**
+  - The inputs: 12 corpus packs × 5 catalog tracks × each pack's gate states (1,068 in all) × 4–6 stage lists per track × every exam placement (none, no day, its day on each stage) × practices on and off, with picks and room varied. That is 62,594 plans.
+  - The stage lists: full, with BETWEEN, held first, PART first, merged and carried first on a Field plan; full, merged, single and carried first on a track.
+  - The gate states: unanswered, "Nothing to avoid", every practice avoided, the safe kinds avoided, a stale answer, and each kind avoided alone.
+  - It asserts the lead's four independently: every stage has practice when practices are allowed and the gate leaves one; no lastStageOnly kind before the last stage; escalation never falls; no avoided or pending kind is placed.
+  - It also asserts that `progressionViolationsOf` finds nothing, which covers the carry, the climb, the shape, the exam placement and the caps.
+  - While it was being written, it found two defects, both fixed: a BETWEEN or PART copied its gate's exam extra off the exam stage, and with room for one practice the Field shape couldn't be restored when the stage's own role kind was avoided.
+- **Sizing goldens** (`stageBandFloorOf`, `practiceSizeOf` at realism's numbers, `practicesThatFitOf`), and the v4 reply's shapes (`DraftReplyV4`, `REPLY_V4_PROPERTIES`, `outlineOrderOf` with hostile keys, `outlineStagesOf`).
+- **The 9 HANDOFF lines** (§20.8).
+
+### 20.10 Deviations and open points for the lead
+
+*The review round (§20.11) settled points 1, 5, 9 and 11, and changed 10 and 12; each says how.*
+
+1. **"Mock tests only from the stage holding the exam"** is read literally: a mock test sits only on the exam's stage. *(Settled in §20.11: the review ruled a dated exam needs its run-up, so the mock test now sits on the stage before a dated exam's; undated, on the last stage, which holds the exam.)*
+   - With no day, the exam's stage is the last stage, and it holds the mock test.
+   - With a day, that stage's one checkpoint is the exam itself, so no mock test is placed. The rehearsal is that stage's timed practice.
+
+   Rev 4's starter put a mock test one stage before a dated exam. If you want that back ("the exam's run-up"), it is one rule in `progressionOf` and one line in the checker.
+2. **No self-test on the first stage**, so accept (which checks the next milestone's bar) stays as light as before. Every Field gate stage after it and before the exam (or the last) holds one, and each asks for the user's bar when it becomes the next milestone. Between a dated exam and the last stage there is none, because escalation never falls. *(§20.11: a BETWEEN or PART stage now takes one too, escalation allowing; the first stage holds the mock test when a dated exam's stage is the second.)*
+3. **A PART now carries its gate's practices** (rev 4: none), so every stage carries practice. This settles the open question in F-R4-13 in favour of R2's motivation timeline.
+4. **A blocked focus first takes the stage's next placeable candidate**, which may be a non-safe kind the user's answer released (BODY with only the harder session avoided → longer). Only when there is none does a safe stand-in take its place. While the card waits, every non-safe kind is blocked, so a waiting plan is safe kinds only, as ruled. Say if you want only safe stand-ins even after a partial answer.
+5. **The room's priority** is focus, partner or carry, the exam's timed practice, then the base. With room for two, an exam stage keeps the carry over timed practice. Say if the exam should come first. *(Settled in §20.11: EXAM and CORE now rank before the carry.)*
+6. **The full attempt closes Field, BODY and CRAFT plans only**; a CARE or DUTY routine closes on the performance check alone. Rev 4's starter placed no full attempt on any plan; the probe's labellers read a last stage with no attempt as missing the aim.
+7. **`BOOK_EXAM` sits on the first stage whenever there is an exam**, not only with a day (rev 4's starter). Booking is most needed when no date is set.
+8. **HANDOFF, not PENDING.** life:check runs the contract check with `--strict`, and this round's items land after lane 0, so the adoption lines don't fail `--strict`. Run `--handoffs` at integration, or turn them into `pending()` once the round ends.
+9. **The version is 4 before R3's v4 instruction and schema land.** A v4-numbered pack still carries the v3 schema and instruction until then. That is harmless while `ROADMAP_GEMINI_LIVE` is false, but the probe must not run before R3 lands. *(Settled: R3's v4 instruction and schema landed in the first round.)*
+10. **An out-of-enum pick still REJECTs the whole reply** (F-R4-20 unchanged). The plan is then the starter, which is code's defaults, but the reply's `needs` and `order` are lost too. R3 could treat a bad pick as salvageable instead; that is your call. *(Changed in the review round: `order` is optional, so a reply without one is never REJECTED; an out-of-enum value still is.)*
+11. **The tables are judgement.** CARE and DUTY don't climb past rung 2: a routine holds rather than escalates. Field Mastered's default is "Build something with {domains}", the most general integrating kind, which reads oddly for some aims (an actuarial exam). Gemini's pick, or the user's swap, covers that. *(Settled in §20.11: a Field plan reads its family's table, and a KNOW plan with an exam goes over mistakes at Mastered.)*
+12. **The hostile pin didn't move**, because nothing in the corpus or its generators changed. It will move when R3's v4 replies or R7's v4 corpus land. *(It moved with them; the review round's table changes move it again through the generator's pick enums. The lead re-blesses.)*
+
+### 20.11 The review round: the exam's run-up, the families, additive picks and the room (the contract item)
+
+The two reviews of the progression round found that code's progression kept its own rules everywhere but did not yet lead to high mastery realistically:
+- dated exams got no mock test and often no timed practice, and the full attempt and the performance check landed after the exam;
+- every Field aim got the one maths-shaped table, with no speaking, listening or performing;
+- a third practice diluted every kind to one session a week;
+- Gemini's pick replaced code's default, was carried forward, and was copied into BETWEEN and PART stages.
+
+This item fixed the catalog's half. The other items adopted it in the same round (§20.11.9).
+
+#### 20.11.0 State of the tree after this item
+
+- **Files:**
+  - roadmap-catalog.ts: the progression section, the sizing, `coverageJsonOf` and the header index.
+  - roadmap-types.ts: the practice family, `Intake.practiceFamily`, `PRACTICE_FAMILY_KEY` and the header index.
+  - scripts/roadmap-contract-check.ts: the §20 section rewritten, and 6 new HANDOFF lines.
+  - This section, and the notes in §20.1, §20.5, §20.7, §20.8 and §20.10.
+- **No schema change and no migration.** The family is stored in `Roadmap.coverage` under `PRACTICE_FAMILY_KEY`, beside the activity answers.
+- **Gates** (DATABASE_URL and DIRECT_URL pointed at a closed port, no model key):
+  - `npx tsc --noEmit -p .` is clean, and eslint is clean on the three code files.
+  - roadmap-contract-check `--strict` passes: 602 passed, 0 failed, and no handoff open. The other items had adopted every new definition by the end (§20.11.9).
+
+#### 20.11.1 The exam (review 1: findings 1, 4 and 9)
+
+- **The run-up.** `ProgressionInput.examPrepStage` is the stage that holds a dated exam's run-up. `examStagesOf(rows, examDay)` computes both indices from the rows' windows, one definition for R2 and R4:
+  - `examStage`: the first stage not held whose window ends on or after the exam's day, else the last;
+  - `examPrepStage`: the exam's own stage when the exam falls `EXAM_PREP_MIN_DAYS` (21) or more into its window, else the stage before it (the exam's own when there is none).
+  - Absent with a day, the run-up is the stage before the exam's. Without a day, the exam's stage (the last) is its own run-up.
+- **Timed practice (EXAM)** sits on the run-up and on the exam's stage, ranked right after the focus and before the carry. On a BETWEEN or PART stage that is full (room for two or more), it takes the place of the last copied practice. With room for one, the focus stays.
+- **The mock test** is the checkpoint of the stage before a dated exam's (escalation: self-test → mock → exam). With no day, the last stage holds the exam and its mock test, as before. A blocked mock gives way to a self-test on a Field plan while escalation allows.
+- **CORE.** On an exam plan, the plan's first production focus stays in every stage up to the exam's, ranked before Gemini's pick and the carry. By default that is problem sets; on a LANGUAGE plan, saying it aloud; on CRAFT, run-throughs.
+- **Going over mistakes** is the first base kind on the run-up and the exam's stage (the review's fix), after the carry. Elsewhere the base is the first base kind not yet placed (§20.11.6). A BETWEEN or PART stage, or a stage after the exam, copies code's practices but never timed practice or a pick.
+- **A KNOW plan with an exam** reads `examStages`:
+  - Fluent offers explaining, problem sets, mistakes and writing.
+  - Mastered's default is going over mistakes (then problem sets, explaining, a partner), and its role step is listing the gaps. On the exam's stage that gives going over mistakes, timed practice and the problem sets (the core).
+  - Building is never offered on a KNOW exam plan.
+- **After a dated exam** (`StageProgression.afterExam`), a stage keeps what the exam's stage trained: its practices, without timed practice or a pick, then the base and the shape. It holds no step and no checkpoint. So the full attempt and the performance check never land after the exam, and nothing climbs. R2 should end an exam aim's ladder at the exam's stage, or mark the later stages as optional (§20.11.9).
+- **A BETWEEN or PART stage takes a self-test** (on a Field plan, not the first stage) while escalation allows, so a long copy stage is never unmeasured.
+- **Disputed:** the review asked for FULL_ATTEMPT on the run-up when a dated exam comes before the last stage. It is not placed:
+  - the mock test on the stage before the exam is that paper: "Use a practice paper in the exam's format. Sit it timed and without notes, as on the day";
+  - FULL_ATTEMPT is lastStageOnly ("performs the aim itself"), a rule that four checks pin independently (contract, realism, server and ui) and that R3's validator enforces;
+  - with nothing placed after the exam, no full attempt or performance check lands after it either.
+
+#### 20.11.2 The practice families (review 1: finding 2)
+
+- **`PracticeFamily`** (roadmap-types) is KNOW (the default), LANGUAGE, PERFORM or BUILD.
+  - A Field plan reads its family's table (`FIELD_FAMILY_PROGRESSION`; KNOW is `PROGRESSION.FIELD`).
+  - The rungs, the carry and the climb are the same for every family.
+  - A track Area has no family; its table is its track's.
+
+| Family | Foundation → Familiar → Retained → Fluent → Mastered (default first) | Partner · base · role steps |
+|---|---|---|
+| KNOW | study, recall · recall, slow drills · problem sets, explain, writing · explain, problem sets, mistakes, writing, a partner, building · building, a partner. *With an exam:* Fluent explain, problem sets, mistakes, writing · Mastered mistakes, problem sets, explain, a partner | recall (else study) · recall, mistakes · outline, gaps, explain once, a small project (the gaps with an exam) |
+| LANGUAGE | listen and repeat, study · recall, slow drills · say it aloud, writing, explain · a partner, say it aloud, writing, mistakes · a partner, run-throughs | recall (else study) · listen and repeat, recall · gaps, explain once (aloud, to someone), a small project |
+| PERFORM | study, listen, slow drills · slow drills, recall · run-throughs, say it aloud, mistakes · run-throughs, a partner · a partner, run-throughs | slow drills (else recall) · slow drills, recall · gaps, a small project |
+| BUILD | study, recall · recall, slow drills · problem sets, writing, explain · building, problem sets, mistakes, a partner · building, a partner | recall (else study) · recall, mistakes · outline, gaps, a small project, explain once |
+
+- KNOW no longer offers listening, saying it aloud or full run-throughs. The review had found "listen and repeat or say it aloud for maths, full run-throughs for code".
+- **The family is one closed choice, and it is the user's.** `Intake.practiceFamily` is the answer to a form question. The form prefills it with `practiceFamilyPrefillOf(aim, examLabel)`, code's reading of the user's own words (examPrefillOf's pattern):
+  - "public speaking" or a speech: PERFORM;
+  - a language exam (IELTS, JLPT …), a language skill word, a word for "language" or "speak" (English and a few others), 語 or 语, or a language name not followed by a topic word: LANGUAGE;
+  - an instrument, singing, dancing, sailing, playing: PERFORM;
+  - making things (build, app, software, coding …) on an aim that is not a credential: BUILD;
+  - else KNOW.
+
+  On the corpus, this reads IELTS, Japanese at work and the Vietnamese aim as LANGUAGE; the guitar and the dinghy as PERFORM; and the Python certificate, the trader and the actuarial exam as KNOW.
+- **Storage.** The family lives in `Roadmap.coverage["$practiceFamily"]` (`PRACTICE_FAMILY_KEY`). `coverageJsonOf(coverage, confirm, family?)` writes it, and `practiceFamilyOfCoverage` reads it. An unknown value is never written, and reads as null.
+- **`practiceFamilyOf(intake)`** is what every plan path passes: as `ProgressionInput.family`, and as the run's family for the pick enums. It returns the user's answer, else the prefill.
+  - *Deviation:* the review said "the default is KNOW". A plan whose intake has no answer (every intake before this round) reads the prefill, not KNOW. So the corpus's language and performance aims get their tables without waiting for an answer.
+  - Making the fallback KNOW is one line in `practiceFamilyOf`.
+- **Gemini never sets the family**, and it is not in the v4 schema. The review's alternative (one more enum, shown as Gemini's choice) is not taken: drafting is off (`ROADMAP_GEMINI_LIVE` false), so the starter every user gets must already have the right family.
+
+#### 20.11.3 Gemini's pick is added, never in place of code's default (review 1: finding 3)
+
+- **The focus is always code's default** (the first placeable candidate).
+  - A valid pick that differs is a PICK, placed after EXAM and CORE and before the carry and the base.
+  - A pick of the default itself marks the FOCUS (`picked`, GEMINI_PICK).
+  - With room for one, or when EXAM and CORE fill the room, the pick waits. R3 logs `keys.pick-reshaped`, or `keys.pick-code` when the stage trains it anyway.
+- **Nothing passes the pick on.** The next stage carries code's default, not the pick. A BETWEEN or PART stage, or a stage after the exam, never copies a pick, and a copied default is no longer marked picked.
+- **The candidates are the family's**, so a kind that doesn't suit the aim is no longer offered as a pick.
+- **The accept blocker is R4's.** `acceptBlockersOf` now blocks, on every track, a pending GEMINI_PICK that is not code's default (`DECIDE_PRACTICE_PICKS`: "Keep Gemini's picks, or use the app's default").
+- **`isUndecidedItem` is unchanged.** It covers Gemini's words left PENDING, and a pick row holds code's words (origin CODE). Making it cover picks would change `draftNeedsOf` for every page that counts rows. R4's plan-wide blocker already holds a pick that differs from the default.
+- **The rules:** `progressionViolationsOf` gains three codes:
+  - DEFAULT: code's default missing with room for two or more;
+  - PICK: a valid pick left out while a lower-ranked slot was free or used;
+  - CORE.
+
+  The contract check's property also asserts, independently, that for every pick vector each stage keeps the FOCUS, EXAM and CORE kinds of the plan built without picks.
+
+#### 20.11.4 Start, then a re-plan (review 1: finding 5; review 2: the carried branch)
+
+- **A carried stage** reads what it carried the way a fresh stage chose it: the partner on the chain's first stage, or else the carry from `[prevFocus, prevCarry]`. It never reads the exam's timed practice or the core as its carry.
+- **A carried copy** (a BETWEEN or PART stage, or a stage after the exam) sets nothing the next stage builds on, as when it was built. So a started PART leaves Familiar with recall drills and study (the review's A'), not recall drills alone.
+- **The property:** for every plan in the property without picks, carrying any stage with exactly its own kinds leaves every other stage as built (71,282 re-planned stages).
+
+#### 20.11.5 The room and the sizing (review 1: finding 7)
+
+- **`practicesThatFitOf(budget, floor?)`** is now the most practices that still give the focus two sessions a week and every other practice one, at the stage's floor (D30 without one): ⌊budget ÷ unit⌋ − 1, from 1 to 3. For example:
+  - Fluent at 135 min a week holds two practices, not three;
+  - 90 min at D45 holds one.
+- **`practiceSizesOf(kinds, budget, floor?)`** sizes a stage's practices together, in the progression's order:
+  - the focus takes `PRACTICE_FOCUS_SHARES` (2) shares, and every other practice one;
+  - the focus also takes the rounding remainder;
+  - a BODY longer session sits at least one band above the easy session.
+
+  At Fluent's 135 min, explaining gets 2 × D45 and problem sets 1 × D45. On run-10k's Stage 3, the longer session gets 2 × D60, and the technique and easy sessions 1 × D45 each. `practiceSizeOf` is unchanged.
+- **R2's `allocate` adopts `practiceSizesOf`** (its HANDOFF line passes).
+
+#### 20.11.6 The rest
+
+- **BODY's last stage (review 1: finding 8).** When the gate holds every candidate of a stage, a track's stand-in first tries the stage before's focus, then that stage's other candidates at or above its rung. Only then does it take a safe kind, and only if that kind isn't easier.
+  - With harder avoided, Stage 5 keeps the longer session and its three practices.
+  - With harder and longer avoided, it keeps strength.
+  - While the card waits, every non-safe kind is blocked, so the stand-ins stay safe: the technique session the stage before trained stands in, not the easy one.
+- **The base** is the first base kind that is placeable and not yet placed (`!taken`), so going over mistakes now appears from Retained. A retrieval stage (Foundation, Familiar) never takes a production kind as its base, because going over mistakes needs work to go over. The exam's run-up is the exception.
+- **A copy with nothing to copy** (a carried source whose kinds the gate now holds) takes the least demanding placeable practice, so no stage is left without practice.
+
+#### 20.11.7 The default plans now (contract-check goldens)
+
+| Stage | KNOW, no exam | KNOW, an exam with no day | LANGUAGE | PERFORM |
+|---|---|---|---|---|
+| Foundation | study + recall · choose material | the same · + book the exam | listen and repeat + recall | study + slow drills + recall |
+| Familiar | recall + study · outline · self-test | the same | recall + listen · the gaps · self-test | slow drills + study + recall · the gaps · self-test |
+| Retained | problem sets + recall + mistakes · the gaps · self-test | the same | say it aloud + recall + listen · explain once · self-test | run-throughs + slow drills + recall · self-test |
+| Fluent | explain + problem sets + recall · explain once · self-test | explain + problem sets (core) + recall · self-test | a partner + say it aloud + listen · a small project · self-test | run-throughs + slow drills + recall · a small project · self-test |
+| Mastered | building + explain + recall · a small project, the full attempt · performance check | mistakes + timed practice + problem sets (core) · the gaps · mock test | a partner + say it aloud + listen · the full attempt · performance check | a partner + run-throughs + slow drills · the full attempt · performance check |
+
+Some dated exams:
+- **The day in Familiar** (no run-up given): Foundation takes timed practice and the mock test, and Familiar timed practice and the exam. Retained to Mastered keep Familiar's practices, with no step and no checkpoint.
+- **IELTS, the review's case:** a LANGUAGE plan whose exam falls six days into Toward Mastered, so the run-up is Fluent.
+  - Fluent holds a partner, timed practice and saying it aloud (the core), and closes on the mock test.
+  - BETWEEN 11 copies Fluent and holds timed practice and the exam.
+  - Mastered keeps what was trained.
+- **CRAFT with a graded exam on Stage 4:** the mock test on Stage 3, run-throughs kept as the core, and Stage 5 after the exam.
+
+#### 20.11.8 What roadmap-contract-check pins now (the §20 section)
+
+- **The tables:** all 16 (the four Field families and the four track tables, each with and without the exam's stages). The check covers every §20.2 rule, each family's defaults, and that each family trains its aim's skill.
+- **The family:**
+  - `practiceFamilyPrefillOf` over the corpus's aims and hostile ones;
+  - `practiceFamilyOf` (the answer wins);
+  - `coverageJsonOf` and `practiceFamilyOfCoverage` round-trip (prototype keys and arrays read null).
+- **Goldens:**
+  - each family's default plan;
+  - the exam undated, on Familiar, on Fluent with its run-up, at depth 8, IELTS, and CRAFT's graded exam;
+  - room for two, and room for one;
+  - additive picks, and picks on an exam plan; invalid picks;
+  - held, PART and BETWEEN stages, and a BETWEEN's self-test;
+  - the Field AVOIDs; practices off;
+  - a carried first stage, and Start then a re-plan (A');
+  - BODY waiting, answered, with harder avoided, and with harder and longer avoided;
+  - CARE, CRAFT, merged stages, DUTY, a single stage, a frozen input and no stage.
+- **Also:** `examStagesOf`, the per-family pick enums, and the notes (PICK, CORE, EXAM).
+- **26 injected breaches** cover every code, among them EXAM_PREP ×3, AFTER_EXAM ×2, DEFAULT and CORE. The clean plan breaks nothing.
+- **The property:** 62,594 plans. The inputs are the 12 packs × 5 tracks × 1,068 gate states × stage lists × exam placements and run-ups × practices on and off, with picks, room and the four families varied. It asserts, independently:
+  - the lead's four;
+  - nothing placed after a dated exam;
+  - every pick vector keeps code's FOCUS, EXAM and CORE kinds;
+  - carried equals fresh on a re-plan (71,282 stages);
+  - and `progressionViolationsOf` finds nothing.
+- **Sizing:** `practicesThatFitOf`, and `practiceSizesOf` within its budget.
+- **6 new HANDOFF lines** (§20.11.9).
+
+#### 20.11.9 Handoffs (HANDOFF lines; their state when this item finished, read from the tree)
+
+- **R2, roadmap-realism.ts:**
+  - Pass `family: practiceFamilyOf(intake)`, and `examStage` and `examPrepStage` from `examStagesOf` over the rows' windows. *(Landed.)*
+  - Size with `practiceSizesOf`. *(Landed.)*
+  - End an exam aim's ladder at the exam's stage, or mark the later stages as optional. *(No line.)*
+  - Map merged track rows by position, so a short plan starts at STAGE_1 (STAGE_2 for WORKING) and ends at STAGE_5. *(Review 1, finding 6; no line.)*
+- **R3, roadmap-validate.ts and roadmap-evidence.ts:**
+  - The pick enums are the run's family's (`PackRun.family`). *(Landed.)*
+  - `order` optional, the empty schema never sent, `gaps` without maxLength, and pick enums only for the ladder's stages. *(Landed; see §20.5.)*
+  - roadmap-model-check's pins of the first round's tables, and of "GEMINI_PICK on the stage's first practice", move to the family tables and additive picks.
+- **R4, roadmap-server.ts:**
+  - `intakeOf` reads the family (`practiceFamilyOfCoverage`), and `intakeData` and the activity answer keep it (`coverageJsonOf`'s third argument). *(Landed.)*
+  - A pending non-default pick blocks accept on every track (`DECIDE_PRACTICE_PICKS`). *(Landed; no line.)*
+- **R5:**
+  - The form asks the family, prefilled by `practiceFamilyPrefillOf`. *(Landed.)*
+  - `stageOptionsOf` reads the plan's family and gate. *(Landed.)*
+  - The plan shows the family, with [Change].
+  - The lead line names only the parts the run used (§20.8).
+- **R7, the hostile bar:** the generator's pick enums are `progressionPickEnumsOf`'s, so the tables' change moves the pin. The lead re-blesses.
+- **The other items' goldens.** roadmap-realism-check and roadmap-model-check pinned the first round's plans:
+  - Field defaults with no base at Retained;
+  - timed practice on the exam's stage alone;
+  - BODY's waiting stand-ins;
+  - picks as the focus.
+
+  Those lines fail until their owners re-pin them. Each failing line is this round's intended change (§20.11.1–§20.11.6).
+
+#### 20.11.10 Deviations and open points for the lead
+
+1. **The family's fallback is the prefill, not KNOW** (§20.11.2). Say if an unanswered intake should read KNOW.
+2. **FULL_ATTEMPT is not placed on the run-up** (§20.11.1, disputed with evidence). The mock test before the exam is the full paper under exam conditions.
+3. **After a dated exam the stages keep practising, unchecked.** This keeps the lead's "every stage carries practice whenever practices are allowed". If R2 ends the ladder at the exam, there are no such stages.
+4. **The exam's stage at low hours.** With room for two it holds going over mistakes (Mastered's exam default) and timed practice; with room for one, going over mistakes alone. Problem sets as the exam default would serve a one-practice stage better (they generate the mistakes to go over); the other items had already pinned the mistakes default when this was weighed, so it is left to you (one line in `PROGRESSION.FIELD.examStages`).
+5. **With room for one, the exam's stage keeps the focus, not timed practice.** At very low hours (3 h a week at a D45 floor), the exam's stage may hold only one practice. EXAM_PREP requires timed practice only with room for two or more.
+6. **The tables are still judgement**, now per family. The lead may tune any list. The table checks hold every candidate list to the climb, with and without the exam's stages.
+7. **R2's guard on BODY sizing.** R2's `allocate` holds a harder and a longer session to at most two a week each (`BODY_SESSIONS_MAX`, "for the lead to fold into" `practiceSizesOf`). `practiceSizesOf` itself doesn't cap them: its golden gives a harder focus three sessions at 240 min. Folding the cap in is one rule in `practiceSizesOf` and a golden.
+8. **F-R4-13's shape and a PERFORM plan at low hours.** Slow drills have no retrieval or production role (`practiceRoleOf`), so with room for one, a PERFORM Familiar stage holds recall drills, not slow drills (guitar at 3 h a week). Giving slow drills a role is a change to the one definition of retrieval and production, which pay honesty also reads, so it is left to you.

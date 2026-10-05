@@ -101,7 +101,10 @@ import {
   positionsOf,
   practiceOnlyLineOf,
   referenceRunOf,
+  rowsAreProgressionOf,
   scopeNamesOf,
+  stageRunOf,
+  stageWhysOf,
   startAgainOffered,
   type LibraryDomain,
 } from "./roadmap-ui-model";
@@ -129,7 +132,7 @@ import { RunFacts, RunTable } from "./RunFacts";
 import { AreaChipView, restartHandoffOf } from "./AimCard";
 import { PlanHistory } from "./PlanHistory";
 import { HowMeasuredSheet, WorkedOutSheet } from "./HowMeasuredSheet";
-import { RankLines } from "./MilestoneCard";
+import { RankLines, StageWhyLine } from "./MilestoneCard";
 import { PaysLine } from "./PaysLine";
 import { RoadmapGlyph } from "./RoadmapGlyph";
 import { TitleClassChip } from "./ProvenanceChip";
@@ -271,6 +274,12 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
   const paused = started ? pausedItemsOf(current, view.activityConfirm, seen) : [];
   const pausedOf = new Map(paused.map((p) => [p.lineageId, p] as const));
   const rank = { rankIndex: m.rankIndex, gives: m.rankIndex != null && m.rankIndex > prevBest, paragonAfter: false };
+  // The practice progression (contracts §20): why this stage holds what it practises, from what it holds (a revision-4 stage of a plan
+  // whose rows are code's progression: any writer but a v3 reply; the stage before's rows aren't in the view, so no "builds on" here).
+  // The plan's track, exam and gate (the editor scope's: what the type picker leaves out), so a stage's options are the ones Gemini was offered.
+  const nowScope = editorScopeOf(view, [m]);
+  const stageRun = nowScope ? stageRunOf(nowScope) : null;
+  const why = stageRun && m.stage && rowsAreProgressionOf(referenceRunOf(view).run) ? (stageWhysOf([m], stageRun).get(m.lineageId) ?? null) : null;
 
   const items = (kind: ItemDraft["kind"]) => m.items.filter((it) => it.kind === kind && it.decision !== "REMOVED").sort((a, b) => a.ord - b.ord);
   const sec = (title: string, cap: string | null, body: ReactNode) => (
@@ -293,6 +302,7 @@ function NowSection({ view, current, onStartOpen }: { view: RoadmapView; current
             <p className="rm-ms-t">
               <MilestoneTitleText milestone={m} />
             </p>
+            <StageWhyLine why={why} track={stageRun?.track} />
             <div className="rm-ms-w">{spanLabel(m.windowStart, m.dueDay, today)}</div>
             <div className="rm-chips" style={{ marginTop: 8 }}>
               <Chip>{current.pastDue ? "Past due" : current.starting ? "Starting" : started ? "Current" : "Planned"}</Chip>

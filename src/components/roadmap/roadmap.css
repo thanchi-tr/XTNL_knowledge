@@ -463,6 +463,12 @@
   .rm-ms-n-held { border-style: dotted; color: var(--ink-2); }
   .rm-ms-stage { color: var(--ink-1); }
 
+  /* ---------- the practice progression (contracts §20): why this stage, under its title ----------
+     Words only (what the stage's practice is for, in bold, then what it builds on and what closes it);
+     at 344 px it wraps under the title in the header's text column, never past it. */
+  .rm-ms-why { color: var(--ink-1); overflow-wrap: anywhere; }
+  .rm-ms-why b { color: var(--ink-0); font-weight: 600; }
+
   /* ---------- week quest parts (F-R4-14) and a body row's health line (F-R4-13) ---------- */
   .rm-parts-l { grid-column: 2 / -1; font-size: 13px; line-height: 18px; color: var(--ink-1); margin: 2px 0 0; }
   .rm-q-health { display: block; font-size: 12px; line-height: 16px; color: var(--ink-2); margin-top: 2px; }

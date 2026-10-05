@@ -153,5 +153,49 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: \"knee injury, no running\" with the card answered (its pre-ticks left ticked): the running sessions are in no list, and stage 5 (harder only) offers none.",
+    "replies": [
+      {
+        "id": "lose-8kg-v4-a",
+        "about": "Mobility, technique and strength picked; the confirm is raised over Gemini's three session picks.",
+        "reply": {
+          "picks": {
+            "STAGE_1": "MOBILITY_SESSION",
+            "STAGE_2": "TECHNIQUE_SESSION",
+            "STAGE_4": "STRENGTH_SESSION"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "picks": {
+            "STAGE_1": "MOBILITY_SESSION",
+            "STAGE_2": "TECHNIQUE_SESSION",
+            "STAGE_4": "STRENGTH_SESSION"
+          },
+          "excluded": [
+            "HARDER_SESSION",
+            "LONGER_SESSION"
+          ],
+          "sessionPicks": true
+        }
+      },
+      {
+        "id": "lose-8kg-v4-b",
+        "about": "A harder session picked for stage 5, which offers nothing while running is avoided: STAGE_5 is no property of `picks`, so EXTRA_PROPERTY, REJECTED whole.",
+        "reply": {
+          "picks": {
+            "STAGE_5": "HARDER_SESSION"
+          }
+        },
+        "expect": {
+          "verdict": "REJECTED",
+          "dropped": {
+            "REJECTED": 1
+          }
+        }
+      }
+    ]
   }
 }

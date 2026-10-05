@@ -154,5 +154,35 @@
         }
       }
     ]
+  },
+  "v4": {
+    "about": "v4: a BODY aim answered \"Nothing to avoid\": every stage picked, climbing.",
+    "replies": [
+      {
+        "id": "run-10k-v4-a",
+        "about": "Easy, strength, longer, longer, harder: each a candidate of its stage, never stepping down.",
+        "reply": {
+          "picks": {
+            "STAGE_1": "EASY_SESSION",
+            "STAGE_2": "STRENGTH_SESSION",
+            "STAGE_3": "LONGER_SESSION",
+            "STAGE_4": "LONGER_SESSION",
+            "STAGE_5": "HARDER_SESSION"
+          }
+        },
+        "expect": {
+          "verdict": "CLEAN",
+          "picks": {
+            "STAGE_1": "EASY_SESSION",
+            "STAGE_2": "STRENGTH_SESSION",
+            "STAGE_3": "LONGER_SESSION",
+            "STAGE_4": "LONGER_SESSION",
+            "STAGE_5": "HARDER_SESSION"
+          },
+          "excluded": [],
+          "sessionPicks": false
+        }
+      }
+    ]
   }
 }

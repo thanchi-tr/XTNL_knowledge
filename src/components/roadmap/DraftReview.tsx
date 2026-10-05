@@ -31,9 +31,11 @@
  *     one session-picks confirm;
  *   - the Depth line and the date check with its offers (Use the realistic
  *     date, Keep my date, Choose a lower depth…; nothing lowers by itself);
- *   - the arrangement line (Gemini runs only);
+ *   - the arrangement line (Gemini runs only; on a v4 run, the outline's
+ *     order and each practice marked as Gemini's choice);
  *   - the milestones: the next expanded and decided now, later ones as an
- *     outline; no Keep and no bulk keep;
+ *     outline; no Keep and no bulk keep; each with its "why this stage"
+ *     line (contracts §20: code's progression, roadmap-ui-model stageWhysOf);
  *   - "Lines to look at": outline lines in no milestone, and lines tied to no
  *     Domain; the outline's empty state; the area-suggestion panel (only
  *     while ROADMAP_GAPS_LIVE).
@@ -65,6 +67,7 @@ import {
   DRAFT_REFRESH_MS,
   ROADMAP_GEMINI_LIVE,
   RUN_STALE_MS,
+  isPracticeFamily,
   type DraftView,
   type MilestoneDraft,
   type RoadmapHeader,
@@ -82,6 +85,7 @@ import {
   CREDENTIAL_LINE,
   GEMINI_LEAD_LINE,
   GEMINI_V3_LEAD_LINE,
+  GEMINI_V4_LEAD_LINE,
   HEALTH_LINE,
   INTENSITY_WORD,
   KIND_NAME,
@@ -101,9 +105,11 @@ import {
   additionBlockedLine,
   additionEffectLine,
   additionsLine,
+  arrangementV4Line,
   byLine,
   depthName,
   exclusionsLine,
+  geminiV4LeadLine,
   outlineEmptyLine,
   paragonDepthLine,
   plural,
@@ -127,15 +133,22 @@ import {
   draftHasGeminiWords,
   draftRunWriterOf,
   geminiNamedOf,
+  geminiV4PartsOf,
   isHeldMilestone,
   isKeysOnlyDraft,
   pickerExcludedOf,
+  picksAreChoicesOf,
   practiceOnlyLineOf,
   rankPlanOf,
+  referenceRunOf,
   rowDomId,
+  rowsAreProgressionOf,
   scheduledOf,
   sessionSwapKindsOf,
+  stageRunOf,
+  stageWhysOf,
   undecidedOf,
+  type GeminiV4Parts,
 } from "./roadmap-ui-model";
 import { useRoadmapAction, useRoadmapRuntime } from "./roadmap-runtime";
 import { ItemEditor, type ItemEditorScope } from "./ItemEditor";
@@ -167,6 +180,8 @@ export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneD
   return {
     roadmapId: h.id,
     aim: h.aim,
+    // The practice family (contracts §20.11): the user's answer when the header carries it; else stageRunOf reads the aim's prefill.
+    practiceFamily: "practiceFamily" in h && isPracticeFamily(h.practiceFamily) ? h.practiceFamily : null,
     constraints: h.constraints,
     examLabel: h.examLabel,
     areaName: h.area.kind === "FIELD" ? h.area.name : TRACK_WORD[h.track],
@@ -180,7 +195,15 @@ export function editorScopeOf(view: RoadmapView, milestones: readonly MilestoneD
     excluded: pickerExcludedOf(confirm, view.draft?.exclusions),
     allowed: confirm ? [] : allowed,
     held: activityWaitingOf(confirm),
+    // The practice progression (contracts §20): the run that wrote these rows (the draft's latest run, else the accepted plan's) says whether Gemini's picks are choices among each stage's options.
+    choices: picksAreChoicesOf(rowsRunOf(view, milestones)),
   };
+}
+
+/** The run that wrote these rows: the latest run for a draft's rows, else the run behind the accepted plan (referenceRunOf). */
+function rowsRunOf(view: Pick<RoadmapView, "draft" | "run" | "acceptedRun">, milestones: readonly MilestoneDraft[]): RunView | null {
+  const drafted = view.draft != null && milestones.some((m) => view.draft!.milestones.includes(m));
+  return drafted ? view.run : referenceRunOf(view).run;
 }
 
 /** Scrolls to a row (or a plan-level card), focusing its first control. */
@@ -234,12 +257,24 @@ export function runRejectedOf(run: RunView | null): boolean {
  * accepted plan.", and while any row is still Gemini's words (`geminiWords`)
  * the line adds "Gemini's words stay marked." — never "Built from your
  * numbers." over rows Gemini wrote. A keys-only Gemini draft (`keysOnly`)
- * reads GEMINI_V3_LEAD_LINE: it wrote none of the words.
+ * says Gemini wrote none of the words: from the progression on (`choices`,
+ * picksAreChoicesOf; contracts §20) the v4 header names its smaller part,
+ * only the parts the run asked and the reply used (`parts`, geminiV4PartsOf
+ * over the draft's rows: geminiV4LeadLine; without them, every part,
+ * GEMINI_V4_LEAD_LINE), and a v3 reply's draft reads GEMINI_V3_LEAD_LINE.
  */
-export function draftLeadOf(writer: RunWriter | null, mode: "draft" | "replan", nonEnglish: boolean, geminiWords = false, keysOnly = false): { eyebrow: string; lead: string | null } {
+export function draftLeadOf(
+  writer: RunWriter | null,
+  mode: "draft" | "replan",
+  nonEnglish: boolean,
+  geminiWords = false,
+  keysOnly = false,
+  choices = true,
+  parts: GeminiV4Parts | null = null
+): { eyebrow: string; lead: string | null } {
   const eyebrow =
     mode === "replan" ? REPLAN_EYEBROW : writer === "GEMINI" ? "Draft · not accepted yet" : writer === "MANUAL" ? "Draft · written by you" : writer ? "Draft · built from your numbers" : "Draft · not accepted yet";
-  if (keysOnly && writer === "GEMINI") return { eyebrow, lead: GEMINI_V3_LEAD_LINE };
+  if (keysOnly && writer === "GEMINI") return { eyebrow, lead: choices ? (parts ? geminiV4LeadLine(parts) : GEMINI_V4_LEAD_LINE) : GEMINI_V3_LEAD_LINE };
   if (nonEnglish && writer === "GEMINI") return { eyebrow, lead: "Gemini's labels are in your language; the app's checks read English only, so each needs your tap." };
   if (mode === "replan" && writer && writer !== "GEMINI") {
     const base = writer === "INHOUSE" ? REPLAN_REFIT_LINE : writer === "MANUAL" ? REPLAN_EDITED_LINE : BUILT_LEAD_LINE;
@@ -287,7 +322,9 @@ function DraftHeader({ header, run, view, mode, next, keysOnly, gates }: { heade
   const draft = view.draft!;
   const writer = draftRunWriterOf(run);
   const rejected = runRejectedOf(run);
-  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly);
+  // The v4 header names only what the run asked and the reply used (contracts §20), read from the rows on screen.
+  const parts = geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" });
+  const { eyebrow, lead } = draftLeadOf(writer, mode, draft.nonEnglish, draftHasGeminiWords(draft.milestones), keysOnly, picksAreChoicesOf(run), parts);
   const capped = run?.capped === true || run?.status === "CAPPED";
   const geminiLive = (gates?.gemini ?? ROADMAP_GEMINI_LIVE) && view.hasKey;
   // On a keys-only draft the uncovered lines sit under "Lines to look at", with the lines tied to no Domain.
@@ -731,6 +768,8 @@ export function DraftReview({
   const ranks = rankPlanOf(draft.milestones, carried);
   const mfOf = (m: MilestoneDraft) => draft.feasibility.milestones.find((x) => x.lineageId === m.lineageId) ?? null;
   const required = draft.depth?.coverage.map((c) => ({ id: c.domainId, name: c.name })) ?? [];
+  // The plan's track, exam and gate (the scope's: what the type picker leaves out), so a stage's options are the ones Gemini was offered.
+  const stageRun = stageRunOf(scope);
   const ctx: MilestoneCardContext = {
     roadmapId: header.id,
     today: view.today,
@@ -756,11 +795,22 @@ export function DraftReview({
       : null,
     body: header.area.kind === "TRACK" && header.area.track === "BODY",
     practiceOnly: practiceOnlyLineOf(activityConfirmOfView(view)),
+    // The practice progression (contracts §20): each stage's why, read from what it holds — on a keys-only draft whose rows are
+    // code's progression (rowsAreProgressionOf: any writer but a v3 reply, which chose every type itself).
+    whys: keysOnly && rowsAreProgressionOf(view.run) ? stageWhysOf(draft.milestones, stageRun) : null,
+    catalogTrack: stageRun.track,
   };
   // The banner names what happened to the latest run; who wrote the rows is the header's (RunView.wrote).
   const banner = mode === "draft" && !runRejectedOf(view.run) ? draftBannerOf(view.run) : null;
   const outlineRange = outline.length > 0 ? (outline.length === 1 ? `Milestone ${outline[0].ord}` : `Milestones ${outline[0].ord}–${outline[outline.length - 1].ord}`) : null;
   const geminiArranged = draft.milestones.some((m) => m.arrangedBy === "GEMINI");
+  // The arrangement line names only what Gemini arranged that still stands (contracts §20): on a v4 run, the outline's order when
+  // it moved your lines and the practices still marked as its choice (none: no line); a v3 run's line is unchanged.
+  const arrangement = !geminiArranged
+    ? null
+    : picksAreChoicesOf(view.run)
+      ? arrangementV4Line(geminiV4PartsOf(draft.milestones, { field: header.area.kind === "FIELD" }))
+      : ARRANGEMENT_LINE;
 
   return (
     <ItemEditor scope={scope}>
@@ -820,10 +870,10 @@ export function DraftReview({
             </section>
           </div>
         )}
-        {keysOnly && geminiArranged && (
+        {keysOnly && arrangement && (
           <section className="card rm-arr">
             <RoadmapGlyph name="info" />
-            <span>{ARRANGEMENT_LINE}</span>
+            <span>{arrangement}</span>
           </section>
         )}
         <div className="rm-grid">

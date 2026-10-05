@@ -115,6 +115,16 @@
  *   (roadmap-catalog.ts holds the catalog half: CatalogEntry.safe, CUE_SAFE_KINDS, cueSafeKindsOf,
  *   the tracks that ask, cueGatedKindsOf, constraintsStateOf, allowedKindsFor, answerActivityCard, the
  *   refusals, and the reader and writer of the stored answers.)
+ *
+ * The practice progression (contracts §20), lane 0: after the probe's no-go,
+ * code owns the practice progression on every plan path (roadmap-catalog
+ * progressionOf); Gemini's reply shrinks to needs, the outline's order and
+ * one pick per stage among code's candidates.
+ *   Reply v4          ROADMAP_PROMPT_VERSION 4 · DraftReplyV4 · REPLY_V4_PROPERTIES · OutlineOrder ·
+ *                     outlineOrderOf (the reply's order, every line kept) · outlineStagesOf (split across stages)
+ *   Family (§20.11)   PracticeFamily · PRACTICE_FAMILIES · PRACTICE_FAMILY_DEFAULT · isPracticeFamily ·
+ *                     practiceFamilyPrefillOf (the form's prefill, code's reading of the aim) ·
+ *                     Intake.practiceFamily (the user's answer) · PRACTICE_FAMILY_KEY (its place in Roadmap.coverage)
  * The practice, step and checkpoint catalog is roadmap-catalog.ts; the aim
  * invitation rules are roadmap-invite.ts; the aim handoff is roadmap-handoff.ts.
  */
@@ -913,12 +923,18 @@ export const REACH_CONFIRM_DAYS = SETTLE_LAG_DAYS;
 /** The only proven id; the approved probe may switch it. */
 export const ROADMAP_MODEL = "gemini-3.5-flash-lite";
 /**
- * Revision 4: 3, keys-only drafting (F-R4-17). The reply holds only keys
- * issued for the run (and, only while ROADMAP_GAPS_LIVE and the user's
- * switch are both on, at most GAPS_MAX gap strings). inputHash includes the
- * version, so a v2 reply is never reused; v2 rows are legacy (F-R4-16).
+ * 4 (contracts §20, the lead's decision after the probe): code owns the
+ * practice progression (roadmap-catalog progressionOf), and the reply
+ * (DraftReplyV4) holds only which unchosen Domains the aim needs, the
+ * outline's order, and at most one pick per stage among code's candidates
+ * (progressionPickEnumsOf), still keys only (and, only while
+ * ROADMAP_GAPS_LIVE and the user's switch are both on, at most GAPS_MAX gap
+ * strings). Revision 4 began at 3, keys-only drafting (F-R4-17: Gemini
+ * picked every practice, step and checkpoint kind; DraftReplyV3). inputHash
+ * includes the version, so a v3 reply is never reused; v2 rows are legacy
+ * (F-R4-16).
  */
-export const ROADMAP_PROMPT_VERSION: number = 3;
+export const ROADMAP_PROMPT_VERSION: number = 4;
 /** The most gap strings a reply may hold (the `gaps` array's maxItems; F-R4-19). */
 export const GAPS_MAX = 4;
 /** A gap name's caps: characters, words, and characters per word (the shape rule). */
@@ -2647,11 +2663,103 @@ export interface Intake {
    * reads it through allowedKindsFor. Absent or null: nothing answered.
    */
   activities?: ActivityConfirm | null;
+  /**
+   * The practice family (contracts §20.11): which kind of skill a Field aim
+   * trains, so code's practice progression trains it (KNOW: a body of
+   * knowledge; LANGUAGE: listening and speaking a language; PERFORM: doing
+   * it, as an instrument or sailing; BUILD: making things). The user's
+   * answer to the form's question, prefilled by practiceFamilyPrefillOf
+   * (YOURS). Stored in Roadmap.coverage under PRACTICE_FAMILY_KEY (no new
+   * column: roadmap-catalog practiceFamilyOfCoverage reads it,
+   * coverageJsonOf writes it). Absent or null: the prefill over the aim
+   * (roadmap-catalog practiceFamilyOf). Read only on a Field Area.
+   */
+  practiceFamily?: PracticeFamily | null;
 }
 
 /** The exam question's prefill (F-R4-24): isCredentialAim over the aim alone (CREDENTIAL_WORDS widened for this). The user's Yes/No wins. */
 export function examPrefillOf(aim: string): boolean {
   return isCredentialAim(aim, null);
+}
+
+// ── The practice family (contracts §20.11): which progression table a Field aim trains with ──
+
+/**
+ * Which kind of skill a Field aim trains (contracts §20.11; the lead's
+ * review of the progression: one table for every Field aim never trained
+ * speaking, listening or performing):
+ *   KNOW      a body of knowledge to understand and use (study → recall →
+ *             problems → explaining → applying it); with an exam, problems,
+ *             mistakes and timed practice up to the exam. The default.
+ *   LANGUAGE  a language to understand and speak (listen and repeat →
+ *             recall → saying it aloud and writing → a partner).
+ *   PERFORM   something to do or play (study → slow drills → full
+ *             run-throughs → a teacher or partner).
+ *   BUILD     things to make (study → recall → problems → building).
+ * One closed choice: the user's answer (Intake.practiceFamily), prefilled by
+ * code's reading of the aim (practiceFamilyPrefillOf). Gemini never sets it.
+ */
+export type PracticeFamily = "KNOW" | "LANGUAGE" | "PERFORM" | "BUILD";
+export const PRACTICE_FAMILIES: readonly PracticeFamily[] = ["KNOW", "LANGUAGE", "PERFORM", "BUILD"];
+/** The family with nothing to read (no answer and no cue in the aim). */
+export const PRACTICE_FAMILY_DEFAULT: PracticeFamily = "KNOW";
+
+/** A practice family (an exact own value; never a prototype name). */
+export function isPracticeFamily(v: unknown): v is PracticeFamily {
+  return typeof v === "string" && (PRACTICE_FAMILIES as readonly string[]).includes(v);
+}
+
+/** A language aim's words (exams named by their test, the skill words, language names and the few non-English words for "language" and "speak"). */
+const FAMILY_LANGUAGE_WORDS: ReadonlySet<string> = new Set([
+  "ielts", "toefl", "toeic", "jlpt", "hsk", "topik", "delf", "dalf", "dele", "cefr", "esol", "goethe",
+  "speak", "speaking", "spoken", "fluent", "fluency", "fluently", "conversation", "conversational", "pronunciation", "accent",
+  "vocabulary", "grammar", "kanji", "hiragana", "katakana", "keigo", "pinyin", "hanzi", "bilingual", "language", "languages",
+  "tiếng", "nói", "idioma", "hablar", "parler", "langue", "sprechen", "sprache", "lingua",
+]);
+/** Language names: a language aim only with no topic word after them ("French history" is not one). */
+const FAMILY_LANGUAGE_NAMES: ReadonlySet<string> = new Set([
+  "english", "japanese", "chinese", "mandarin", "cantonese", "korean", "spanish", "french", "german", "italian", "portuguese",
+  "russian", "arabic", "hindi", "vietnamese", "thai", "dutch", "swedish", "norwegian", "danish", "finnish", "polish", "turkish",
+  "greek", "hebrew", "indonesian", "malay", "tagalog", "swahili", "ukrainian", "czech",
+]);
+const FAMILY_TOPIC_WORDS: ReadonlySet<string> = new Set(["history", "cooking", "cuisine", "food", "culture", "art", "politics", "law", "literature", "wine", "medicine", "revolution"]);
+/** Something to do or play (an instrument, singing, dancing, sailing, a speech). */
+const FAMILY_PERFORM_WORDS: ReadonlySet<string> = new Set([
+  "play", "playing", "perform", "recital", "concert", "gig", "sing", "singing", "song", "songs", "dance", "dancing", "choir",
+  "piano", "guitar", "violin", "viola", "cello", "drums", "drum", "ukulele", "flute", "saxophone", "trumpet", "clarinet", "harp", "instrument",
+  "abrsm", "sail", "sailing", "dinghy", "surf", "surfing", "ski", "skiing", "juggle", "juggling", "acting", "speech", "speeches",
+]);
+/** Things to make. Not read on a credential aim (a certificate is a body of knowledge examined). */
+const FAMILY_BUILD_WORDS: ReadonlySet<string> = new Set([
+  "build", "building", "develop", "app", "apps", "website", "websites", "software", "programming", "coding", "code", "developer",
+  "game", "games", "design", "designer", "portfolio", "novel", "robot", "robotics", "prototype", "startup", "woodwork", "furniture",
+]);
+/** Characters that mark a language name in Japanese or Chinese (日本語, 英語, 汉语). */
+const FAMILY_LANGUAGE_CJK = /[語语]/u;
+
+/**
+ * The practice family question's prefill (contracts §20.11), code's reading
+ * of the user's own aim and exam label (examPrefillOf's pattern: it only
+ * prefills, and the user's answer wins). Pure and deterministic; no model.
+ *   - "public speaking", a speech: PERFORM;
+ *   - a language exam, a language skill word, a word for "language" or
+ *     "speak" (English and a few others), 語 or 语, or a language name not
+ *     followed by a topic word: LANGUAGE;
+ *   - an instrument, singing, dancing, sailing, playing: PERFORM;
+ *   - making things (build, app, software, coding …) on an aim that is not
+ *     a credential (isCredentialAim): BUILD;
+ *   - else KNOW.
+ */
+export function practiceFamilyPrefillOf(aim: string | null | undefined, examLabel?: string | null): PracticeFamily {
+  const text = `${aim ?? ""} ${examLabel ?? ""}`;
+  const words = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const has = (set: ReadonlySet<string>) => words.some((w) => set.has(w));
+  if (/\bpublic\s+speaking\b/i.test(text)) return "PERFORM";
+  if (has(FAMILY_LANGUAGE_WORDS) || FAMILY_LANGUAGE_CJK.test(text)) return "LANGUAGE";
+  if (words.some((w, i) => FAMILY_LANGUAGE_NAMES.has(w) && !FAMILY_TOPIC_WORDS.has(words[i + 1] ?? ""))) return "LANGUAGE";
+  if (has(FAMILY_PERFORM_WORDS)) return "PERFORM";
+  if (has(FAMILY_BUILD_WORDS) && !isCredentialAim(aim ?? "", examLabel)) return "BUILD";
+  return PRACTICE_FAMILY_DEFAULT;
 }
 
 /** The pack's sections, in prompt order; the form's privacy line is generated from this list. */
@@ -2732,6 +2840,95 @@ export interface DraftReplyStage {
   practices?: { kind: string; on?: string }[];
   steps: { kind: string; on?: string }[];
   checkpoint?: string | null;
+}
+
+/**
+ * The v4 reply (ROADMAP_PROMPT_VERSION 4; contracts §20): Gemini's part once
+ * code owns the practice progression. Keys only, every string an enum value
+ * issued for the run, except `gaps` (only while ROADMAP_GAPS_LIVE and the
+ * user's switch are both on). Validation reads the parsed JSON as unknown
+ * and never trusts this shape.
+ *   needs  unchosen D-keys the aim needs (omitted on a track Area or with
+ *          none listed): pending DOMAIN items (NOT_CHOSEN), shown as Gemini's
+ *          choice; the user confirms them (as v3)
+ *   order  the outline's S-keys in the order to learn them, each once
+ *          (omitted without an outline): outlineOrderOf resolves it, and code
+ *          splits it across the stages in that order (outlineStagesOf)
+ *   picks  per slot (FOUNDATION … the depth's key, or STAGE_1..STAGE_5), at
+ *          most one kind from that slot's enum (roadmap-catalog
+ *          progressionPickEnumsOf: the stage's focus candidates on this
+ *          run); a slot left out takes code's default. Everything else in
+ *          the stage (the carry, the spaced review, the steps, the
+ *          checkpoint) is code's (progressionOf)
+ * There is no `stages` object, no practice, step or checkpoint list and no
+ * `on`: Gemini places no step and no checkpoint.
+ */
+export interface DraftReplyV4 {
+  needs?: string[];
+  order?: string[];
+  picks?: Partial<Record<string, string>>;
+  gaps?: string[];
+}
+
+/** The v4 reply's properties, in the schema's propertyOrdering (a property whose enum would be empty is left out). */
+export const REPLY_V4_PROPERTIES = ["needs", "order", "picks", "gaps"] as const;
+
+/** What outlineOrderOf gives: the line indices in learning order (every line once), what was dropped, and the lines Gemini left out (appended in the user's order). */
+export interface OutlineOrder {
+  order: number[];
+  /** Entries of the reply's `order` not used: a value that isn't a string, an unknown or confusable key, a line already listed. */
+  dropped: number;
+  /** Lines the reply didn't list, appended after its order in the user's own order. */
+  appended: number[];
+}
+
+/**
+ * The outline's order from a v4 reply (contracts §20.5), pure: `order` read
+ * as unknown against the run's keymap (S-key → line index; an own-property
+ * lookup, exact keys only: no trim, no case-fold, so 'S01', 's1' and
+ * '__proto__' never resolve), each line once, in the reply's order; then
+ * every line it left out, in the user's order, so no line is ever lost (the
+ * v3 "uncovered" lines are gone). A missing or non-array `order` is the
+ * user's order with nothing dropped. Indices outside 0..lines-1 never
+ * resolve.
+ */
+export function outlineOrderOf(order: unknown, keymap: Readonly<Record<string, number>> | null | undefined, lines: number): OutlineOrder {
+  const n = typeof lines === "number" && Number.isInteger(lines) && lines > 0 ? lines : 0;
+  const seen = new Set<number>();
+  const out: number[] = [];
+  let dropped = 0;
+  if (Array.isArray(order)) {
+    for (const key of order) {
+      const idx = typeof key === "string" && keymap && Object.prototype.hasOwnProperty.call(keymap, key) ? keymap[key] : undefined;
+      if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= n || seen.has(idx)) {
+        dropped += 1;
+        continue;
+      }
+      seen.add(idx);
+      out.push(idx);
+    }
+  }
+  const appended: number[] = [];
+  for (let i = 0; i < n; i++) if (!seen.has(i)) appended.push(i);
+  return { order: [...out, ...appended], dropped, appended };
+}
+
+/**
+ * The ordered outline split across `stages` stages, in order (contracts
+ * §20.5; R2's syllabusChunks over the order, uncapped as the depth ladder
+ * splits it): the first lines % stages stages take one more. [] per stage
+ * with no line; [] with no stage.
+ */
+export function outlineStagesOf(order: readonly number[], stages: number): number[][] {
+  const k = typeof stages === "number" && Number.isInteger(stages) && stages > 0 ? stages : 0;
+  const out: number[][] = [];
+  let next = 0;
+  for (let i = 0; i < k; i++) {
+    const size = Math.floor(order.length / k) + (i < order.length % k ? 1 : 0);
+    out.push(order.slice(next, next + size));
+    next += size;
+  }
+  return out;
 }
 
 // ─── The integrity verdict (F-R4-20) ────────────────────────────────────────
@@ -5623,6 +5820,13 @@ export interface ActivityAnswer {
  * keeps only chosen Domain ids, so the form can't write answers through it.
  */
 export const ACTIVITY_CONFIRM_KEY = "$activities";
+/**
+ * Where the user's practice family is stored (contracts §20.11): this key of
+ * the Roadmap.coverage JSON, beside the answers (no new column). Its value is
+ * a PracticeFamily string, so intakeOf's numbers-only coverage read skips it;
+ * roadmap-catalog practiceFamilyOfCoverage reads it and coverageJsonOf writes it.
+ */
+export const PRACTICE_FAMILY_KEY = "$practiceFamily";
 
 // ── The gate's shapes (allowedKindsFor, roadmap-catalog.ts) ──
 

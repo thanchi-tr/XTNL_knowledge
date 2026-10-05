@@ -76,9 +76,18 @@
  *     run's exact schema (R3's integrityOf; a reuse against the CURRENT
  *     schema). A REJECTED reply writes nothing of its own; the run is FAILED
  *     with report.integrity and the starter. A clean reply is validated
- *     (validateKeysOnly) and materialised into R2's stage ladder (slot →
- *     stage, merged and held slots into the next kept milestone, within the
- *     caps), then R2's syncStagePractices, feasibility and the date check.
+ *     (validateKeysOnly) and materialised into R2's stage ladder: Gemini's
+ *     part only (v4, contracts §20: the Domains the aim needs, the outline's
+ *     learning order, one pick per stage among code's candidates), then the
+ *     practice progression through R2's fitPlan (code owns every stage's
+ *     practices, steps and checkpoint; a valid pick is added beside its
+ *     stage's focus, code's default, contracts §20.11),
+ *     the feasibility and the date check.
+ *   - The practice progression (contracts §20) on every plan path: the
+ *     starter, Gemini's plan, every re-plan (the started stages carried),
+ *     the activity answer's re-sync and every re-fit after an edit pass the
+ *     plan's intake to R2 (PlaceOpts.intake), which puts progressionOf's
+ *     kinds on each DRAFT stage; Start and the week quests read them.
  *   - Depth plans (F-R4-9 to F-R4-12): the intake's depth, coverage, date
  *     mode, exam and its date, the outline lines' Domains, named Domains and
  *     "Start again at a depth"; acceptance records the DateCheck, coverage
@@ -166,6 +175,28 @@
  *
  *   Confirm   setActivityVerdictsCore · ActivityVerdictsResult · PausedTask · PlanGate · gatePlanRows ·
  *             ACTIVITY_WAITING_PICK · ACTIVITY_AVOIDED_PICK · ACTIVITY_WAITING_START · ACTIVITY_HELD_IN_DRAFT
+ *
+ * The practice progression's review round (contracts §20.11; lane R4's half):
+ *   - Gemini's picks are decided: a pick that isn't code's default for its
+ *     stage (pickIsDefaultOf over the plan's family's candidates), still
+ *     PENDING, blocks accept on every plan (DECIDE_PRACTICE_PICKS on a plan
+ *     whose session picks need no confirm), "Next item to decide" pointing at
+ *     it. One decision for the plan: confirmSessionPicksCore KEEP (CHECKED)
+ *     or DEFAULT (removed, the re-fit keeps code's default); per row, "I
+ *     checked this" keeps a pick and Remove gives the default back.
+ *   - Nothing is sent that asks nothing or an earlier version: the claim
+ *     refuses a v4 schema with no property (NOTHING_TO_ARRANGE: no run row,
+ *     no cap; R3's schemaAsksNothing), and runDraftCore drafts only a pack of
+ *     today's ROADMAP_PROMPT_VERSION (an earlier pack, or one asking nothing,
+ *     fails without the call, the starter in its place). The pick enums are
+ *     asked for the dated ladder's own stage keys (pickStagesOf).
+ *   - The practice family (Intake.practiceFamily) is the user's answer:
+ *     validateIntake reads it, intakeOf reads it from Roadmap.coverage
+ *     (practiceFamilyOfCoverage), intakeData and the activity answer write it
+ *     through coverageJsonOf, an intake save without one keeps the stored
+ *     one, and a changed family re-syncs the draft (draftGateOps).
+ *
+ *   Picks     DECIDE_PRACTICE_PICKS · PRACTICE_PICKS_CHOICE · NOTHING_TO_ARRANGE
  */
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -354,6 +385,7 @@ import {
   type PaceResult,
   type PlanHistoryRow,
   type PracticeBand,
+  type PracticeFamily,
   type PracticeMethod,
   type ProficiencyBasis,
   type ProficiencyRebaseCause,
@@ -417,6 +449,7 @@ import {
   isMissingRev4Column,
   isRecallType,
   isRetryEntry,
+  isPracticeFamily,
   isStageKey,
   paragonMissingOf,
   rankIndexForStage,
@@ -429,6 +462,8 @@ import {
   isDepthLoweringRecord,
   writeNeedOf,
   domainsShort,
+  outlineOrderOf,
+  outlineStagesOf,
   yoursText,
   type AimDepth,
   type AimStep,
@@ -483,7 +518,10 @@ import {
   isCatalogKey,
   isPlaceableKind,
   isSessionPickKind,
+  practiceFamilyOf,
+  practiceFamilyOfCoverage,
   practiceRoleOf,
+  progressionCandidatesOf,
   withActivityPointer,
   type CatalogKey,
   type CatalogTrack,
@@ -938,8 +976,9 @@ export interface RoadmapLanes {
   lowerDepthPlanOf: typeof realism.lowerDepthPlanOf;
   dateEffectOf: typeof realism.dateEffectOf;
   floorDayOf: typeof realism.floorDayOf;
+  /** One stage's progression within its plan (contracts §20); R4 re-syncs through fitPlan (PlaceOpts.intake) instead. */
   syncStagePractices: typeof realism.syncStagePractices;
-  /** Confirm to unlock (contracts §19): a track draft's starter practices after the user's answer. */
+  /** Confirm to unlock (contracts §19): a track draft's practice progression after the user's answer (contracts §20). */
   syncTrackStarter: typeof realism.syncTrackStarter;
   buildResponseSchema: typeof model.buildResponseSchema;
   integrityOf: typeof validate.integrityOf;
@@ -977,6 +1016,12 @@ export const RACED = "Something changed at the same moment. Try again.";
 export const NO_ROADMAP = "That roadmap no longer exists.";
 export const ANOTHER_ACTIVE = "Another roadmap is active. Archive it to start another.";
 export const DRAFT_RUNNING = "A draft is already running.";
+/**
+ * The claim's refusal when the run's v4 schema would ask Gemini nothing (no Domain to suggest, no outline to order and
+ * no practice to pick: practices off, no outline, every Domain chosen): the model is never called, no run row is
+ * written and no draft of the day's cap is used (keysOnlySchemaOf leaves out every property then).
+ */
+export const NOTHING_TO_ARRANGE = "There's nothing here for Gemini to arrange: build from your numbers.";
 /** The one cap copy: roadmap-model's DRAFT_CAP_LINE (the claim refuses with it; RunView.capped shows it). */
 export const DRAFT_CAPPED = model.DRAFT_CAP_LINE;
 export const GATE_OFF = "Starting milestones arrives with the next update.";
@@ -2307,7 +2352,7 @@ const pendingAddition = (i: Pick<ItemDraft, "kind" | "decision" | "notes" | "ori
   i.kind === "DOMAIN" && i.origin === "GEMINI" && i.decision === "PENDING" && i.notes.includes("NOT_CHOSEN");
 
 /**
- * Runs R2's naming steps (fitPlan's relabel, syncStagePractices) with every
+ * Runs R2's naming steps (fitPlan's relabel and its practice progression) with every
  * pending Gemini addition hidden (fix round 2, lens 1 minor; F-R4-21): R2
  * names a stage's practices, steps and checkpoint over the row's live DOMAIN
  * items, and a Domain Gemini suggested is not the user's until confirmed, so
@@ -2366,6 +2411,25 @@ function picksNeedConfirmOf(r: Pick<RoadmapRec, "fieldId" | "track" | "constrain
   } catch {
     return (track === "BODY" || track === "CARE") && !!r.constraints?.trim();
   }
+}
+
+/**
+ * Whether a Gemini pick is code's own default for its stage (contracts §20.5): the first of the stage's candidates on
+ * this run (roadmap-catalog progressionCandidatesOf over the plan's track, the exam answer, practices and the gate;
+ * a BETWEEN or PART row reads its gate's by level). Such a pick changes nothing, so it never waits on the user.
+ */
+function pickIsDefaultOf(r: RoadmapRec, gate: Pick<ActivityGate, "blocked">): (d: MilestoneDraft, i: ItemDraft) => boolean {
+  const track = catalogTrackOf({ fieldId: r.fieldId, track: isOneOf(ROADMAP_TRACKS, r.track) ? r.track : DEFAULT_FIELD_TRACK });
+  // The candidates are the plan's family's on a Field plan (contracts §20.11), as the pick enums offered them.
+  const run = { exam: !!r.examLabel?.trim(), practicesAllowed: track !== "FIELD" || r.practicesAllowed, family: track === "FIELD" ? practiceFamilyOf(intakeOf(r)) : null, gate };
+  return (d, i) => {
+    if (!d.stage || !i.catalogKey) return false;
+    try {
+      return progressionCandidatesOf(track, { stage: d.stage, level: gateLevelOf(d) }, run)[0] === i.catalogKey;
+    } catch {
+      return false;
+    }
+  };
 }
 
 /** A stage's gate level: its paying card measure's level, else its gate stage's level; null on a track stage or a legacy row. */
@@ -2625,6 +2689,8 @@ export function validateIntake(raw: unknown, ctx: IntakeContext): { ok: true; va
       replaces,
       // Read only while ROADMAP_GAPS_LIVE (decision 51); a Field Area only.
       suggestAreas: !!fieldId && r.suggestAreas === true,
+      // The practice family (contracts §20.11): the user's answer on a Field Area (an exact family), else none (the prefill reads the aim).
+      practiceFamily: fieldId && isPracticeFamily(r.practiceFamily) ? r.practiceFamily : null,
     },
   };
 }
@@ -2666,6 +2732,8 @@ export function intakeOf(r: RoadmapRec): Intake {
     examLabel: r.examLabel,
     // Confirm to unlock (contracts §19.3): the user's per-kind answers, stored in Roadmap.coverage["$activities"].
     activities: activityConfirmOf(r.coverage),
+    // The practice family the user answered (contracts §20.11), stored in Roadmap.coverage["$practiceFamily"]; a Field Area only.
+    practiceFamily: r.fieldId != null ? practiceFamilyOfCoverage(r.coverage) : null,
   };
 }
 
@@ -2690,7 +2758,7 @@ function intakeData(i: Intake, today: DayKey): Record<string, unknown> {
     examLabel: i.examLabel,
     depth: i.fieldId ? (i.depth ?? AIM_DEPTHS[DEPTH_DEFAULT]) : null,
     dateMode: i.dateMode ?? "CHOSEN",
-    coverage: coverageJsonOf(i.coverage ?? null, i.activities ?? null),
+    coverage: coverageJsonOf(i.coverage ?? null, i.activities ?? null, i.fieldId ? (i.practiceFamily ?? null) : null),
     suggestAreas: i.suggestAreas === true,
     examDay: i.examLabel ? (i.examDay ?? null) : null,
   };
@@ -2752,7 +2820,8 @@ export async function saveIntakeCore(userId: string, intake: Intake, now: Date, 
     if (draft) {
       // The form never sends the stored answers (contracts §19.3): the row's own ride along, so an intake save never drops
       // them; the guard on the row as read makes an answer saved meanwhile a re-read, never a loss.
-      const kept = intakeData({ ...value, activities: activityConfirmOf(draft.coverage) }, today);
+      // The family too, when this save carries no answer of its own (a form that doesn't ask it).
+      const kept = intakeData({ ...value, activities: activityConfirmOf(draft.coverage), practiceFamily: value.practiceFamily ?? practiceFamilyOfCoverage(draft.coverage) }, today);
       const ops: StoreOp[] = [
         { op: "guard", guard: { g: "ROADMAP_IS", id: draft.id, statuses: ["DRAFT"], updatedAt: draft.updatedAt } },
         { op: "guard", guard: { g: "NO_OTHER_ACTIVE", exceptId: draft.id } },
@@ -2805,7 +2874,9 @@ async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: Road
   const gate = planGateOf(e, next).gate;
   const before = planGateOf(e, prev).gate;
   const switched = before.track !== gate.track;
-  const moved = !switched && JSON.stringify(gate.blocked) !== JSON.stringify(before.blocked);
+  // A Field plan's practice family changed (the user's answer, or the aim the prefill reads): the progression's tables did.
+  const refamilied = !switched && next.fieldId != null && practiceFamilyOf(intakeOf(prev)) !== practiceFamilyOf(intakeOf(next));
+  const moved = !switched && (refamilied || JSON.stringify(gate.blocked) !== JSON.stringify(before.blocked));
   if (!switched && !moved && gate.blocked.length === 0) return [];
   const b = await e.store.bundle(userId, next.id);
   if (!b || legacyOf(b)) return [];
@@ -2818,7 +2889,7 @@ async function draftGateOps(e: Env, userId: string, prev: RoadmapRec, next: Road
   if (moved || switched) {
     try {
       const ctx = await planContext(e, userId, next, now, coveragePriorOf(b) ?? draftCoverageOf(group));
-      afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf({ roadmap: next }, group)), switched ? null : before.blocked);
+      afters = regatedDrafts(e, ctx, [], drafts, switched ? null : before.blocked);
     } catch (err) {
       console.error("roadmap: the draft wasn't re-synced to the new words (the blocked kinds left it):", err instanceof Error ? err.message : err);
     }
@@ -3541,93 +3612,122 @@ function requiredOfPlan(ctx: PlanContext, plan: readonly MilestoneDraft[] = []):
 const withRequired = (intake: Intake, required: readonly string[]): Intake => (intake.fieldId ? { ...intake, domainIds: [...required] } : intake);
 
 /**
- * Materialisation (F-R4-17; R4): Gemini's per-slot keys, validated, placed
- * into R2's stage ladder. Each slot's items go to the milestone of its stage;
- * a merged or held stage's slot goes into the next kept milestone (by place
- * on the climb: a count gate sits just before its stage), within the caps:
- * practices ≤ PRACTICES_PER_MILESTONE and steps ≤ STEPS_PER_MILESTONE, the
- * higher stage's picks first; one checkpoint, the higher stage's, and none
- * when code already placed one there (EXAM_DAY replaces it); lines
- * unlimited. A BETWEEN milestone copies the practices of the slot above it;
- * its lines, steps and checkpoint stay with that slot's own milestone. A
- * pick code already placed there (the same type on the same Domain) is not
- * repeated. Gemini's Domain additions (`needs`, pending, NOT_CHOSEN) sit on
- * every kept milestone; area suggestions (GAP) only on the first, and only
- * while ROADMAP_GAPS_LIVE and the user's switch are on. Held rows stay empty.
+ * Materialisation (F-R4-17; v4, contracts §20): Gemini's part of a validated
+ * reply placed on R2's stage ladder, whose practices, steps and checkpoints
+ * are the practice progression's (code owns it; the reply's picks reach the
+ * plan as withStagePractices' `picks`, never as rows of the reply's own).
+ *   - The outline: every line of the ladder (and any line the reply placed
+ *     that the ladder lacks) split across the kept milestones in `order`
+ *     (the reply's learning order, roadmap-types outlineOrderOf; absent, the
+ *     user's), by roadmap-types outlineStagesOf, each line once, listed in
+ *     that order within its milestone.
+ *   - Gemini's Domain additions (`needs`, pending, NOT_CHOSEN) sit on every
+ *     kept milestone; area suggestions (GAP) only on the first, and only
+ *     while ROADMAP_GAPS_LIVE and the user's switch are on.
+ *   - A practice, step or checkpoint item the reply carries (a v3 reply's)
+ *     is never placed: the progression owns the stage.
+ * Held rows stay empty.
  */
-export function materialiseKeys(ladder: readonly MilestoneDraft[], validated: Pick<ValidatedDraft, "milestones">, slots: readonly string[], opts: { gapsOn: boolean; makeId: () => string }): MilestoneDraft[] {
+export function materialiseKeys(
+  ladder: readonly MilestoneDraft[],
+  validated: Pick<ValidatedDraft, "milestones">,
+  slots: readonly string[],
+  opts: { gapsOn: boolean; makeId: () => string; order?: readonly number[] | null }
+): MilestoneDraft[] {
+  const rows = ladder.map((m) => ({ ...m, items: m.items.map((i) => ({ ...i })) }));
+  const kept = rows.filter((m) => !heldRow(m) && m.status !== "LATER").sort((a, b) => a.ord - b.ord);
+  if (kept.length === 0) return rows;
+  const fresh = (it: ItemDraft): ItemDraft => ({ ...it, id: null, lineageId: opts.makeId() });
   const bySlot = new Map<string, MilestoneDraft>();
   validated.milestones.forEach((m, i) => {
     const key = m.stage && slots.includes(m.stage) ? m.stage : slots[i];
     if (key && !bySlot.has(key)) bySlot.set(key, m);
   });
-  const rows = ladder.map((m) => ({ ...m, items: m.items.map((i) => ({ ...i })) }));
-  const kept = rows.filter((m) => !heldRow(m) && m.status !== "LATER").sort((a, b) => a.ord - b.ord);
-  if (kept.length === 0) return rows;
-  const targetOf = (slot: string): MilestoneDraft => {
-    const own = kept.find((m) => m.stage === slot);
-    if (own) return own;
-    const place = slotPlaceOf(slot);
-    return kept.find((m) => rowPlaceOf(m) > place) ?? kept[kept.length - 1];
-  };
-  const fresh = (it: ItemDraft): ItemDraft => ({ ...it, id: null, lineageId: opts.makeId() });
-  const contributions = new Map<MilestoneDraft, { place: number; items: ItemDraft[]; copyOnly: boolean }[]>();
-  const add = (m: MilestoneDraft, place: number, items: ItemDraft[], copyOnly = false) => {
-    const list = contributions.get(m) ?? [];
-    list.push({ place, items, copyOnly });
-    contributions.set(m, list);
-  };
+  // The outline's lines: the ladder's, then any the reply placed that the ladder lacks (a line is the user's words).
+  const lines = new Map<number, ItemDraft>();
+  for (const m of kept) for (const it of m.items) if (it.kind === "TOPIC" && it.syllabusRef != null && !lines.has(it.syllabusRef)) lines.set(it.syllabusRef, it);
   const additions = new Map<string, ItemDraft>();
   const gaps: ItemDraft[] = [];
   for (const slot of slots) {
     const v = bySlot.get(slot);
     if (!v) continue;
-    const planItems: ItemDraft[] = [];
     for (const it of v.items) {
       if (it.kind === "DOMAIN") {
         if (it.domainId && !additions.has(it.domainId)) additions.set(it.domainId, it);
       } else if (it.kind === "GAP") {
         if (opts.gapsOn) gaps.push(it);
-      } else planItems.push(it);
-    }
-    add(targetOf(slot), slotPlaceOf(slot), planItems);
-    // A BETWEEN milestone copies the practices of the slot above it.
-    for (const m of kept) {
-      if (m.stage !== "BETWEEN") continue;
-      const above = stageOfLevel((gateLevelOf(m) ?? 0) + 1);
-      if (above === slot) add(m, slotPlaceOf(slot), planItems.filter((i) => i.kind === "PRACTICE"), true);
+      } else if (it.kind === "TOPIC" && it.syllabusRef != null && !lines.has(it.syllabusRef)) lines.set(it.syllabusRef, fresh(it));
     }
   }
-  const sameKind = (a: ItemDraft, b: ItemDraft) => a.kind === b.kind && !!a.catalogKey && a.catalogKey === b.catalogKey && (a.domainId ?? null) === (b.domainId ?? null);
-  for (const m of kept) {
-    const items = m.items;
-    const cap = { PRACTICE: PRACTICES_PER_MILESTONE, STEP: STEPS_PER_MILESTONE, CHECKPOINT: CHECKPOINTS_PER_MILESTONE } as Record<string, number>;
-    const count = (kind: string) => items.filter((i) => i.kind === kind && liveItem(i)).length;
-    // The higher stage's picks first.
-    const parts = [...(contributions.get(m) ?? [])].sort((a, b) => b.place - a.place);
-    for (const part of parts) {
-      for (const it of part.items) {
-        if (it.kind === "TOPIC") {
-          if (part.copyOnly) continue;
-          items.push(fresh(it));
-          continue;
-        }
-        if (cap[it.kind] == null) continue;
-        if (count(it.kind) >= cap[it.kind]) continue;
-        if (items.some((x) => liveItem(x) && sameKind(x, it))) continue;
-        items.push(fresh(it));
-      }
-    }
+  // The learning order: the reply's (each line once), then every line it left out, in the user's order.
+  const given = (opts.order ?? []).filter((r, k, all) => lines.has(r) && all.indexOf(r) === k);
+  const order = [...given, ...[...lines.keys()].filter((r) => !given.includes(r)).sort((a, b) => a - b)];
+  const split = outlineStagesOf(order, kept.length);
+  kept.forEach((m, k) => {
+    const items = m.items.filter((i) => i.kind !== "TOPIC");
+    for (const ref of split[k] ?? []) items.push({ ...(lines.get(ref) as ItemDraft) });
     for (const d of additions.values()) if (!items.some((i) => i.kind === "DOMAIN" && i.domainId === d.domainId)) items.push(fresh(d));
-  }
+    m.items = items;
+  });
   if (gaps.length) kept[0].items.push(...gaps.map(fresh));
-  // Lines in outline order within a milestone; every item numbered in its milestone.
+  // Every item numbered in its milestone: the Domains, the rest, then the lines in learning order.
   for (const m of kept) {
-    const topics = m.items.filter((i) => i.kind === "TOPIC").sort((a, b) => (a.syllabusRef ?? 0) - (b.syllabusRef ?? 0));
+    const topics = m.items.filter((i) => i.kind === "TOPIC");
     const rest = m.items.filter((i) => i.kind !== "TOPIC");
     m.items = [...rest, ...topics].map((i, k) => ({ ...i, ord: k + 1 }));
   }
   return rows;
+}
+
+/**
+ * Gemini's learning order of the outline, from a reply (contracts §20.5):
+ * the validator's own (R3's v4 `order`, as line indices or an OutlineOrder),
+ * else the reply's `order` S-keys through roadmap-types outlineOrderOf over
+ * the run's keymap (exact keys only), else a v3 reply's lines in the order
+ * its stages placed them; null with none (the user's order).
+ */
+function replyOrderOf(checked: unknown, parsed: unknown, pack: EvidencePack, lines: number, validated: Pick<ValidatedDraft, "milestones">, slots: readonly string[]): number[] | null {
+  const own = (o: unknown, k: string): unknown => (o && typeof o === "object" && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, k) ? (o as Record<string, unknown>)[k] : undefined);
+  const indices = (v: unknown): number[] | null => (Array.isArray(v) && v.every((x) => typeof x === "number" && Number.isInteger(x)) ? (v as number[]) : null);
+  const fromValidator = own(checked, "order");
+  const direct = indices(fromValidator) ?? indices(own(fromValidator, "order"));
+  if (direct) return direct;
+  const raw = own(parsed, "order");
+  if (Array.isArray(raw)) return outlineOrderOf(raw, pack.keymap?.syllabus ?? null, lines).order;
+  const bySlot = [...validated.milestones].sort((a, b) => slots.indexOf(a.stage ?? "") - slots.indexOf(b.stage ?? ""));
+  const placed = bySlot.flatMap((m) => m.items.filter((i) => i.kind === "TOPIC" && i.syllabusRef != null).map((i) => i.syllabusRef as number));
+  return placed.length ? placed : null;
+}
+
+/**
+ * Gemini's picks from a reply (contracts §20.5), read as unknown: the
+ * validator's own (R3's v4 `picks`), else the reply's `picks` object, else a
+ * v3 reply's first practice per stage that is one of that stage's
+ * candidates on this run (progressionCandidatesOf through the gate). R2's
+ * progression reads any pick outside a stage's candidates as absent: code's
+ * default.
+ */
+function replyPicksOf(
+  checked: unknown,
+  parsed: unknown,
+  validated: Pick<ValidatedDraft, "milestones">,
+  run: { track: CatalogTrack; exam: boolean; practicesAllowed: boolean; family: PracticeFamily | null; gate: Pick<ActivityGate, "blocked"> }
+): unknown {
+  const own = (o: unknown, k: string): unknown => (o && typeof o === "object" && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, k) ? (o as Record<string, unknown>)[k] : undefined);
+  const plain = (v: unknown): boolean => !!v && typeof v === "object" && !Array.isArray(v);
+  const fromValidator = own(checked, "picks");
+  if (plain(fromValidator)) return fromValidator;
+  const raw = own(parsed, "picks");
+  if (plain(raw)) return raw;
+  const out: Record<string, string> = {};
+  for (const m of validated.milestones) {
+    const stage = m.stage;
+    if (!stage || Object.prototype.hasOwnProperty.call(out, stage)) continue;
+    const cands = progressionCandidatesOf(run.track, { stage }, run) as readonly string[];
+    const first = [...m.items].sort((a, b) => a.ord - b.ord).find((i) => i.kind === "PRACTICE" && i.decision !== "REMOVED" && !!i.catalogKey && cands.includes(i.catalogKey));
+    if (first?.catalogKey) out[stage] = first.catalogKey;
+  }
+  return out;
 }
 
 /** A Domain item whose provenance must survive a re-date: Gemini's `needs` (NOT_CHOSEN) or a Domain created from a suggestion. */
@@ -3676,7 +3776,7 @@ export function transplantOnto(old: readonly MilestoneDraft[], ladder: readonly 
 /**
  * A draft re-dated after a plan-level change (F-R4-19, F-R4-21): R2's ladder
  * for R from today (on a re-plan, without the stages already carried), the
- * draft's rows carried onto it, R2's stage practices, and the feasibility
+ * draft's rows carried onto it, the practice progression, and the feasibility
  * with the date check. The ladder's refusal (past 3 years, nothing left to
  * do) refuses the change in its words.
  */
@@ -3686,7 +3786,7 @@ function redraftOf(e: Env, ctx: PlanContext, drafts: readonly MilestoneDraft[], 
   const carriedStages = new Set(carried.map((m) => `${m.stage ?? ""}:${gateLevelOf(m) ?? ""}`));
   const fresh = ladder.plan.filter((m) => !carriedStages.has(`${m.stage ?? ""}:${gateLevelOf(m) ?? ""}`));
   const moved = transplantOnto(drafts, fresh, e.makeId);
-  const plan = withStagePractices(e, { ...ctx, intake: withRequired(ctx.intake, required) }, moved, requiredNamesOf(ctx, required), carried).map((m) => ({
+  const plan = withStagePractices(e, { ...ctx, intake: withRequired(ctx.intake, required) }, moved, carried).map((m) => ({
     ...m,
     version: ctx.roadmap.version + 1,
     status: (m.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
@@ -3725,37 +3825,38 @@ function feasibilityFor(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[
 }
 
 /**
- * R2's stage practices on every kept stage (a retrieval practice early, a
- * production practice from Retained on; a held row stays empty), then R2's
- * allocation (fitPlan, its depth branch: sessions and bands, never a lower
- * depth term) over the plan with the carried rows beside it. Both steps name
- * a stage's code labels over its Domains; a pending Gemini addition is hidden
- * from them (withPendingHidden), so no label names a Domain the user hasn't
- * confirmed.
+ * The practice progression on every kept stage (contracts §20: R2's fitPlan
+ * puts progressionOf's practices, steps and checkpoint on each DRAFT stage,
+ * the carried rows beside them read, not changed; a held row stays empty),
+ * and R2's allocation (sessions and bands, never a lower depth term) over the
+ * plan. `replyPicks` are Gemini's (a reply's, read as unknown); without them each
+ * stage keeps its GEMINI_PICK practice as its pick. The step names a stage's
+ * code labels over its Domains; a pending Gemini addition is hidden from it
+ * (withPendingHidden), so no label names a Domain the user hasn't confirmed.
  */
-function withStagePractices(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[], names: Readonly<Record<string, DomainName>>, carried: readonly MilestoneDraft[] = []): MilestoneDraft[] {
-  return withPendingHidden(plan, (masked) => stagePracticesOf(e, ctx, masked, names, carried));
+function withStagePractices(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[], carried: readonly MilestoneDraft[] = [], replyPicks?: unknown): MilestoneDraft[] {
+  return withPendingHidden(plan, (masked) => stagePracticesOf(e, ctx, masked, carried, replyPicks));
 }
 
 /**
  * Draft rows after the plan's gate changed (contracts §19: the user's answer,
  * a re-plan), or as they were when the gate changes nothing in them: every
  * live item of a kind the gate now blocks leaves (gatePlanRows), a track
- * plan's starter kinds follow the answers (R2's syncTrackStarter: a kind the
- * gate allows now but didn't under `since` — the blocked kinds the rows were
- * built with — is placed where the starter places it, and so is the safe
- * kind standing in for one now avoided), then R2's stage practices and
- * allocation (withStagePractices). `since` null (the plan's track changed,
- * draftGateOps: the rows were built for another track) places every starter
- * kind of the new track a stage lacks, as a fresh build of it would.
- * `carried` are the started rows beside them (never changed).
+ * plan's practices, steps and checkpoint follow the answers (R2's
+ * syncTrackStarter: the practice progression under the new gate, contracts
+ * §20, so a kind the answer released is placed where the progression places
+ * it, and a safe kind standing in for one now avoided), then the
+ * progression and R2's allocation on every stage (withStagePractices). A
+ * plan's track changed (draftGateOps) is the same: the progression of the
+ * new track. `since` (the blocked kinds the rows were built with, or null
+ * after a track switch) is passed on and no longer read by R2: a REMOVED row
+ * keeps the user's no. `carried` are the started rows beside them (never changed).
  */
 function regatedDrafts(
   e: Env,
   ctx: PlanContext,
   carried: readonly MilestoneDraft[],
   drafts: readonly MilestoneDraft[],
-  names: Readonly<Record<string, DomainName>>,
   since: readonly CatalogKey[] | null
 ): MilestoneDraft[] {
   const gate = gateOf(e, ctx);
@@ -3764,38 +3865,40 @@ function regatedDrafts(
   let filled = pruned;
   if (trackArea) {
     try {
-      filled = e.lanes.syncTrackStarter([...carried, ...pruned], ctx.intake, e.makeId, { gate, excluded: gate.blocked, ...(since ? { since } : {}) }).filter((d) => !isCarried(d));
+      const all = [...carried, ...pruned];
+      filled = e.lanes.syncTrackStarter(all, ctx.intake, e.makeId, { gate, excluded: gate.blocked, input: realismInputOf(ctx, all), ...(since ? { since } : {}) }).filter((d) => !isCarried(d));
     } catch (err) {
       console.error("roadmap: the track starter wasn't re-synced:", err instanceof Error ? err.message : err);
     }
   }
   if (JSON.stringify(filled) === JSON.stringify(drafts)) return [...drafts];
-  return withStagePractices(e, ctx, filled, names, carried);
+  return withStagePractices(e, ctx, filled, carried);
 }
 
-/** withStagePractices' two steps, over rows whose pending additions are hidden. */
-function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[], names: Readonly<Record<string, DomainName>>, carried: readonly MilestoneDraft[]): MilestoneDraft[] {
-  // Confirm to unlock (contracts §19): no row keeps a kind the gate blocks, and no requirement adds one (R2 takes the next of its role).
+/**
+ * withStagePractices' step, over rows whose pending additions are hidden: the
+ * gate first (no row keeps a kind it blocks), then R2's fitPlan with the
+ * plan's intake and the gate's blocked kinds, which puts the practice
+ * progression on every DRAFT stage (contracts §20; a blocked kind is never
+ * placed: the track's safe kinds, or the next of its role, stand in) and
+ * sizes it; then the measures follow the rows (syncMeasures: a practice's
+ * PRACTICE_KEPT, a checkpoint's CHECKPOINT).
+ */
+function stagePracticesOf(e: Env, ctx: PlanContext, plan: readonly MilestoneDraft[], carried: readonly MilestoneDraft[], replyPicks?: unknown): MilestoneDraft[] {
   const gate = gateOf(e, ctx);
   const trackArea = ctx.intake.fieldId == null;
   const gated = gatePlanRows(plan, gate, trackArea, e.makeId);
-  const input = realismInputOf(ctx, gated);
-  const synced = gated.map((m) => {
-    if (heldRow(m) || m.status === "LATER") return m;
-    try {
-      return syncMeasures(e.lanes.syncStagePractices(m, input, names, e.makeId, gate.blocked), trackArea, e.makeId);
-    } catch (err) {
-      console.error("roadmap: stage practices not synced:", err instanceof Error ? err.message : err);
-      return m;
-    }
-  });
   try {
-    const all = [...carried, ...synced];
-    const fitted = gatePlanRows(e.lanes.fitPlan(all, realismInputOf(ctx, all), { excluded: gate.blocked }), gate, trackArea, e.makeId).filter((d) => !isCarried(d));
-    return fitted.length === synced.length ? fitted.map((d, i) => ({ ...d, stage: d.stage ?? synced[i].stage })) : synced;
+    const all = [...carried, ...gated];
+    const fitted = gatePlanRows(e.lanes.fitPlan(all, realismInputOf(ctx, all), { excluded: gate.blocked, intake: ctx.intake, picks: replyPicks }), gate, trackArea, e.makeId).filter((d) => !isCarried(d));
+    if (fitted.length !== gated.length) return gated;
+    return fitted.map((d, i) => {
+      const row = { ...d, stage: d.stage ?? gated[i].stage };
+      return heldRow(row) || row.status === "LATER" ? row : syncMeasures(row, trackArea, e.makeId);
+    });
   } catch (err) {
-    console.error("roadmap: the allocation wasn't worked out (sessions as written):", err instanceof Error ? err.message : err);
-    return synced;
+    console.error("roadmap: the practice progression wasn't placed (the rows as written):", err instanceof Error ? err.message : err);
+    return gated;
   }
 }
 
@@ -3823,7 +3926,7 @@ function ladderOf(e: Env, ctx: PlanContext, required: readonly string[]): { ok: 
 /**
  * The plan built from one parsed reply (F-R4-17): keys-only validation
  * (R3's validateKeysOnly with its KeysOnlyContext, after the integrity walk
- * passed), materialised into R2's stage ladder, R2's stage practices, and the
+ * passed), materialised into R2's stage ladder, the practice progression, and the
  * feasibility with the date check, all on today's data. `plan` is null when
  * nothing survives or the ladder refuses (the run then writes the plan from
  * your numbers); `validated` is set whenever validation ran.
@@ -3866,20 +3969,31 @@ function planFromReply(
   });
   // Confirm to unlock (contracts §19): a pick of a kind the gate blocks never reaches the plan (dropped before the caps,
   // so it never crowds out an allowed one), whatever the run's enums offered; the report says so as R3's validator does.
-  const validated: ValidatedDraft = gateValidated({ ...checked, report: { ...checked.report, integrity } }, gateOf(e, ctx));
+  const gate = gateOf(e, ctx);
+  const validated: ValidatedDraft = gateValidated({ ...checked, report: { ...checked.report, integrity } }, gate);
   let ladder: readonly MilestoneDraft[] | null = extra.ladder ?? null;
   if (!ladder) {
     const res = ladderOf(e, ctx, required);
     ladder = res.ok ? res.plan : null;
   }
   if (!ladder || ladder.length === 0) return { plan: null, feasibility: null, validated };
+  // Gemini's part (contracts §20): the outline's learning order and one pick per stage among code's candidates. The
+  // practices, steps and checkpoints are the progression's (R2's), each valid pick added beside its stage's focus.
+  const order = replyOrderOf(checked, parsed, pack, ctx.intake.syllabus?.lines.length ?? 0, validated, slots);
+  const picks = replyPicksOf(checked, parsed, validated, {
+    track: ctx.intake.fieldId != null ? "FIELD" : ctx.intake.track,
+    exam: !!ctx.intake.examLabel && ctx.intake.exam !== false,
+    practicesAllowed: ctx.intake.practicesAllowed,
+    family: ctx.intake.fieldId != null ? practiceFamilyOf(ctx.intake) : null,
+    gate,
+  });
   // The area-suggestion slot is materialised only when it was issued for this run and the switch is on (F-R4-19).
   const gapsOn = extra.gapsOn ?? (ROADMAP_GAPS_LIVE && ctx.intake.suggestAreas === true && (pack as { run?: { gaps?: unknown } }).run?.gaps === true);
-  const placed = materialiseKeys(ladder, validated, slots, { gapsOn, makeId: e.makeId });
-  const key = extra.memo ? JSON.stringify(placed) : null;
+  const placed = materialiseKeys(ladder, validated, slots, { gapsOn, makeId: e.makeId, order });
+  const key = extra.memo ? JSON.stringify([placed, picks]) : null;
   const hit = key != null ? extra.memo?.get(key) : undefined;
   if (hit) return { ...hit, validated };
-  const plan = withStagePractices(e, ctx, placed, requiredNamesOf(ctx, required)).map((m) => ({ ...m, version: ctx.roadmap.version + 1 }));
+  const plan = withStagePractices(e, ctx, placed, [], picks).map((m) => ({ ...m, version: ctx.roadmap.version + 1 }));
   if (plan.length === 0) return { plan: null, feasibility: null, validated };
   const feasibility = feasibilityFor(e, ctx, plan);
   if (key != null && extra.memo) {
@@ -4079,16 +4193,22 @@ async function claimDraftUnpointed(
   const ctx = await planContext(e, userId, first.roadmap, now);
   // The pack's windows are the stage ladder's (F-R4-10): the plan Gemini arranges is the one code dated.
   let windows: { start: DayKey; end: DayKey }[];
+  // The stage keys the dated ladder reads a pick for (R3's pickStagesOf): the pick enums are asked for these alone, so no
+  // pick is asked for a stage the plan doesn't hold (a merged or held one).
+  let pickStages: string[];
   try {
     const ladder = ladderOf(e, ctx, requiredOfPlan(ctx));
     if (!ladder.ok) return fail(ladder.error);
     windows = ladder.plan.filter((m) => m.status !== "LATER" && !heldRow(m) && m.windowStart && m.dueDay).map((m) => ({ start: m.windowStart as DayKey, end: m.dueDay as DayKey }));
+    pickStages = evidence.pickStagesOf(ladder.plan);
   } catch (err) {
     console.error("roadmap: the stage ladder wasn't worked out for the draft:", err instanceof Error ? err.message : err);
     return fail("Couldn't plan the stages. Build from your numbers, or try again.");
   }
   if (windows.length === 0) return fail("The aim's date no longer fits a roadmap — change the date.");
-  const pack = e.lanes.buildEvidencePack({ intake: ctx.intake, areaName: ctx.areaName, domains: evidenceDomainsOf(ctx), windows });
+  const pack = e.lanes.buildEvidencePack({ intake: ctx.intake, areaName: ctx.areaName, domains: evidenceDomainsOf(ctx), windows, pickStages });
+  // A schema with no property asks nothing (and the API refuses an OBJECT without properties): never called, nothing written.
+  if (emptySchemaOf(schemaOf(e, pack))) return fail(NOTHING_TO_ARRANGE);
   const inputHash = sha256(e.lanes.inputHashMaterial(pack, ctx.intake, ROADMAP_MODEL, ROADMAP_SAMPLES));
 
   if (!opts.force) {
@@ -4286,6 +4406,13 @@ function schemaOf(e: Env, pack: EvidencePack): unknown {
   }
 }
 
+/**
+ * A built schema that asks Gemini nothing (R3's schemaAsksNothing, the one definition: keysOnlySchemaOf leaves out
+ * needs, order and picks whenever each would be empty, and the API refuses an OBJECT without properties). Null (no
+ * schema built) is not read here: the run fails on it in its own words.
+ */
+const emptySchemaOf = (schema: unknown): boolean => schema != null && validate.schemaAsksNothing(schema);
+
 /** Every property name a schema issues (the path normaliser's own list, a defence in depth over R3's). */
 function schemaKeysOf(schema: unknown): Set<string> {
   const out = new Set<string>();
@@ -4369,14 +4496,19 @@ export async function runDraftCore(runId: string, deps: RoadmapDeps = {}): Promi
     }
     const ctx = await planContext(e, run.userId, b.roadmap, now);
     const pack = run.pack as EvidencePack;
-    // Only a keys-only pack (prompt version 3) is ever drafted: an earlier run's free-text reply is never read (F-R4-17).
-    const keysOnly = !!pack && typeof pack === "object" && typeof pack.promptVersion === "number" && pack.promptVersion >= 3;
+    // Only a pack of today's prompt version is ever drafted (contracts §20.5): an earlier run's pack (a v3 one still
+    // RUNNING across a deploy: its stored lines ask for practices, steps and a checkpoint) is never sent beside today's
+    // instruction and schema, and an earlier free-text reply is never read (F-R4-17).
+    const keysOnly = !!pack && typeof pack === "object" && pack.promptVersion === ROADMAP_PROMPT_VERSION;
     const schema = keysOnly ? schemaOf(e, pack) : null;
-    const results: SampleResult[] = keysOnly && schema ? await e.lanes.draftSamples(pack, ROADMAP_SAMPLES, { callModel: deps.callModel, seedBase: run.seedBase ?? SEED_BASE }) : [];
+    // A schema that asks nothing is never sent (the claim refuses it; a run claimed before that guard fails here).
+    const empty = emptySchemaOf(schema);
+    const results: SampleResult[] = keysOnly && schema && !empty ? await e.lanes.draftSamples(pack, ROADMAP_SAMPLES, { callModel: deps.callModel, seedBase: run.seedBase ?? SEED_BASE }) : [];
     const samples = results.flatMap((r) => (r.ok ? [r.value] : []));
     const errors = results.flatMap((r) => (r.ok ? [] : [r.error]));
     if (!keysOnly) errors.push("an earlier prompt version (never read)");
     else if (!schema) errors.push("the run's schema wasn't built");
+    else if (empty) errors.push("nothing for Gemini to arrange (never sent)");
 
     // Every reply is walked against the run's exact schema first; a REJECTED one is never read further (F-R4-20).
     const gapSourceExclude = samples.length ? await suggestionDomainsOf(e, run.userId) : [];
@@ -4691,7 +4823,7 @@ async function rewrite(
       // R2's re-fit names the stages' code labels: a pending Gemini addition is hidden from it (withPendingHidden); it adds
       // no stage practice of a kind the plan's gate blocks (contracts §19).
       const blocked = gateOf(e, ctx).blocked;
-      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked })).filter((d) => !isCarried(d));
+      next = withPendingHidden(plan, (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake })).filter((d) => !isCarried(d));
     } catch (err) {
       console.error("roadmap: re-fit after an edit failed; saved without it:", err);
     }
@@ -4775,6 +4907,13 @@ async function decideItemUnpointed(userId: string, itemId: string, decision: Ite
     const legacy = legacyOf(loc.b);
     if (decision === "KEPT") return fail(legacy ? DRAFT_IT_AGAIN : NOTHING_TO_KEEP);
     if (decision === "CHECKED" && legacy) return fail(DRAFT_IT_AGAIN);
+    // Gemini's practice pick, still waiting (contracts §20.5): "I checked this" keeps it, the row's own keep beside the
+    // plan-wide one (confirmSessionPicksCore); Remove gives the app's default back (the re-fit below). Never a kind the gate holds.
+    if (decision === "CHECKED" && item && item.kind === "PRACTICE" && editable && pendingPick(itemDraftOf(item))) {
+      const gate = planGateOf(e, loc.b.roadmap).gate;
+      if (!isPlaceableKind(gate, item.catalogKey)) return fail(pointedAt(gate, gate.rows.find((r) => r.kind === item.catalogKey)?.state === "AVOID" ? ACTIVITY_AVOIDED_PICK : ACTIVITY_WAITING_PICK));
+      return updateOne(e, userId, loc, "roadmapItem", item.id, { decision, decidedAt: now });
+    }
     if (decision === "CHECKED" && !(item && item.kind === "GAP")) {
       if (!item && !m.title.trim()) return fail(NAME_IT_FIRST);
       return fail(NOTHING_TO_CHECK);
@@ -5641,7 +5780,7 @@ async function applyRemedyUnpointed(userId: string, roadmapId: string, remedy: R
     const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
     const drafts = group.map(draftOf);
     const input = realismInputOf(ctx, [...carried, ...drafts]);
-    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy, { excluded: gateOf(e, ctx).blocked }).filter((d) => !isCarried(d));
+    const changed = e.lanes.applyRemedy([...carried, ...drafts], input, remedy, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake }).filter((d) => !isCarried(d));
     const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["DRAFT", "ACTIVE"], version: b.roadmap.version } }];
     if (remedy === "MOVE_DATE") {
       // R2's remedyTargetDay (inside applyRemedy) picks the first Sunday that fits, at most today + SPAN_MAX_DAYS.
@@ -5736,7 +5875,7 @@ export function acceptBlockersOf(
   drafts: readonly MilestoneDraft[],
   feasibility: Feasibility | null,
   scheduledTotal: number,
-  opts: { picksNeedConfirm?: boolean; gate?: SwapGate } = {}
+  opts: { picksNeedConfirm?: boolean; gate?: SwapGate; pickIsDefault?: (d: MilestoneDraft, i: ItemDraft) => boolean } = {}
 ): AcceptCheck {
   const blockers: string[] = [];
   // Confirm to unlock (contracts §19): a draft never becomes the plan holding a live item of a kind the gate blocks,
@@ -5747,9 +5886,15 @@ export function acceptBlockersOf(
   // Revision 4 (F-R4-17, F-R4-21): Gemini's Domain additions and a body or care plan's session picks are decided for the
   // whole plan, before anything else; a pending one blocks accept, and "Next item to decide" scrolls to it.
   const pendingAdd = drafts.flatMap((d) => d.items.filter(pendingAddition));
-  const pendingPicks = opts.picksNeedConfirm ? drafts.flatMap((d) => d.items.filter(pendingPick)) : [];
+  // Gemini's practice picks (contracts §20.5) on every other plan: a pick that isn't code's own default for its stage, still
+  // PENDING, is Gemini's choice the user hasn't looked at; it blocks until kept or swapped for the app's default
+  // (confirmSessionPicksCore KEEP or DEFAULT, or the row's own "I checked this" or Remove), so a pick never reaches the
+  // plan undecided.
+  const pendingPicks = opts.picksNeedConfirm
+    ? drafts.flatMap((d) => d.items.filter(pendingPick))
+    : drafts.filter((d) => d.status !== "LATER").flatMap((d) => d.items.filter((i) => i.kind === "PRACTICE" && pendingPick(i) && !(opts.pickIsDefault?.(d, i) ?? false)));
   if (pendingAdd.length) blockers.push(DECIDE_ADDITIONS);
-  if (pendingPicks.length) blockers.push(confirmPicksOf(gate));
+  if (pendingPicks.length) blockers.push(opts.picksNeedConfirm ? confirmPicksOf(gate) : DECIDE_PRACTICE_PICKS);
   // A held stage ("Held when you began") is never the milestone to decide.
   const next = drafts.find((d) => d.status !== "LATER" && !heldRow(d)) ?? null;
   if (!next) blockers.push("There's no milestone to accept.");
@@ -5777,6 +5922,8 @@ export function acceptBlockersOf(
 
 /** Revision 4 accept refusals, in words. */
 export const DECIDE_ADDITIONS = "Decide Gemini's suggested Domains first: add them or leave them out.";
+/** Gemini's practice picks waiting on a plan that needs no session confirm (a Field plan's; contracts §20.5). */
+export const DECIDE_PRACTICE_PICKS = "Decide Gemini's practice picks first: keep them, or use the app's default.";
 /** A body plan's session-picks blocker (confirmPicksOf on BODY, with no safe session avoided). */
 export const CONFIRM_PICKS = "Confirm Gemini's session picks first: keep them, or use easy, mobility and technique sessions.";
 
@@ -6131,7 +6278,7 @@ async function acceptUnpointed(userId: string, roadmapId: string, choices: Accep
       if (real && daysBetween(ctx.today, real) < SPAN_MIN_DAYS && carriedRows.length === 0) return fail(ONLY_WEEKS_AWAY);
     }
     const gate = planGateOf(e, b.roadmap).gate;
-    const check = acceptBlockersOf(drafts, feasibility, scheduledTotal, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate });
+    const check = acceptBlockersOf(drafts, feasibility, scheduledTotal, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate, pickIsDefault: pickIsDefaultOf(b.roadmap, gate) });
     // Decision 2: while the activity card waits, the refusal points at it (a waiting plan is never a dead end).
     if (check.blockers.length) return fail(pointedAt(gate, check.blockers[0]));
     if (check.needsOver && !overAccepted) return fail(pointedAt(gate, "This plan is over your hours or pace: switch on “Keep it over my hours/pace” to accept it."));
@@ -7419,14 +7566,17 @@ async function replanUnpointed(userId: string, roadmapId: string, kind: ReplanKi
     const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
     const gate = gateOf(e, ctx);
     if (kind === "REFIT") {
-      const refitted = e.lanes.refit([...carried, ...plan], realismInputOf(ctx, [...carried, ...plan]), { excluded: gate.blocked });
+      const refitted = e.lanes.refit([...carried, ...plan], realismInputOf(ctx, [...carried, ...plan]), { excluded: gate.blocked, intake: ctx.intake });
       plan = refitted.filter((d) => !isCarried(d)).map((d) => ({ ...d, status: d.status === "LATER" ? "LATER" : "DRAFT", version: v }));
     }
-    // Confirm to unlock (contracts §19): the re-plan keeps no kind the user's answers block, and a track plan's starter
-    // kinds follow them (a kind their answer released is placed where the starter places it).
-    // What the starter placed before any answer is the baseline: only what the answers changed is added.
+    // The practice progression (contracts §20): an "Edit by hand" re-plan's DRAFT stages are rebuilt with the started
+    // stages carried too (a Re-fit's re-date already placed it), so the stage after a started one carries what it trained
+    // and no opening or exam step is placed twice.
+    if (kind === "MANUAL") plan = withStagePractices(e, ctx, plan, carried).map((d) => ({ ...d, version: v, status: (d.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus }));
+    // Confirm to unlock (contracts §19): the re-plan keeps no kind the user's answers block, and a track plan's practices
+    // follow them (a kind their answer released is placed where the progression places it).
     const unanswered = allowedKindsFor(planGateOf(e, ctx.roadmap).state, null).blocked;
-    plan = regatedDrafts(e, ctx, carried, plan, requiredNamesOf(ctx, requiredOfPlan(ctx, [...carried, ...plan])), unanswered).map((d) => ({
+    plan = regatedDrafts(e, ctx, carried, plan, unanswered).map((d) => ({
       ...d,
       version: v,
       status: (d.status === "LATER" ? "LATER" : "DRAFT") as MilestoneStatus,
@@ -8451,7 +8601,8 @@ function draftViewOf(
     feasibility = { today: ctx.today, m: ctx.m, milestones: [], aimCheck: { kind: "unchecked" }, basis: [], remedies: [], impossible: false, over: false };
   }
   // The total acceptCore checks against MAX_MILESTONES: positions over the carried rows and the draft's scheduled ones.
-  const check = acceptBlockersOf(drafts, feasibility, total, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate: planGateOf(e, b.roadmap).gate });
+  const viewGate = planGateOf(e, b.roadmap).gate;
+  const check = acceptBlockersOf(drafts, feasibility, total, { picksNeedConfirm: picksNeedConfirmOf(b.roadmap), gate: viewGate, pickIsDefault: pickIsDefaultOf(b.roadmap, viewGate) });
   // A line a started milestone covers is in the plan, not "Not in this plan yet" (fix round 2's carry-over).
   const coveredBy = [...drafts.flatMap((d) => d.items), ...carriedRows.filter((m) => !superseded(b, m)).flatMap((m) => m.items.map(itemDraftOf))];
   const used = new Set(coveredBy.filter((i) => i.kind === "TOPIC" && liveItem(i) && i.syllabusRef != null).map((i) => i.syllabusRef as number));
@@ -9755,7 +9906,7 @@ async function lowerDepthUnpointed(userId: string, roadmapId: string, to: AimDep
     let dropped: string[];
     let lowered: MilestoneDraft[] = plan;
     try {
-      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to, { excluded: gateOf(e, ctx).blocked });
+      const pure = e.lanes.lowerDepthPlanOf(plan, realismInputOf(ctx, plan), to, { excluded: gateOf(e, ctx).blocked, intake: ctx.intake });
       if (!pure.ok) return fail(pure.error);
       dropped = pure.dropped;
       lowered = pure.plan;
@@ -9892,15 +10043,25 @@ async function confirmDomainAdditionsUnpointed(userId: string, roadmapId: string
  * pick waiting; any other choice is refused in the plan's own words
  * (picksChoiceRefusalOf: "Keep the picks, or use Plan the week ahead and
  * Keep a log." on a care plan), as accept's blocker is (confirmPicksOf).
+ *
+ * On a plan whose session picks need no confirm (a Field plan's, contracts
+ * §20.5): Gemini's practice picks, the one decision accept waits on
+ * (DECIDE_PRACTICE_PICKS): KEEP sets them CHECKED; DEFAULT (EASY reads the
+ * same there) removes each that isn't code's default and re-fits, so code's
+ * default stands in its stage (decidePracticePicks).
  */
-export async function confirmSessionPicksCore(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+export async function confirmSessionPicksCore(userId: string, roadmapId: string, choice: "KEEP" | "EASY" | "DEFAULT", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   return pointedRefusal(deps, userId, { roadmapId }, await confirmSessionPicksUnpointed(userId, roadmapId, choice, now, deps));
 }
 
 /** confirmSessionPicksCore's work; confirmSessionPicksCore points its refusals at the activity card while it waits (pointedRefusal, decision 2). */
-async function confirmSessionPicksUnpointed(userId: string, roadmapId: string, choice: "KEEP" | "EASY", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
+async function confirmSessionPicksUnpointed(userId: string, roadmapId: string, choice: "KEEP" | "EASY" | "DEFAULT", now: Date, deps: RoadmapDeps = {}): Promise<RoadmapActionResult<null>> {
   if (writesOff(deps)) return fail(ROADMAP_WRITES_OFF);
   const e = envOf(deps);
+  const first = await e.store.bundle(userId, roadmapId);
+  // A plan whose session picks need no confirm (a Field plan's, a track plan with nothing to watch): Gemini's practice picks, kept or the app's default.
+  if (first && !picksNeedConfirmOf(first.roadmap)) return decidePracticePicks(e, userId, roadmapId, choice === "KEEP" ? "KEEP" : choice === "EASY" || choice === "DEFAULT" ? "DEFAULT" : null, now);
+  if (choice === "DEFAULT") choice = "EASY";
   const res = await withRetry<null>(async () => {
     const b = await e.store.bundle(userId, roadmapId);
     if (!b) return fail(NO_ROADMAP);
@@ -9975,6 +10136,74 @@ async function confirmSessionPicksUnpointed(userId: string, roadmapId: string, c
     } catch (err) {
       if (!(err instanceof ModelTextError)) throw err;
       logRefusedWrite("session-picks", err);
+      return fail(CHANGE_NOT_SAVED);
+    }
+    const out = await e.store.apply(userId, ops);
+    return out === "ok" ? ok(null) : "stale";
+  });
+  invalidate("roadmap");
+  return res;
+}
+
+/** The words a practice-picks choice other than KEEP or DEFAULT is refused with. */
+export const PRACTICE_PICKS_CHOICE = "Keep Gemini's picks, or use the app's default.";
+
+/**
+ * Gemini's practice picks on a plan that needs no session confirm (contracts
+ * §20.5; a Field plan's): the one decision accept waits on
+ * (DECIDE_PRACTICE_PICKS). KEEP sets every waiting pick CHECKED (a kind the
+ * gate now holds leaves instead); DEFAULT removes every waiting pick that
+ * isn't code's own default for its stage and re-fits the draft, so the
+ * practice progression puts code's default back in its place (a removed
+ * kind never returns there). One transaction through the one writer.
+ */
+async function decidePracticePicks(e: Env, userId: string, roadmapId: string, choice: "KEEP" | "DEFAULT" | null, now: Date): Promise<RoadmapActionResult<null>> {
+  const res = await withRetry<null>(async () => {
+    const b = await e.store.bundle(userId, roadmapId);
+    if (!b) return fail(NO_ROADMAP);
+    if (choice == null) return fail(PRACTICE_PICKS_CHOICE);
+    const group = draftRowsOf(b);
+    const gate = planGateOf(e, b.roadmap).gate;
+    const isDefault = pickIsDefaultOf(b.roadmap, gate);
+    const drafts = group.map(draftOf);
+    const waiting = (d: MilestoneDraft, i: ItemDraft) => d.status !== "LATER" && i.kind === "PRACTICE" && pendingPick(i) && (choice === "KEEP" || !isDefault(d, i));
+    if (!drafts.some((d) => d.items.some((i) => waiting(d, i)))) return fail("There are no practice picks to decide.");
+    const decided = new Set<string>();
+    const trackArea = b.roadmap.fieldId == null;
+    let next = drafts.map((d) => {
+      if (!d.items.some((i) => waiting(d, i))) return d;
+      const items = d.items.map((i) => {
+        if (!waiting(d, i)) return i;
+        decided.add(i.id as string);
+        return { ...i, decision: (choice === "KEEP" && isPlaceableKind(gate, i.catalogKey) ? "CHECKED" : "REMOVED") as Decision };
+      });
+      return items.some((i, k) => i.decision === "REMOVED" && d.items[k].decision !== "REMOVED") ? syncMeasures({ ...d, items }, trackArea, e.makeId) : { ...d, items };
+    });
+    if (choice === "DEFAULT") {
+      // The practice progression puts code's default in each removed pick's place (R2's re-fit, as every structural edit).
+      try {
+        const ctx = await planContext(e, userId, b.roadmap, now, coveragePriorOf(b));
+        const carried = carriedPlanOf(b, group, await carriedGoalsOf(e, userId, b));
+        const blocked = gateOf(e, ctx).blocked;
+        next = withPendingHidden([...carried, ...next], (masked) => e.lanes.fitPlan(masked, realismInputOf(ctx, masked), { excluded: blocked, intake: ctx.intake })).filter((d) => !isCarried(d));
+      } catch (err) {
+        console.error("roadmap: re-fit after the practice picks failed; saved without it:", err);
+      }
+    }
+    const ops: StoreOp[] = [{ op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: ["DRAFT", "ACTIVE"], version: b.roadmap.version } }];
+    const afterOf = (m: MilestoneRec, k: number) => next.find((x) => x.lineageId === m.lineageId && x.id === m.id) ?? next[k];
+    const ctxText = { ...modelTextContextOf(b, await e.io.fieldTree()), rev4: true };
+    try {
+      group.forEach((m, k) => {
+        const after = afterOf(m, k);
+        if (!after || JSON.stringify(after) === JSON.stringify(draftOf(m))) return;
+        ops.push({ op: "guard", guard: { g: "MILESTONE_IS", id: m.id, statuses: [m.status as MilestoneStatus] } });
+        const others = group.map((x, j) => (x.id === m.id ? null : (afterOf(x, j) ?? draftOf(x)))).filter((x): x is MilestoneDraft => x != null);
+        writeRoadmapRows(ops, { kind: "REWRITE", before: m, after, now, makeId: e.makeId, decided, others }, ctxText);
+      });
+    } catch (err) {
+      if (!(err instanceof ModelTextError)) throw err;
+      logRefusedWrite("practice-picks", err);
       return fail(CHANGE_NOT_SAVED);
     }
     const out = await e.store.apply(userId, ops);
@@ -10078,7 +10307,7 @@ export async function setActivityVerdictsCore(userId: string, roadmapId: string,
     // The card's answer under the words as read now: its key must be theirs (decision 3).
     const answered = answerActivityCard(intake.activities ?? null, before.state, answer, today);
     if (!answered.ok) return fail(answered.error);
-    const coverage = coverageJsonOf(intake.coverage, answered.value);
+    const coverage = coverageJsonOf(intake.coverage, answered.value, intake.practiceFamily ?? null);
     const ops: StoreOp[] = [
       { op: "guard", guard: { g: "ROADMAP_IS", id: roadmapId, statuses: [b.roadmap.status as RoadmapStatus], version: b.roadmap.version, updatedAt: b.roadmap.updatedAt } },
       { op: "update", table: "roadmap", where: { id: roadmapId }, data: { coverage, updatedAt: now } },
@@ -10102,7 +10331,7 @@ export async function setActivityVerdictsCore(userId: string, roadmapId: string,
         const drafts = group.map(draftOf);
         let afters: MilestoneDraft[];
         try {
-          afters = regatedDrafts(e, ctx, [], drafts, requiredNamesOf(ctx, requiredDomainsOf(b, group)), before.gate.blocked);
+          afters = regatedDrafts(e, ctx, [], drafts, before.gate.blocked);
         } catch (err) {
           console.error("roadmap: the draft wasn't re-synced after the answers (the plan paths read them):", err instanceof Error ? err.message : err);
           afters = gatePlanRows(drafts, after, b.roadmap.fieldId == null, e.makeId);
@@ -10789,7 +11018,7 @@ function hostileRunOf(key: string, input: HostileViewInput, givenPack: EvidenceP
   if (givenPack) pack = givenPack;
   else {
     const windows = ladder.filter((m) => m.status !== "LATER" && !heldRow(m) && m.windowStart && m.dueDay).map((m) => ({ start: m.windowStart as DayKey, end: m.dueDay as DayKey }));
-    pack = e.lanes.buildEvidencePack({ intake: ctx.intake, areaName: ctx.areaName, domains: evidenceDomainsOf(ctx), windows });
+    pack = e.lanes.buildEvidencePack({ intake: ctx.intake, areaName: ctx.areaName, domains: evidenceDomainsOf(ctx), windows, pickStages: evidence.pickStagesOf(ladder) });
   }
   const facts = { e, ctx, roadmap, tree, required, ladder, pack, schema: schemaOf(e, pack), memo: new Map<string, { plan: MilestoneDraft[]; feasibility: Feasibility }>() };
   let starter: { plan: MilestoneDraft[]; feasibility: Feasibility; report: ValidationReport } | null = null;
