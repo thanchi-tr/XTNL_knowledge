@@ -1,0 +1,1699 @@
+{
+  "aim": "actuarial-probability",
+  "pack": "actuarial-probability",
+  "promptVersion": 4,
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real v4 reply, unedited. `plan` is code's plan with the reply's picks (the progression), stage by stage. The lead fills `labels` (practice fit per stage read from `plan`, arrangement from the reply's order), sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "pGvDav-vI6iD1e8P6MDY2A4",
+  "finishReason": "STOP",
+  "latencyMs": 1882,
+  "usage": {
+    "promptTokenCount": 763,
+    "candidatesTokenCount": 127,
+    "totalTokenCount": 890,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 763
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"needs\": [\n    \"D3\",\n    \"D4\"\n  ],\n  \"order\": [\n    \"S1\",\n    \"S2\",\n    \"S3\",\n    \"S4\",\n    \"S5\",\n    \"S6\"\n  ],\n  \"picks\": {\n    \"FAMILIAR\": \"SLOW_DRILLS\",\n    \"RETAINED\": \"PROBLEM_SETS\",\n    \"FLUENT\": \"MISTAKE_REVIEW\",\n    \"MASTERED\": \"PROBLEM_SETS\"\n  }\n}",
+  "parsed": {
+    "needs": [
+      "D3",
+      "D4"
+    ],
+    "order": [
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6"
+    ],
+    "picks": {
+      "FAMILIAR": "SLOW_DRILLS",
+      "RETAINED": "PROBLEM_SETS",
+      "FLUENT": "MISTAKE_REVIEW",
+      "MASTERED": "PROBLEM_SETS"
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-3",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-1",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_calc",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Calculus",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_linalg",
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": false,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "NOT_CHOSEN"
+            ],
+            "kind": "DOMAIN",
+            "label": "Linear Algebra",
+            "origin": "GEMINI"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_prob",
+            "proposedName": null,
+            "syllabusRef": 0,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "General probability",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_prob",
+            "proposedName": null,
+            "syllabusRef": 1,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Univariate random variables",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "READING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Study Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "READ_AND_CARD"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-8",
+            "ord": 6,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Choose your material for Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-9",
+            "ord": 7,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Book Exam P",
+            "origin": "CODE",
+            "catalogKey": "BOOK_EXAM"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-6"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-6"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-7"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-7"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-10",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_prob",
+            "proposedName": null,
+            "syllabusRef": 2,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Multivariate random variables",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "READING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Study Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "READ_AND_CARD"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-15",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Write an outline of Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "OUTLINE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-12"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-12"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-13"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-13"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-14"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-16"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-16"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-17",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-18",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_inf",
+            "proposedName": null,
+            "syllabusRef": 3,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Conditional expectation and variance",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-19",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Problem sets: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "PROBLEM_SETS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-20",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-21",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Go over your mistakes: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "MISTAKE_REVIEW"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-22",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "List what you still can't do in Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-23",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-19"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-19"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-20"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-20"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-21"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-21"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-23"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-23"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-24",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-25",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_st_prob",
+            "proposedName": null,
+            "syllabusRef": 4,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Common discrete distributions",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-26",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "WRITING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Explain it in your own words: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_IT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-27",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Problem sets: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "PROBLEM_SETS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-28",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Go over your mistakes: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "MISTAKE_REVIEW"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-29",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Explain Probability, Inference to someone without notes",
+            "origin": "CODE",
+            "catalogKey": "EXPLAIN_ONCE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-30",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-26"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-26"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-27"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-27"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-28"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-28"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-30"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-30"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-31",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-32",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": 5,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Common continuous distributions",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-33",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Go over your mistakes: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "MISTAKE_REVIEW"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-34",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Timed practice: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "TIMED_PRACTICE"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-35",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Problem sets: Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "PROBLEM_SETS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-36",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "List what you still can't do in Probability, Inference",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-37",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "MOCK_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Mock test: Exam P",
+            "origin": "CODE",
+            "catalogKey": "MOCK_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-33"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-33"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-34"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-34"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-35"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-35"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-37"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-37"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "MASTERED",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Calculus",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        },
+        {
+          "milestoneOrd": 1,
+          "kind": "DOMAIN",
+          "label": "Linear Algebra",
+          "code": "NOT_CHOSEN",
+          "reason": "suggested by Gemini from your Domains: add it only if this aim needs it"
+        }
+      ],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": true,
+    "credential": true,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [
+      "d_st_calc",
+      "d_st_linalg"
+    ],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": [
+      5
+    ],
+    "picks": {
+      "FAMILIAR": "SLOW_DRILLS",
+      "RETAINED": "PROBLEM_SETS",
+      "FLUENT": "MISTAKE_REVIEW"
+    },
+    "order": {
+      "order": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "dropped": 0,
+      "appended": []
+    },
+    "reordered": false
+  },
+  "pickStages": [
+    "FAMILIAR",
+    "RETAINED",
+    "FLUENT",
+    "MASTERED"
+  ],
+  "plan": [
+    {
+      "stage": "PART",
+      "level": 6,
+      "windowStart": "2026-10-05",
+      "dueDay": "2026-11-22",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 4,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "READ_AND_CARD",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [
+        "CHOOSE_MATERIAL",
+        "BOOK_EXAM"
+      ],
+      "checkpoint": null
+    },
+    {
+      "stage": "FAMILIAR",
+      "level": 6,
+      "windowStart": "2026-11-23",
+      "dueDay": "2027-01-03",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 4,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "SLOW_DRILLS",
+          "why": "PICK",
+          "picked": true,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "READ_AND_CARD",
+          "why": "PARTNER",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [
+        "OUTLINE"
+      ],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "RETAINED",
+      "level": 8,
+      "windowStart": "2027-01-04",
+      "dueDay": "2027-02-21",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "PROBLEM_SETS",
+          "why": "FOCUS",
+          "picked": true,
+          "sessionsPerWeek": 4,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "CARRY",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "MISTAKE_REVIEW",
+          "why": "BASE",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [
+        "LIST_GAPS"
+      ],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "FLUENT",
+      "level": 10,
+      "windowStart": "2027-02-22",
+      "dueDay": "2027-05-23",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "EXPLAIN_IT",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "PROBLEM_SETS",
+          "why": "CORE",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "MISTAKE_REVIEW",
+          "why": "PICK",
+          "picked": true,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [
+        "EXPLAIN_ONCE"
+      ],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "BETWEEN",
+      "level": 11,
+      "windowStart": "2027-05-24",
+      "dueDay": "2027-08-22",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "MISTAKE_REVIEW",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "PROBLEM_SETS",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "BASE",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "MASTERED",
+      "level": 12,
+      "windowStart": "2027-08-23",
+      "dueDay": "2028-02-20",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "MISTAKE_REVIEW",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "TIMED_PRACTICE",
+          "why": "EXAM",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        },
+        {
+          "kind": "PROBLEM_SETS",
+          "why": "CORE",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [
+        "LIST_GAPS"
+      ],
+      "checkpoint": "MOCK_TEST"
+    }
+  ],
+  "room": {
+    "basis": "ladder",
+    "maxPractices": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "examStage": 5
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {
+      "D3": {
+        "plausible": null
+      },
+      "D4": {
+        "plausible": null
+      }
+    },
+    "stages": {
+      "PART": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      },
+      "BETWEEN": {
+        "practiceFit": null
+      },
+      "MASTERED": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}

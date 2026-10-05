@@ -1,0 +1,1551 @@
+{
+  "aim": "new-subject",
+  "pack": "new-subject",
+  "promptVersion": 4,
+  "gapsLive": false,
+  "thinkingLow": false,
+  "note": "A real v4 reply, unedited. `plan` is code's plan with the reply's picks (the progression), stage by stage. The lead fills `labels` (practice fit per stage read from `plan`, arrangement from the reply's order), sets `expected` (CLEAN, SALVAGED or REJECTED) and blessed: true; roadmap-model-check then re-validates and deep-compares it.",
+  "model": "gemini-3.5-flash-lite",
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "pmvDarvJEriT9tMP0qSlgQs",
+  "finishReason": "STOP",
+  "latencyMs": 1531,
+  "usage": {
+    "promptTokenCount": 680,
+    "candidatesTokenCount": 112,
+    "totalTokenCount": 792,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 680
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "error": null,
+  "raw": "{\n  \"order\": [\n    \"S1\",\n    \"S2\",\n    \"S3\",\n    \"S4\",\n    \"S5\",\n    \"S6\"\n  ],\n  \"picks\": {\n    \"FAMILIAR\": \"SLOW_DRILLS\",\n    \"RETAINED\": \"MISTAKE_REVIEW\",\n    \"FLUENT\": \"RUN_THROUGHS\",\n    \"MASTERED\": \"WITH_A_PARTNER\"\n  }\n}",
+  "parsed": {
+    "order": [
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6"
+    ],
+    "picks": {
+      "FAMILIAR": "SLOW_DRILLS",
+      "RETAINED": "MISTAKE_REVIEW",
+      "FLUENT": "RUN_THROUGHS",
+      "MASTERED": "WITH_A_PARTNER"
+    }
+  },
+  "integrity": {
+    "verdict": "CLEAN",
+    "violations": [],
+    "modelChars": 0,
+    "gapsKept": 0,
+    "gapsHidden": 0,
+    "gapsDropped": 0,
+    "notANameByClause": {}
+  },
+  "validated": {
+    "milestones": [
+      {
+        "id": null,
+        "lineageId": "probe-1",
+        "version": 1,
+        "ord": 1,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-2",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_boat",
+            "proposedName": null,
+            "syllabusRef": 0,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Rigging and launching",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-3",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_boat",
+            "proposedName": null,
+            "syllabusRef": 1,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Points of sail",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-4",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "READING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Study Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "READ_AND_CARD"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-5",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-6",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-7",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Choose your material for Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "CHOOSE_MATERIAL"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-4"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-4"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-5"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-5"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-6"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-6"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FOUNDATION",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-8",
+        "version": 1,
+        "ord": 2,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-9",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_boat",
+            "proposedName": null,
+            "syllabusRef": 2,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Tacking and gybing",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-10",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-11",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "READING",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Study Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "READ_AND_CARD"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-12",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-13",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "List what you still can't do in Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "LIST_GAPS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-14",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-10"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-10"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-11"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-11"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-12"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-12"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-14"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-14"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FAMILIAR",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-15",
+        "version": 1,
+        "ord": 3,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-16",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_boat",
+            "proposedName": null,
+            "syllabusRef": 3,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Capsize recovery drills",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-17",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Full run-throughs: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RUN_THROUGHS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-18",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Go over your mistakes: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "MISTAKE_REVIEW"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-19",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-20",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-17"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-17"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-18"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-18"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-19"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-19"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-20"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-20"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "RETAINED",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-21",
+        "version": 1,
+        "ord": 4,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-22",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_wind",
+            "proposedName": null,
+            "syllabusRef": 4,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Reading wind shifts and gusts",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-23",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Full run-throughs: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RUN_THROUGHS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-24",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-25",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "STUDY_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Recall drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RECALL_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-26",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Finish a small project with Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SMALL_PROJECT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-27",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "SELF_TEST",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Self-test: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SELF_TEST"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-23"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-23"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-24"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-24"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-25"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-25"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-27"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-27"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "FLUENT",
+        "arrangedBy": "GEMINI"
+      },
+      {
+        "id": null,
+        "lineageId": "probe-28",
+        "version": 1,
+        "ord": 5,
+        "title": "",
+        "titleOrigin": "CODE",
+        "titleDecision": "PENDING",
+        "windowStart": null,
+        "dueDay": null,
+        "status": "DRAFT",
+        "rankIndex": null,
+        "overAccepted": false,
+        "items": [
+          {
+            "id": null,
+            "lineageId": "probe-29",
+            "ord": 0,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": "d_sa_wind",
+            "proposedName": null,
+            "syllabusRef": 5,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "TOPIC",
+            "label": "Weather forecasts and safe limits",
+            "origin": "SYLLABUS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-30",
+            "ord": 1,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "COACHED_SESSION",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "GEMINI_PICK"
+            ],
+            "kind": "PRACTICE",
+            "label": "Practise with a teacher or partner: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "WITH_A_PARTNER"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-31",
+            "ord": 2,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [
+              "PRODUCTION_ADDED"
+            ],
+            "kind": "PRACTICE",
+            "label": "Full run-throughs: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "RUN_THROUGHS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-32",
+            "ord": 3,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": "DELIBERATE_PRACTICE",
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "PRACTICE",
+            "label": "Slow, focused drills: Boat Handling, Wind and Weather",
+            "origin": "CODE",
+            "catalogKey": "SLOW_DRILLS"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-33",
+            "ord": 4,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": null,
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "STEP",
+            "label": "Do a full attempt at: Sail a dinghy solo",
+            "origin": "CODE",
+            "catalogKey": "FULL_ATTEMPT"
+          },
+          {
+            "id": null,
+            "lineageId": "probe-34",
+            "ord": 5,
+            "rawLabel": null,
+            "decision": "PENDING",
+            "domainId": null,
+            "proposedName": null,
+            "syllabusRef": null,
+            "method": null,
+            "sessionsPerWeek": null,
+            "durationBand": null,
+            "rule": null,
+            "planSource": null,
+            "checkpointKind": "PERFORMANCE_CHECK",
+            "outOf": null,
+            "bar": null,
+            "addToToday": true,
+            "templateId": null,
+            "flags": [],
+            "notes": [],
+            "kind": "CHECKPOINT",
+            "label": "Performance check: Sail a dinghy solo",
+            "origin": "CODE",
+            "catalogKey": "PERFORMANCE_CHECK"
+          }
+        ],
+        "measures": [
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-30"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-30"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-31"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-31"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "PRACTICE_KEPT",
+            "role": "PAYS",
+            "scope": {
+              "itemLineageIds": [
+                "probe-32"
+              ]
+            },
+            "unit": "sessions",
+            "itemLineageId": "probe-32"
+          },
+          {
+            "id": null,
+            "minLevel": null,
+            "target": 0,
+            "targetSource": "WORKED_OUT",
+            "fittedTarget": null,
+            "rateSource": null,
+            "baseline": null,
+            "baselineDay": null,
+            "measureKey": null,
+            "kind": "CHECKPOINT",
+            "role": "CONTEXT",
+            "scope": {
+              "itemLineageIds": [
+                "probe-34"
+              ]
+            },
+            "unit": "score",
+            "itemLineageId": "probe-34"
+          }
+        ],
+        "notes": [],
+        "titleFlags": [],
+        "stage": "MASTERED",
+        "arrangedBy": "GEMINI"
+      }
+    ],
+    "report": {
+      "dropped": [],
+      "flagged": [],
+      "notes": [],
+      "integrity": {
+        "verdict": "CLEAN",
+        "violations": [],
+        "modelChars": 0,
+        "gapsKept": 0,
+        "gapsHidden": 0,
+        "gapsDropped": 0,
+        "notANameByClause": {}
+      }
+    },
+    "bulkKeepOff": false,
+    "credential": false,
+    "nonEnglish": false,
+    "uncoveredSyllabus": [],
+    "alarm": false,
+    "needs": [],
+    "exclusions": [],
+    "sessionPicks": null,
+    "gaps": [],
+    "gapsHidden": 0,
+    "unassignedLines": [],
+    "picks": {
+      "FAMILIAR": "SLOW_DRILLS",
+      "RETAINED": "MISTAKE_REVIEW",
+      "FLUENT": "RUN_THROUGHS",
+      "MASTERED": "WITH_A_PARTNER"
+    },
+    "order": {
+      "order": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "dropped": 0,
+      "appended": []
+    },
+    "reordered": false
+  },
+  "pickStages": [
+    "FAMILIAR",
+    "RETAINED",
+    "FLUENT",
+    "MASTERED"
+  ],
+  "plan": [
+    {
+      "stage": "PART",
+      "level": 6,
+      "windowStart": "2026-10-05",
+      "dueDay": "2026-12-13",
+      "room": 2,
+      "practices": [
+        {
+          "kind": "SLOW_DRILLS",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [
+        "CHOOSE_MATERIAL"
+      ],
+      "checkpoint": null
+    },
+    {
+      "stage": "FAMILIAR",
+      "level": 6,
+      "windowStart": "2026-12-14",
+      "dueDay": "2027-02-14",
+      "room": 2,
+      "practices": [
+        {
+          "kind": "SLOW_DRILLS",
+          "why": "FOCUS",
+          "picked": true,
+          "sessionsPerWeek": 2,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "RECALL_DRILLS",
+          "why": "PARTNER",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [
+        "LIST_GAPS"
+      ],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "RETAINED",
+      "level": 8,
+      "windowStart": "2027-02-15",
+      "dueDay": "2027-04-04",
+      "room": 3,
+      "practices": [
+        {
+          "kind": "RUN_THROUGHS",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "MISTAKE_REVIEW",
+          "why": "PICK",
+          "picked": true,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        },
+        {
+          "kind": "SLOW_DRILLS",
+          "why": "CARRY",
+          "picked": false,
+          "sessionsPerWeek": 1,
+          "durationBand": "D30"
+        }
+      ],
+      "steps": [],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "FLUENT",
+      "level": 10,
+      "windowStart": "2027-04-05",
+      "dueDay": "2027-07-04",
+      "room": 1,
+      "practices": [
+        {
+          "kind": "RUN_THROUGHS",
+          "why": "FOCUS",
+          "picked": true,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [
+        "SMALL_PROJECT"
+      ],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "BETWEEN",
+      "level": 11,
+      "windowStart": "2027-07-05",
+      "dueDay": "2027-09-19",
+      "room": 1,
+      "practices": [
+        {
+          "kind": "RUN_THROUGHS",
+          "why": "COPY",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [],
+      "checkpoint": "SELF_TEST"
+    },
+    {
+      "stage": "MASTERED",
+      "level": 12,
+      "windowStart": "2027-09-20",
+      "dueDay": "2028-02-13",
+      "room": 1,
+      "practices": [
+        {
+          "kind": "RUN_THROUGHS",
+          "why": "FOCUS",
+          "picked": false,
+          "sessionsPerWeek": 2,
+          "durationBand": "D45"
+        }
+      ],
+      "steps": [
+        "FULL_ATTEMPT"
+      ],
+      "checkpoint": "PERFORMANCE_CHECK"
+    }
+  ],
+  "room": {
+    "basis": "ladder",
+    "maxPractices": [
+      2,
+      2,
+      3,
+      1,
+      1,
+      1
+    ],
+    "examStage": null
+  },
+  "expected": null,
+  "blessed": false,
+  "labels": {
+    "needs": {},
+    "stages": {
+      "PART": {
+        "practiceFit": null
+      },
+      "FAMILIAR": {
+        "practiceFit": null
+      },
+      "RETAINED": {
+        "practiceFit": null
+      },
+      "FLUENT": {
+        "practiceFit": null
+      },
+      "BETWEEN": {
+        "practiceFit": null
+      },
+      "MASTERED": {
+        "practiceFit": null
+      }
+    },
+    "arrangementKeepsOrder": null,
+    "gaps": []
+  }
+}
